@@ -1,10 +1,9 @@
 C/OpenSSL Crypto Module
 ========================
 
-The ``crypto`` directory contains ServSpy's standalone C/OpenSSL
+The ``src/crypto_api`` directory contains ServSpy's C/OpenSSL
 cryptography library. The library is independent from the Python runtime
-and can be built either as part of the repository or as a separate CMake
-project.
+and is built from the repository root with CMake.
 
 The module provides:
 
@@ -14,7 +13,7 @@ The module provides:
 - AES-256-GCM authenticated encryption for ECDH sessions.
 - PEM key persistence and structured error reporting.
 
-The public headers are located in ``crypto/include``:
+The public headers are located in ``src/crypto_api/include``:
 
 - ``ss_crypto.h`` - common errors, OpenSSL diagnostics, and HKDF.
 - ``ss_rsa.h`` - RSA key and encryption APIs.
@@ -39,17 +38,13 @@ Build it from the repository root:
     cmake --build build --parallel
     ctest --test-dir build --output-on-failure
 
-The module can also be built independently:
+The C test suite lives in ``test/`` (``test_hkdf``, ``test_rsa``,
+``test_ecdh``) and is built and run together with the library.
 
-.. code-block:: bash
-
-    cmake -S crypto -B crypto-build -DCMAKE_BUILD_TYPE=Release
-    cmake --build crypto-build --parallel
-    ctest --test-dir crypto-build --output-on-failure
-
-CMake install rules export the ``ss_crypto`` library, its public headers,
-and a CMake package configuration. A pkg-config template is also provided
-as ``crypto/ss_crypto.pc.in``.
+CMake install rules export the ``crypto_api`` library, its public headers,
+and a CMake package configuration. All CMake content sits at the
+repository root: the CMake package template and the pkg-config template
+are ``cmake/crypto_apiConfig.cmake.in`` and ``crypto_api.pc.in``.
 
 Common API
 ==========

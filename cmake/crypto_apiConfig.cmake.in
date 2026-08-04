@@ -1,0 +1,5 @@
+@PACKAGE_INIT@
+
+include("${CMAKE_CURRENT_LIST_DIR}/crypto_apiTargets.cmake")
+
+check_required_components(crypto_api)
