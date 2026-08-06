@@ -25,8 +25,13 @@ set(CRYPTO_API_SOURCES
   src/crypto_api/ss_ecdh.c
 )
 
-add_library(crypto_api ${CRYPTO_API_SOURCES})
+add_library(crypto_api SHARED ${CRYPTO_API_SOURCES})
 add_library(crypto_api::crypto_api ALIAS crypto_api)
+
+# Windows shared build needs the export macro (SS_CRYPTO_SHARED).
+if(WIN32)
+  target_compile_definitions(crypto_api PRIVATE SS_CRYPTO_SHARED)
+endif()
 
 target_include_directories(crypto_api PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/crypto_api/include>

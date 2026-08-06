@@ -40,6 +40,10 @@ test/*.err
 test/*.tmp
 test/*.key
 test/*.pem
+
+# crypto keys (never commit private keys or exchanged peer keys)
+src/network_api/.Flow/pvt_key/
+src/network_api/.Flow/pub_key/
 *.o
 *.d
 *.so

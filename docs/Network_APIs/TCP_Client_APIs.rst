@@ -23,7 +23,8 @@ the TCP server and exchange data with the server.
             is_input_command_in_console: Any,
             is_wait_server: Any,
             max_custom_workers: Any,
-            is_extend_command: Any=False) -> None: 
+            is_extend_command: Any=False,
+            is_enable_encrypto: Any=True) -> None: 
             ...
 
 The TCP Client Setup API is defined in the ``TCP_Client_Base`` class.
@@ -39,6 +40,8 @@ The parameters of the ``__init__`` method are as follows:
 - ``is_input_command_in_console``: A flag indicating whether to input commands in the console (interactive mode).
 - ``is_wait_server``: A flag indicating whether to keep retrying connection until the server is available.
 - ``max_custom_workers``: The maximum number of custom worker threads.
+- ``is_enable_encrypto``: A flag indicating whether the messages exchanged with
+  the server are RSA-encrypted (see :ref:`tcp-client-encrypted-channel-api`).
 
 Every parameter has default values:
 
@@ -54,6 +57,9 @@ Every parameter has default values:
 - ``max_custom_workers``: Default is ``10``
 - ``is_extend_command``: Default is ``False`` 
   (when ``True``, ``__init__`` will not call ``start_TCP_client()`` automatically)
+- ``is_enable_encrypto``: Default is ``True`` 
+  (when ``True``, the client performs an RSA public-key exchange with the
+  server right after connecting and all subsequent messages are encrypted)
 
 The TCP Client Setup API will initialize all the necessary 
 parameters and resources for the TCP client.
@@ -228,6 +234,10 @@ It verifies the client is still running and the socket is valid, then:
 
 - accepts both ``str`` and ``bytes`` message payloads
 - trims string payloads and appends a newline if missing
+- when the socket is in encrypted mode (the public-key exchange has
+  completed), the plaintext is signed with the ``_VALID`` marker,
+  RSA-OAEP encrypted with the server's public key, base64 encoded and
+  newline-terminated instead of being sent in cleartext
 - encodes string payloads as UTF-8
 - sends the complete message with ``client_socket.sendall(data)``
 - returns ``True`` on success, otherwise logs the error and returns ``False``
@@ -235,6 +245,52 @@ It verifies the client is still running and the socket is valid, then:
 The client also provides an interactive input loop (`interactive_mode`) 
 that reads user input from the console and sends messages 
 to the server.
+
+.. _tcp-client-encrypted-channel-api:
+
+TCP Client encrypted channel API
+--------------------------------
+
+When the client is created with ``is_enable_encrypto=True`` (the default),
+it performs an RSA public-key exchange with the server immediately after
+connecting, before any message content is encrypted.
+
+Key material
+^^^^^^^^^^^^
+
+- If a PEM private key exists at ``~/.ssh/id_rsa`` it is reused; otherwise a
+  fresh RSA-2048 keypair is generated into ``network_api/.Flow/pvt_key``
+  (``client_priv.pem`` / ``client_pub.pem``). The exchanged public key is
+  always derived from the private key, so a rotated ``~/.ssh`` pair is
+  picked up automatically.
+- Public keys received from the server are stored in
+  ``network_api/.Flow/pub_key`` as ``server_<peer-mac>.pem``. The peer's
+  MAC address is appended to the exchanged key so each entry is clearly
+  labelled with which server it came from.
+
+Handshake
+^^^^^^^^^
+
+The client sends a plaintext ``/crypto_key_exchange <client-mac>`` greeting
+right after connecting; the server replies with
+``/crypto_key_exchange_ack <server-mac> <need-client-pub> <force>``. Either
+side that is missing the other's public key pushes its own key file over the
+file-transfer mechanism, and both sides switch to encrypted mode only after
+``/crypto_ready`` has been received from the peer (so plaintext and
+ciphertext never interleave on a connection). On later connections the
+registry is consulted first and the exchange is skipped when the keys are
+already known.
+
+Decode verification and key rotation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Every encrypted plaintext carries the fixed suffix ``_VALID`` (separated by
+``_``). If a message cannot be decrypted, or the suffix is missing, the
+socket drops out of encrypted mode, the local key is reloaded, and a forced
+``/crypto_key_exchange`` restarts the handshake so both sides re-push their
+current public keys. This is what recovers when a user rotates the
+``~/.ssh`` keypair while connections are active: the stale key is detected
+on the first decode failure and the peers automatically re-exchange.
 
 .. _tcp-client-command-api:
 
@@ -606,14 +662,20 @@ is as follows:
     - `send_message`
     - `interactive_mode`
 
-3. The client command APIs:
+3. The client encrypted channel APIs (see :ref:`tcp-client-encrypted-channel-api`):
+    - `_crypto_exchange_thread`
+    - `_crypto_after_ack`
+    - `_crypto_push_pub_key`
+    - `_crypto_process_line`
+
+4. The client command APIs:
     - `register_command`
     - `_execute_custom_handler`
     - `submit_task`
     - `create_temporary_server`
     - `create_temporary_client`
 
-4. The client file transfer APIs:
+5. The client file transfer APIs:
     - `file_transfer_client_recv_client_start`
     - `file_transfer_client_recv_client_start_thread`
     - `folder_file_transfer_client_recv_client_start`
@@ -625,7 +687,7 @@ is as follows:
     - `file_transfer_mode_recv`
     - `file_transfer_mode`
 
-5. The client console commands (interactive mode):
+6. The client console commands (interactive mode):
     - `/quit`
     - `/file`
     - `/multiple_file`

@@ -13,3 +13,4 @@ def test_tcp_client_init():
     assert client.host == "127.0.0.1"
     assert client.port == 65003  # noqa: PLR2004
     assert callable(client.connect)
+    assert client.is_enable_encrypto is True

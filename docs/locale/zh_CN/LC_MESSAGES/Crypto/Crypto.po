@@ -1,0 +1,280 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, RayXu
+# This file is distributed under the same license as the PyFlow package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PyFlow\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-08-07 00:17+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.10.3\n"
+
+#: ../../Crypto/Crypto.rst:2 fdff6fd7fd664738a572ee533e1a5827
+msgid "C/OpenSSL Crypto Module"
+msgstr "C/OpenSSL 加密模块"
+
+#: ../../Crypto/Crypto.rst:4 3deff5ab02524055987d367c04d45d13
+msgid ""
+"The ``src/crypto_api`` directory contains ServSpy's C/OpenSSL cryptography "
+"library. The library is independent from the Python runtime and is built "
+"from the repository root with CMake."
+msgstr ""
+"``src/crypto_api`` 目录包含 ServSpy 的 C/OpenSSL 加密库。该库独立于 Python 运行时，并使用 CMake "
+"从存储库根构建。"
+
+#: ../../Crypto/Crypto.rst:8 3b205af6f6b841289c00d5dff64c3685
+msgid "The module provides:"
+msgstr "该模块提供："
+
+#: ../../Crypto/Crypto.rst:10 1b9a84cc908f4408a53d395373f7072f
+msgid "RSA-OAEP encryption and decryption with SHA-256."
+msgstr "使用 SHA-256 进行 RSA-OAEP 加密和解密。"
+
+#: ../../Crypto/Crypto.rst:11 043bd722031a45e8851549d0da176f52
+msgid "ECDH key agreement on P-256, P-384, and P-521."
+msgstr "P-256、P-384 和 P-521 上的 ECDH 密钥协议。"
+
+#: ../../Crypto/Crypto.rst:12 f258fc4668b848f0b444c837addc2c91
+msgid "HKDF-SHA256 session-key derivation."
+msgstr "HKDF-SHA256 会话密钥派生。"
+
+#: ../../Crypto/Crypto.rst:13 bcd473eff33448e9ad676a783c8ff1a2
+msgid "AES-256-GCM authenticated encryption for ECDH sessions."
+msgstr "ECDH 会话的 AES-256-GCM 身份验证加密。"
+
+#: ../../Crypto/Crypto.rst:14 b5cf880776ab4cea97d4518378de0b83
+msgid "PEM key persistence and structured error reporting."
+msgstr "PEM 密钥持久性和结构化错误报告。"
+
+#: ../../Crypto/Crypto.rst:16 db317eda3fab476da523857722d73b9b
+msgid "The public headers are located in ``src/crypto_api/include``:"
+msgstr "公共标头位于“src/crypto_api/include”中："
+
+#: ../../Crypto/Crypto.rst:18 0a8708d8e48f4f8aa18996ccdee18a0a
+msgid "``ss_crypto.h`` - common errors, OpenSSL diagnostics, and HKDF."
+msgstr "``ss_crypto.h`` - 常见错误、OpenSSL 诊断和 HKDF。"
+
+#: ../../Crypto/Crypto.rst:19 6ac2383036094fd1b68be1846a94cd13
+msgid "``ss_rsa.h`` - RSA key and encryption APIs."
+msgstr "``ss_rsa.h`` - RSA 密钥和加密 API。"
+
+#: ../../Crypto/Crypto.rst:20 c70e4dccf2bb49988120dbdffbc9b8f5
+msgid "``ss_ecdh.h`` - ECDH key agreement and seal/open APIs."
+msgstr "``ss_ecdh.h`` - ECDH 密钥协议和密封/开放 API。"
+
+#: ../../Crypto/Crypto.rst:23 1c24f0fe9d3340a698754976ab1d4b42
+msgid "Build"
+msgstr "建造"
+
+#: ../../Crypto/Crypto.rst:25 a57818256f95424facfdcb4ce9a0c1dd
+msgid ""
+"The module requires OpenSSL 1.1.1 or newer and CMake 3.16 or newer. On "
+"Debian or Ubuntu, install the build dependencies with:"
+msgstr ""
+"该模块需要 OpenSSL 1.1.1 或更高版本以及 CMake 3.16 或更高版本。在 Debian 或 Ubuntu "
+"上，使用以下命令安装构建依赖项："
+
+#: ../../Crypto/Crypto.rst:33 3625f0b23e9d4169a9e77ec7e461cf5b
+msgid "Build it from the repository root:"
+msgstr "从存储库根目录构建它："
+
+#: ../../Crypto/Crypto.rst:41 04d983635b00498a8ec2d1844472d78e
+msgid ""
+"The C test suite lives in ``test/`` (``test_hkdf``, ``test_rsa``, "
+"``test_ecdh``) and is built and run together with the library."
+msgstr "C 测试套件位于“test/”（“test_hkdf”、“test_rsa”、“test_ecdh”）中，并与库一起构建和运行。"
+
+#: ../../Crypto/Crypto.rst:44 e295ab5ecde347859a10b523b7b39f2d
+msgid ""
+"The library is built as a shared object (``libcrypto_api.so``) so it can be "
+"loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes binding "
+"used by the TCP layer to encrypt messages with RSA-OAEP (see the "
+"``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
+"binding looks for the library via ``ctypes.util.find_library`` and in "
+"``build/`` next to the repository root."
+msgstr ""
+"该库被构建为共享对象（“libcrypto_api.so”），因此可以从Python加载：“src/network_api/rsa_crypto.py”是TCP层使用的ctypes绑定，用于使用RSA-"
+"OAEP加密消息（请参阅“TCP_Server_APIs”/“TCP_Client_APIs”加密通道部分）。绑定通过“ctypes.util.find_library”和存储库根目录旁边的“build/”查找库。"
+
+#: ../../Crypto/Crypto.rst:51 f297853b68084a898cbf376e964e8f8e
+msgid ""
+"CMake install rules export the ``crypto_api`` library, its public headers, "
+"and a CMake package configuration. All CMake content sits at the repository "
+"root: the CMake package template and the pkg-config template are "
+"``cmake/crypto_apiConfig.cmake.in`` and ``crypto_api.pc.in``."
+msgstr ""
+"CMake 安装规则导出“crypto_api”库、其公共标头和 CMake 包配置。所有 CMake 内容都位于存储库根目录：CMake 包模板和 "
+"pkg-config 模板是“cmake/crypto_apiConfig.cmake.in”和“crypto_api.pc.in”。"
+
+#: ../../Crypto/Crypto.rst:57 fc9e55c66def4521885a663a67f3a59c
+msgid "Common API"
+msgstr "通用API"
+
+#: ../../Crypto/Crypto.rst:59 ca2af2dcc11c4432a4e252ae6fb530ec
+msgid ""
+"All public functions return ``ss_err_t``. ``SS_OK`` indicates success. Use "
+"``ss_err_string`` to convert an error code to readable text and "
+"``ss_crypto_openssl_errors`` to retrieve the pending OpenSSL error queue."
+msgstr ""
+"所有公共函数都返回``ss_err_t``。 “SS_OK”表示成功。使用 ss_err_string 将错误代码转换为可读文本，并使用 "
+"ss_crypto_openssl_errors 检索挂起的 OpenSSL 错误队列。"
+
+#: ../../Crypto/Crypto.rst:77 3413d21a1e174f849dfbd7f5840bb428
+msgid ""
+"The library uses caller-provided output buffers for fixed-size results. "
+"Functions that return allocated buffers document that the caller must "
+"release them with ``free``. Opaque key handles must be released with their "
+"corresponding ``*_free`` function."
+msgstr ""
+"该库使用调用者提供的输出缓冲区来获取固定大小的结果。返回分配的缓冲区的函数记录了调用者必须使用“free”释放它们。不透明的按键句柄必须使用其相应的“*_free”函数来释放。"
+
+#: ../../Crypto/Crypto.rst:83 af426607096248439b6592145af6764a
+msgid "RSA API"
+msgstr "RSA API"
+
+#: ../../Crypto/Crypto.rst:85 1e0209363c764cfe9b270d3f7221ef40
+msgid ""
+"RSA keys are generated with ``ss_rsa_keygen``. The implementation uses RSA-"
+"OAEP with SHA-256 for encryption and decryption. Key sizes from 2048 to "
+"16384 bits are accepted; 2048, 3072, or 4096 bits are recommended."
+msgstr ""
+"RSA 密钥是使用“ss_rsa_keygen”生成的。该实现使用 RSA-OAEP 和 SHA-256 进行加密和解密。接受 2048 至 16384"
+" 位的密钥大小；建议使用 2048、3072 或 4096 位。"
+
+#: ../../Crypto/Crypto.rst:109 3e26320f16ab47a0af87bf5dc89e647a
+msgid ""
+"The first encryption call with ``out == NULL`` queries the required output "
+"size. RSA encryption is binary-safe and accepts an explicit input length. "
+"The maximum plaintext size is returned by ``ss_rsa_max_plaintext_len``."
+msgstr ""
+"第一个使用“out == NULL”的加密调用查询所需的输出大小。 RSA "
+"加密是二进制安全的，并且接受显式输入长度。最大明文大小由“ss_rsa_max_plaintext_len”返回。"
+
+#: ../../Crypto/Crypto.rst:113 c192246cb34a43808801654736d8fce8
+msgid "Public and private keys can be stored as PEM files:"
+msgstr "公钥和私钥可以存储为 PEM 文件："
+
+#: ../../Crypto/Crypto.rst:124 ddd2778c646f42898403f65a835627bf
+msgid "ECDH API"
+msgstr "ECDH API"
+
+#: ../../Crypto/Crypto.rst:126 67c165608ff34545ad59d22f734c0266
+msgid ""
+"ECDH key pairs are created with ``ss_ecdh_keypair_generate``. The supported "
+"curve names are:"
+msgstr "ECDH 密钥对是使用“ss_ecdh_keypair_generate”创建的。支持的曲线名称是："
+
+#: ../../Crypto/Crypto.rst:129 737f5f74529f452da38ae54c1e6bdcea
+msgid "``SS_ECDH_CURVE_P256``"
+msgstr "``SS_ECDH_CURVE_P256``"
+
+#: ../../Crypto/Crypto.rst:130 4e6a452663d84c9eac9615a421d54edb
+msgid "``SS_ECDH_CURVE_P384``"
+msgstr "``SS_ECDH_CURVE_P384``"
+
+#: ../../Crypto/Crypto.rst:131 e421bbf3383e4079820642816c90e921
+msgid "``SS_ECDH_CURVE_P521``"
+msgstr "``SS_ECDH_CURVE_P521``"
+
+#: ../../Crypto/Crypto.rst:133 5f2b04819c5a4d7b8e96512bca6cf86e
+msgid ""
+"Public keys are exchanged as PEM SubjectPublicKeyInfo strings. Parsed peer "
+"keys are checked before use."
+msgstr "公钥作为 PEM subjectPublicKeyInfo 字符串进行交换。使用前会检查已解析的对等密钥。"
+
+#: ../../Crypto/Crypto.rst:156 0f40f41880b94e828bbd58ac631754a1
+msgid ""
+"The higher-level ``ss_ecdh_seal`` and ``ss_ecdh_open`` APIs are recommended "
+"for application payloads. They derive an AES-256-GCM key with HKDF-SHA256, "
+"include a random salt and IV, and authenticate optional AAD."
+msgstr ""
+"建议将更高级别的 ``ss_ecdh_seal`` 和 ``ss_ecdh_open`` API 用于应用程序负载。他们使用 HKDF-SHA256 "
+"派生 AES-256-GCM 密钥，包括随机盐和 IV，并验证可选的 AAD。"
+
+#: ../../Crypto/Crypto.rst:160 84614363b3104ac4a44f044dad010eeb
+msgid "The ``ss_ecdh_seal`` output format is:"
+msgstr "``ss_ecdh_seal`` 输出格式为："
+
+#: ../../Crypto/Crypto.rst:166 77967b230b95484a836884d1d717eab3
+msgid ""
+"The fixed overhead is ``SS_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext "
+"is allowed. A failed tag check returns ``SS_ERR_AUTH_FAILED`` and no "
+"plaintext is returned."
+msgstr ""
+"固定开销为“SS_ECDH_SEAL_OVERHEAD”（44 "
+"字节）。允许空明文。失败的标签检查返回``SS_ERR_AUTH_FAILED``并且不返回明文。"
+
+#: ../../Crypto/Crypto.rst:171 1c226278e4b746a8b67358e6f6b12b25
+msgid "Security Notes"
+msgstr "安全说明"
+
+#: ../../Crypto/Crypto.rst:173 22976e7f6a74484abe6856c1e38ff27d
+msgid ""
+"ECDH provides key agreement, but it does not authenticate public-key "
+"ownership by itself. Public keys must be exchanged over an authenticated "
+"channel or verified with an external signature/certificate mechanism."
+msgstr "ECDH 提供密钥协商，但它本身并不验证公钥所有权。公钥必须通过经过身份验证的通道进行交换或使用外部签名/证书机制进行验证。"
+
+#: ../../Crypto/Crypto.rst:177 532db57edd2f478f94bca8860aaead12
+msgid ""
+"Private key files may be protected with a passphrase. Applications should "
+"restrict their file permissions and avoid logging passphrases, private keys,"
+" or plaintext session keys."
+msgstr "私钥文件可以用密码保护。应用程序应限制其文件权限并避免记录密码、私钥或纯文本会话密钥。"
+
+#: ../../Crypto/Crypto.rst:182 599771577d30442180350e4e07c480f1
+msgid "Error Handling"
+msgstr "错误处理"
+
+#: ../../Crypto/Crypto.rst:184 59bde59a25ea4fe5a46ea5b7d29a4569
+msgid "The main error codes are:"
+msgstr "主要错误代码有："
+
+#: ../../Crypto/Crypto.rst:186 a20ad03d7c334f02b5ff41c9b5bbee92
+msgid "``SS_ERR_INVALID_ARG`` - invalid pointer or length."
+msgstr "``SS_ERR_INVALID_ARG`` - 无效的指针或长度。"
+
+#: ../../Crypto/Crypto.rst:187 00d6efea688847c79215e48f3a13b2d1
+msgid "``SS_ERR_NOMEM`` - allocation failure."
+msgstr "``SS_ERR_NOMEM`` - 分配失败。"
+
+#: ../../Crypto/Crypto.rst:188 186f19fb4245429e9d15af05cad0f907
+msgid "``SS_ERR_OPENSSL`` - OpenSSL operation failure."
+msgstr "``SS_ERR_OPENSSL`` - OpenSSL 操作失败。"
+
+#: ../../Crypto/Crypto.rst:189 599dddb1941c4b1cba7c1d5d9d8b1034
+msgid "``SS_ERR_IO`` - file operation failure."
+msgstr "``SS_ERR_IO`` - 文件操作失败。"
+
+#: ../../Crypto/Crypto.rst:190 dbb3eeecaf6c4d078923d7ffe0e2ec62
+msgid ""
+"``SS_ERR_PARSE`` - malformed PEM/DER input or wrong private-key passphrase."
+msgstr "``SS_ERR_PARSE`` - PEM/DER 输入格式错误或私钥密码错误。"
+
+#: ../../Crypto/Crypto.rst:191 aadaaf69feba491eaff6dce2aa27b6e8
+msgid "``SS_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient."
+msgstr "``SS_ERR_BUFFER_TOO_SMALL`` - 调用者输出缓冲区不足。"
+
+#: ../../Crypto/Crypto.rst:192 50170c9fc49648a1a701a4aaf21d7fed
+msgid "``SS_ERR_AUTH_FAILED`` - AES-GCM authentication failed."
+msgstr "``SS_ERR_AUTH_FAILED`` - AES-GCM 身份验证失败。"
+
+#: ../../Crypto/Crypto.rst:193 8c7401db6f7e4cb6bdb2c6d3a2eba0e1
+msgid "``SS_ERR_UNSUPPORTED`` - unsupported curve or key type."
+msgstr "``SS_ERR_UNSUPPORTED`` - 不支持的曲线或关键点类型。"
+
+#: ../../Crypto/Crypto.rst:194 a2d89fdafbf645b48d94f9cb888e953a
+msgid "``SS_ERR_DECRYPT`` - RSA decryption failed."
+msgstr "``SS_ERR_DECRYPT`` - RSA 解密失败。"
+
+#: ../../Crypto/Crypto.rst:196 153dd51810da4fce893f4cfb3b2b1365
+msgid "For detailed OpenSSL diagnostics:"
+msgstr "有关详细的 OpenSSL 诊断："

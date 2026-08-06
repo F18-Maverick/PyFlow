@@ -41,6 +41,13 @@ Build it from the repository root:
 The C test suite lives in ``test/`` (``test_hkdf``, ``test_rsa``,
 ``test_ecdh``) and is built and run together with the library.
 
+The library is built as a shared object (``libcrypto_api.so``) so it can
+be loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes
+binding used by the TCP layer to encrypt messages with RSA-OAEP (see the
+``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections).
+The binding looks for the library via ``ctypes.util.find_library`` and in
+``build/`` next to the repository root.
+
 CMake install rules export the ``crypto_api`` library, its public headers,
 and a CMake package configuration. All CMake content sits at the
 repository root: the CMake package template and the pkg-config template

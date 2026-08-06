@@ -19,7 +19,8 @@ SERVER_DEFAULTS = {
     'is_hand_alloc_port': False,
     'is_input_command_in_console': True,
     'max_custom_workers': 10,
-    'is_extend_command': False
+    'is_extend_command': False,
+    'is_enable_encrypto': True
 }
 
 CLIENT_DEFAULTS = {
@@ -33,7 +34,8 @@ CLIENT_DEFAULTS = {
     'is_input_command_in_console': True,
     'is_wait_server': True,
     'max_custom_workers': 10,
-    'is_extend_command': False
+    'is_extend_command': False,
+    'is_enable_encrypto': True
 }
 
 def parse_addr_port(addr_port):

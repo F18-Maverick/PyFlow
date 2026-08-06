@@ -23,7 +23,8 @@ clients.
             is_hand_alloc_port: Any,
             is_input_command_in_console: Any,
             max_custom_workers: Any,
-            is_extend_command: Any=False) -> None:
+            is_extend_command: Any=False,
+            is_enable_encrypto: Any=True) -> None:
             ...
 
 The TCP Server Setup API is defined in the ``TCP_Server_Base`` class.
@@ -38,6 +39,8 @@ The parameters of the ``__init__`` method are as follows:
 - ``is_hand_alloc_port``: A flag indicating whether to manually allocate the port.
 - ``is_input_command_in_console``: A flag indicating whether to input commands in the console.
 - ``max_custom_workers``: The maximum number of custom worker threads.
+- ``is_enable_encrypto``: A flag indicating whether the messages exchanged with
+  clients are RSA-encrypted (see :ref:`tcp-server-encrypted-channel-api`).
 
 All parameters have default values:
 
@@ -52,6 +55,9 @@ All parameters have default values:
 - ``max_custom_workers``: Default is ``10``
 - ``is_extend_command``: Default is ``False`` 
   (when ``True``, ``__init__`` will not call ``start_TCP_Server()`` automatically)
+- ``is_enable_encrypto``: Default is ``True`` 
+  (when ``True``, client connections go through an RSA public-key exchange
+  and all subsequent messages are encrypted)
 
 The TCP Server Setup API will initialize all the necessary 
 parameters and resources for the TCP server.
@@ -247,6 +253,10 @@ It verifies the server is running and the socket is valid, then:
 
 - accepts both ``str`` and ``bytes`` message payloads
 - trims string payloads and appends a newline if missing
+- when the socket is in encrypted mode (the public-key exchange has
+  completed), the plaintext is signed with the ``_VALID`` marker,
+  RSA-OAEP encrypted with the peer's public key, base64 encoded and
+  newline-terminated instead of being sent in cleartext
 - encodes string payloads as UTF-8
 - sends the complete message with ``client_socket.sendall(data)``
 - returns ``True`` on success, otherwise logs the error and returns ``False``
@@ -255,6 +265,52 @@ And there are also some other functions which are
 used to send message in bulk to the clients, such 
 as the `broadcast` function and the `send_msg_to_specific_client` 
 function.
+
+.. _tcp-server-encrypted-channel-api:
+
+TCP Server encrypted channel API
+--------------------------------
+
+When the server is created with ``is_enable_encrypto=True`` (the default),
+every connected client goes through an RSA public-key exchange before any
+message content is encrypted.
+
+Key material
+^^^^^^^^^^^^
+
+- If a PEM private key exists at ``~/.ssh/id_rsa`` it is reused; otherwise a
+  fresh RSA-2048 keypair is generated into ``network_api/.Flow/pvt_key``
+  (``server_priv.pem`` / ``server_pub.pem``). The exchanged public key is
+  always derived from the private key, so a rotated ``~/.ssh`` pair is
+  picked up automatically.
+- Public keys received from clients are stored in ``network_api/.Flow/pub_key``
+  as ``client_<peer-mac>.pem``. The peer's MAC address is appended to the
+  exchanged key so each entry is clearly labelled with which client it came
+  from.
+
+Handshake
+^^^^^^^^^
+
+The client initiates the exchange by sending a plaintext
+``/crypto_key_exchange <client-mac>`` greeting; the server replies with
+``/crypto_key_exchange_ack <server-mac> <need-client-pub> <force>``. Either
+side that is missing the other's public key pushes its own key file over the
+file-transfer mechanism, and both sides switch to encrypted mode only after
+``/crypto_ready`` has been received from the peer (so plaintext and
+ciphertext never interleave on a connection). On later connections the
+registry is consulted first and the exchange is skipped when the keys are
+already known.
+
+Decode verification and key rotation
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Every encrypted plaintext carries the fixed suffix ``_VALID`` (separated by
+``_``). If a message cannot be decrypted, or the suffix is missing, the
+socket drops out of encrypted mode, the local key is reloaded, and a forced
+``/crypto_key_exchange`` restarts the handshake so both sides re-push their
+current public keys. This is what recovers when a user rotates the
+``~/.ssh`` keypair while connections are active: the stale key is detected
+on the first decode failure and the peers automatically re-exchange.
 
 .. code-block:: python
 
@@ -714,21 +770,27 @@ are as follows:
     - `broadcast`
     - `send_msg_to_specific_client`
 
-3. The server command APIs:
+3. The server encrypted channel APIs (see :ref:`tcp-server-encrypted-channel-api`):
+    - `_crypto_on_client_hello`
+    - `_crypto_wait_server_ready`
+    - `_crypto_push_pub_to_client`
+    - `_crypto_process_line`
+
+4. The server command APIs:
     - `register_command`
     - `_execute_custom_handler`
     - `submit_task`
     - `create_temporary_server`
     - `create_temporary_client`
 
-4. The server file transfer APIs:
+5. The server file transfer APIs:
     - `file_transfer_server_recv_client_start`
     - `file_transfer_server_recv_client_start_thread`
     - `folder_file_transfer_server_recv_client_start`
     - `multiple_file_multiple_client_transfer_server_recv_client_start`
     - `diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start`
 
-5. The server console commands:
+6. The server console commands:
     - `/stop`
     - `/status`
     - `/clients`
