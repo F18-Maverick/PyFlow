@@ -286,7 +286,8 @@ Key material
 - Public keys received from clients are stored in ``network_api/.Flow/pub_key``
   as ``client_<peer-mac>.pem``. The peer's MAC address is appended to the
   exchanged key so each entry is clearly labelled with which client it came
-  from.
+  from; in the file name the MAC uses ``_`` separators (``:`` is an illegal
+  filename character on Windows).
 
 Handshake
 ^^^^^^^^^

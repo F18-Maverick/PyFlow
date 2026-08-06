@@ -243,9 +243,15 @@ class RsaCrypto:
     # ---- peer public key registry -------------------------------------------
 
     def peer_pub_path(self, peer_role, peer_mac):
-        """Path of the stored public key for ``peer_role`` on ``peer_mac``."""
+        """Path of the stored public key for ``peer_role`` on ``peer_mac``.
+
+        The MAC is sanitized for the filesystem (``:`` -> ``_``) so the same
+        registry layout works on every platform: ``:`` is an illegal
+        filename character on Windows.
+        """
         return os.path.join(
-            self.pub_key_dir, "{}_{}.pem".format(peer_role, peer_mac))
+            self.pub_key_dir,
+            "{}_{}.pem".format(peer_role, peer_mac.replace(":", "_")))
 
     def has_peer_key(self, peer_role, peer_mac):
         return os.path.exists(self.peer_pub_path(peer_role, peer_mac))

@@ -108,10 +108,14 @@ def test_handshake_flips_both_sides_and_stores_keys(tcp_pair):
     mac = client.crypto.mac
     assert os.path.exists(server.crypto.peer_pub_path("client", mac))
     assert os.path.exists(client.crypto.peer_pub_path("server", mac))
-    # the exchanged key files carry the peer MAC in their name
+    # the exchanged key files carry the peer MAC (filesystem-safe "_"
+    # separators) in their name
+    mac_file = mac.replace(":", "_")
     names = os.listdir(str(tmp_path / "pub_key"))
-    assert any(name.startswith("client_") and mac in name for name in names)
-    assert any(name.startswith("server_") and mac in name for name in names)
+    assert any(name.startswith("client_") and mac_file in name
+               for name in names)
+    assert any(name.startswith("server_") and mac_file in name
+               for name in names)
 
 
 def test_encrypted_roundtrip(tcp_pair):

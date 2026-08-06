@@ -159,6 +159,7 @@ def test_encrypt_without_peer_key_raises(crypto):
 
 
 def test_peer_registry_naming(crypto):
+    # the MAC in the filename is filesystem-safe: ":" becomes "_"
     path = crypto.peer_pub_path("server", "aa:bb:cc:dd:ee:ff")
     assert path == os.path.join(
-        crypto.pub_key_dir, "server_aa:bb:cc:dd:ee:ff.pem")
+        crypto.pub_key_dir, "server_aa_bb_cc_dd_ee_ff.pem")
