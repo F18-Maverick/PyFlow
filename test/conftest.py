@@ -38,7 +38,9 @@ def client(monkeypatch):
 
     Use this fixture when a test only needs a client instance.
     """
-    c = TCP_Client_Base(host="127.0.0.1", port=CLIENT_PORT, client_host="127.0.0.1", is_extend_command=True)
+    c = TCP_Client_Base(
+        host="127.0.0.1", port=CLIENT_PORT, client_host="127.0.0.1", is_extend_command=True
+    )
     monkeypatch.setattr(ctl, "client_instance", c)
     try:
         yield c
@@ -53,7 +55,9 @@ def server_client(monkeypatch):
     Use this when a test requires both sides present.
     """
     s = TCP_Server_Base(host="127.0.0.1", port=SERVER2_PORT, is_extend_command=True)
-    c = TCP_Client_Base(host="127.0.0.1", port=CLIENT2_PORT, client_host="127.0.0.1", is_extend_command=True)
+    c = TCP_Client_Base(
+        host="127.0.0.1", port=CLIENT2_PORT, client_host="127.0.0.1", is_extend_command=True
+    )
     monkeypatch.setattr(ctl, "server_instance", s)
     monkeypatch.setattr(ctl, "client_instance", c)
     try:

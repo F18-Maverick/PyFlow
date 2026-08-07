@@ -10,16 +10,16 @@ import time
 from pathlib import Path
 
 # ========== 用户配置 ==========
-LANGUAGES = ['ja', 'zh_CN', 'zh_TW', 'ko', 'ru']
-SOURCE_LANG = 'en'
-REQUEST_DELAY = 0.8          # 每条翻译间隔（秒），防限流
-REQUEST_TIMEOUT = 30         # 单条请求超时（秒）
-MAX_RETRIES = 3              # 单条翻译失败重试次数
+LANGUAGES = ["ja", "zh_CN", "zh_TW", "ko", "ru"]
+SOURCE_LANG = "en"
+REQUEST_DELAY = 0.8  # 每条翻译间隔（秒），防限流
+REQUEST_TIMEOUT = 30  # 单条请求超时（秒）
+MAX_RETRIES = 3  # 单条翻译失败重试次数
 ENABLE_TRANSLATION = True
 
 LANG_MAP = {
-    'zh_CN': 'zh-CN',
-    'zh_TW': 'zh-TW',
+    "zh_CN": "zh-CN",
+    "zh_TW": "zh-TW",
 }
 # ================================
 
@@ -34,7 +34,7 @@ except ImportError:
 def find_locale_dir(start_path: Path) -> Path:
     current = start_path.resolve()
     for _ in range(10):
-        candidate = current / 'locale'
+        candidate = current / "locale"
         if candidate.is_dir():
             return candidate
         if current.parent == current:
@@ -64,15 +64,13 @@ def translate_po_file(po_path: Path, target_lang: str, locale_dir: Path):
     for idx, entry in enumerate(empty_entries, 1):
         # 每 5 条或每 50 条显示一次进度
         if idx % 5 == 0 or idx == 1 or idx == total:
-            print(f"     ⏳ 进度: {idx}/{total} ({idx*100//total}%) - {entry.msgid[:40]}...")
+            print(f"     ⏳ 进度: {idx}/{total} ({idx * 100 // total}%) - {entry.msgid[:40]}...")
 
         # 带重试的翻译
         for attempt in range(MAX_RETRIES):
             try:
                 translator = GoogleTranslator(
-                    source=SOURCE_LANG,
-                    target=target_code,
-                    timeout=REQUEST_TIMEOUT
+                    source=SOURCE_LANG, target=target_code, timeout=REQUEST_TIMEOUT
                 )
                 entry.msgstr = translator.translate(entry.msgid)
                 translated += 1
@@ -80,14 +78,14 @@ def translate_po_file(po_path: Path, target_lang: str, locale_dir: Path):
                 break  # 成功则跳出重试循环
             except Exception as e:
                 if attempt < MAX_RETRIES - 1:
-                    print(f"     ⚠️ 重试 {attempt+1}/{MAX_RETRIES}: {entry.msgid[:30]}...")
+                    print(f"     ⚠️ 重试 {attempt + 1}/{MAX_RETRIES}: {entry.msgid[:30]}...")
                     time.sleep(2)  # 重试前等待 2 秒
                 else:
                     print(f"     ❌ 翻译失败: {entry.msgid[:40]}... → {e}")
                 continue
 
     if translated:
-        backup = po_path.with_suffix(po_path.suffix + '.bak')
+        backup = po_path.with_suffix(po_path.suffix + ".bak")
         po_path.rename(backup)
         po.save(str(po_path))
         print(f"     ✅ 完成: {translated}/{total} 条，备份: {backup.name}")
@@ -108,19 +106,19 @@ def main():
     if not ENABLE_TRANSLATION:
         print("ℹ️ 翻译功能已关闭，仅扫描文件...")
         for lang in LANGUAGES:
-            lang_path = locale_dir / lang / 'LC_MESSAGES'
+            lang_path = locale_dir / lang / "LC_MESSAGES"
             if lang_path.exists():
-                po_files = list(lang_path.rglob('*.po'))
+                po_files = list(lang_path.rglob("*.po"))
                 print(f"  {lang}: {len(po_files)} 个 .po 文件")
         return
 
     for lang in LANGUAGES:
-        lang_dir = locale_dir / lang / 'LC_MESSAGES'
+        lang_dir = locale_dir / lang / "LC_MESSAGES"
         if not lang_dir.is_dir():
             print(f"⚠️ 跳过 {lang}：目录不存在")
             continue
 
-        po_files = list(lang_dir.rglob('*.po'))
+        po_files = list(lang_dir.rglob("*.po"))
         if not po_files:
             print(f"⚠️ 跳过 {lang}：没有 .po 文件")
             continue
@@ -133,6 +131,5 @@ def main():
     print("📌 请运行: sphinx-intl build")
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
-

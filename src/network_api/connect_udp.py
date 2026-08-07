@@ -8,7 +8,7 @@ MAX_DATAGRAM = 65535
 
 
 class UDP:
-    def __init__(self, host='0.0.0.0', port=0):
+    def __init__(self, host="0.0.0.0", port=0):
         self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -29,11 +29,11 @@ class UDP:
         self._socket.sendto(data, addr)
 
     def broadcast(self, data, port):
-        self.send(data, ('255.255.255.255', port))
+        self.send(data, ("255.255.255.255", port))
 
     def listen(self, handler):
         if self._closed:
-            raise RuntimeError('endpoint is closed')
+            raise RuntimeError("endpoint is closed")
         if self._recv_thread and self._recv_thread.is_alive():
             return
         self._recv_thread = threading.Thread(target=self._run, args=(handler,), daemon=True)
@@ -53,7 +53,7 @@ class UDP:
             try:
                 handler(data, addr)
             except Exception:
-                logger.exception(f'handler error from {addr}')
+                logger.exception(f"handler error from {addr}")
 
     def close(self):
         self._closed = True

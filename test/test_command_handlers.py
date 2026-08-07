@@ -5,7 +5,7 @@ import io
 import json
 from types import SimpleNamespace
 
-package_dictionary=os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+package_dictionary = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if package_dictionary not in os.sys.path:
     sys.path.insert(0, package_dictionary)
 
@@ -71,7 +71,11 @@ def test_command_handler_server_setup_triggers_file_transfer(server_client, monk
     monkeypatch.setattr(ctl.os, "makedirs", lambda *a, **k: None)
 
     # mock subprocess.run to avoid executing real commands
-    monkeypatch.setattr(ctl.subprocess, "run", lambda *a, **kw: SimpleNamespace(stdout="out", stderr="", returncode=0))
+    monkeypatch.setattr(
+        ctl.subprocess,
+        "run",
+        lambda *a, **kw: SimpleNamespace(stdout="out", stderr="", returncode=0),
+    )
 
     calls = {}
 
@@ -107,7 +111,7 @@ def test_command_done_merges_transferred_logs_into_one_file(server, tmp_path, mo
     existing_file = logs_dir / "logs_1.json"
     existing_file.write_text(json.dumps({"cmd1": [{"error": "none"}]}), encoding="utf-8")
 
-    cmd = "/command_done \"logs_0.json\" \"/tmp/logs/logs_0.json\""
+    cmd = '/command_done "logs_0.json" "/tmp/logs/logs_0.json"'
     ctl._command_done_dealing_server(None, ("127.0.0.1", 9999), cmd)
 
     merged_file = logs_dir / "merged_logs.json"

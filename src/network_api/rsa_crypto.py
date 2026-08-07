@@ -89,18 +89,27 @@ def _configure(lib):
     lib.ss_rsa_keygen.restype = ctypes.c_int
     lib.ss_rsa_read_pub.argtypes = [ctypes.c_char_p, ctypes.POINTER(c_void_p)]
     lib.ss_rsa_read_pub.restype = ctypes.c_int
-    lib.ss_rsa_read_priv.argtypes = [
-        ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(c_void_p)]
+    lib.ss_rsa_read_priv.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(c_void_p)]
     lib.ss_rsa_read_priv.restype = ctypes.c_int
     lib.ss_rsa_write_pub.argtypes = [c_void_p, ctypes.c_char_p]
     lib.ss_rsa_write_pub.restype = ctypes.c_int
     lib.ss_rsa_write_priv.argtypes = [c_void_p, ctypes.c_char_p, ctypes.c_char_p]
     lib.ss_rsa_write_priv.restype = ctypes.c_int
     lib.ss_rsa_encrypt.argtypes = [
-        c_void_p, c_uint8_p, c_size_t, c_uint8_p, ctypes.POINTER(c_size_t)]
+        c_void_p,
+        c_uint8_p,
+        c_size_t,
+        c_uint8_p,
+        ctypes.POINTER(c_size_t),
+    ]
     lib.ss_rsa_encrypt.restype = ctypes.c_int
     lib.ss_rsa_decrypt.argtypes = [
-        c_void_p, c_uint8_p, c_size_t, c_uint8_p, ctypes.POINTER(c_size_t)]
+        c_void_p,
+        c_uint8_p,
+        c_size_t,
+        c_uint8_p,
+        ctypes.POINTER(c_size_t),
+    ]
     lib.ss_rsa_decrypt.restype = ctypes.c_int
     lib.ss_rsa_max_plaintext_len.argtypes = [c_void_p]
     lib.ss_rsa_max_plaintext_len.restype = c_size_t
@@ -134,7 +143,8 @@ def load_library():
     raise CryptoLibraryError(
         "libcrypto_api not found; build it first with "
         "'cmake -S . -B build && cmake --build build' "
-        "(searched: {})".format(", ".join(candidates)))
+        "(searched: {})".format(", ".join(candidates))
+    )
 
 
 def get_local_mac():
@@ -162,8 +172,9 @@ class RsaCrypto:
         self.flow_dir = os.path.join(project_dir, ".Flow")
         self.pvt_key_dir = os.path.join(self.flow_dir, "pvt_key")
         self.pub_key_dir = os.path.join(self.flow_dir, "pub_key")
-        self.ssh_dir = ssh_dir if ssh_dir is not None else os.path.join(
-            os.path.expanduser("~"), ".ssh")
+        self.ssh_dir = (
+            ssh_dir if ssh_dir is not None else os.path.join(os.path.expanduser("~"), ".ssh")
+        )
         self.mac = get_local_mac()
         for directory in (self.pvt_key_dir, self.pub_key_dir):
             os.makedirs(directory, exist_ok=True)
@@ -176,8 +187,7 @@ class RsaCrypto:
 
     def ensure_keys(self, force_reload=False):
         """Load the RSA keypair (see module docstring) and cache handles."""
-        if (not force_reload and self._priv_key is not None
-                and self.priv_path is not None):
+        if not force_reload and self._priv_key is not None and self.priv_path is not None:
             return
         lib = load_library()
         priv_candidates = [os.path.join(self.ssh_dir, "id_rsa")]
@@ -197,8 +207,7 @@ class RsaCrypto:
             if not os.path.exists(priv_path):
                 self._generate_keypair(lib, priv_path, pub_path)
         self.priv_path = priv_path
-        self.pub_path = os.path.join(
-            self.pvt_key_dir, "{}_pub.pem".format(self.role))
+        self.pub_path = os.path.join(self.pvt_key_dir, "{}_pub.pem".format(self.role))
         # (Re)derive the PEM public key from the private key: the SSH
         # public file (~/.ssh/id_rsa.pub) is OpenSSH-format and cannot
         # be parsed by the C library.
@@ -220,11 +229,9 @@ class RsaCrypto:
 
     def _read_priv_handle(self, lib, path):
         handle = ctypes.c_void_p()
-        err = lib.ss_rsa_read_priv(path.encode("utf-8"), None,
-                                   ctypes.byref(handle))
+        err = lib.ss_rsa_read_priv(path.encode("utf-8"), None, ctypes.byref(handle))
         if err != SS_OK or not handle.value:
-            raise ValueError(
-                "cannot parse private key {} (err {})".format(path, err))
+            raise ValueError("cannot parse private key {} (err {})".format(path, err))
         return RsaKey(handle.value, lib)
 
     def _generate_keypair(self, lib, priv_path, pub_path):
@@ -250,8 +257,8 @@ class RsaCrypto:
         filename character on Windows.
         """
         return os.path.join(
-            self.pub_key_dir,
-            "{}_{}.pem".format(peer_role, peer_mac.replace(":", "_")))
+            self.pub_key_dir, "{}_{}.pem".format(peer_role, peer_mac.replace(":", "_"))
+        )
 
     def has_peer_key(self, peer_role, peer_mac):
         return os.path.exists(self.peer_pub_path(peer_role, peer_mac))
@@ -260,6 +267,7 @@ class RsaCrypto:
         """Move a freshly received public key into the registry."""
         dest = self.peer_pub_path(peer_role, peer_mac)
         import shutil
+
         shutil.move(src_path, dest)
         self._peer_pub_cache.pop(dest, None)
 
@@ -293,8 +301,8 @@ class RsaCrypto:
         key = self._load_peer_pub(path)
         if key is None:
             raise ValueError(
-                "no public key for {} {} stored at {}".format(
-                    peer_role, peer_mac, path))
+                "no public key for {} {} stored at {}".format(peer_role, peer_mac, path)
+            )
         payload = plaintext + VALID_SIGN
         data = payload.encode("utf-8")
         lib = load_library()
@@ -303,24 +311,23 @@ class RsaCrypto:
             raise RuntimeError("ss_rsa_max_plaintext_len returned {}".format(max_len))
         parts = []
         for offset in range(0, len(data), max_len):
-            chunk = data[offset:offset + max_len]
+            chunk = data[offset : offset + max_len]
             parts.append(self._rsa_encrypt_chunk(lib, key, chunk))
         return "|".join(parts)
 
     def _rsa_encrypt_chunk(self, lib, key, chunk):
         in_buf = (ctypes.c_uint8 * len(chunk)).from_buffer_copy(chunk)
         out_len = ctypes.c_size_t(0)
-        err = lib.ss_rsa_encrypt(key.handle, in_buf, len(chunk), None,
-                                 ctypes.byref(out_len))
+        err = lib.ss_rsa_encrypt(key.handle, in_buf, len(chunk), None, ctypes.byref(out_len))
         if err != SS_OK:
             raise RuntimeError("ss_rsa_encrypt (query) failed: {}".format(err))
         out_buf = (ctypes.c_uint8 * out_len.value)()
-        err = lib.ss_rsa_encrypt(key.handle, in_buf, len(chunk), out_buf,
-                                 ctypes.byref(out_len))
+        err = lib.ss_rsa_encrypt(key.handle, in_buf, len(chunk), out_buf, ctypes.byref(out_len))
         if err != SS_OK:
             raise RuntimeError("ss_rsa_encrypt failed: {}".format(err))
         import base64
-        return base64.b64encode(bytes(out_buf[:out_len.value])).decode("ascii")
+
+        return base64.b64encode(bytes(out_buf[: out_len.value])).decode("ascii")
 
     def decrypt_with_own(self, wire_body):
         """Decrypt a wire body with our private key.
@@ -334,6 +341,7 @@ class RsaCrypto:
         lib = load_library()
         try:
             import base64
+
             plain = b""
             for part in wire_body.split("|"):
                 if not part:
@@ -352,13 +360,15 @@ class RsaCrypto:
     def _rsa_decrypt_chunk(self, lib, chunk):
         in_buf = (ctypes.c_uint8 * len(chunk)).from_buffer_copy(chunk)
         out_len = ctypes.c_size_t(0)
-        err = lib.ss_rsa_decrypt(self._priv_key.handle, in_buf, len(chunk),
-                                 None, ctypes.byref(out_len))
+        err = lib.ss_rsa_decrypt(
+            self._priv_key.handle, in_buf, len(chunk), None, ctypes.byref(out_len)
+        )
         if err != SS_OK:
             return False, b""
         out_buf = (ctypes.c_uint8 * out_len.value)()
-        err = lib.ss_rsa_decrypt(self._priv_key.handle, in_buf, len(chunk),
-                                 out_buf, ctypes.byref(out_len))
+        err = lib.ss_rsa_decrypt(
+            self._priv_key.handle, in_buf, len(chunk), out_buf, ctypes.byref(out_len)
+        )
         if err != SS_OK:
             return False, b""
-        return True, bytes(out_buf[:out_len.value])
+        return True, bytes(out_buf[: out_len.value])

@@ -27,8 +27,9 @@ except rsa_crypto.CryptoLibraryError:
     HAVE_LIB = False
 
 pytestmark = pytest.mark.skipif(
-    not HAVE_LIB, reason="libcrypto_api not built (run cmake -S . -B build "
-                        "&& cmake --build build first)")
+    not HAVE_LIB,
+    reason="libcrypto_api not built (run cmake -S . -B build && cmake --build build first)",
+)
 
 # Ports are per-test to avoid cross-test interference.
 _PORT_COUNTER = 65000
@@ -46,19 +47,25 @@ def tcp_pair(tmp_path):
     ssh_dir = tmp_path / "ssh"
     ssh_dir.mkdir()
     port = _next_port()
-    server = TCP_Server_Base(host="127.0.0.1", port=port,
-                             is_extend_command=True,
-                             is_input_command_in_console=False,
-                             is_enable_encrypto=True)
+    server = TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=True,
+    )
     _redirect_crypto(server.crypto, tmp_path, ssh_dir)
     threading.Thread(target=server.start_TCP_Server, daemon=True).start()
     time.sleep(0.4)
 
-    client = TCP_Client_Base(host="127.0.0.1", port=port,
-                             client_host="127.0.0.1",
-                             is_extend_command=True,
-                             is_input_command_in_console=False,
-                             is_enable_encrypto=True)
+    client = TCP_Client_Base(
+        host="127.0.0.1",
+        port=port,
+        client_host="127.0.0.1",
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=True,
+    )
     _redirect_crypto(client.crypto, tmp_path, ssh_dir)
     assert client.connect()
     yield server, client, tmp_path
@@ -100,10 +107,8 @@ def test_handshake_flips_both_sides_and_stores_keys(tcp_pair):
     assert len(server._encrypted_sockets) == 1
     # local keypairs generated under pvt_key
     for role in ("server", "client"):
-        assert os.path.exists(
-            os.path.join(str(tmp_path / "pvt_key"), f"{role}_priv.pem"))
-        assert os.path.exists(
-            os.path.join(str(tmp_path / "pvt_key"), f"{role}_pub.pem"))
+        assert os.path.exists(os.path.join(str(tmp_path / "pvt_key"), f"{role}_priv.pem"))
+        assert os.path.exists(os.path.join(str(tmp_path / "pvt_key"), f"{role}_pub.pem"))
     # exchanged peer keys stored under pub_key, labelled with the peer MAC
     mac = client.crypto.mac
     assert os.path.exists(server.crypto.peer_pub_path("client", mac))
@@ -112,10 +117,8 @@ def test_handshake_flips_both_sides_and_stores_keys(tcp_pair):
     # separators) in their name
     mac_file = mac.replace(":", "_")
     names = os.listdir(str(tmp_path / "pub_key"))
-    assert any(name.startswith("client_") and mac_file in name
-               for name in names)
-    assert any(name.startswith("server_") and mac_file in name
-               for name in names)
+    assert any(name.startswith("client_") and mac_file in name for name in names)
+    assert any(name.startswith("server_") and mac_file in name for name in names)
 
 
 def test_encrypted_roundtrip(tcp_pair):
@@ -134,11 +137,14 @@ def test_second_connection_reuses_exchanged_keys(tcp_pair):
     client.close()
     time.sleep(0.8)
     port = server.port
-    client2 = TCP_Client_Base(host="127.0.0.1", port=port,
-                              client_host="127.0.0.1",
-                              is_extend_command=True,
-                              is_input_command_in_console=False,
-                              is_enable_encrypto=True)
+    client2 = TCP_Client_Base(
+        host="127.0.0.1",
+        port=port,
+        client_host="127.0.0.1",
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=True,
+    )
     _redirect_crypto(client2.crypto, tmp_path, tmp_path / "ssh")
     assert client2.connect()
     try:
@@ -162,13 +168,10 @@ def test_rotated_client_key_triggers_re_exchange(tcp_pair):
     import ctypes
 
     handle = ctypes.c_void_p()
-    assert lib.ss_rsa_keygen(rsa_crypto.DEFAULT_KEY_BITS,
-                             ctypes.byref(handle)) == rsa_crypto.SS_OK
+    assert lib.ss_rsa_keygen(rsa_crypto.DEFAULT_KEY_BITS, ctypes.byref(handle)) == rsa_crypto.SS_OK
     new_key = rsa_crypto.RsaKey(handle.value, lib)
-    assert lib.ss_rsa_write_priv(
-        new_key.handle, client.crypto.priv_path.encode(), None) == 0
-    assert lib.ss_rsa_write_pub(
-        new_key.handle, client.crypto.pub_path.encode()) == 0
+    assert lib.ss_rsa_write_priv(new_key.handle, client.crypto.priv_path.encode(), None) == 0
+    assert lib.ss_rsa_write_pub(new_key.handle, client.crypto.pub_path.encode()) == 0
     del new_key
     server_pub_path = server.crypto.peer_pub_path("client", client.crypto.mac)
     old_stored_pub = open(server_pub_path, "rb").read()
@@ -191,17 +194,23 @@ def test_encryption_disabled_is_plaintext(tmp_path):
     ssh_dir = tmp_path / "ssh"
     ssh_dir.mkdir()
     port = _next_port()
-    server = TCP_Server_Base(host="127.0.0.1", port=port,
-                             is_extend_command=True,
-                             is_input_command_in_console=False,
-                             is_enable_encrypto=False)
+    server = TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
     threading.Thread(target=server.start_TCP_Server, daemon=True).start()
     time.sleep(0.4)
-    client = TCP_Client_Base(host="127.0.0.1", port=port,
-                             client_host="127.0.0.1",
-                             is_extend_command=True,
-                             is_input_command_in_console=False,
-                             is_enable_encrypto=False)
+    client = TCP_Client_Base(
+        host="127.0.0.1",
+        port=port,
+        client_host="127.0.0.1",
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
     assert client.connect()
     try:
         time.sleep(0.5)
