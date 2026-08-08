@@ -24,7 +24,8 @@ the TCP server and exchange data with the server.
             is_wait_server: Any,
             max_custom_workers: Any,
             is_extend_command: Any=False,
-            is_enable_encrypto: Any=True) -> None: 
+            is_enable_encrypto: Any=True,
+            is_custom_keys: Any=None) -> None: 
             ...
 
 The TCP Client Setup API is defined in the ``TCP_Client_Base`` class.
@@ -42,6 +43,10 @@ The parameters of the ``__init__`` method are as follows:
 - ``max_custom_workers``: The maximum number of custom worker threads.
 - ``is_enable_encrypto``: A flag indicating whether the messages exchanged with
   the server are RSA-encrypted (see :ref:`tcp-client-encrypted-channel-api`).
+- ``is_custom_keys``: An optional ``[pub_key_path, pvt_key_path]`` pair of
+  user-supplied RSA keys. Both files must exist, parse as PEM, and pair
+  with each other; an invalid pair is silently ignored and the default
+  key lookup is used instead (``None`` keeps the default lookup).
 
 Every parameter has default values:
 
@@ -60,6 +65,9 @@ Every parameter has default values:
 - ``is_enable_encrypto``: Default is ``True`` 
   (when ``True``, the client performs an RSA public-key exchange with the
   server right after connecting and all subsequent messages are encrypted)
+- ``is_custom_keys``: Default is ``None`` 
+  (a ``[pub_key_path, pvt_key_path]`` list uses a user-supplied keypair
+  instead of the default ``~/.ssh`` / generated keys)
 
 The TCP Client Setup API will initialize all the necessary 
 parameters and resources for the TCP client.
@@ -263,24 +271,50 @@ Key material
   (``client_priv.pem`` / ``client_pub.pem``). The exchanged public key is
   always derived from the private key, so a rotated ``~/.ssh`` pair is
   picked up automatically.
-- Public keys received from the server are stored in
-  ``network_api/.Flow/pub_key`` as ``server_<peer-mac>.pem``. The peer's
-  MAC address is appended to the exchanged key so each entry is clearly
-  labelled with which server it came from; in the file name the MAC uses
-  ``_`` separators (``:`` is an illegal filename character on Windows).
+- A user-supplied keypair can be forced with ``is_custom_keys =
+  [pub_key_path, pvt_key_path]``: both files must exist, parse as PEM and
+  pair with each other (a probe encrypted with the public key must decrypt
+  with the private key); an invalid pair is ignored and the default lookup
+  is used.
+- Public keys received from the server are cached in
+  ``network_api/.Flow/pub_key`` as ``server_<ip>_<port>.pem`` (the server
+  endpoint the key came from; ``:`` is replaced with ``_`` so IPv6 literals
+  are safe on every platform, including Windows).
+
+Anti-MITM identity check (TOFU)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Every connection re-exchanges public keys in plaintext, and each side
+records the peer in ``network_api/.Flow/pub_key/pub_key.json``: the key is
+``(ip, port)`` (a Python tuple of the endpoint the peer is reachable at),
+the value is ``[<sha256 of the public key>, <public key PEM>]``.
+
+- First connection from an endpoint: the key is recorded and trusted
+  (trust on first use).
+- Later connection presenting the *same* key: accepted. If the endpoint
+  changed (dynamic IP / user-changed port) the record is moved to the new
+  ``(ip, port)`` instead of being duplicated.
+- Later connection presenting a *different* key for an already-recorded
+  endpoint: the connection is rejected (``/crypto_reject`` is received and
+  the client closes).
+
+The client-side record is keyed by the fixed server address, so a server
+that changes its public key (for example a MITM substitution) is always
+rejected on later connections. To reset trust (rotated keys, new server),
+delete the ``pub_key.json`` entry (or the whole file).
 
 Handshake
 ^^^^^^^^^
 
-The client sends a plaintext ``/crypto_key_exchange <client-mac>`` greeting
-right after connecting; the server replies with
-``/crypto_key_exchange_ack <server-mac> <need-client-pub> <force>``. Either
-side that is missing the other's public key pushes its own key file over the
-file-transfer mechanism, and both sides switch to encrypted mode only after
-``/crypto_ready`` has been received from the peer (so plaintext and
+The client sends a plaintext ``/crypto_key_exchange`` greeting right after
+connecting; the server replies with
+``/crypto_key_exchange_ack <need-client-pub> <force>``. Both sides then
+push their public key files over the file-transfer mechanism (plaintext)
+and TOFU-check the received key. Both sides switch to encrypted mode only
+after ``/crypto_ready`` has been received from the peer (so plaintext and
 ciphertext never interleave on a connection). On later connections the
-registry is consulted first and the exchange is skipped when the keys are
-already known.
+keys are re-exchanged and TOFU-checked again; the exchange is never
+skipped, only the identity check short-circuits for known keys.
 
 Decode verification and key rotation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -289,9 +323,12 @@ Every encrypted plaintext carries the fixed suffix ``_VALID`` (separated by
 ``_``). If a message cannot be decrypted, or the suffix is missing, the
 socket drops out of encrypted mode, the local key is reloaded, and a forced
 ``/crypto_key_exchange`` restarts the handshake so both sides re-push their
-current public keys. This is what recovers when a user rotates the
-``~/.ssh`` keypair while connections are active: the stale key is detected
-on the first decode failure and the peers automatically re-exchange.
+current public keys. The re-exchange itself re-runs the TOFU check: a peer
+whose key did not change is accepted again, while a peer presenting a
+*different* key for a recorded endpoint is rejected (see the TOFU section
+above). A user who intentionally rotates a keypair must delete the stale
+``pub_key.json`` entry (or the whole file) on the peer side to re-trust the
+new key.
 
 .. _tcp-client-command-api:
 

@@ -44,9 +44,13 @@ The C test suite lives in ``test/`` (``test_hkdf``, ``test_rsa``,
 The library is built as a shared object (``libcrypto_api.so``) so it can
 be loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes
 binding used by the TCP layer to encrypt messages with RSA-OAEP (see the
-``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections).
-The binding looks for the library via ``ctypes.util.find_library`` and in
-``build/`` next to the repository root.
+``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The
+binding also implements the TCP layer's anti-MITM identity check (TOFU):
+peer public keys are exchanged on every connection, recorded under the
+peer's ``(ip, port)`` in ``network_api/.Flow/pub_key/pub_key.json`` with
+their SHA-256, and a changed key for a recorded endpoint rejects the
+connection. The binding looks for the library via
+``ctypes.util.find_library`` and in ``build/`` next to the repository root.
 
 CMake install rules export the ``crypto_api`` library, its public headers,
 and a CMake package configuration. All CMake content sits at the

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-07 00:17+0800\n"
+"POT-Creation-Date: 2026-08-09 01:46+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -97,23 +97,32 @@ msgstr ""
 "Набор тестов C находится в ``test/`` (``test_hkdf``, ``test_rsa``, "
 "``test_ecdh``) и собирается и запускается вместе с библиотекой."
 
-#: ../../Crypto/Crypto.rst:44 e295ab5ecde347859a10b523b7b39f2d
+#: ../../Crypto/Crypto.rst:44 2d8ebac8b06147e4983c07a6c69296ab
 msgid ""
 "The library is built as a shared object (``libcrypto_api.so``) so it can be "
 "loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes binding "
 "used by the TCP layer to encrypt messages with RSA-OAEP (see the "
 "``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
-"binding looks for the library via ``ctypes.util.find_library`` and in "
-"``build/`` next to the repository root."
+"binding also implements the TCP layer's anti-MITM identity check (TOFU): "
+"peer public keys are exchanged on every connection, recorded under the "
+"peer's ``(ip, port)`` in ``network_api/.Flow/pub_key/pub_key.json`` with "
+"their SHA-256, and a changed key for a recorded endpoint rejects the "
+"connection. The binding looks for the library via "
+"``ctypes.util.find_library`` and in ``build/`` next to the repository root."
 msgstr ""
 "Библиотека создана как общий объект (``libcrypto_api.so``), поэтому ее можно"
 " загрузить из Python: ``src/network_api/rsa_crypto.py`` — это привязка "
 "ctypes, используемая уровнем TCP для шифрования сообщений с помощью RSA-OAEP"
 " (см. разделы ``TCP_Server_APIs``/``TCP_Client_APIs`` зашифрованных "
-"каналов). Привязка ищет библиотеку через ``ctypes.util.find_library`` и в "
-"``build/`` рядом с корнем репозитория."
+"каналов). Привязка также реализует проверку идентичности анти-MITM (TOFU) на"
+" уровне TCP: открытые ключи однорангового узла обмениваются при каждом "
+"соединении, записанные под ``(ip, port)`` однорангового узла в "
+"``network_api/.Flow/pub_key/pub_key.json`` с их SHA-256, а измененный ключ "
+"для записанной конечной точки отклоняет соединение. Привязка ищет библиотеку"
+" через ``ctypes.util.find_library`` и в ``build/`` рядом с корнем "
+"репозитория."
 
-#: ../../Crypto/Crypto.rst:51 f297853b68084a898cbf376e964e8f8e
+#: ../../Crypto/Crypto.rst:55 f297853b68084a898cbf376e964e8f8e
 msgid ""
 "CMake install rules export the ``crypto_api`` library, its public headers, "
 "and a CMake package configuration. All CMake content sits at the repository "
@@ -125,11 +134,11 @@ msgstr ""
 "находится в корне репозитория: шаблон пакета CMake и шаблон pkg-config — это"
 " ``cmake/crypto_apiConfig.cmake.in`` и ``crypto_api.pc.in``."
 
-#: ../../Crypto/Crypto.rst:57 fc9e55c66def4521885a663a67f3a59c
+#: ../../Crypto/Crypto.rst:61 fc9e55c66def4521885a663a67f3a59c
 msgid "Common API"
 msgstr "Общий API"
 
-#: ../../Crypto/Crypto.rst:59 ca2af2dcc11c4432a4e252ae6fb530ec
+#: ../../Crypto/Crypto.rst:63 ca2af2dcc11c4432a4e252ae6fb530ec
 msgid ""
 "All public functions return ``ss_err_t``. ``SS_OK`` indicates success. Use "
 "``ss_err_string`` to convert an error code to readable text and "
@@ -140,7 +149,7 @@ msgstr ""
 "текст и ss_crypto_openssl_errors для получения очереди ожидающих ошибок "
 "OpenSSL."
 
-#: ../../Crypto/Crypto.rst:77 3413d21a1e174f849dfbd7f5840bb428
+#: ../../Crypto/Crypto.rst:81 3413d21a1e174f849dfbd7f5840bb428
 msgid ""
 "The library uses caller-provided output buffers for fixed-size results. "
 "Functions that return allocated buffers document that the caller must "
@@ -153,11 +162,11 @@ msgstr ""
 "статусом «свободно». Непрозрачные дескрипторы клавиш должны быть освобождены"
 " с помощью соответствующей функции ``*_free``."
 
-#: ../../Crypto/Crypto.rst:83 af426607096248439b6592145af6764a
+#: ../../Crypto/Crypto.rst:87 af426607096248439b6592145af6764a
 msgid "RSA API"
 msgstr "API RSA"
 
-#: ../../Crypto/Crypto.rst:85 1e0209363c764cfe9b270d3f7221ef40
+#: ../../Crypto/Crypto.rst:89 1e0209363c764cfe9b270d3f7221ef40
 msgid ""
 "RSA keys are generated with ``ss_rsa_keygen``. The implementation uses RSA-"
 "OAEP with SHA-256 for encryption and decryption. Key sizes from 2048 to "
@@ -167,7 +176,7 @@ msgstr ""
 "OAEP с SHA-256 для шифрования и дешифрования. Принимаются размеры ключей от "
 "2048 до 16384 бит; Рекомендуется 2048, 3072 или 4096 бит."
 
-#: ../../Crypto/Crypto.rst:109 3e26320f16ab47a0af87bf5dc89e647a
+#: ../../Crypto/Crypto.rst:113 3e26320f16ab47a0af87bf5dc89e647a
 msgid ""
 "The first encryption call with ``out == NULL`` queries the required output "
 "size. RSA encryption is binary-safe and accepts an explicit input length. "
@@ -178,15 +187,15 @@ msgstr ""
 "Максимальный размер открытого текста возвращается "
 "``ss_rsa_max_plaintext_len``."
 
-#: ../../Crypto/Crypto.rst:113 c192246cb34a43808801654736d8fce8
+#: ../../Crypto/Crypto.rst:117 c192246cb34a43808801654736d8fce8
 msgid "Public and private keys can be stored as PEM files:"
 msgstr "Открытые и закрытые ключи можно хранить в виде файлов PEM:"
 
-#: ../../Crypto/Crypto.rst:124 ddd2778c646f42898403f65a835627bf
+#: ../../Crypto/Crypto.rst:128 ddd2778c646f42898403f65a835627bf
 msgid "ECDH API"
 msgstr "ECDH API"
 
-#: ../../Crypto/Crypto.rst:126 67c165608ff34545ad59d22f734c0266
+#: ../../Crypto/Crypto.rst:130 67c165608ff34545ad59d22f734c0266
 msgid ""
 "ECDH key pairs are created with ``ss_ecdh_keypair_generate``. The supported "
 "curve names are:"
@@ -194,19 +203,19 @@ msgstr ""
 "Пары ключей ECDH создаются с помощью ss_ecdh_keypair_generate. "
 "Поддерживаемые имена кривых:"
 
-#: ../../Crypto/Crypto.rst:129 737f5f74529f452da38ae54c1e6bdcea
+#: ../../Crypto/Crypto.rst:133 737f5f74529f452da38ae54c1e6bdcea
 msgid "``SS_ECDH_CURVE_P256``"
 msgstr "``SS_ECDH_CURVE_P256``"
 
-#: ../../Crypto/Crypto.rst:130 4e6a452663d84c9eac9615a421d54edb
+#: ../../Crypto/Crypto.rst:134 4e6a452663d84c9eac9615a421d54edb
 msgid "``SS_ECDH_CURVE_P384``"
 msgstr "``SS_ECDH_CURVE_P384``"
 
-#: ../../Crypto/Crypto.rst:131 e421bbf3383e4079820642816c90e921
+#: ../../Crypto/Crypto.rst:135 e421bbf3383e4079820642816c90e921
 msgid "``SS_ECDH_CURVE_P521``"
 msgstr "``SS_ECDH_CURVE_P521``"
 
-#: ../../Crypto/Crypto.rst:133 5f2b04819c5a4d7b8e96512bca6cf86e
+#: ../../Crypto/Crypto.rst:137 5f2b04819c5a4d7b8e96512bca6cf86e
 msgid ""
 "Public keys are exchanged as PEM SubjectPublicKeyInfo strings. Parsed peer "
 "keys are checked before use."
@@ -214,7 +223,7 @@ msgstr ""
 "Открытые ключи передаются в виде строк PEM subjectPublicKeyInfo. Разобранные"
 " ключи одноранговых узлов проверяются перед использованием."
 
-#: ../../Crypto/Crypto.rst:156 0f40f41880b94e828bbd58ac631754a1
+#: ../../Crypto/Crypto.rst:160 0f40f41880b94e828bbd58ac631754a1
 msgid ""
 "The higher-level ``ss_ecdh_seal`` and ``ss_ecdh_open`` APIs are recommended "
 "for application payloads. They derive an AES-256-GCM key with HKDF-SHA256, "
@@ -225,11 +234,11 @@ msgstr ""
 " HKDF-SHA256, включают случайную соль и IV и аутентифицируют дополнительный "
 "AAD."
 
-#: ../../Crypto/Crypto.rst:160 84614363b3104ac4a44f044dad010eeb
+#: ../../Crypto/Crypto.rst:164 84614363b3104ac4a44f044dad010eeb
 msgid "The ``ss_ecdh_seal`` output format is:"
 msgstr "Формат вывода ss_ecdh_seal:"
 
-#: ../../Crypto/Crypto.rst:166 77967b230b95484a836884d1d717eab3
+#: ../../Crypto/Crypto.rst:170 77967b230b95484a836884d1d717eab3
 msgid ""
 "The fixed overhead is ``SS_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext "
 "is allowed. A failed tag check returns ``SS_ERR_AUTH_FAILED`` and no "
@@ -239,11 +248,11 @@ msgstr ""
 "байта). Допускается пустой открытый текст. Неудачная проверка тега "
 "возвращает ``SS_ERR_AUTH_FAILED`` и открытый текст не возвращается."
 
-#: ../../Crypto/Crypto.rst:171 1c226278e4b746a8b67358e6f6b12b25
+#: ../../Crypto/Crypto.rst:175 1c226278e4b746a8b67358e6f6b12b25
 msgid "Security Notes"
 msgstr "Примечания по безопасности"
 
-#: ../../Crypto/Crypto.rst:173 22976e7f6a74484abe6856c1e38ff27d
+#: ../../Crypto/Crypto.rst:177 22976e7f6a74484abe6856c1e38ff27d
 msgid ""
 "ECDH provides key agreement, but it does not authenticate public-key "
 "ownership by itself. Public keys must be exchanged over an authenticated "
@@ -254,7 +263,7 @@ msgstr ""
 "аутентифицированному каналу или проверяться с помощью внешнего механизма "
 "подписи/сертификата."
 
-#: ../../Crypto/Crypto.rst:177 532db57edd2f478f94bca8860aaead12
+#: ../../Crypto/Crypto.rst:181 532db57edd2f478f94bca8860aaead12
 msgid ""
 "Private key files may be protected with a passphrase. Applications should "
 "restrict their file permissions and avoid logging passphrases, private keys,"
@@ -264,55 +273,70 @@ msgstr ""
 "следует ограничивать права доступа к файлам и избегать регистрации парольных"
 " фраз, закрытых ключей или ключей сеанса в виде открытого текста."
 
-#: ../../Crypto/Crypto.rst:182 599771577d30442180350e4e07c480f1
+#: ../../Crypto/Crypto.rst:186 599771577d30442180350e4e07c480f1
 msgid "Error Handling"
 msgstr "Обработка ошибок"
 
-#: ../../Crypto/Crypto.rst:184 59bde59a25ea4fe5a46ea5b7d29a4569
+#: ../../Crypto/Crypto.rst:188 59bde59a25ea4fe5a46ea5b7d29a4569
 msgid "The main error codes are:"
 msgstr "Основные коды ошибок:"
 
-#: ../../Crypto/Crypto.rst:186 a20ad03d7c334f02b5ff41c9b5bbee92
+#: ../../Crypto/Crypto.rst:190 a20ad03d7c334f02b5ff41c9b5bbee92
 msgid "``SS_ERR_INVALID_ARG`` - invalid pointer or length."
 msgstr "``SS_ERR_INVALID_ARG`` — неверный указатель или длина."
 
-#: ../../Crypto/Crypto.rst:187 00d6efea688847c79215e48f3a13b2d1
+#: ../../Crypto/Crypto.rst:191 00d6efea688847c79215e48f3a13b2d1
 msgid "``SS_ERR_NOMEM`` - allocation failure."
 msgstr "``SS_ERR_NOMEM`` - ошибка выделения."
 
-#: ../../Crypto/Crypto.rst:188 186f19fb4245429e9d15af05cad0f907
+#: ../../Crypto/Crypto.rst:192 186f19fb4245429e9d15af05cad0f907
 msgid "``SS_ERR_OPENSSL`` - OpenSSL operation failure."
 msgstr "``SS_ERR_OPENSSL`` - сбой операции OpenSSL."
 
-#: ../../Crypto/Crypto.rst:189 599dddb1941c4b1cba7c1d5d9d8b1034
+#: ../../Crypto/Crypto.rst:193 599dddb1941c4b1cba7c1d5d9d8b1034
 msgid "``SS_ERR_IO`` - file operation failure."
 msgstr "``SS_ERR_IO`` - сбой файловой операции."
 
-#: ../../Crypto/Crypto.rst:190 dbb3eeecaf6c4d078923d7ffe0e2ec62
+#: ../../Crypto/Crypto.rst:194 dbb3eeecaf6c4d078923d7ffe0e2ec62
 msgid ""
 "``SS_ERR_PARSE`` - malformed PEM/DER input or wrong private-key passphrase."
 msgstr ""
 "``SS_ERR_PARSE`` — неверный ввод PEM/DER или неверная парольная фраза "
 "закрытого ключа."
 
-#: ../../Crypto/Crypto.rst:191 aadaaf69feba491eaff6dce2aa27b6e8
+#: ../../Crypto/Crypto.rst:195 aadaaf69feba491eaff6dce2aa27b6e8
 msgid "``SS_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient."
 msgstr ""
 "``SS_ERR_BUFFER_TOO_SMALL`` - буфер вывода вызывающего абонента "
 "недостаточен."
 
-#: ../../Crypto/Crypto.rst:192 50170c9fc49648a1a701a4aaf21d7fed
+#: ../../Crypto/Crypto.rst:196 50170c9fc49648a1a701a4aaf21d7fed
 msgid "``SS_ERR_AUTH_FAILED`` - AES-GCM authentication failed."
 msgstr "``SS_ERR_AUTH_FAILED`` — аутентификация AES-GCM не удалась."
 
-#: ../../Crypto/Crypto.rst:193 8c7401db6f7e4cb6bdb2c6d3a2eba0e1
+#: ../../Crypto/Crypto.rst:197 8c7401db6f7e4cb6bdb2c6d3a2eba0e1
 msgid "``SS_ERR_UNSUPPORTED`` - unsupported curve or key type."
 msgstr "``SS_ERR_UNSUPPORTED`` - неподдерживаемый тип кривой или ключа."
 
-#: ../../Crypto/Crypto.rst:194 a2d89fdafbf645b48d94f9cb888e953a
+#: ../../Crypto/Crypto.rst:198 a2d89fdafbf645b48d94f9cb888e953a
 msgid "``SS_ERR_DECRYPT`` - RSA decryption failed."
 msgstr "``SS_ERR_DECRYPT`` — расшифровка RSA не удалась."
 
-#: ../../Crypto/Crypto.rst:196 153dd51810da4fce893f4cfb3b2b1365
+#: ../../Crypto/Crypto.rst:200 153dd51810da4fce893f4cfb3b2b1365
 msgid "For detailed OpenSSL diagnostics:"
 msgstr "Для подробной диагностики OpenSSL:"
+
+#~ msgid ""
+#~ "The library is built as a shared object (``libcrypto_api.so``) so it can be "
+#~ "loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes binding "
+#~ "used by the TCP layer to encrypt messages with RSA-OAEP (see the "
+#~ "``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
+#~ "binding looks for the library via ``ctypes.util.find_library`` and in "
+#~ "``build/`` next to the repository root."
+#~ msgstr ""
+#~ "Библиотека создана как общий объект (``libcrypto_api.so``), поэтому ее можно"
+#~ " загрузить из Python: ``src/network_api/rsa_crypto.py`` — это привязка "
+#~ "ctypes, используемая уровнем TCP для шифрования сообщений с помощью RSA-OAEP"
+#~ " (см. разделы ``TCP_Server_APIs``/``TCP_Client_APIs`` зашифрованных "
+#~ "каналов). Привязка ищет библиотеку через ``ctypes.util.find_library`` и в "
+#~ "``build/`` рядом с корнем репозитория."

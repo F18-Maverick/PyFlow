@@ -21,6 +21,7 @@ SERVER_DEFAULTS = {
     "max_custom_workers": 10,
     "is_extend_command": False,
     "is_enable_encrypto": True,
+    "is_custom_keys": None,
 }
 
 CLIENT_DEFAULTS = {
@@ -36,6 +37,7 @@ CLIENT_DEFAULTS = {
     "max_custom_workers": 10,
     "is_extend_command": False,
     "is_enable_encrypto": True,
+    "is_custom_keys": None,
 }
 
 

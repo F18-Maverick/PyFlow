@@ -26,6 +26,7 @@ class TCP_Server_Base:  # TCP server class
         max_custom_workers=10,
         is_extend_command=False,
         is_enable_encrypto=True,
+        is_custom_keys=None,
     ):
         self.project_dir = os.path.dirname(os.path.abspath(__file__))
         self.project_info_dir = os.path.join(self.project_dir, ".Flow")
@@ -81,14 +82,17 @@ class TCP_Server_Base:  # TCP server class
         self._task_semaphore = threading.Semaphore(max_custom_workers)
         self.is_extend_command = is_extend_command
         self.is_enable_encrypto = is_enable_encrypto
+        self.is_custom_keys = is_custom_keys
         self._encrypted_sockets = set()
         self._encrypted_recv_buffers = {}
-        self._crypto_peer = {}  # socket -> (peer_role, peer_mac)
+        self._crypto_peer = {}  # socket -> (peer_role, peer_pem_path)
         self._crypto_state = {}  # client_address -> crypto handshake state
         self._crypto_sock_addr = {}  # socket -> client_address
         self._crypto_push_active = set()  # sockets with an in-flight key push
         self.crypto = (
-            rsa_crypto.RsaCrypto("server", self.project_dir) if is_enable_encrypto else None
+            rsa_crypto.RsaCrypto("server", self.project_dir, custom_keys=is_custom_keys)
+            if is_enable_encrypto
+            else None
         )
         if self.is_extend_command:
             pass
@@ -450,15 +454,15 @@ class TCP_Server_Base:  # TCP server class
             data += "\n"
         client_socket.sendall(data.encode("utf-8"))
 
-    def _crypto_mark_encrypted(self, client_socket, peer_role, peer_mac):
+    def _crypto_mark_encrypted(self, client_socket, peer_role, peer_pem_path):
         self._encrypted_sockets.add(client_socket)
-        self._crypto_peer[client_socket] = (peer_role, peer_mac)
+        self._crypto_peer[client_socket] = (peer_role, peer_pem_path)
 
     def _crypto_encrypt_message(self, client_socket, message):
         peer = self._crypto_peer.get(client_socket)
         if peer is None or self.crypto is None:
             raise RuntimeError("socket not bound to a crypto peer")
-        return self.crypto.encrypt_for_peer(peer[0], peer[1], message.strip())
+        return self.crypto.encrypt_for_peer(peer[1], message.strip())
 
     def receive_message(self, client_socket, msg_length):  # receive message
         data = client_socket.recv(msg_length)
@@ -497,83 +501,84 @@ class TCP_Server_Base:  # TCP server class
         state = self._crypto_state.get(addr) if addr is not None else None
         if state is None:
             state = {
-                "client_mac": (self.crypto.mac if self.crypto else None),
-                "peer_pub_event": threading.Event(),
                 "force": True,
+                "peer_pub_event": threading.Event(),
+                "peer_pub_ok": None,
+                "peer_pem_path": None,
+                "ready_sent": False,
+                "peer_ready": False,
             }
             if addr is not None:
                 self._crypto_state[addr] = state
         state["force"] = True
         state["peer_pub_event"] = threading.Event()
-        if addr is not None and state.get("client_mac"):
+        state["peer_pub_ok"] = None
+        if addr is not None:
             threading.Thread(
                 target=self._crypto_wait_server_ready,
-                args=(client_socket, addr, state["client_mac"], state),
+                args=(client_socket, addr, state),
                 daemon=True,
             ).start()
         try:
-            self._send_raw(client_socket, f"/crypto_key_exchange {self.crypto.mac} 1")
+            self._send_raw(client_socket, "/crypto_key_exchange 1")
         except Exception:
             traceback.print_exc()
 
-    def _crypto_on_client_hello(self, client_socket, client_address, client_mac, force):
-        """Server side of /crypto_key_exchange: reply with our MAC and
-        whether we need the client's public key, then finish our own
-        half of the exchange (wait for the client's key, send ready)."""
+    def _crypto_on_client_hello(self, client_socket, client_address, force):
+        """Server side of /crypto_key_exchange: reply that we need the
+        client's public key (every connection re-exchanges), then wait
+        for it and announce readiness."""
         self.crypto.ensure_keys()
         state = self._crypto_state.setdefault(
             client_address,
             {
-                "client_mac": client_mac,
-                "peer_pub_event": threading.Event(),
                 "force": force,
+                "peer_pub_event": threading.Event(),
+                "peer_pub_ok": None,
+                "peer_pem_path": None,
                 "ready_sent": False,
                 "peer_ready": False,
             },
         )
-        state["client_mac"] = client_mac
         state["force"] = force
-        need_client_pub = force or not self.crypto.has_peer_key("client", client_mac)
-        ack = (
-            f"/crypto_key_exchange_ack {self.crypto.mac} "
-            f"{1 if need_client_pub else 0} {1 if force else 0}"
-        )
-        self._send_raw(client_socket, ack)
-        if need_client_pub:
-            state["peer_pub_event"] = threading.Event()
-            threading.Thread(
-                target=self._crypto_wait_server_ready,
-                args=(client_socket, client_address, client_mac, state),
-                daemon=True,
-            ).start()
-        else:
-            state["ready_sent"] = True
-            self._send_raw(client_socket, "/crypto_ready")
-            self._crypto_try_server_flip(client_socket, client_mac, state)
+        state["peer_pub_event"] = threading.Event()
+        state["peer_pub_ok"] = None
+        self._send_raw(client_socket, f"/crypto_key_exchange_ack 1 {1 if force else 0}")
+        threading.Thread(
+            target=self._crypto_wait_server_ready,
+            args=(client_socket, client_address, state),
+            daemon=True,
+        ).start()
 
-    def _crypto_try_server_flip(self, client_socket, client_mac, state):
-        """Flip the socket to encrypted mode only when both sides have
-        announced readiness (no plaintext/encrypted interleaving)."""
+    def _crypto_try_server_flip(self, client_socket, state):
+        """Flip the socket to encrypted mode only when the peer key
+        passed the TOFU check and both sides announced readiness (no
+        plaintext/encrypted interleaving)."""
         if (
-            state.get("ready_sent")
+            state.get("peer_pub_ok") is True
+            and state.get("peer_pem_path")
+            and state.get("ready_sent")
             and state.get("peer_ready")
             and client_socket not in self._encrypted_sockets
         ):
-            self._crypto_mark_encrypted(client_socket, "client", client_mac)
+            self._crypto_mark_encrypted(client_socket, "client", state["peer_pem_path"])
 
-    def _crypto_wait_server_ready(self, client_socket, client_address, client_mac, state):
-        """Wait until the client's public key arrived, then announce
-        readiness. The socket flips to encrypted mode only when the
-        client's /crypto_ready is received too."""
+    def _crypto_wait_server_ready(self, client_socket, client_address, state):
+        """Wait until the client's public key arrived and passed the
+        TOFU check, then announce readiness. The socket flips to
+        encrypted mode only when the client's /crypto_ready arrives too."""
         if not state["peer_pub_event"].wait(timeout=60):
-            print(f"crypto: waiting for public key of {client_mac} timed out")
+            print("crypto: waiting for client public key timed out")
+            return
+        if state.get("peer_pub_ok") is not True:
+            print("crypto: client public key rejected, connection dropped")
             return
         state["ready_sent"] = True
         try:
             self._send_raw(client_socket, "/crypto_ready")
         except Exception:
             traceback.print_exc()
-        self._crypto_try_server_flip(client_socket, client_mac, state)
+        self._crypto_try_server_flip(client_socket, state)
 
     def _crypto_push_pub_to_client(self, client_socket, client_address):
         """Push our public key file to the client via the file-transfer
@@ -591,7 +596,7 @@ class TCP_Server_Base:  # TCP server class
             file_server_port = None
             waiting_time = 0
             while True:
-                time.sleep(1)
+                time.sleep(0.05)
                 with self.file_transfer_server_port_lock:
                     for port_info in list(self.file_server_port_list):
                         if port_info[1] == client_id:
@@ -601,7 +606,7 @@ class TCP_Server_Base:  # TCP server class
                 if file_server_port is not None:
                     break
                 waiting_time += 1
-                if waiting_time >= 20:
+                if waiting_time >= 200:
                     print("crypto: transfer port waiting timeout, public key push failed")
                     return False
             self.file_transfer_mode(
@@ -615,12 +620,47 @@ class TCP_Server_Base:  # TCP server class
             self._crypto_push_active.discard(client_socket)
         return True
 
-    def _crypto_store_received_pub(self, full_path, peer_role, peer_mac):
-        """Move a received public key file into the peer registry."""
+    def _crypto_store_received_pub(self, full_path, peer_role, client_address):
+        """TOFU-check a public key received via the file-transfer
+        mechanism and cache it under the peer endpoint.
+
+        The check runs ``verify_peer_pub`` against ``pub_key.json``; on
+        failure the peer connection is rejected and dropped.
+        """
         if self.crypto is None:
             return
-        self.crypto.store_peer_key(peer_role, peer_mac, full_path)
-        print(f"crypto: stored public key of {peer_role} {peer_mac}")
+        peer_ip, peer_port = client_address
+        try:
+            with open(full_path, "r", encoding="utf-8") as f:
+                pem = f.read()
+        except OSError:
+            pem = ""
+        ok, reason = self.crypto.verify_peer_pub(peer_ip, peer_port, pem, peer_role)
+        state = self._crypto_state.get(client_address)
+        if ok:
+            self.crypto.store_peer_pem(peer_role, peer_ip, peer_port, full_path)
+            if state is not None:
+                state["peer_pem_path"] = self.crypto.peer_pem_path(
+                    peer_role, peer_ip, peer_port
+                )
+                state["peer_pub_ok"] = True
+                state["peer_pub_event"].set()
+            print(f"crypto: accepted public key from {peer_ip}:{peer_port} ({reason})")
+        else:
+            if state is not None:
+                state["peer_pub_ok"] = False
+                state["peer_pub_event"].set()
+            print(f"crypto: REJECTED public key from {peer_ip}:{peer_port}: {reason}")
+            peer_socket = self.clients.get(client_address, {}).get("socket")
+            if peer_socket is not None:
+                try:
+                    self._send_raw(peer_socket, f"/crypto_reject {reason}")
+                except Exception:
+                    traceback.print_exc()
+                try:
+                    peer_socket.close()
+                except Exception:
+                    traceback.print_exc()
 
     def handle_client(self, client_socket, client_address):  # deal with each client
         client_id = f"{client_address[0]}:{client_address[1]}"
@@ -682,6 +722,12 @@ class TCP_Server_Base:  # TCP server class
             with self.client_lock:
                 if client_address in self.clients:
                     del self.clients[client_address]
+            self._crypto_state.pop(client_address, None)
+            self._crypto_sock_addr.pop(client_socket, None)
+            self._crypto_peer.pop(client_socket, None)
+            self._crypto_push_active.discard(client_socket)
+            self._encrypted_sockets.discard(client_socket)
+            self._encrypted_recv_buffers.pop(client_socket, None)
             client_socket.close()
             print(f"client disconnected: {client_id}")
             print(f"current connection count: {len(self.clients)}")
@@ -742,11 +788,8 @@ class TCP_Server_Base:  # TCP server class
             and command.lower().split(" ")[0] == "/crypto_key_exchange"
         ):
             parts = command.split(" ")
-            if len(parts) < 2:
-                return None
-            client_mac = parts[1]
-            force = len(parts) > 2 and parts[2] == "1"
-            self._crypto_on_client_hello(client_socket, client_address, client_mac, force)
+            force = len(parts) > 1 and parts[1] == "1"
+            self._crypto_on_client_hello(client_socket, client_address, force)
             return None
         elif (
             self.is_enable_encrypto
@@ -754,11 +797,7 @@ class TCP_Server_Base:  # TCP server class
             and command.lower().split(" ")[0] == "/crypto_pub_key"
         ):
             # client pushes its public key file via the file-transfer
-            # mechanism; the receive hook stores it in the registry
-            parts = command.split(" ")
-            state = self._crypto_state.get(client_address, {})
-            state["client_mac"] = parts[1] if len(parts) > 1 else state.get("client_mac")
-            self._crypto_state[client_address] = state
+            # mechanism; the receive hook TOFU-checks and stores it
             self.file_transfer_server_recv_server_start_thread(client_id, client_socket, command)
             return None
         elif (
@@ -783,8 +822,8 @@ class TCP_Server_Base:  # TCP server class
             parts = command.split(" ")
             if len(parts) < 2:
                 return None
-            client_needs_server_pub = parts[2] if len(parts) > 2 else "0"
-            force = len(parts) > 3 and parts[3] == "1"
+            client_needs_server_pub = parts[1]
+            force = len(parts) > 2 and parts[2] == "1"
             if force or client_needs_server_pub == "1":
                 threading.Thread(
                     target=self._crypto_push_pub_to_client,
@@ -797,25 +836,32 @@ class TCP_Server_Base:  # TCP server class
             and self.crypto is not None
             and command.lower().split(" ")[0] == "/crypto_ready"
         ):
-            client_mac = self._crypto_state.get(client_address, {}).get("client_mac")
             state = self._crypto_state.setdefault(
                 client_address,
                 {
-                    "client_mac": client_mac,
+                    "force": False,
                     "peer_pub_event": threading.Event(),
+                    "peer_pub_ok": None,
+                    "peer_pem_path": None,
                     "ready_sent": False,
                     "peer_ready": False,
                 },
             )
             state["peer_ready"] = True
-            if client_mac:
-                # the client may still be finishing its push; the file
-                # is already written, only the registry move may lag
-                for _ in range(50):
-                    if self.crypto.has_peer_key("client", client_mac):
-                        break
-                    time.sleep(0.1)
-            self._crypto_try_server_flip(client_socket, client_mac, state)
+            self._crypto_try_server_flip(client_socket, state)
+            return None
+        elif (
+            self.is_enable_encrypto
+            and self.crypto is not None
+            and command.lower().split(" ")[0] == "/crypto_reject"
+        ):
+            # the peer rejected our public key (TOFU mismatch)
+            reason = command[len("/crypto_reject") :].strip()
+            print(f"crypto: connection rejected by peer: {reason}")
+            try:
+                client_socket.close()
+            except Exception:
+                traceback.print_exc()
             return None
         else:
             cmd_parts = shlex.split(command.strip())
@@ -1041,13 +1087,9 @@ class TCP_Server_Base:  # TCP server class
                 self.send_message(client_file_socket, self.server_received_file_data_sign)
                 print(f"file {filename} received from {client_id}, size {file_size} bytes")
                 if command_part[0] == "/crypto_pub_key":
-                    peer_mac = command_part[1] if len(command_part) > 1 else None
-                    if peer_mac:
-                        self._crypto_store_received_pub(full_path, "client", peer_mac)
-                        for state in self._crypto_state.values():
-                            if state.get("client_mac") == peer_mac:
-                                state["peer_pub_event"].set()
-                                break
+                    peer_addr = self._crypto_sock_addr.get(client_socket)
+                    if peer_addr:
+                        self._crypto_store_received_pub(full_path, "client", peer_addr)
                 close_socket()
             except Exception as e:
                 traceback.print_exc()
@@ -1618,6 +1660,7 @@ class TCP_Client_Base:  # TCP client class
         max_custom_workers=10,
         is_extend_command=False,
         is_enable_encrypto=True,
+        is_custom_keys=None,
     ):
         self.project_dir = os.path.dirname(os.path.abspath(__file__))
         self.file_transfer_dir = os.path.join(self.project_dir, "received_files")
@@ -1684,21 +1727,25 @@ class TCP_Client_Base:  # TCP client class
         self._task_semaphore = threading.Semaphore(max_custom_workers)
         self.is_extend_command = is_extend_command
         self.is_enable_encrypto = is_enable_encrypto
+        self.is_custom_keys = is_custom_keys
         self._encrypted_sockets = set()
         self._encrypted_recv_buffers = {}
-        self._crypto_peer = {}  # socket -> (peer_role, peer_mac)
+        self._crypto_peer = {}  # socket -> (peer_role, peer_pem_path)
         self.crypto = (
-            rsa_crypto.RsaCrypto("client", self.project_dir) if is_enable_encrypto else None
+            rsa_crypto.RsaCrypto("client", self.project_dir, custom_keys=is_custom_keys)
+            if is_enable_encrypto
+            else None
         )
         self._crypto_ack_event = threading.Event()
         self._crypto_exchange_done = threading.Event()
         self._crypto_server_pub_event = threading.Event()
-        self._crypto_server_mac = None
         self._crypto_force = False
         self._crypto_push_active = set()
         self._crypto_requested_server_pub = False
         self._crypto_server_ready = False
         self._crypto_own_ready_sent = False
+        self._crypto_server_pub_ok = None  # None/True/False: TOFU check of server key
+        self._crypto_server_pem_path = None  # cached server public key file
         if self.is_extend_command:
             pass
         else:
@@ -1967,6 +2014,7 @@ class TCP_Client_Base:  # TCP client class
         while True:
             try:
                 self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
                 if self.timeout != None:
                     self.client_socket.settimeout(self.timeout)  # connect over 5 seconds timeout
                 else:
@@ -2089,15 +2137,15 @@ class TCP_Client_Base:  # TCP client class
             data += "\n"
         client_socket.sendall(data.encode("utf-8"))
 
-    def _crypto_mark_encrypted(self, client_socket, peer_role, peer_mac):
+    def _crypto_mark_encrypted(self, client_socket, peer_role, peer_pem_path):
         self._encrypted_sockets.add(client_socket)
-        self._crypto_peer[client_socket] = (peer_role, peer_mac)
+        self._crypto_peer[client_socket] = (peer_role, peer_pem_path)
 
     def _crypto_encrypt_message(self, client_socket, message):
         peer = self._crypto_peer.get(client_socket)
         if peer is None or self.crypto is None:
             raise RuntimeError("socket not bound to a crypto peer")
-        return self.crypto.encrypt_for_peer(peer[0], peer[1], message.strip())
+        return self.crypto.encrypt_for_peer(peer[1], message.strip())
 
     def _crypto_process_line(self, client_socket, line):
         """Decrypt a received line when the socket is in encrypted mode.
@@ -2145,7 +2193,9 @@ class TCP_Client_Base:  # TCP client class
             self._crypto_exchange_done = threading.Event()
             self._crypto_server_pub_event = threading.Event()
             self._crypto_requested_server_pub = False
-            hello = f"/crypto_key_exchange {self.crypto.mac}"
+            self._crypto_server_pub_ok = None
+            self._crypto_server_pem_path = None
+            hello = "/crypto_key_exchange"
             if force:
                 hello += " 1"
             self._send_raw(self.client_socket, hello)
@@ -2173,46 +2223,50 @@ class TCP_Client_Base:  # TCP client class
             except Exception:
                 pass
 
-    def _crypto_on_server_hello(self, server_mac, force):
+    def _crypto_on_server_hello(self, force):
         """Server initiated the handshake (re-exchange after a decode
-        failure): ack with our MAC and needs, then run our half."""
-        self._crypto_server_mac = server_mac
+        failure): ack that we need its key (every connection re-exchanges),
+        then run our half."""
         self._crypto_force = force
-        need_server_pub = force or not self.crypto.has_peer_key("server", server_mac)
-        ack = (
-            f"/crypto_key_exchange_ack {self.crypto.mac} "
-            f"{1 if need_server_pub else 0} {1 if force else 0}"
-        )
+        ack = f"/crypto_key_exchange_ack 1 {1 if force else 0}"
         self._send_raw(self.client_socket, ack)
         self._crypto_after_ack("1" if force else "0", force)
 
     def _crypto_try_flip(self):
-        """Flip to encrypted mode only when both sides announced readiness."""
+        """Flip to encrypted mode only when the server key passed the
+        TOFU check and both sides announced readiness."""
         if (
             self._crypto_server_ready
             and self._crypto_own_ready_sent
+            and self._crypto_server_pub_ok is True
+            and self._crypto_server_pem_path
             and self.client_socket not in self._encrypted_sockets
         ):
-            self._crypto_mark_encrypted(self.client_socket, "server", self._crypto_server_mac)
+            self._crypto_mark_encrypted(
+                self.client_socket, "server", self._crypto_server_pem_path
+            )
 
     def _crypto_after_ack(self, server_needs, force):
-        """Server replied to our hello: push our key / request the
-        server's key as needed, then signal the exchange thread."""
-        need_server_pub = force or not self.crypto.has_peer_key("server", self._crypto_server_mac)
+        """Server replied to our hello: push our key and request the
+        server's key (every connection re-exchanges), then signal the
+        exchange thread."""
         need_push = force or server_needs == "1"
         push_thread = None
         if need_push:
             push_thread = threading.Thread(target=self._crypto_push_pub_key, daemon=True)
             push_thread.start()
-        if need_server_pub and not self._crypto_requested_server_pub:
+        if not self._crypto_requested_server_pub:
             self._crypto_requested_server_pub = True
             self._send_raw(self.client_socket, "/crypto_pub_key_request")
 
         def _wait_done():
             if push_thread is not None:
                 push_thread.join(timeout=90)
-            if need_server_pub and not self._crypto_server_pub_event.wait(timeout=90):
+            if not self._crypto_server_pub_event.wait(timeout=90):
                 print("crypto: waiting for server public key timed out")
+                return
+            if self._crypto_server_pub_ok is not True:
+                print("crypto: server public key rejected")
                 return
             self._crypto_exchange_done.set()
 
@@ -2229,13 +2283,13 @@ class TCP_Client_Base:  # TCP client class
             with self.file_client_id_lock:
                 client_id = copy.copy(self.file_client_id)
                 self.file_client_id += 1
-            send_msg = f"/crypto_pub_key {self.crypto.mac} {client_id}"
+            send_msg = f"/crypto_pub_key {client_id}"
             self._send_raw(self.client_socket, send_msg)
             file_transfer_client_port = self.palloc()
             file_server_port = None
             waiting_time = 0
             while True:
-                time.sleep(1)
+                time.sleep(0.05)
                 with self.file_transfer_server_port_lock:
                     for port_info in list(self.file_server_port_list):
                         if port_info[1] == client_id:
@@ -2245,7 +2299,7 @@ class TCP_Client_Base:  # TCP client class
                 if file_server_port is not None:
                     break
                 waiting_time += 1
-                if waiting_time >= 20:
+                if waiting_time >= 200:
                     print("crypto: transfer port waiting timeout, public key push failed")
                     return False
             self.file_transfer_mode(
@@ -2259,12 +2313,41 @@ class TCP_Client_Base:  # TCP client class
             self._crypto_push_active.discard(self.client_socket)
         return True
 
-    def _crypto_store_received_pub(self, full_path, peer_role, peer_mac):
-        """Move a received public key file into the peer registry."""
+    def _crypto_store_received_pub(self, full_path, peer_role, server_addr):
+        """TOFU-check the server's public key received via the file
+        transfer mechanism and cache it under the server endpoint.
+
+        On failure the connection is rejected and closed.
+        """
         if self.crypto is None:
             return
-        self.crypto.store_peer_key(peer_role, peer_mac, full_path)
-        print(f"crypto: stored public key of {peer_role} {peer_mac}")
+        peer_ip, peer_port = server_addr
+        try:
+            with open(full_path, "r", encoding="utf-8") as f:
+                pem = f.read()
+        except OSError:
+            pem = ""
+        ok, reason = self.crypto.verify_peer_pub(peer_ip, peer_port, pem, peer_role)
+        if ok:
+            self.crypto.store_peer_pem(peer_role, peer_ip, peer_port, full_path)
+            self._crypto_server_pem_path = self.crypto.peer_pem_path(
+                peer_role, peer_ip, peer_port
+            )
+            self._crypto_server_pub_ok = True
+            print(f"crypto: accepted server public key ({reason})")
+        else:
+            self._crypto_server_pub_ok = False
+            print(f"crypto: REJECTED server public key: {reason}")
+            try:
+                self._send_raw(self.client_socket, f"/crypto_reject {reason}")
+            except Exception:
+                traceback.print_exc()
+            try:
+                self.close()
+            except Exception:
+                traceback.print_exc()
+            return
+        self._crypto_server_pub_event.set()
 
     def handle_server_command(self, command):  # deal with special command from server
         client_id = f"{self.client_host}:{self.client_port}"
@@ -2294,10 +2377,8 @@ class TCP_Client_Base:  # TCP client class
             and command.lower().split(" ")[0] == "/crypto_key_exchange"
         ):
             parts = command.split(" ")
-            if len(parts) < 2:
-                return
-            force = len(parts) > 2 and parts[2] == "1"
-            self._crypto_on_server_hello(parts[1], force)
+            force = len(parts) > 1 and parts[1] == "1"
+            self._crypto_on_server_hello(force)
         elif (
             self.is_enable_encrypto
             and self.crypto is not None
@@ -2306,10 +2387,17 @@ class TCP_Client_Base:  # TCP client class
             parts = command.split(" ")
             if len(parts) < 2:
                 return
-            self._crypto_server_mac = parts[1]
-            server_needs = parts[2] if len(parts) > 2 else "0"
-            force = len(parts) > 3 and parts[3] == "1"
+            server_needs = parts[1]
+            force = len(parts) > 2 and parts[2] == "1"
             self._crypto_after_ack(server_needs, force)
+        elif (
+            self.is_enable_encrypto
+            and self.crypto is not None
+            and command.lower().split(" ")[0] == "/crypto_reject"
+        ):
+            reason = command[len("/crypto_reject") :].strip()
+            print(f"crypto: connection rejected by server: {reason}")
+            self.close()
         elif (
             self.is_enable_encrypto
             and self.crypto is not None
@@ -2896,10 +2984,7 @@ class TCP_Client_Base:  # TCP client class
                 self.send_message(client_file_socket, self.server_received_file_data_sign)
                 print(f"file {filename} received from {client_id}, size {file_size} bytes")
                 if command_part[0] == "/crypto_pub_key":
-                    peer_mac = self._crypto_server_mac
-                    if peer_mac:
-                        self._crypto_store_received_pub(full_path, "server", peer_mac)
-                        self._crypto_server_pub_event.set()
+                    self._crypto_store_received_pub(full_path, "server", (self.host, self.port))
                 close_socket()
             except Exception as e:
                 traceback.print_exc()

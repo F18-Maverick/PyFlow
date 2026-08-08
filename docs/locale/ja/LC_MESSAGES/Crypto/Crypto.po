@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-07 00:17+0800\n"
+"POT-Creation-Date: 2026-08-09 01:46+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -94,22 +94,29 @@ msgstr ""
 "C テストスイートは ``test/`` (``test_hkdf``、``test_rsa``、``test_ecdh``) "
 "に存在し、ライブラリと一緒に構築および実行されます。"
 
-#: ../../Crypto/Crypto.rst:44 e295ab5ecde347859a10b523b7b39f2d
+#: ../../Crypto/Crypto.rst:44 2d8ebac8b06147e4983c07a6c69296ab
 msgid ""
 "The library is built as a shared object (``libcrypto_api.so``) so it can be "
 "loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes binding "
 "used by the TCP layer to encrypt messages with RSA-OAEP (see the "
 "``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
-"binding looks for the library via ``ctypes.util.find_library`` and in "
-"``build/`` next to the repository root."
+"binding also implements the TCP layer's anti-MITM identity check (TOFU): "
+"peer public keys are exchanged on every connection, recorded under the "
+"peer's ``(ip, port)`` in ``network_api/.Flow/pub_key/pub_key.json`` with "
+"their SHA-256, and a changed key for a recorded endpoint rejects the "
+"connection. The binding looks for the library via "
+"``ctypes.util.find_library`` and in ``build/`` next to the repository root."
 msgstr ""
 "このライブラリは共有オブジェクト (``libcrypto_api.so``) として構築されているため、Python からロードできます。 "
 "``src/network_api/rsa_crypto.py`` は、RSA-OAEP でメッセージを暗号化するために TCP 層によって使用される "
 "ctypes バインディングです (``TCP_Server_APIs`` / ``TCP_Client_APIs`` "
-"暗号化チャネルのセクションを参照)。バインディングは ``ctypes.util.find_library`` を介して、およびリポジトリ ルートの隣の"
-" ``build/`` でライブラリを検索します。"
+"暗号化チャネルのセクションを参照)。このバインディングは、TCP 層の反 MITM ID チェック (TOFU) "
+"も実装します。ピアの公開鍵は接続ごとに交換され、ピアの ``(ip, port)'' の "
+"``network_api/.Flow/pub_key/pub_key.json`` に SHA-256 "
+"で記録され、記録されたエンドポイントの変更されたキーは接続を拒否します。バインディングは ``ctypes.util.find_library`` "
+"を介して、およびリポジトリ ルートの隣の ``build/`` 内でライブラリを検索します。"
 
-#: ../../Crypto/Crypto.rst:51 f297853b68084a898cbf376e964e8f8e
+#: ../../Crypto/Crypto.rst:55 f297853b68084a898cbf376e964e8f8e
 msgid ""
 "CMake install rules export the ``crypto_api`` library, its public headers, "
 "and a CMake package configuration. All CMake content sits at the repository "
@@ -121,11 +128,11 @@ msgstr ""
 "config テンプレートは ``cmake/crypto_apiConfig.cmake.in`` と ``crypto_api.pc.in`` "
 "です。"
 
-#: ../../Crypto/Crypto.rst:57 fc9e55c66def4521885a663a67f3a59c
+#: ../../Crypto/Crypto.rst:61 fc9e55c66def4521885a663a67f3a59c
 msgid "Common API"
 msgstr "共通API"
 
-#: ../../Crypto/Crypto.rst:59 ca2af2dcc11c4432a4e252ae6fb530ec
+#: ../../Crypto/Crypto.rst:63 ca2af2dcc11c4432a4e252ae6fb530ec
 msgid ""
 "All public functions return ``ss_err_t``. ``SS_OK`` indicates success. Use "
 "``ss_err_string`` to convert an error code to readable text and "
@@ -135,7 +142,7 @@ msgstr ""
 "を使用してエラーコードを読み取り可能なテキストに変換し、 ``ss_crypto_openssl_errors`` を使用して保留中の OpenSSL "
 "エラーキューを取得します。"
 
-#: ../../Crypto/Crypto.rst:77 3413d21a1e174f849dfbd7f5840bb428
+#: ../../Crypto/Crypto.rst:81 3413d21a1e174f849dfbd7f5840bb428
 msgid ""
 "The library uses caller-provided output buffers for fixed-size results. "
 "Functions that return allocated buffers document that the caller must "
@@ -146,11 +153,11 @@ msgstr ""
 "``free`` でバッファを解放する必要があることが文書化されています。不透明なキーハンドルは、対応する ``*_free`` "
 "関数を使用して解放する必要があります。"
 
-#: ../../Crypto/Crypto.rst:83 af426607096248439b6592145af6764a
+#: ../../Crypto/Crypto.rst:87 af426607096248439b6592145af6764a
 msgid "RSA API"
 msgstr "RSA API"
 
-#: ../../Crypto/Crypto.rst:85 1e0209363c764cfe9b270d3f7221ef40
+#: ../../Crypto/Crypto.rst:89 1e0209363c764cfe9b270d3f7221ef40
 msgid ""
 "RSA keys are generated with ``ss_rsa_keygen``. The implementation uses RSA-"
 "OAEP with SHA-256 for encryption and decryption. Key sizes from 2048 to "
@@ -159,7 +166,7 @@ msgstr ""
 "RSA キーは ``ss_rsa_keygen`` で生成されます。この実装では、暗号化と復号化に SHA-256 を備えた RSA-OAEP "
 "を使用します。 2048 ～ 16384 ビットのキー サイズが受け入れられます。 2048、3072、または 4096 ビットが推奨されます。"
 
-#: ../../Crypto/Crypto.rst:109 3e26320f16ab47a0af87bf5dc89e647a
+#: ../../Crypto/Crypto.rst:113 3e26320f16ab47a0af87bf5dc89e647a
 msgid ""
 "The first encryption call with ``out == NULL`` queries the required output "
 "size. RSA encryption is binary-safe and accepts an explicit input length. "
@@ -169,39 +176,39 @@ msgstr ""
 "暗号化はバイナリセーフであり、明示的な入力長を受け入れます。平文の最大サイズは ``ss_rsa_max_plaintext_len`` "
 "によって返されます。"
 
-#: ../../Crypto/Crypto.rst:113 c192246cb34a43808801654736d8fce8
+#: ../../Crypto/Crypto.rst:117 c192246cb34a43808801654736d8fce8
 msgid "Public and private keys can be stored as PEM files:"
 msgstr "公開キーと秘密キーは PEM ファイルとして保存できます。"
 
-#: ../../Crypto/Crypto.rst:124 ddd2778c646f42898403f65a835627bf
+#: ../../Crypto/Crypto.rst:128 ddd2778c646f42898403f65a835627bf
 msgid "ECDH API"
 msgstr "ECDH API"
 
-#: ../../Crypto/Crypto.rst:126 67c165608ff34545ad59d22f734c0266
+#: ../../Crypto/Crypto.rst:130 67c165608ff34545ad59d22f734c0266
 msgid ""
 "ECDH key pairs are created with ``ss_ecdh_keypair_generate``. The supported "
 "curve names are:"
 msgstr "ECDH キーペアは ``ss_ecdh_keypair_generate`` で作成されます。サポートされている曲線名は次のとおりです。"
 
-#: ../../Crypto/Crypto.rst:129 737f5f74529f452da38ae54c1e6bdcea
+#: ../../Crypto/Crypto.rst:133 737f5f74529f452da38ae54c1e6bdcea
 msgid "``SS_ECDH_CURVE_P256``"
 msgstr "「SS_ECDH_CURVE_P256」"
 
-#: ../../Crypto/Crypto.rst:130 4e6a452663d84c9eac9615a421d54edb
+#: ../../Crypto/Crypto.rst:134 4e6a452663d84c9eac9615a421d54edb
 msgid "``SS_ECDH_CURVE_P384``"
 msgstr "「SS_ECDH_CURVE_P384」"
 
-#: ../../Crypto/Crypto.rst:131 e421bbf3383e4079820642816c90e921
+#: ../../Crypto/Crypto.rst:135 e421bbf3383e4079820642816c90e921
 msgid "``SS_ECDH_CURVE_P521``"
 msgstr "「SS_ECDH_CURVE_P521」"
 
-#: ../../Crypto/Crypto.rst:133 5f2b04819c5a4d7b8e96512bca6cf86e
+#: ../../Crypto/Crypto.rst:137 5f2b04819c5a4d7b8e96512bca6cf86e
 msgid ""
 "Public keys are exchanged as PEM SubjectPublicKeyInfo strings. Parsed peer "
 "keys are checked before use."
 msgstr "公開キーは、PEM SubjectPublicKeyInfo 文字列として交換されます。解析されたピアキーは使用前にチェックされます。"
 
-#: ../../Crypto/Crypto.rst:156 0f40f41880b94e828bbd58ac631754a1
+#: ../../Crypto/Crypto.rst:160 0f40f41880b94e828bbd58ac631754a1
 msgid ""
 "The higher-level ``ss_ecdh_seal`` and ``ss_ecdh_open`` APIs are recommended "
 "for application payloads. They derive an AES-256-GCM key with HKDF-SHA256, "
@@ -211,11 +218,11 @@ msgstr ""
 "が推奨されます。これらは、HKDF-SHA256 を使用して AES-256-GCM キーを取得し、ランダム ソルトと IV を含めて、オプションの "
 "AAD を認証します。"
 
-#: ../../Crypto/Crypto.rst:160 84614363b3104ac4a44f044dad010eeb
+#: ../../Crypto/Crypto.rst:164 84614363b3104ac4a44f044dad010eeb
 msgid "The ``ss_ecdh_seal`` output format is:"
 msgstr "`ss_ecdh_seal` の出力形式は次のとおりです。"
 
-#: ../../Crypto/Crypto.rst:166 77967b230b95484a836884d1d717eab3
+#: ../../Crypto/Crypto.rst:170 77967b230b95484a836884d1d717eab3
 msgid ""
 "The fixed overhead is ``SS_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext "
 "is allowed. A failed tag check returns ``SS_ERR_AUTH_FAILED`` and no "
@@ -224,11 +231,11 @@ msgstr ""
 "固定オーバーヘッドは ``SS_ECDH_SEAL_OVERHEAD`` (44 バイト) "
 "です。空の平文は許可されます。タグチェックが失敗すると「SS_ERR_AUTH_FAILED」が返され、平文は返されません。"
 
-#: ../../Crypto/Crypto.rst:171 1c226278e4b746a8b67358e6f6b12b25
+#: ../../Crypto/Crypto.rst:175 1c226278e4b746a8b67358e6f6b12b25
 msgid "Security Notes"
 msgstr "セキュリティに関する注意事項"
 
-#: ../../Crypto/Crypto.rst:173 22976e7f6a74484abe6856c1e38ff27d
+#: ../../Crypto/Crypto.rst:177 22976e7f6a74484abe6856c1e38ff27d
 msgid ""
 "ECDH provides key agreement, but it does not authenticate public-key "
 "ownership by itself. Public keys must be exchanged over an authenticated "
@@ -237,7 +244,7 @@ msgstr ""
 "ECDH "
 "は鍵の合意を提供しますが、それ自体では公開鍵の所有権を認証しません。公開キーは、認証されたチャネルを介して交換されるか、外部の署名/証明書メカニズムを使用して検証される必要があります。"
 
-#: ../../Crypto/Crypto.rst:177 532db57edd2f478f94bca8860aaead12
+#: ../../Crypto/Crypto.rst:181 532db57edd2f478f94bca8860aaead12
 msgid ""
 "Private key files may be protected with a passphrase. Applications should "
 "restrict their file permissions and avoid logging passphrases, private keys,"
@@ -246,51 +253,65 @@ msgstr ""
 "秘密キー ファイルはパスフレーズで保護できます。アプリケーションはファイルのアクセス許可を制限し、パスフレーズ、秘密キー、または平文のセッション "
 "キーのログ記録を避ける必要があります。"
 
-#: ../../Crypto/Crypto.rst:182 599771577d30442180350e4e07c480f1
+#: ../../Crypto/Crypto.rst:186 599771577d30442180350e4e07c480f1
 msgid "Error Handling"
 msgstr "エラー処理"
 
-#: ../../Crypto/Crypto.rst:184 59bde59a25ea4fe5a46ea5b7d29a4569
+#: ../../Crypto/Crypto.rst:188 59bde59a25ea4fe5a46ea5b7d29a4569
 msgid "The main error codes are:"
 msgstr "主なエラーコードは次のとおりです。"
 
-#: ../../Crypto/Crypto.rst:186 a20ad03d7c334f02b5ff41c9b5bbee92
+#: ../../Crypto/Crypto.rst:190 a20ad03d7c334f02b5ff41c9b5bbee92
 msgid "``SS_ERR_INVALID_ARG`` - invalid pointer or length."
 msgstr "``SS_ERR_INVALID_ARG`` - 無効なポインタまたは長さです。"
 
-#: ../../Crypto/Crypto.rst:187 00d6efea688847c79215e48f3a13b2d1
+#: ../../Crypto/Crypto.rst:191 00d6efea688847c79215e48f3a13b2d1
 msgid "``SS_ERR_NOMEM`` - allocation failure."
 msgstr "``SS_ERR_NOMEM`` - 割り当て失敗。"
 
-#: ../../Crypto/Crypto.rst:188 186f19fb4245429e9d15af05cad0f907
+#: ../../Crypto/Crypto.rst:192 186f19fb4245429e9d15af05cad0f907
 msgid "``SS_ERR_OPENSSL`` - OpenSSL operation failure."
 msgstr "``SS_ERR_OPENSSL`` - OpenSSL 操作の失敗。"
 
-#: ../../Crypto/Crypto.rst:189 599dddb1941c4b1cba7c1d5d9d8b1034
+#: ../../Crypto/Crypto.rst:193 599dddb1941c4b1cba7c1d5d9d8b1034
 msgid "``SS_ERR_IO`` - file operation failure."
 msgstr "``SS_ERR_IO`` - ファイル操作の失敗。"
 
-#: ../../Crypto/Crypto.rst:190 dbb3eeecaf6c4d078923d7ffe0e2ec62
+#: ../../Crypto/Crypto.rst:194 dbb3eeecaf6c4d078923d7ffe0e2ec62
 msgid ""
 "``SS_ERR_PARSE`` - malformed PEM/DER input or wrong private-key passphrase."
 msgstr "``SS_ERR_PARSE`` - 不正な形式の PEM/DER 入力または間違った秘密鍵パスフレーズ。"
 
-#: ../../Crypto/Crypto.rst:191 aadaaf69feba491eaff6dce2aa27b6e8
+#: ../../Crypto/Crypto.rst:195 aadaaf69feba491eaff6dce2aa27b6e8
 msgid "``SS_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient."
 msgstr "``SS_ERR_BUFFER_TOO_SMALL`` - 呼び出し元の出力バッファが不十分です。"
 
-#: ../../Crypto/Crypto.rst:192 50170c9fc49648a1a701a4aaf21d7fed
+#: ../../Crypto/Crypto.rst:196 50170c9fc49648a1a701a4aaf21d7fed
 msgid "``SS_ERR_AUTH_FAILED`` - AES-GCM authentication failed."
 msgstr "``SS_ERR_AUTH_FAILED`` - AES-GCM 認証が失敗しました。"
 
-#: ../../Crypto/Crypto.rst:193 8c7401db6f7e4cb6bdb2c6d3a2eba0e1
+#: ../../Crypto/Crypto.rst:197 8c7401db6f7e4cb6bdb2c6d3a2eba0e1
 msgid "``SS_ERR_UNSUPPORTED`` - unsupported curve or key type."
 msgstr "``SS_ERR_UNSUPPORTED`` - サポートされていないカーブまたはキー タイプ。"
 
-#: ../../Crypto/Crypto.rst:194 a2d89fdafbf645b48d94f9cb888e953a
+#: ../../Crypto/Crypto.rst:198 a2d89fdafbf645b48d94f9cb888e953a
 msgid "``SS_ERR_DECRYPT`` - RSA decryption failed."
 msgstr "``SS_ERR_DECRYPT`` - RSA 復号化に失敗しました。"
 
-#: ../../Crypto/Crypto.rst:196 153dd51810da4fce893f4cfb3b2b1365
+#: ../../Crypto/Crypto.rst:200 153dd51810da4fce893f4cfb3b2b1365
 msgid "For detailed OpenSSL diagnostics:"
 msgstr "詳細な OpenSSL 診断については、以下を参照してください。"
+
+#~ msgid ""
+#~ "The library is built as a shared object (``libcrypto_api.so``) so it can be "
+#~ "loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes binding "
+#~ "used by the TCP layer to encrypt messages with RSA-OAEP (see the "
+#~ "``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
+#~ "binding looks for the library via ``ctypes.util.find_library`` and in "
+#~ "``build/`` next to the repository root."
+#~ msgstr ""
+#~ "このライブラリは共有オブジェクト (``libcrypto_api.so``) として構築されているため、Python からロードできます。 "
+#~ "``src/network_api/rsa_crypto.py`` は、RSA-OAEP でメッセージを暗号化するために TCP 層によって使用される "
+#~ "ctypes バインディングです (``TCP_Server_APIs`` / ``TCP_Client_APIs`` "
+#~ "暗号化チャネルのセクションを参照)。バインディングは ``ctypes.util.find_library`` を介して、およびリポジトリ ルートの隣の"
+#~ " ``build/`` でライブラリを検索します。"

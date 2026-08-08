@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-07 00:17+0800\n"
+"POT-Creation-Date: 2026-08-09 01:46+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -92,19 +92,26 @@ msgid ""
 "``test_ecdh``) and is built and run together with the library."
 msgstr "C 測試套件位於“test/”（“test_hkdf”、“test_rsa”、“test_ecdh”）中，並與程式庫一起建置和運行。"
 
-#: ../../Crypto/Crypto.rst:44 e295ab5ecde347859a10b523b7b39f2d
+#: ../../Crypto/Crypto.rst:44 2d8ebac8b06147e4983c07a6c69296ab
 msgid ""
 "The library is built as a shared object (``libcrypto_api.so``) so it can be "
 "loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes binding "
 "used by the TCP layer to encrypt messages with RSA-OAEP (see the "
 "``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
-"binding looks for the library via ``ctypes.util.find_library`` and in "
-"``build/`` next to the repository root."
+"binding also implements the TCP layer's anti-MITM identity check (TOFU): "
+"peer public keys are exchanged on every connection, recorded under the "
+"peer's ``(ip, port)`` in ``network_api/.Flow/pub_key/pub_key.json`` with "
+"their SHA-256, and a changed key for a recorded endpoint rejects the "
+"connection. The binding looks for the library via "
+"``ctypes.util.find_library`` and in ``build/`` next to the repository root."
 msgstr ""
 "函式庫被建構為共享物件（“libcrypto_api.so”），因此可以從Python載入：「src/network_api/rsa_crypto.py」是TCP層使用的ctypes綁定，用於使用RSA-"
-"OAEP加密訊息（請參閱「TCP_Server_APIs」/「TCP_Client_APIs」加密通道部分）。綁定透過「ctypes.util.find_library」和儲存庫根目錄旁的「build/」來尋找庫。"
+"OAEP加密訊息（請參閱「TCP_Server_APIs」/「TCP_Client_APIs」加密通道部分）。此綁定也實作了 TCP 層的反 MITM "
+"身分檢查 (TOFU)：在每個連線上交換對等公鑰，並使用其 SHA-256 "
+"記錄在「network_api/.Flow/pub_key/pub_key.json」中對等方的「(ip, "
+"port)」下，並且記錄端點的變更金鑰會拒絕連線點的變更金鑰會拒絕連線點。綁定透過「ctypes.util.find_library」和儲存庫根目錄旁的「build/」來尋找庫。"
 
-#: ../../Crypto/Crypto.rst:51 f297853b68084a898cbf376e964e8f8e
+#: ../../Crypto/Crypto.rst:55 f297853b68084a898cbf376e964e8f8e
 msgid ""
 "CMake install rules export the ``crypto_api`` library, its public headers, "
 "and a CMake package configuration. All CMake content sits at the repository "
@@ -114,11 +121,11 @@ msgstr ""
 "CMake 安裝規則匯出「crypto_api」庫、其公共標頭和 CMake 套件配置。所有 CMake 內容都位於儲存庫根目錄：CMake 套件範本和"
 " pkg-config 範本是「cmake/crypto_apiConfig.cmake.in」和「crypto_api.pc.in」。"
 
-#: ../../Crypto/Crypto.rst:57 fc9e55c66def4521885a663a67f3a59c
+#: ../../Crypto/Crypto.rst:61 fc9e55c66def4521885a663a67f3a59c
 msgid "Common API"
 msgstr "一般API"
 
-#: ../../Crypto/Crypto.rst:59 ca2af2dcc11c4432a4e252ae6fb530ec
+#: ../../Crypto/Crypto.rst:63 ca2af2dcc11c4432a4e252ae6fb530ec
 msgid ""
 "All public functions return ``ss_err_t``. ``SS_OK`` indicates success. Use "
 "``ss_err_string`` to convert an error code to readable text and "
@@ -127,7 +134,7 @@ msgstr ""
 "所有公共函數都傳回``ss_err_t``。 “SS_OK”表示成功。使用 ss_err_string 將錯誤代碼轉換為可讀文本，並使用 "
 "ss_crypto_openssl_errors 檢索掛起的 OpenSSL 錯誤佇列。"
 
-#: ../../Crypto/Crypto.rst:77 3413d21a1e174f849dfbd7f5840bb428
+#: ../../Crypto/Crypto.rst:81 3413d21a1e174f849dfbd7f5840bb428
 msgid ""
 "The library uses caller-provided output buffers for fixed-size results. "
 "Functions that return allocated buffers document that the caller must "
@@ -136,11 +143,11 @@ msgid ""
 msgstr ""
 "該函式庫使用呼叫者提供的輸出緩衝區來取得固定大小的結果。傳回分配的緩衝區的函數記錄了呼叫者必須使用“free”釋放它們。不透明的按鍵句柄必須使用其對應的“*_free”函數來釋放。"
 
-#: ../../Crypto/Crypto.rst:83 af426607096248439b6592145af6764a
+#: ../../Crypto/Crypto.rst:87 af426607096248439b6592145af6764a
 msgid "RSA API"
 msgstr "RSA API"
 
-#: ../../Crypto/Crypto.rst:85 1e0209363c764cfe9b270d3f7221ef40
+#: ../../Crypto/Crypto.rst:89 1e0209363c764cfe9b270d3f7221ef40
 msgid ""
 "RSA keys are generated with ``ss_rsa_keygen``. The implementation uses RSA-"
 "OAEP with SHA-256 for encryption and decryption. Key sizes from 2048 to "
@@ -149,7 +156,7 @@ msgstr ""
 "RSA 金鑰是使用「ss_rsa_keygen」產生的。此實作使用 RSA-OAEP 和 SHA-256 進行加密和解密。接受 2048 至 16384"
 " 位元的金鑰大小；建議使用 2048、3072 或 4096 位元。"
 
-#: ../../Crypto/Crypto.rst:109 3e26320f16ab47a0af87bf5dc89e647a
+#: ../../Crypto/Crypto.rst:113 3e26320f16ab47a0af87bf5dc89e647a
 msgid ""
 "The first encryption call with ``out == NULL`` queries the required output "
 "size. RSA encryption is binary-safe and accepts an explicit input length. "
@@ -158,39 +165,39 @@ msgstr ""
 "第一個使用「out == NULL」的加密呼叫查詢所需的輸出大小。 RSA "
 "加密是二進位安全的，並且接受明確輸入長度。最大明文大小由「ss_rsa_max_plaintext_len」傳回。"
 
-#: ../../Crypto/Crypto.rst:113 c192246cb34a43808801654736d8fce8
+#: ../../Crypto/Crypto.rst:117 c192246cb34a43808801654736d8fce8
 msgid "Public and private keys can be stored as PEM files:"
 msgstr "公鑰和私鑰可以儲存為 PEM 檔案："
 
-#: ../../Crypto/Crypto.rst:124 ddd2778c646f42898403f65a835627bf
+#: ../../Crypto/Crypto.rst:128 ddd2778c646f42898403f65a835627bf
 msgid "ECDH API"
 msgstr "ECDH API"
 
-#: ../../Crypto/Crypto.rst:126 67c165608ff34545ad59d22f734c0266
+#: ../../Crypto/Crypto.rst:130 67c165608ff34545ad59d22f734c0266
 msgid ""
 "ECDH key pairs are created with ``ss_ecdh_keypair_generate``. The supported "
 "curve names are:"
 msgstr "ECDH 金鑰對是使用「ss_ecdh_keypair_generate」建立的。支援的曲線名稱是："
 
-#: ../../Crypto/Crypto.rst:129 737f5f74529f452da38ae54c1e6bdcea
+#: ../../Crypto/Crypto.rst:133 737f5f74529f452da38ae54c1e6bdcea
 msgid "``SS_ECDH_CURVE_P256``"
 msgstr "``SS_ECDH_CURVE_P256``"
 
-#: ../../Crypto/Crypto.rst:130 4e6a452663d84c9eac9615a421d54edb
+#: ../../Crypto/Crypto.rst:134 4e6a452663d84c9eac9615a421d54edb
 msgid "``SS_ECDH_CURVE_P384``"
 msgstr "``SS_ECDH_CURVE_P384``"
 
-#: ../../Crypto/Crypto.rst:131 e421bbf3383e4079820642816c90e921
+#: ../../Crypto/Crypto.rst:135 e421bbf3383e4079820642816c90e921
 msgid "``SS_ECDH_CURVE_P521``"
 msgstr "``SS_ECDH_CURVE_P521``"
 
-#: ../../Crypto/Crypto.rst:133 5f2b04819c5a4d7b8e96512bca6cf86e
+#: ../../Crypto/Crypto.rst:137 5f2b04819c5a4d7b8e96512bca6cf86e
 msgid ""
 "Public keys are exchanged as PEM SubjectPublicKeyInfo strings. Parsed peer "
 "keys are checked before use."
 msgstr "公鑰作為 PEM subjectPublicKeyInfo 字串進行交換。使用前會檢查已解析的對等金鑰。"
 
-#: ../../Crypto/Crypto.rst:156 0f40f41880b94e828bbd58ac631754a1
+#: ../../Crypto/Crypto.rst:160 0f40f41880b94e828bbd58ac631754a1
 msgid ""
 "The higher-level ``ss_ecdh_seal`` and ``ss_ecdh_open`` APIs are recommended "
 "for application payloads. They derive an AES-256-GCM key with HKDF-SHA256, "
@@ -199,11 +206,11 @@ msgstr ""
 "建議將更高層級的 ``ss_ecdh_seal`` 和 ``ss_ecdh_open`` API 用於應用程式負載。他們使用 HKDF-SHA256 "
 "派生 AES-256-GCM 金鑰，包括隨機鹽和 IV，並驗證可選的 AAD。"
 
-#: ../../Crypto/Crypto.rst:160 84614363b3104ac4a44f044dad010eeb
+#: ../../Crypto/Crypto.rst:164 84614363b3104ac4a44f044dad010eeb
 msgid "The ``ss_ecdh_seal`` output format is:"
 msgstr "``ss_ecdh_seal`` 輸出格式為："
 
-#: ../../Crypto/Crypto.rst:166 77967b230b95484a836884d1d717eab3
+#: ../../Crypto/Crypto.rst:170 77967b230b95484a836884d1d717eab3
 msgid ""
 "The fixed overhead is ``SS_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext "
 "is allowed. A failed tag check returns ``SS_ERR_AUTH_FAILED`` and no "
@@ -212,69 +219,80 @@ msgstr ""
 "固定開銷為“SS_ECDH_SEAL_OVERHEAD”（44 "
 "位元組）。允許空明文。失敗的標籤檢查回傳``SS_ERR_AUTH_FAILED``並且不回傳明文。"
 
-#: ../../Crypto/Crypto.rst:171 1c226278e4b746a8b67358e6f6b12b25
+#: ../../Crypto/Crypto.rst:175 1c226278e4b746a8b67358e6f6b12b25
 msgid "Security Notes"
 msgstr "安全說明"
 
-#: ../../Crypto/Crypto.rst:173 22976e7f6a74484abe6856c1e38ff27d
+#: ../../Crypto/Crypto.rst:177 22976e7f6a74484abe6856c1e38ff27d
 msgid ""
 "ECDH provides key agreement, but it does not authenticate public-key "
 "ownership by itself. Public keys must be exchanged over an authenticated "
 "channel or verified with an external signature/certificate mechanism."
 msgstr "ECDH 提供金鑰協商，但它本身並未驗證公鑰所有權。公鑰必須透過經過身份驗證的通道進行交換或使用外部簽章/憑證機制進行驗證。"
 
-#: ../../Crypto/Crypto.rst:177 532db57edd2f478f94bca8860aaead12
+#: ../../Crypto/Crypto.rst:181 532db57edd2f478f94bca8860aaead12
 msgid ""
 "Private key files may be protected with a passphrase. Applications should "
 "restrict their file permissions and avoid logging passphrases, private keys,"
 " or plaintext session keys."
 msgstr "私鑰檔案可以用密碼保護。應用程式應限制其檔案權限並避免記錄密碼、私鑰或純文字會話金鑰。"
 
-#: ../../Crypto/Crypto.rst:182 599771577d30442180350e4e07c480f1
+#: ../../Crypto/Crypto.rst:186 599771577d30442180350e4e07c480f1
 msgid "Error Handling"
 msgstr "錯誤處理"
 
-#: ../../Crypto/Crypto.rst:184 59bde59a25ea4fe5a46ea5b7d29a4569
+#: ../../Crypto/Crypto.rst:188 59bde59a25ea4fe5a46ea5b7d29a4569
 msgid "The main error codes are:"
 msgstr "主要錯誤代碼有："
 
-#: ../../Crypto/Crypto.rst:186 a20ad03d7c334f02b5ff41c9b5bbee92
+#: ../../Crypto/Crypto.rst:190 a20ad03d7c334f02b5ff41c9b5bbee92
 msgid "``SS_ERR_INVALID_ARG`` - invalid pointer or length."
 msgstr "``SS_ERR_INVALID_ARG`` - 無效的指標或長度。"
 
-#: ../../Crypto/Crypto.rst:187 00d6efea688847c79215e48f3a13b2d1
+#: ../../Crypto/Crypto.rst:191 00d6efea688847c79215e48f3a13b2d1
 msgid "``SS_ERR_NOMEM`` - allocation failure."
 msgstr "``SS_ERR_NOMEM`` - 分配失敗。"
 
-#: ../../Crypto/Crypto.rst:188 186f19fb4245429e9d15af05cad0f907
+#: ../../Crypto/Crypto.rst:192 186f19fb4245429e9d15af05cad0f907
 msgid "``SS_ERR_OPENSSL`` - OpenSSL operation failure."
 msgstr "``SS_ERR_OPENSSL`` - OpenSSL 操作失敗。"
 
-#: ../../Crypto/Crypto.rst:189 599dddb1941c4b1cba7c1d5d9d8b1034
+#: ../../Crypto/Crypto.rst:193 599dddb1941c4b1cba7c1d5d9d8b1034
 msgid "``SS_ERR_IO`` - file operation failure."
 msgstr "``SS_ERR_IO`` - 檔案操作失敗。"
 
-#: ../../Crypto/Crypto.rst:190 dbb3eeecaf6c4d078923d7ffe0e2ec62
+#: ../../Crypto/Crypto.rst:194 dbb3eeecaf6c4d078923d7ffe0e2ec62
 msgid ""
 "``SS_ERR_PARSE`` - malformed PEM/DER input or wrong private-key passphrase."
 msgstr "``SS_ERR_PARSE`` - PEM/DER 輸入格式錯誤或私鑰密碼錯誤。"
 
-#: ../../Crypto/Crypto.rst:191 aadaaf69feba491eaff6dce2aa27b6e8
+#: ../../Crypto/Crypto.rst:195 aadaaf69feba491eaff6dce2aa27b6e8
 msgid "``SS_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient."
 msgstr "``SS_ERR_BUFFER_TOO_SMALL`` - 呼叫者輸出緩衝區不足。"
 
-#: ../../Crypto/Crypto.rst:192 50170c9fc49648a1a701a4aaf21d7fed
+#: ../../Crypto/Crypto.rst:196 50170c9fc49648a1a701a4aaf21d7fed
 msgid "``SS_ERR_AUTH_FAILED`` - AES-GCM authentication failed."
 msgstr "``SS_ERR_AUTH_FAILED`` - AES-GCM 驗證失敗。"
 
-#: ../../Crypto/Crypto.rst:193 8c7401db6f7e4cb6bdb2c6d3a2eba0e1
+#: ../../Crypto/Crypto.rst:197 8c7401db6f7e4cb6bdb2c6d3a2eba0e1
 msgid "``SS_ERR_UNSUPPORTED`` - unsupported curve or key type."
 msgstr "``SS_ERR_UNSUPPORTED`` - 不支援的曲線或關鍵點類型。"
 
-#: ../../Crypto/Crypto.rst:194 a2d89fdafbf645b48d94f9cb888e953a
+#: ../../Crypto/Crypto.rst:198 a2d89fdafbf645b48d94f9cb888e953a
 msgid "``SS_ERR_DECRYPT`` - RSA decryption failed."
 msgstr "``SS_ERR_DECRYPT`` - RSA 解密失敗。"
 
-#: ../../Crypto/Crypto.rst:196 153dd51810da4fce893f4cfb3b2b1365
+#: ../../Crypto/Crypto.rst:200 153dd51810da4fce893f4cfb3b2b1365
 msgid "For detailed OpenSSL diagnostics:"
 msgstr "有關詳細的 OpenSSL 診斷："
+
+#~ msgid ""
+#~ "The library is built as a shared object (``libcrypto_api.so``) so it can be "
+#~ "loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes binding "
+#~ "used by the TCP layer to encrypt messages with RSA-OAEP (see the "
+#~ "``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
+#~ "binding looks for the library via ``ctypes.util.find_library`` and in "
+#~ "``build/`` next to the repository root."
+#~ msgstr ""
+#~ "函式庫被建構為共享物件（“libcrypto_api.so”），因此可以從Python載入：「src/network_api/rsa_crypto.py」是TCP層使用的ctypes綁定，用於使用RSA-"
+#~ "OAEP加密訊息（請參閱「TCP_Server_APIs」/「TCP_Client_APIs」加密通道部分）。綁定透過「ctypes.util.find_library」和儲存庫根目錄旁的「build/」來尋找庫。"

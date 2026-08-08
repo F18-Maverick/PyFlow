@@ -5,8 +5,14 @@ lifecycle required by the encrypted TCP channel:
 
 - Reuse an existing RSA keypair from ``~/.ssh`` (PEM private key) when
   one is present and parseable, otherwise generate a fresh keypair into
-  ``.Flow/pvt_key``.
-- Keep exchanged peer public keys in ``.Flow/pub_key/<role>_<mac>.pem``.
+  ``.Flow/pvt_key``. A caller-supplied keypair (``custom_keys``) is
+  honoured when both files parse and the pair matches.
+- Anti-MITM identity check (TOFU): every connection exchanges public
+  keys in plaintext. Each side records the peer in
+  ``.Flow/pub_key/pub_key.json`` under the peer's ``(ip, port)`` with
+  the SHA-256 of its public key; a later connection from the same
+  endpoint presenting a different key is rejected, and a known key seen
+  from a new endpoint is re-registered under the new ``(ip, port)``.
 - RSA-OAEP encrypt/decrypt with the ``_VALID`` plaintext signature so a
   stale key (for example a rotated ``~/.ssh`` pair) is detected and the
   peers re-exchange their public keys.
@@ -17,7 +23,11 @@ cmake --build build``); see ``load_library`` for the search paths.
 
 import ctypes
 import ctypes.util
+import hashlib
+import json
 import os
+import tempfile
+import threading
 import uuid
 
 # Suffix appended to every plaintext before RSA-OAEP encryption. The
@@ -163,10 +173,20 @@ class RsaCrypto:
 
     ``role`` is ``"server"`` or ``"client"`` and is used to name the
     locally generated keypair (``pvt_key/<role>_priv.pem``) and the
-    peer registry entries (``pub_key/<peer_role>_<peer_mac>.pem``).
+    peer key cache (``pub_key/<peer_role>_<ip>_<port>.pem``). Peer
+    identity is tracked in ``pub_key/pub_key.json`` (TOFU, see
+    ``verify_peer_pub``).
     """
 
-    def __init__(self, role, project_dir, ssh_dir=None):
+    def __init__(self, role, project_dir, ssh_dir=None, custom_keys=None):
+        """Create the crypto wrapper for ``role`` ("server" or "client").
+
+        ``custom_keys`` may be a ``[pub_key_path, pvt_key_path]`` pair to
+        use a user-supplied RSA keypair instead of the default lookup
+        (``~/.ssh`` / generated). The pair is validated on first use
+        (paths exist, files parse, the keys match); an invalid pair is
+        ignored and the default lookup is used instead.
+        """
         self.role = role
         self.project_dir = project_dir
         self.flow_dir = os.path.join(project_dir, ".Flow")
@@ -175,7 +195,10 @@ class RsaCrypto:
         self.ssh_dir = (
             ssh_dir if ssh_dir is not None else os.path.join(os.path.expanduser("~"), ".ssh")
         )
+        self.custom_keys = custom_keys
         self.mac = get_local_mac()
+        self.registry_path = os.path.join(self.pub_key_dir, "pub_key.json")
+        self._registry_lock = threading.Lock()
         for directory in (self.pvt_key_dir, self.pub_key_dir):
             os.makedirs(directory, exist_ok=True)
         self.priv_path = None
@@ -190,6 +213,13 @@ class RsaCrypto:
         if not force_reload and self._priv_key is not None and self.priv_path is not None:
             return
         lib = load_library()
+        if self.custom_keys is not None and self._validate_custom_keys(
+            lib, self.custom_keys
+        ):
+            self.priv_path = self.custom_keys[1]
+            self.pub_path = self.custom_keys[0]
+            self._priv_key = self._read_priv_handle(lib, self.priv_path)
+            return
         priv_candidates = [os.path.join(self.ssh_dir, "id_rsa")]
         priv_path = None
         for candidate in priv_candidates:
@@ -234,6 +264,60 @@ class RsaCrypto:
             raise ValueError("cannot parse private key {} (err {})".format(path, err))
         return RsaKey(handle.value, lib)
 
+    def _validate_custom_keys(self, lib, custom_keys):
+        """Check a user-supplied ``[pub_path, pvt_path]`` pair.
+
+        Valid means: both paths exist, both files parse as PEM keys, and
+        the public key pairs with the private key (a probe encrypted with
+        the public key decrypts with the private key).
+        """
+        if not isinstance(custom_keys, (list, tuple)) or len(custom_keys) != 2:
+            return False
+        pub_path, pvt_path = custom_keys
+        if not (isinstance(pub_path, str) and isinstance(pvt_path, str)):
+            return False
+        if not (os.path.isfile(pub_path) and os.path.isfile(pvt_path)):
+            return False
+        try:
+            pub_handle = ctypes.c_void_p()
+            if lib.ss_rsa_read_pub(
+                pub_path.encode("utf-8"), ctypes.byref(pub_handle)
+            ) != SS_OK or not pub_handle.value:
+                return False
+            pub_key = RsaKey(pub_handle.value, lib)
+            priv_handle = ctypes.c_void_p()
+            if lib.ss_rsa_read_priv(
+                pvt_path.encode("utf-8"), None, ctypes.byref(priv_handle)
+            ) != SS_OK or not priv_handle.value:
+                return False
+            priv_key = RsaKey(priv_handle.value, lib)
+            # pairing probe: public-encrypt -> private-decrypt must round-trip
+            probe = b"custom-key-pair-check"
+            in_buf = (ctypes.c_uint8 * len(probe)).from_buffer_copy(probe)
+            out_len = ctypes.c_size_t(0)
+            if lib.ss_rsa_encrypt(
+                pub_key.handle, in_buf, len(probe), None, ctypes.byref(out_len)
+            ) != SS_OK:
+                return False
+            out_buf = (ctypes.c_uint8 * out_len.value)()
+            if lib.ss_rsa_encrypt(
+                pub_key.handle, in_buf, len(probe), out_buf, ctypes.byref(out_len)
+            ) != SS_OK:
+                return False
+            dec_len = ctypes.c_size_t(0)
+            if lib.ss_rsa_decrypt(
+                priv_key.handle, out_buf, out_len.value, None, ctypes.byref(dec_len)
+            ) != SS_OK:
+                return False
+            dec_buf = (ctypes.c_uint8 * dec_len.value)()
+            if lib.ss_rsa_decrypt(
+                priv_key.handle, out_buf, out_len.value, dec_buf, ctypes.byref(dec_len)
+            ) != SS_OK:
+                return False
+            return bytes(dec_buf[: dec_len.value]) == probe
+        except Exception:
+            return False
+
     def _generate_keypair(self, lib, priv_path, pub_path):
         handle = ctypes.c_void_p()
         err = lib.ss_rsa_keygen(DEFAULT_KEY_BITS, ctypes.byref(handle))
@@ -243,29 +327,88 @@ class RsaCrypto:
         err = lib.ss_rsa_write_priv(key.handle, priv_path.encode("utf-8"), None)
         if err != SS_OK:
             raise RuntimeError("ss_rsa_write_priv failed: {}".format(err))
+        try:
+            os.chmod(priv_path, 0o600)  # private key: owner-only
+        except OSError:
+            pass
         err = lib.ss_rsa_write_pub(key.handle, pub_path.encode("utf-8"))
         if err != SS_OK:
             raise RuntimeError("ss_rsa_write_pub failed: {}".format(err))
 
-    # ---- peer public key registry -------------------------------------------
+    # ---- peer public key registry (TOFU) -------------------------------------
 
-    def peer_pub_path(self, peer_role, peer_mac):
-        """Path of the stored public key for ``peer_role`` on ``peer_mac``.
+    def peer_pem_path(self, peer_role, peer_ip, peer_port):
+        """Path of the exchanged public key file for ``peer_role`` at
+        ``(peer_ip, peer_port)``.
 
-        The MAC is sanitized for the filesystem (``:`` -> ``_``) so the same
-        registry layout works on every platform: ``:`` is an illegal
-        filename character on Windows.
+        The IP is sanitized for the filesystem (``:`` -> ``_`` so IPv6
+        literals are safe on every platform, including Windows).
         """
+        safe_ip = peer_ip.replace(":", "_")
         return os.path.join(
-            self.pub_key_dir, "{}_{}.pem".format(peer_role, peer_mac.replace(":", "_"))
+            self.pub_key_dir, "{}_{}_{}.pem".format(peer_role, safe_ip, peer_port)
         )
 
-    def has_peer_key(self, peer_role, peer_mac):
-        return os.path.exists(self.peer_pub_path(peer_role, peer_mac))
+    def _load_registry(self):
+        """Read ``pub_key.json``: ``{(ip, port)} -> [sha256, pem]``."""
+        try:
+            with open(self.registry_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
 
-    def store_peer_key(self, peer_role, peer_mac, src_path):
-        """Move a freshly received public key into the registry."""
-        dest = self.peer_pub_path(peer_role, peer_mac)
+    def _save_registry(self, registry):
+        """Atomically persist the registry (unique tmp file + rename)."""
+        fd, tmp = tempfile.mkstemp(dir=self.pub_key_dir, prefix=".pub_key.json.", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(registry, f, indent=2, ensure_ascii=False)
+            os.replace(tmp, self.registry_path)
+        except Exception:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
+
+    def verify_peer_pub(self, peer_ip, peer_port, peer_pem, peer_role):
+        """TOFU check-and-record for a peer public key.
+
+        ``peer_pem`` is the PEM text received on this connection,
+        ``(peer_ip, peer_port)`` the endpoint it came from. Returns
+        ``(ok, reason)``:
+
+        - key already registered under any endpoint -> accept, and
+          re-register it under the current endpoint when it moved
+          (IPs are dynamic and ports are user-changeable);
+        - key unknown but the endpoint already holds a *different* key
+          -> reject (a trusted endpoint suddenly presenting a new key);
+        - key and endpoint both unknown -> accept and record (first
+          connection is trusted, TOFU).
+        """
+        sha = hashlib.sha256(peer_pem.encode("utf-8")).hexdigest()
+        key_str = str((peer_ip, peer_port))
+        with self._registry_lock:
+            registry = self._load_registry()
+            for k, v in registry.items():
+                if v[0] == sha:
+                    if k == key_str:
+                        return True, "known key"
+                    if key_str in registry:
+                        return False, "endpoint already claimed by another key"
+                    del registry[k]
+                    registry[key_str] = [sha, peer_pem]
+                    self._save_registry(registry)
+                    return True, "known key, endpoint updated"
+            if key_str in registry:
+                return False, "public key changed for same endpoint"
+            registry[key_str] = [sha, peer_pem]
+            self._save_registry(registry)
+            return True, "first connection (TOFU)"
+
+    def store_peer_pem(self, peer_role, peer_ip, peer_port, src_path):
+        """Move a freshly received public key file into the key cache."""
+        dest = self.peer_pem_path(peer_role, peer_ip, peer_port)
         import shutil
 
         shutil.move(src_path, dest)
@@ -290,18 +433,18 @@ class RsaCrypto:
         self._peer_pub_cache[path] = (mtime, key)
         return key
 
-    def encrypt_for_peer(self, peer_role, peer_mac, plaintext):
-        """Encrypt ``plaintext`` with the peer's public key.
+    def encrypt_for_peer(self, peer_pem_path, plaintext):
+        """Encrypt ``plaintext`` with the peer's public key file.
 
         Returns the ASCII wire body (no trailing newline): each chunk is
         RSA-OAEP encrypted and base64 encoded, chunks joined with ``|``.
-        Raises if no peer key is stored yet.
+        Raises if no peer key is stored at ``peer_pem_path`` yet.
         """
-        path = self.peer_pub_path(peer_role, peer_mac)
+        path = peer_pem_path
         key = self._load_peer_pub(path)
         if key is None:
             raise ValueError(
-                "no public key for {} {} stored at {}".format(peer_role, peer_mac, path)
+                "no public key for peer stored at {}".format(path)
             )
         payload = plaintext + VALID_SIGN
         data = payload.encode("utf-8")

@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-07 00:17+0800\n"
+"POT-Creation-Date: 2026-08-09 01:46+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -94,21 +94,28 @@ msgstr ""
 "C 테스트 스위트는 ``test/``(``test_hkdf``, ``test_rsa``, ``test_ecdh``)에 있으며 라이브러리와"
 " 함께 빌드되고 실행됩니다."
 
-#: ../../Crypto/Crypto.rst:44 e295ab5ecde347859a10b523b7b39f2d
+#: ../../Crypto/Crypto.rst:44 2d8ebac8b06147e4983c07a6c69296ab
 msgid ""
 "The library is built as a shared object (``libcrypto_api.so``) so it can be "
 "loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes binding "
 "used by the TCP layer to encrypt messages with RSA-OAEP (see the "
 "``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
-"binding looks for the library via ``ctypes.util.find_library`` and in "
-"``build/`` next to the repository root."
+"binding also implements the TCP layer's anti-MITM identity check (TOFU): "
+"peer public keys are exchanged on every connection, recorded under the "
+"peer's ``(ip, port)`` in ``network_api/.Flow/pub_key/pub_key.json`` with "
+"their SHA-256, and a changed key for a recorded endpoint rejects the "
+"connection. The binding looks for the library via "
+"``ctypes.util.find_library`` and in ``build/`` next to the repository root."
 msgstr ""
 "라이브러리는 공유 객체(``libcrypto_api.so``)로 구축되어 Python에서 로드할 수 있습니다. "
 "``src/network_api/rsa_crypto.py``는 RSA-OAEP로 메시지를 암호화하기 위해 TCP 계층에서 사용하는 "
 "ctypes 바인딩입니다(``TCP_Server_APIs`` / ``TCP_Client_APIs`` 암호화된 채널 섹션 참조). 바인딩은"
-" ``ctypes.util.find_library``를 통해 그리고 저장소 루트 옆에 있는 ``build/``에서 라이브러리를 찾습니다."
+" 또한 TCP 계층의 TOFU(anti-MITM ID 확인)를 구현합니다. 피어 공개 키는 모든 연결에서 교환되고, SHA-256을 "
+"사용하여 ``network_api/.Flow/pub_key/pub_key.json``에 있는 피어의 ``(ip, port)``에 "
+"기록되며, 기록된 끝점에 대해 변경된 키는 연결을 거부합니다. 바인딩은 ``ctypes.util.find_library``를 통해 그리고"
+" 저장소 루트 옆에 있는 ``build/``에서 라이브러리를 찾습니다."
 
-#: ../../Crypto/Crypto.rst:51 f297853b68084a898cbf376e964e8f8e
+#: ../../Crypto/Crypto.rst:55 f297853b68084a898cbf376e964e8f8e
 msgid ""
 "CMake install rules export the ``crypto_api`` library, its public headers, "
 "and a CMake package configuration. All CMake content sits at the repository "
@@ -119,11 +126,11 @@ msgstr ""
 "콘텐츠는 저장소 루트에 있습니다. CMake 패키지 템플릿과 pkg-config 템플릿은 "
 "``cmake/crypto_apiConfig.cmake.in`` 및 ``crypto_api.pc.in``입니다."
 
-#: ../../Crypto/Crypto.rst:57 fc9e55c66def4521885a663a67f3a59c
+#: ../../Crypto/Crypto.rst:61 fc9e55c66def4521885a663a67f3a59c
 msgid "Common API"
 msgstr "공통 API"
 
-#: ../../Crypto/Crypto.rst:59 ca2af2dcc11c4432a4e252ae6fb530ec
+#: ../../Crypto/Crypto.rst:63 ca2af2dcc11c4432a4e252ae6fb530ec
 msgid ""
 "All public functions return ``ss_err_t``. ``SS_OK`` indicates success. Use "
 "``ss_err_string`` to convert an error code to readable text and "
@@ -133,7 +140,7 @@ msgstr ""
 " 오류 코드를 읽을 수 있는 텍스트로 변환하고 ``ss_crypto_openssl_errors``를 사용하여 보류 중인 OpenSSL "
 "오류 대기열을 검색합니다."
 
-#: ../../Crypto/Crypto.rst:77 3413d21a1e174f849dfbd7f5840bb428
+#: ../../Crypto/Crypto.rst:81 3413d21a1e174f849dfbd7f5840bb428
 msgid ""
 "The library uses caller-provided output buffers for fixed-size results. "
 "Functions that return allocated buffers document that the caller must "
@@ -143,11 +150,11 @@ msgstr ""
 "라이브러리는 고정 크기 결과를 위해 호출자가 제공한 출력 버퍼를 사용합니다. 할당된 버퍼를 반환하는 함수는 호출자가 이를 "
 "``free``로 해제해야 함을 문서화합니다. 불투명 키 핸들은 해당 ``*_free`` 함수를 사용하여 해제해야 합니다."
 
-#: ../../Crypto/Crypto.rst:83 af426607096248439b6592145af6764a
+#: ../../Crypto/Crypto.rst:87 af426607096248439b6592145af6764a
 msgid "RSA API"
 msgstr "RSA API"
 
-#: ../../Crypto/Crypto.rst:85 1e0209363c764cfe9b270d3f7221ef40
+#: ../../Crypto/Crypto.rst:89 1e0209363c764cfe9b270d3f7221ef40
 msgid ""
 "RSA keys are generated with ``ss_rsa_keygen``. The implementation uses RSA-"
 "OAEP with SHA-256 for encryption and decryption. Key sizes from 2048 to "
@@ -156,7 +163,7 @@ msgstr ""
 "RSA 키는 ``ss_rsa_keygen``을 사용하여 생성됩니다. 구현에서는 암호화 및 암호 해독을 위해 SHA-256과 함께 RSA-"
 "OAEP를 사용합니다. 2048~16384비트의 키 크기가 허용됩니다. 2048, 3072 또는 4096비트가 권장됩니다."
 
-#: ../../Crypto/Crypto.rst:109 3e26320f16ab47a0af87bf5dc89e647a
+#: ../../Crypto/Crypto.rst:113 3e26320f16ab47a0af87bf5dc89e647a
 msgid ""
 "The first encryption call with ``out == NULL`` queries the required output "
 "size. RSA encryption is binary-safe and accepts an explicit input length. "
@@ -165,40 +172,40 @@ msgstr ""
 "``out == NULL``을 사용한 첫 번째 암호화 호출은 필요한 출력 크기를 쿼리합니다. RSA 암호화는 바이너리 안전하며 명시적인 "
 "입력 길이를 허용합니다. 최대 일반 텍스트 크기는 ``ss_rsa_max_plaintext_len``에 의해 반환됩니다."
 
-#: ../../Crypto/Crypto.rst:113 c192246cb34a43808801654736d8fce8
+#: ../../Crypto/Crypto.rst:117 c192246cb34a43808801654736d8fce8
 msgid "Public and private keys can be stored as PEM files:"
 msgstr "공개 및 개인 키는 PEM 파일로 저장할 수 있습니다."
 
-#: ../../Crypto/Crypto.rst:124 ddd2778c646f42898403f65a835627bf
+#: ../../Crypto/Crypto.rst:128 ddd2778c646f42898403f65a835627bf
 msgid "ECDH API"
 msgstr "ECDH API"
 
-#: ../../Crypto/Crypto.rst:126 67c165608ff34545ad59d22f734c0266
+#: ../../Crypto/Crypto.rst:130 67c165608ff34545ad59d22f734c0266
 msgid ""
 "ECDH key pairs are created with ``ss_ecdh_keypair_generate``. The supported "
 "curve names are:"
 msgstr ""
 "ECDH 키 쌍은 ``ss_ecdh_keypair_generate``를 사용하여 생성됩니다. 지원되는 곡선 이름은 다음과 같습니다."
 
-#: ../../Crypto/Crypto.rst:129 737f5f74529f452da38ae54c1e6bdcea
+#: ../../Crypto/Crypto.rst:133 737f5f74529f452da38ae54c1e6bdcea
 msgid "``SS_ECDH_CURVE_P256``"
 msgstr "``SS_ECDH_CURVE_P256``"
 
-#: ../../Crypto/Crypto.rst:130 4e6a452663d84c9eac9615a421d54edb
+#: ../../Crypto/Crypto.rst:134 4e6a452663d84c9eac9615a421d54edb
 msgid "``SS_ECDH_CURVE_P384``"
 msgstr "``SS_ECDH_CURVE_P384``"
 
-#: ../../Crypto/Crypto.rst:131 e421bbf3383e4079820642816c90e921
+#: ../../Crypto/Crypto.rst:135 e421bbf3383e4079820642816c90e921
 msgid "``SS_ECDH_CURVE_P521``"
 msgstr "``SS_ECDH_CURVE_P521``"
 
-#: ../../Crypto/Crypto.rst:133 5f2b04819c5a4d7b8e96512bca6cf86e
+#: ../../Crypto/Crypto.rst:137 5f2b04819c5a4d7b8e96512bca6cf86e
 msgid ""
 "Public keys are exchanged as PEM SubjectPublicKeyInfo strings. Parsed peer "
 "keys are checked before use."
 msgstr "공개 키는 PEM SubjectPublicKeyInfo 문자열로 교환됩니다. 구문 분석된 피어 키는 사용 전에 확인됩니다."
 
-#: ../../Crypto/Crypto.rst:156 0f40f41880b94e828bbd58ac631754a1
+#: ../../Crypto/Crypto.rst:160 0f40f41880b94e828bbd58ac631754a1
 msgid ""
 "The higher-level ``ss_ecdh_seal`` and ``ss_ecdh_open`` APIs are recommended "
 "for application payloads. They derive an AES-256-GCM key with HKDF-SHA256, "
@@ -207,11 +214,11 @@ msgstr ""
 "애플리케이션 페이로드에는 더 높은 수준의 ``ss_ecdh_seal`` 및 ``ss_ecdh_open`` API가 권장됩니다. HKDF-"
 "SHA256을 사용하여 AES-256-GCM 키를 파생하고 임의의 솔트와 IV를 포함하며 선택적 AAD를 인증합니다."
 
-#: ../../Crypto/Crypto.rst:160 84614363b3104ac4a44f044dad010eeb
+#: ../../Crypto/Crypto.rst:164 84614363b3104ac4a44f044dad010eeb
 msgid "The ``ss_ecdh_seal`` output format is:"
 msgstr "``ss_ecdh_seal`` 출력 형식은 다음과 같습니다:"
 
-#: ../../Crypto/Crypto.rst:166 77967b230b95484a836884d1d717eab3
+#: ../../Crypto/Crypto.rst:170 77967b230b95484a836884d1d717eab3
 msgid ""
 "The fixed overhead is ``SS_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext "
 "is allowed. A failed tag check returns ``SS_ERR_AUTH_FAILED`` and no "
@@ -220,11 +227,11 @@ msgstr ""
 "고정 오버헤드는 ``SS_ECDH_SEAL_OVERHEAD``(44바이트)입니다. 빈 일반 텍스트가 허용됩니다. 실패한 태그 확인은 "
 "``SS_ERR_AUTH_FAILED``를 반환하고 일반 텍스트는 반환되지 않습니다."
 
-#: ../../Crypto/Crypto.rst:171 1c226278e4b746a8b67358e6f6b12b25
+#: ../../Crypto/Crypto.rst:175 1c226278e4b746a8b67358e6f6b12b25
 msgid "Security Notes"
 msgstr "보안 참고사항"
 
-#: ../../Crypto/Crypto.rst:173 22976e7f6a74484abe6856c1e38ff27d
+#: ../../Crypto/Crypto.rst:177 22976e7f6a74484abe6856c1e38ff27d
 msgid ""
 "ECDH provides key agreement, but it does not authenticate public-key "
 "ownership by itself. Public keys must be exchanged over an authenticated "
@@ -233,7 +240,7 @@ msgstr ""
 "ECDH는 키 계약을 제공하지만 공개 키 소유권을 자체적으로 인증하지는 않습니다. 공개 키는 인증된 채널을 통해 교환되거나 외부 "
 "서명/인증서 메커니즘을 통해 확인되어야 합니다."
 
-#: ../../Crypto/Crypto.rst:177 532db57edd2f478f94bca8860aaead12
+#: ../../Crypto/Crypto.rst:181 532db57edd2f478f94bca8860aaead12
 msgid ""
 "Private key files may be protected with a passphrase. Applications should "
 "restrict their file permissions and avoid logging passphrases, private keys,"
@@ -242,51 +249,64 @@ msgstr ""
 "개인 키 파일은 암호로 보호될 수 있습니다. 애플리케이션은 파일 권한을 제한하고 암호, 개인 키 또는 일반 텍스트 세션 키를 기록하지 "
 "않아야 합니다."
 
-#: ../../Crypto/Crypto.rst:182 599771577d30442180350e4e07c480f1
+#: ../../Crypto/Crypto.rst:186 599771577d30442180350e4e07c480f1
 msgid "Error Handling"
 msgstr "오류 처리"
 
-#: ../../Crypto/Crypto.rst:184 59bde59a25ea4fe5a46ea5b7d29a4569
+#: ../../Crypto/Crypto.rst:188 59bde59a25ea4fe5a46ea5b7d29a4569
 msgid "The main error codes are:"
 msgstr "주요 오류 코드는 다음과 같습니다."
 
-#: ../../Crypto/Crypto.rst:186 a20ad03d7c334f02b5ff41c9b5bbee92
+#: ../../Crypto/Crypto.rst:190 a20ad03d7c334f02b5ff41c9b5bbee92
 msgid "``SS_ERR_INVALID_ARG`` - invalid pointer or length."
 msgstr "``SS_ERR_INVALID_ARG`` - 포인터 또는 길이가 잘못되었습니다."
 
-#: ../../Crypto/Crypto.rst:187 00d6efea688847c79215e48f3a13b2d1
+#: ../../Crypto/Crypto.rst:191 00d6efea688847c79215e48f3a13b2d1
 msgid "``SS_ERR_NOMEM`` - allocation failure."
 msgstr "``SS_ERR_NOMEM`` - 할당 실패."
 
-#: ../../Crypto/Crypto.rst:188 186f19fb4245429e9d15af05cad0f907
+#: ../../Crypto/Crypto.rst:192 186f19fb4245429e9d15af05cad0f907
 msgid "``SS_ERR_OPENSSL`` - OpenSSL operation failure."
 msgstr "``SS_ERR_OPENSSL`` - OpenSSL 작업 실패."
 
-#: ../../Crypto/Crypto.rst:189 599dddb1941c4b1cba7c1d5d9d8b1034
+#: ../../Crypto/Crypto.rst:193 599dddb1941c4b1cba7c1d5d9d8b1034
 msgid "``SS_ERR_IO`` - file operation failure."
 msgstr "``SS_ERR_IO`` - 파일 작업 실패."
 
-#: ../../Crypto/Crypto.rst:190 dbb3eeecaf6c4d078923d7ffe0e2ec62
+#: ../../Crypto/Crypto.rst:194 dbb3eeecaf6c4d078923d7ffe0e2ec62
 msgid ""
 "``SS_ERR_PARSE`` - malformed PEM/DER input or wrong private-key passphrase."
 msgstr "``SS_ERR_PARSE`` - 잘못된 PEM/DER 입력 또는 잘못된 개인 키 암호."
 
-#: ../../Crypto/Crypto.rst:191 aadaaf69feba491eaff6dce2aa27b6e8
+#: ../../Crypto/Crypto.rst:195 aadaaf69feba491eaff6dce2aa27b6e8
 msgid "``SS_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient."
 msgstr "``SS_ERR_BUFFER_TOO_SMALL`` - 호출자 출력 버퍼가 부족합니다."
 
-#: ../../Crypto/Crypto.rst:192 50170c9fc49648a1a701a4aaf21d7fed
+#: ../../Crypto/Crypto.rst:196 50170c9fc49648a1a701a4aaf21d7fed
 msgid "``SS_ERR_AUTH_FAILED`` - AES-GCM authentication failed."
 msgstr "``SS_ERR_AUTH_FAILED`` - AES-GCM 인증에 실패했습니다."
 
-#: ../../Crypto/Crypto.rst:193 8c7401db6f7e4cb6bdb2c6d3a2eba0e1
+#: ../../Crypto/Crypto.rst:197 8c7401db6f7e4cb6bdb2c6d3a2eba0e1
 msgid "``SS_ERR_UNSUPPORTED`` - unsupported curve or key type."
 msgstr "``SS_ERR_UNSUPPORTED`` - 지원되지 않는 곡선 또는 키 유형입니다."
 
-#: ../../Crypto/Crypto.rst:194 a2d89fdafbf645b48d94f9cb888e953a
+#: ../../Crypto/Crypto.rst:198 a2d89fdafbf645b48d94f9cb888e953a
 msgid "``SS_ERR_DECRYPT`` - RSA decryption failed."
 msgstr "``SS_ERR_DECRYPT`` - RSA 암호 해독에 실패했습니다."
 
-#: ../../Crypto/Crypto.rst:196 153dd51810da4fce893f4cfb3b2b1365
+#: ../../Crypto/Crypto.rst:200 153dd51810da4fce893f4cfb3b2b1365
 msgid "For detailed OpenSSL diagnostics:"
 msgstr "자세한 OpenSSL 진단:"
+
+#~ msgid ""
+#~ "The library is built as a shared object (``libcrypto_api.so``) so it can be "
+#~ "loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes binding "
+#~ "used by the TCP layer to encrypt messages with RSA-OAEP (see the "
+#~ "``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
+#~ "binding looks for the library via ``ctypes.util.find_library`` and in "
+#~ "``build/`` next to the repository root."
+#~ msgstr ""
+#~ "라이브러리는 공유 객체(``libcrypto_api.so``)로 구축되어 Python에서 로드할 수 있습니다. "
+#~ "``src/network_api/rsa_crypto.py``는 RSA-OAEP로 메시지를 암호화하기 위해 TCP 계층에서 사용하는 "
+#~ "ctypes 바인딩입니다(``TCP_Server_APIs`` / ``TCP_Client_APIs`` 암호화된 채널 섹션 참조). 바인딩은"
+#~ " ``ctypes.util.find_library``를 통해 그리고 저장소 루트 옆에 있는 ``build/``에서 라이브러리를 찾습니다."
