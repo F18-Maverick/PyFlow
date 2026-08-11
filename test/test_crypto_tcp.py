@@ -8,6 +8,7 @@ shared libcrypto_api and are skipped when it is not built.
 import contextlib
 import io
 import os
+import socket
 import sys
 import threading
 import time
@@ -32,8 +33,8 @@ pytestmark = pytest.mark.skipif(
     reason="libcrypto_api not built (run cmake -S . -B build && cmake --build build first)",
 )
 
-# Ports are per-test to avoid cross-test interference.
-_PORT_COUNTER = 65000
+_PORT_COUNTER = 65000  # per-test ports avoid cross-test interference
+
 
 
 def _next_port():
@@ -119,6 +120,30 @@ def _wait_disconnected(client, tries=400):
     return False
 
 
+def _server_sock(server, client):
+    """The server-side socket object for a connected client."""
+    return server.clients[client.client_socket.getsockname()]["socket"]
+
+
+def _wait_server_reexchanged(server, client, tries=400):
+    """Wait until the server dropped the socket (decode failure) and
+    re-flipped it (re-exchange complete), or the client died."""
+    sock = _server_sock(server, client)
+    for _ in range(tries):
+        if not client.running:
+            return False
+        if sock not in server._encrypted_sockets:
+            break
+        time.sleep(0.1)
+    for _ in range(tries):
+        if not client.running:
+            return False
+        if sock in server._encrypted_sockets:
+            return True
+        time.sleep(0.1)
+    return False
+
+
 def _roundtrip(client, message, wait=2.5):
     """Send a message and capture both sides' stdout during the exchange."""
     buf = io.StringIO()
@@ -143,17 +168,17 @@ def test_handshake_flips_both_sides_and_stores_keys(tcp_pair):
     time.sleep(0.5)
     assert client.client_socket in client._encrypted_sockets
     assert len(server._encrypted_sockets) == 1
-    # local keypairs generated under pvt_key
-    for role in ("server", "client"):
+    for role in ("server", "client"):  # local keypairs generated under pvt_key
+
         assert os.path.exists(os.path.join(str(tmp_path / "pvt_key"), f"{role}_priv.pem"))
         assert os.path.exists(os.path.join(str(tmp_path / "pvt_key"), f"{role}_pub.pem"))
-    # the TOFU registry was written on both sides
-    server_reg = _registry_entries(server.crypto)
+    server_reg = _registry_entries(server.crypto)  # the TOFU registry was written on both sides
+
     client_reg = _registry_entries(client.crypto)
     assert len(server_reg) == 1  # this client, keyed by (ip, client port)
     assert len(client_reg) == 1  # the server, keyed by (ip, server port)
-    # exchanged peer keys cached as pem files under each side's pub_key
-    names = os.listdir(str(tmp_path / "pub_key"))
+    names = os.listdir(str(tmp_path / "pub_key"))  # exchanged peer keys cached as pem files under each side's pub_key
+
     assert "pub_key.json" in names
     assert any(name.startswith("client_") and name.endswith(".pem") for name in names)
     client_names = os.listdir(str(tmp_path / "pub_key_client"))
@@ -190,9 +215,8 @@ def test_second_connection_passes_tofu(tcp_pair, tmp_path):
     try:
         assert _wait_flip(client2)
         time.sleep(0.5)
-        # same key from a (possibly new) source port: accepted, and the
-        # registry still holds exactly one entry per peer
-        assert len(_registry_entries(server.crypto)) == 1
+        assert len(_registry_entries(server.crypto)) == 1  # same key from a (possibly new) source port: accepted, still one entry per peer
+
         assert len(_registry_entries(client2.crypto)) == 1
         out = _roundtrip(client2, "second connection")
         assert "[server] msg send: second connection" in out
@@ -206,16 +230,13 @@ def test_rotated_client_key_rejected(tcp_pair, tmp_path):
     server, client, _ = tcp_pair
     assert _wait_flip(client)
     time.sleep(0.5)
-    # rotate the client's keypair (as if the user replaced ~/.ssh) and
-    # reload it; the next server->client message cannot be decrypted, so
-    # the client forces a re-exchange and pushes the *new* public key
-    _new_keypair((client.crypto.pub_path, client.crypto.priv_path))
+    _new_keypair((client.crypto.pub_path, client.crypto.priv_path))  # rotate the client's keypair (as if ~/.ssh was replaced) and reload it
+
     client.crypto.reload_own_key()
     _roundtrip(client, "trigger rotation", wait=7.0)
-    # the server rejects the changed key and drops the connection
-    assert _wait_disconnected(client)
-    # the rejected key must not have been recorded
-    assert len(_registry_entries(server.crypto)) == 1
+    assert _wait_disconnected(client)  # the server rejects the changed key and drops the connection
+    assert len(_registry_entries(server.crypto)) == 1  # the rejected key must not have been recorded
+
 
 
 def test_rotated_server_key_rejected(tcp_pair, tmp_path):
@@ -224,14 +245,12 @@ def test_rotated_server_key_rejected(tcp_pair, tmp_path):
     server, client, _ = tcp_pair
     assert _wait_flip(client)
     time.sleep(0.5)
-    # rotate the server's keypair and reload it in the running server;
-    # the next client->server message cannot be decrypted, so the server
-    # forces a re-exchange and pushes its *new* public key
-    _new_keypair((server.crypto.pub_path, server.crypto.priv_path))
+    _new_keypair((server.crypto.pub_path, server.crypto.priv_path))  # rotate the server's keypair and reload it in the running server
+
     server.crypto.reload_own_key()
     _roundtrip(client, "trigger rotation", wait=7.0)
-    # the client rejects the changed key and closes the connection
-    assert _wait_disconnected(client)
+    assert _wait_disconnected(client)  # the client rejects the changed key and closes the connection
+
     assert len(_registry_entries(client.crypto)) == 1
 
 
@@ -307,3 +326,90 @@ def test_encryption_disabled_is_plaintext(tmp_path):
     finally:
         client.close()
         server.stop()
+
+
+def test_replay_of_old_ciphertext_rejected(tcp_pair):
+    """Replaying an old ciphertext (correct session nonce, stale seq) is
+    dropped by the receiver and does not disturb the connection."""
+    server, client, _ = tcp_pair
+    assert _wait_flip(client)
+    time.sleep(0.5)
+    out = _roundtrip(client, "first message")  # consume seq 0 with a normal message
+
+    assert "[server] msg send: first message" in out
+    nonce = client._crypto_my_nonce  # replay a ciphertext carrying seq 0 (already consumed) under the current session nonce
+
+    body = client.crypto.encrypt_for_peer(client._crypto_server_pem_path, "REPLAY_MARKER")
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        client._send_raw(client.client_socket, f"{nonce}|0|{body}")
+        time.sleep(1.2)
+    assert "REPLAY_MARKER" not in buf.getvalue()
+    out2 = _roundtrip(client, "after replay")  # the connection is still healthy
+
+    assert "[server] msg send: after replay" in out2
+
+
+def test_replay_across_sessions_rejected(tcp_pair):
+    """A ciphertext from a previous session (stale nonce) is rejected
+    even at seq 0: the session nonce changes every handshake."""
+    server, client, _ = tcp_pair
+    assert _wait_flip(client)
+    time.sleep(0.5)
+    old_nonce = client._crypto_my_nonce
+    body = client.crypto.encrypt_for_peer(client._crypto_server_pem_path, "OLD_SESSION")
+    client._send_raw(client.client_socket, f"{'a'*32}|0|AAAA")  # force a re-exchange (new nonce): trigger a decode failure on the server with garbage
+    assert _wait_server_reexchanged(server, client)
+    assert client.running
+    assert client._crypto_my_nonce != old_nonce
+    buf = io.StringIO()  # replay the old-session ciphertext: nonce mismatch -> dropped
+
+    with contextlib.redirect_stdout(buf):
+        client._send_raw(client.client_socket, f"{old_nonce}|0|{body}")
+        time.sleep(1.2)
+    assert "OLD_SESSION" not in buf.getvalue()
+
+
+def test_unauthenticated_pub_push_ignored(tmp_path):
+    """A /crypto_pub_key push from a connection that never started the
+    handshake is ignored: it cannot poison the TOFU registry."""
+    ssh_dir = tmp_path / "ssh"
+    ssh_dir.mkdir()
+    port = _next_port()
+    server = TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=True,
+    )
+    _redirect_crypto(server.crypto, tmp_path, ssh_dir, "pub_key")
+    threading.Thread(target=server.start_TCP_Server, daemon=True).start()
+    time.sleep(0.4)
+    raw = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    raw.settimeout(3)
+    raw.connect(("127.0.0.1", port))
+    raw.sendall(b"/crypto_pub_key 0\n")
+    time.sleep(1.0)
+    raw.close()
+    try:
+        assert len(_registry_entries(server.crypto)) == 0  # no registry entry and no cached key file were created
+
+        names = os.listdir(str(tmp_path / "pub_key"))
+        assert not any(name.endswith(".pem") for name in names)
+    finally:
+        server.stop()
+
+
+def test_decode_failure_burst_closes_connection(tcp_pair):
+    """After MAX_DECODE_FAILURES consecutive decode failures the
+    circuit breaker closes the connection instead of re-exchanging
+    forever."""
+    server, client, _ = tcp_pair
+    assert _wait_flip(client)
+    time.sleep(0.5)
+    for i in range(3):
+        client._send_raw(client.client_socket, f"{'a'*32}|{i}|AAAA")
+        if not _wait_server_reexchanged(server, client):
+            break  # breaker fired, connection closed
+    assert _wait_disconnected(client)

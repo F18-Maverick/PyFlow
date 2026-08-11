@@ -23,6 +23,7 @@ cmake --build build``); see ``load_library`` for the search paths.
 
 import ctypes
 import ctypes.util
+import contextlib
 import hashlib
 import json
 import os
@@ -30,14 +31,9 @@ import tempfile
 import threading
 import uuid
 
-# Suffix appended to every plaintext before RSA-OAEP encryption. The
-# receiver strips it after a successful decrypt, so a message decoded
-# with a wrong/stale key (decrypt failure or missing suffix) is
-# unmistakably detected and triggers a public-key re-exchange.
-VALID_SIGN = "_VALID"
+VALID_SIGN = "_VALID"  # plaintext suffix; a decrypt missing it signals a stale/wrong key
 
-# ss_err_t values, must match ss_crypto.h.
-SS_OK = 0
+SS_OK = 0  # ss_err_t values, must match ss_crypto.h
 SS_ERR_INVALID_ARG = 1
 SS_ERR_NOMEM = 2
 SS_ERR_OPENSSL = 3
@@ -48,8 +44,7 @@ SS_ERR_AUTH_FAILED = 7
 SS_ERR_UNSUPPORTED = 8
 SS_ERR_DECRYPT = 9
 
-# Default size for generated keys (bits). ss_rsa_keygen accepts 2048..16384.
-DEFAULT_KEY_BITS = 2048
+DEFAULT_KEY_BITS = 2048  # generated keys (bits); ss_rsa_keygen accepts 2048..16384
 
 
 class CryptoLibraryError(RuntimeError):
@@ -85,8 +80,7 @@ class _Library:
         self.lib = ctypes.CDLL(path)
         _configure(self.lib)
 
-    def __getattr__(self, name):
-        # Expose the CDLL functions directly on the wrapper.
+    def __getattr__(self, name):  # expose the CDLL functions directly on the wrapper
         return getattr(self.lib, name)
 
 
@@ -199,6 +193,8 @@ class RsaCrypto:
         self.mac = get_local_mac()
         self.registry_path = os.path.join(self.pub_key_dir, "pub_key.json")
         self._registry_lock = threading.Lock()
+        self._key_lock = threading.Lock()  # serialises _priv_key use/reload so a handle is never freed mid-decrypt (no-GIL safe)
+        self._peer_pub_cache_lock = threading.Lock()  # peer-key cache; the encrypt loop holds it so a cached handle is never freed mid-encrypt
         for directory in (self.pvt_key_dir, self.pub_key_dir):
             os.makedirs(directory, exist_ok=True)
         self.priv_path = None
@@ -206,21 +202,25 @@ class RsaCrypto:
         self._priv_key = None
         self._peer_pub_cache = {}  # path -> (mtime, RsaKey)
 
-    # ---- key lifecycle ------------------------------------------------------
 
     def ensure_keys(self, force_reload=False):
-        """Load the RSA keypair (see module docstring) and cache handles."""
-        if not force_reload and self._priv_key is not None and self.priv_path is not None:
-            return
-        lib = load_library()
-        if self.custom_keys is not None and self._validate_custom_keys(
-            lib, self.custom_keys
-        ):
-            self.priv_path = self.custom_keys[1]
-            self.pub_path = self.custom_keys[0]
-            self._priv_key = self._read_priv_handle(lib, self.priv_path)
-            return
-        priv_candidates = [os.path.join(self.ssh_dir, "id_rsa")]
+        """Load the RSA keypair (see module docstring) and cache handles.
+
+        Runs under ``_key_lock``: the private-key handle must never be
+        replaced (or freed on GC) while another thread is decrypting.
+        """
+        with self._key_lock:
+            if not force_reload and self._priv_key is not None and self.priv_path is not None:
+                return
+            lib = load_library()
+            if self.custom_keys is not None and self._validate_custom_keys(
+                lib, self.custom_keys
+            ):
+                self.priv_path = self.custom_keys[1]
+                self.pub_path = self.custom_keys[0]
+                self._priv_key = self._read_priv_handle(lib, self.priv_path)
+                return
+            priv_candidates = [os.path.join(self.ssh_dir, "id_rsa")]
         priv_path = None
         for candidate in priv_candidates:
             if os.path.exists(candidate):
@@ -238,10 +238,7 @@ class RsaCrypto:
                 self._generate_keypair(lib, priv_path, pub_path)
         self.priv_path = priv_path
         self.pub_path = os.path.join(self.pvt_key_dir, "{}_pub.pem".format(self.role))
-        # (Re)derive the PEM public key from the private key: the SSH
-        # public file (~/.ssh/id_rsa.pub) is OpenSSH-format and cannot
-        # be parsed by the C library.
-        priv_key = self._read_priv_handle(lib, self.priv_path)
+        priv_key = self._read_priv_handle(lib, self.priv_path)  # pub re-derived from priv: ~/.ssh pub file is OpenSSH-format, unparseable here
         if os.path.exists(self.pub_path):
             try:
                 os.remove(self.pub_path)
@@ -254,7 +251,8 @@ class RsaCrypto:
 
     def reload_own_key(self):
         """Re-read the private key (e.g. after a ~/.ssh rotation)."""
-        self._priv_key = None
+        with self._key_lock:
+            self._priv_key = None
         self.ensure_keys(force_reload=True)
 
     def _read_priv_handle(self, lib, path):
@@ -291,8 +289,7 @@ class RsaCrypto:
             ) != SS_OK or not priv_handle.value:
                 return False
             priv_key = RsaKey(priv_handle.value, lib)
-            # pairing probe: public-encrypt -> private-decrypt must round-trip
-            probe = b"custom-key-pair-check"
+            probe = b"custom-key-pair-check"  # pairing probe: pub-encrypt -> priv-decrypt must round-trip
             in_buf = (ctypes.c_uint8 * len(probe)).from_buffer_copy(probe)
             out_len = ctypes.c_size_t(0)
             if lib.ss_rsa_encrypt(
@@ -335,7 +332,6 @@ class RsaCrypto:
         if err != SS_OK:
             raise RuntimeError("ss_rsa_write_pub failed: {}".format(err))
 
-    # ---- peer public key registry (TOFU) -------------------------------------
 
     def peer_pem_path(self, peer_role, peer_ip, peer_port):
         """Path of the exchanged public key file for ``peer_role`` at
@@ -371,6 +367,43 @@ class RsaCrypto:
                 pass
             raise
 
+    @contextlib.contextmanager
+    def _registry_file_lock(self):
+        """Cross-process exclusive lock around the registry file.
+
+        The in-process ``_registry_lock`` serialises threads of one
+        instance; this lock serialises separate processes (e.g. several
+        server instances sharing one ``.Flow`` directory) so the
+        read-modify-write of ``pub_key.json`` never loses updates.
+        """
+        lock_path = self.registry_path + ".lock"
+        lock_file = open(lock_path, "a+")
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                if lock_file.tell() == 0:
+                    lock_file.write("\0")
+                    lock_file.flush()
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            if os.name == "nt":
+                import msvcrt
+
+                lock_file.seek(0)
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
+
     def verify_peer_pub(self, peer_ip, peer_port, peer_pem, peer_role):
         """TOFU check-and-record for a peer public key.
 
@@ -389,22 +422,23 @@ class RsaCrypto:
         sha = hashlib.sha256(peer_pem.encode("utf-8")).hexdigest()
         key_str = str((peer_ip, peer_port))
         with self._registry_lock:
-            registry = self._load_registry()
-            for k, v in registry.items():
-                if v[0] == sha:
-                    if k == key_str:
-                        return True, "known key"
-                    if key_str in registry:
-                        return False, "endpoint already claimed by another key"
-                    del registry[k]
-                    registry[key_str] = [sha, peer_pem]
-                    self._save_registry(registry)
-                    return True, "known key, endpoint updated"
-            if key_str in registry:
-                return False, "public key changed for same endpoint"
-            registry[key_str] = [sha, peer_pem]
-            self._save_registry(registry)
-            return True, "first connection (TOFU)"
+            with self._registry_file_lock():
+                registry = self._load_registry()
+                for k, v in registry.items():
+                    if v[0] == sha:
+                        if k == key_str:
+                            return True, "known key"
+                        if key_str in registry:
+                            return False, "endpoint already claimed by another key"
+                        del registry[k]
+                        registry[key_str] = [sha, peer_pem]
+                        self._save_registry(registry)
+                        return True, "known key, endpoint updated"
+                if key_str in registry:
+                    return False, "public key changed for same endpoint"
+                registry[key_str] = [sha, peer_pem]
+                self._save_registry(registry)
+                return True, "first connection (TOFU)"
 
     def store_peer_pem(self, peer_role, peer_ip, peer_port, src_path):
         """Move a freshly received public key file into the key cache."""
@@ -412,11 +446,17 @@ class RsaCrypto:
         import shutil
 
         shutil.move(src_path, dest)
-        self._peer_pub_cache.pop(dest, None)
+        with self._peer_pub_cache_lock:
+            self._peer_pub_cache.pop(dest, None)
 
-    # ---- encrypt / decrypt ---------------------------------------------------
 
     def _load_peer_pub(self, path):
+        """Return the cached RsaKey for ``path``, (re)parsing on change.
+
+        The caller must hold ``_peer_pub_cache_lock``: the returned
+        handle is only safe to use while that lock is held (a concurrent
+        ``store_peer_pem`` may otherwise free it).
+        """
         cached = self._peer_pub_cache.get(path)
         try:
             mtime = os.path.getmtime(path)
@@ -438,25 +478,26 @@ class RsaCrypto:
 
         Returns the ASCII wire body (no trailing newline): each chunk is
         RSA-OAEP encrypted and base64 encoded, chunks joined with ``|``.
-        Raises if no peer key is stored at ``peer_pem_path`` yet.
+        Raises if no peer key is stored at ``peer_pem_path`` yet. The
+        whole encryption runs under ``_peer_pub_cache_lock`` so the peer
+        handle cannot be freed mid-encrypt (no-GIL safe).
         """
         path = peer_pem_path
-        key = self._load_peer_pub(path)
-        if key is None:
-            raise ValueError(
-                "no public key for peer stored at {}".format(path)
-            )
-        payload = plaintext + VALID_SIGN
-        data = payload.encode("utf-8")
-        lib = load_library()
-        max_len = lib.ss_rsa_max_plaintext_len(key.handle)
-        if max_len <= 0:
-            raise RuntimeError("ss_rsa_max_plaintext_len returned {}".format(max_len))
-        parts = []
-        for offset in range(0, len(data), max_len):
-            chunk = data[offset : offset + max_len]
-            parts.append(self._rsa_encrypt_chunk(lib, key, chunk))
-        return "|".join(parts)
+        with self._peer_pub_cache_lock:
+            key = self._load_peer_pub(path)
+            if key is None:
+                raise ValueError("no public key for peer stored at {}".format(path))
+            payload = plaintext + VALID_SIGN
+            data = payload.encode("utf-8")
+            lib = load_library()
+            max_len = lib.ss_rsa_max_plaintext_len(key.handle)
+            if max_len <= 0:
+                raise RuntimeError("ss_rsa_max_plaintext_len returned {}".format(max_len))
+            parts = []
+            for offset in range(0, len(data), max_len):
+                chunk = data[offset : offset + max_len]
+                parts.append(self._rsa_encrypt_chunk(lib, key, chunk))
+            return "|".join(parts)
 
     def _rsa_encrypt_chunk(self, lib, key, chunk):
         in_buf = (ctypes.c_uint8 * len(chunk)).from_buffer_copy(chunk)
@@ -477,28 +518,30 @@ class RsaCrypto:
 
         Returns ``(True, plaintext)`` on success, or ``(False, None)``
         when the key is stale/wrong or the ``_VALID`` signature is
-        missing.
+        missing. Runs under ``_key_lock`` so the handle cannot be freed
+        by a concurrent ``reload_own_key`` (no-GIL safe).
         """
-        if self._priv_key is None:
-            return False, None
-        lib = load_library()
-        try:
-            import base64
-
-            plain = b""
-            for part in wire_body.split("|"):
-                if not part:
-                    return False, None
-                chunk = base64.b64decode(part)
-                ok, out = self._rsa_decrypt_chunk(lib, chunk)
-                if not ok:
-                    return False, None
-                plain += out
-            if not plain.endswith(VALID_SIGN.encode("utf-8")):
+        with self._key_lock:
+            if self._priv_key is None:
                 return False, None
-            return True, plain[: -len(VALID_SIGN)].decode("utf-8")
-        except Exception:
-            return False, None
+            lib = load_library()
+            try:
+                import base64
+
+                plain = b""
+                for part in wire_body.split("|"):
+                    if not part:
+                        return False, None
+                    chunk = base64.b64decode(part)
+                    ok, out = self._rsa_decrypt_chunk(lib, chunk)
+                    if not ok:
+                        return False, None
+                    plain += out
+                if not plain.endswith(VALID_SIGN.encode("utf-8")):
+                    return False, None
+                return True, plain[: -len(VALID_SIGN)].decode("utf-8")
+            except Exception:
+                return False, None
 
     def _rsa_decrypt_chunk(self, lib, chunk):
         in_buf = (ctypes.c_uint8 * len(chunk)).from_buffer_copy(chunk)

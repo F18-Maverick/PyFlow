@@ -26,8 +26,7 @@ pytestmark = pytest.mark.skipif(
     reason="libcrypto_api not built (run cmake -S . -B build && cmake --build build first)",
 )
 
-# fixed endpoint used by the registry tests: (peer_ip, peer_port)
-PEER_IP = "127.0.0.1"
+PEER_IP = "127.0.0.1"  # fixed endpoint used by the registry tests
 PEER_PORT = 50001
 
 
@@ -72,8 +71,7 @@ def test_generated_keys_land_in_pvt_key(crypto):
     assert os.path.exists(crypto.pub_path)
     assert crypto.priv_path.startswith(crypto.pvt_key_dir)
     assert os.path.dirname(crypto.priv_path) == crypto.pvt_key_dir
-    # generated private keys must not be world-readable
-    assert os.stat(crypto.priv_path).st_mode & 0o077 == 0
+    assert os.stat(crypto.priv_path).st_mode & 0o077 == 0  # generated private keys must not be world-readable
 
 
 def test_ssh_key_is_reused_when_present(tmp_path):
@@ -142,8 +140,8 @@ def test_custom_keys_invalid_pair_ignored(tmp_path):
     pvt_path = str(tmp_path / "only_pvt.pem")
     assert lib.ss_rsa_write_priv(key.handle, pvt_path.encode(), None) == 0
     del key
-    # pub file missing -> pair invalid -> default lookup used
-    crypto = rsa_crypto.RsaCrypto(
+    crypto = rsa_crypto.RsaCrypto(  # pub file missing -> pair invalid -> default lookup used
+
         "client",
         str(tmp_path),
         str(ssh_dir),
@@ -217,8 +215,8 @@ def test_missing_valid_signature_fails(crypto, peer):
     """A ciphertext whose plaintext lacks the _VALID suffix is rejected."""
     crypto.ensure_keys()
     pem_path = _register(crypto, peer)
-    # encrypt "hello" WITHOUT the _VALID suffix via the C library directly
-    lib = rsa_crypto.load_library()
+    lib = rsa_crypto.load_library()  # encrypt "hello" WITHOUT the _VALID suffix via the C library directly
+
     import base64
     import ctypes
     import src.network_api.rsa_crypto as rc
@@ -238,8 +236,8 @@ def test_missing_valid_signature_fails(crypto, peer):
     wire = base64.b64encode(bytes(out_buf[: out_len.value])).decode("ascii")
     ok, _ = peer.decrypt_with_own(wire)
     assert not ok
-    # while the normal wrapper path (with suffix) still round-trips
-    ok2, plain2 = peer.decrypt_with_own(crypto.encrypt_for_peer(pem_path, "hello"))
+    ok2, plain2 = peer.decrypt_with_own(crypto.encrypt_for_peer(pem_path, "hello"))  # the normal wrapper path (with suffix) still round-trips
+
     assert ok2
     assert plain2 == "hello"
 
@@ -251,12 +249,9 @@ def test_encrypt_without_peer_key_raises(crypto):
 
 
 def test_peer_pem_naming(crypto):
-    # the endpoint in the filename is filesystem-safe: ":" becomes "_"
-    path = crypto.peer_pem_path("server", "fe80::1", 5000)
+    path = crypto.peer_pem_path("server", "fe80::1", 5000)  # the endpoint in the filename is filesystem-safe: ":" becomes "_"
+
     assert path == os.path.join(crypto.pub_key_dir, "server_fe80__1_5000.pem")
-
-
-# ---- TOFU registry ----------------------------------------------------------
 
 
 def _pem_of(crypto):
@@ -319,8 +314,8 @@ def test_tofu_same_endpoint_new_key_rejected(crypto, peer):
     ok, reason = crypto.verify_peer_pub(PEER_IP, PEER_PORT, _pem_of(other), "server")
     assert not ok
     assert "changed" in reason
-    # the original record is untouched
-    registry = _registry(crypto)
+    registry = _registry(crypto)  # the original record is untouched
+
     assert len(registry) == 1
     assert registry[str((PEER_IP, PEER_PORT))][0] != ""
 
@@ -330,8 +325,7 @@ def test_tofu_endpoint_conflict_rejected(crypto, peer):
     crypto.verify_peer_pub(PEER_IP, PEER_PORT, _pem_of(peer), "server")
     other = _other_role(crypto)
     crypto.verify_peer_pub("10.0.0.7", 6000, _pem_of(other), "server")
-    # peer's key is registered at (PEER_IP, PEER_PORT); presenting it
-    # from the endpoint already claimed by another key must be rejected
-    ok, reason = crypto.verify_peer_pub("10.0.0.7", 6000, _pem_of(peer), "server")
+    ok, reason = crypto.verify_peer_pub("10.0.0.7", 6000, _pem_of(peer), "server")  # peer's key is registered at (PEER_IP, PEER_PORT); presenting it from the endpoint claimed by another key must be rejected
+
     assert not ok
     assert "claimed" in reason

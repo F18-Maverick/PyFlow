@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-09 01:46+0800\n"
+"POT-Creation-Date: 2026-08-11 21:48+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: ru <LL@li.org>\n"
@@ -666,16 +666,20 @@ msgid "Handshake"
 msgstr "Рукопожатие"
 
 #: ../../Network_APIs/TCP_Server_APIs.rst:332 ccd18cd2834f41bda1071144d95267b4
+#, fuzzy
 msgid ""
 "The client initiates the exchange by sending a plaintext "
-"``/crypto_key_exchange`` greeting; the server replies with "
-"``/crypto_key_exchange_ack <need-client-pub> <force>``. Both sides then push"
-" their public key files over the file-transfer mechanism (plaintext) and "
-"TOFU-check the received key. Both sides switch to encrypted mode only after "
-"``/crypto_ready`` has been received from the peer (so plaintext and "
-"ciphertext never interleave on a connection). On later connections the keys "
-"are re-exchanged and TOFU-checked again; the exchange is never skipped, only"
-" the identity check short-circuits for known keys."
+"``/crypto_key_exchange <client-nonce>`` greeting; the server replies with "
+"``/crypto_key_exchange_ack <server-nonce> <need-client-pub> <force>``. Both "
+"sides then push their public key files over the file-transfer mechanism "
+"(plaintext) and TOFU-check the received key. Both sides switch to encrypted "
+"mode only after ``/crypto_ready`` has been received from the peer (so "
+"plaintext and ciphertext never interleave on a connection). On later "
+"connections the keys are re-exchanged and TOFU-checked again; the exchange "
+"is never skipped, only the identity check short-circuits for known keys. "
+"Public-key pushes are only accepted from a connection that actually started "
+"the handshake, so an arbitrary unauthenticated peer cannot poison the "
+"registry."
 msgstr ""
 "Клиент инициирует обмен, отправляя открытое текстовое приветствие "
 "``/crypto_key_exchange``; сервер отвечает ``/crypto_key_exchange_ack <need-"
@@ -688,11 +692,34 @@ msgstr ""
 "обмен никогда не пропускается, только проверка личности сокращает известные "
 "ключи."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:343 b61e8c15a51a4fcd8aeedb87fb1206c1
+#: ../../Network_APIs/TCP_Server_APIs.rst:346 cd0aefb51a01422fa8fa62d8980396a3
+msgid "Replay protection"
+msgstr "Защита от повтора"
+
+#: ../../Network_APIs/TCP_Server_APIs.rst:348 219cff1544774209bfdd23fa94476fec
+msgid ""
+"The handshake exchanges a random session nonce, and every encrypted line on "
+"the wire carries it plus a per-connection sequence number: ``<sender-"
+"nonce>|<seq>|<ciphertext>``. The receiver drops a line whose nonce does not "
+"match the current session (ciphertext replayed from an older connection) or "
+"whose sequence number is not the expected one (ciphertext replayed within "
+"the session / out of order); both counters reset when the socket flips to "
+"encrypted mode after a (re-)exchange."
+msgstr ""
+"При рукопожатии происходит обмен случайным одноразовым номером сеанса, и "
+"каждая зашифрованная строка в сети содержит его плюс порядковый номер для "
+"каждого соединения: ``<sender-nonce>|<seq>|<ciphertext>``. Получатель "
+"удаляет строку, nonce которой не соответствует текущему сеансу "
+"(зашифрованный текст воспроизводится из более старого соединения) или чей "
+"порядковый номер не является ожидаемым (зашифрованный текст воспроизводится "
+"внутри сеанса/не в порядке); оба счетчика сбрасываются, когда сокет "
+"переключается в зашифрованный режим после (повторного) обмена."
+
+#: ../../Network_APIs/TCP_Server_APIs.rst:357 b61e8c15a51a4fcd8aeedb87fb1206c1
 msgid "Decode verification and key rotation"
 msgstr "Проверка декодирования и ротация ключей"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:345 b3bf4ecbb32842889e62e79609bfcd16
+#: ../../Network_APIs/TCP_Server_APIs.rst:359 b3bf4ecbb32842889e62e79609bfcd16
 msgid ""
 "Every encrypted plaintext carries the fixed suffix ``_VALID`` (separated by "
 "``_``). If a message cannot be decrypted, or the suffix is missing, the "
@@ -717,7 +744,21 @@ msgstr ""
 "должен удалить устаревшую запись ``pub_key.json`` (или весь файл) на стороне"
 " однорангового узла, чтобы повторно доверять новому ключу."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:364 b85e6f0b61eb4f388cc7c18c08d01c1d
+#: ../../Network_APIs/TCP_Server_APIs.rst:370 ca79adbaea5e4c4c83540e6082bd6efa
+msgid ""
+"Re-exchanges are circuit-broken: after ``MAX_DECODE_FAILURES`` (3) "
+"consecutive decode failures on one connection the connection is closed "
+"instead of re-exchanging, so a garbage-injection or persistent-mismatch "
+"storm cannot spin the loop forever. A successful decryption resets the "
+"counter."
+msgstr ""
+"Повторный обмен является разрывом цепи: после ``MAX_DECODE_FAILURES`` (3) "
+"последовательных ошибок декодирования в одном соединении соединение "
+"закрывается вместо повторного обмена, поэтому впрыск мусора или шторм "
+"постоянного несоответствия не могут вращать цикл вечно. Успешная расшифровка"
+" сбрасывает счетчик."
+
+#: ../../Network_APIs/TCP_Server_APIs.rst:384 b85e6f0b61eb4f388cc7c18c08d01c1d
 #, fuzzy
 msgid ""
 "The `broadcast` function sends a message to all clients in the "
@@ -732,7 +773,7 @@ msgstr ""
 "исключит клиента, указанного параметром exclude_client, при отправке "
 "сообщения."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:378 9b6a44f792db4afea1a0910d14bdfa54
+#: ../../Network_APIs/TCP_Server_APIs.rst:398 9b6a44f792db4afea1a0910d14bdfa54
 #, fuzzy
 msgid ""
 "The `send_msg_to_specific_client` function sends one or more messages to one"
@@ -744,7 +785,7 @@ msgstr ""
 "идентификаторам клиентов. И в аргументы ``message`` следует ввести команду "
 "отправки сообщения."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:382 5c93a8b7df9c4ba592e31a8a7c5d7dad
+#: ../../Network_APIs/TCP_Server_APIs.rst:402 5c93a8b7df9c4ba592e31a8a7c5d7dad
 msgid ""
 "These methods form the server's client I/O loop and ensure reliable message "
 "exchange for connected TCP clients."
@@ -752,11 +793,11 @@ msgstr ""
 "Эти методы образуют цикл клиентского ввода-вывода сервера и обеспечивают "
 "надежный обмен сообщениями для подключенных TCP-клиентов."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:389 fc06292f70904c668e628446b1338225
+#: ../../Network_APIs/TCP_Server_APIs.rst:409 fc06292f70904c668e628446b1338225
 msgid "TCP Server command API"
 msgstr "Командный API TCP-сервера"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:391 ba0fa4e7318744b8b676846bf49e4859
+#: ../../Network_APIs/TCP_Server_APIs.rst:411 ba0fa4e7318744b8b676846bf49e4859
 msgid ""
 "The server supports several built-in commands and a command extension API. "
 "The main entry point is the `handle_command` method, which is invoked for "
@@ -766,7 +807,7 @@ msgstr ""
 "Основной точкой входа является метод handle_command, который вызывается для "
 "любого сообщения, начинающегося с ``/``."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:396 b5777f13d35f4f26ae617247f91c26b0
+#: ../../Network_APIs/TCP_Server_APIs.rst:416 b5777f13d35f4f26ae617247f91c26b0
 #, fuzzy
 msgid ""
 "We support two solutions for command handling: inputting a command in the "
@@ -777,7 +818,7 @@ msgstr ""
 "консоль, а другое — получение команды от других клиентов. Вы также можете "
 "вызывать функции, определенные для команд в коде."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:401 55f3dddd875a4c9c8ae20b9136d46687
+#: ../../Network_APIs/TCP_Server_APIs.rst:421 55f3dddd875a4c9c8ae20b9136d46687
 #, fuzzy
 msgid ""
 "*Note: You can select the solution which you want to use by changing the "
@@ -790,29 +831,29 @@ msgstr ""
 "``True`` разрешает серверу вводить команду в консоли, а ``False`` "
 "запрещает.*"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:408 ad8952a11a4947988db649c68b52a743
+#: ../../Network_APIs/TCP_Server_APIs.rst:428 ad8952a11a4947988db649c68b52a743
 msgid "Built-in client commands include:"
 msgstr "Встроенные клиентские команды включают в себя:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:410 39ff77f126e1412d8406d435655743e1
+#: ../../Network_APIs/TCP_Server_APIs.rst:430 39ff77f126e1412d8406d435655743e1
 msgid "``/help``: returns the available command list and usage hints."
 msgstr ""
 "``/help``: возвращает список доступных команд и подсказки по использованию."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:411 78375e446e9d48f1958b500306d3c73c
+#: ../../Network_APIs/TCP_Server_APIs.rst:431 78375e446e9d48f1958b500306d3c73c
 msgid "``/time``: returns the current server time."
 msgstr "``/time``: возвращает текущее время сервера."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:412 622d1d6fabab4e3c9871b3d9f231c352
+#: ../../Network_APIs/TCP_Server_APIs.rst:432 622d1d6fabab4e3c9871b3d9f231c352
 msgid "``/clients``: returns the list of connected client IDs."
 msgstr ""
 "``/clients``: возвращает список идентификаторов подключенных клиентов."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:413 10f588280ba8440681dc59a414e3af8a
+#: ../../Network_APIs/TCP_Server_APIs.rst:433 10f588280ba8440681dc59a414e3af8a
 msgid "``/quit``: returns a goodbye message and disconnects the client."
 msgstr "``/quit``: возвращает прощальное сообщение и отключает клиента."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:414 9be97d4482b24ae98c3d863f51128eea
+#: ../../Network_APIs/TCP_Server_APIs.rst:434 9be97d4482b24ae98c3d863f51128eea
 msgid ""
 "``/file <file_path> <client_id>``: starts a file transfer request from "
 "client to server."
@@ -820,7 +861,7 @@ msgstr ""
 "``/file <file_path> <client_id>``: запускает запрос на передачу файла от "
 "клиента к серверу."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:415 bebd16ce5960408ebfd51b440943241c
+#: ../../Network_APIs/TCP_Server_APIs.rst:435 bebd16ce5960408ebfd51b440943241c
 msgid ""
 "``/file_folder <folder_path> <client_id>``: starts a folder transfer request"
 " from client to server."
@@ -828,7 +869,7 @@ msgstr ""
 "``/file_folder <folder_path> <client_id>``: запускает запрос на передачу "
 "папки с клиента на сервер."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:416 56efc16c32234ab28bae72fc31310836
+#: ../../Network_APIs/TCP_Server_APIs.rst:436 56efc16c32234ab28bae72fc31310836
 msgid ""
 "``/server_file_transfer_port <port> <client_id>``: internal protocol message"
 " used to coordinate file transfer ports."
@@ -836,7 +877,7 @@ msgstr ""
 "``/server_file_transfer_port <порт> <client_id>``: сообщение внутреннего "
 "протокола, используемое для координации портов передачи файлов."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:418 2f2a9a9f4bb74954b2da2e5e4d9f9169
+#: ../../Network_APIs/TCP_Server_APIs.rst:438 2f2a9a9f4bb74954b2da2e5e4d9f9169
 msgid ""
 "In `handle_command`, the server will first check if the command matches any "
 "built-in commands. If it does, the `handle_command` will call the functions "
@@ -846,7 +887,7 @@ msgstr ""
 "либо встроенным командам. Если это произойдет, `handle_command` вызовет "
 "функции, определенные для команд."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:423 d5c00491ac2343c597c6bad8a8398ecc
+#: ../../Network_APIs/TCP_Server_APIs.rst:443 d5c00491ac2343c597c6bad8a8398ecc
 msgid ""
 "If a command is not recognized by the built-in handler, `handle_command` "
 "will check if it matches any registered custom commands from the command "
@@ -860,15 +901,15 @@ msgstr ""
 "зарегистрирована, «handle_command» вызовет функцию, определенную для этой "
 "команды. API расширения команд определяется как:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:441 996f9af0f74e4e3a91427fe3c5ab134e
+#: ../../Network_APIs/TCP_Server_APIs.rst:461 996f9af0f74e4e3a91427fe3c5ab134e
 msgid "The args of the `register_command` function are as follows:"
 msgstr "Аргументы функции `register_command` следующие:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:444 1cecc25c6761455dbace5be3acfd7a86
+#: ../../Network_APIs/TCP_Server_APIs.rst:464 1cecc25c6761455dbace5be3acfd7a86
 msgid "``command_name``: The name of the command to register."
 msgstr "``command_name``: имя регистрируемой команды."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:446 dcc654ebd8e442a8bdc84d7a10b6529c
+#: ../../Network_APIs/TCP_Server_APIs.rst:466 dcc654ebd8e442a8bdc84d7a10b6529c
 msgid ""
 "*Note: The ``command_name`` should start with a slash (e.g., "
 "``/my_command``) to be recognized as a command.*"
@@ -876,11 +917,11 @@ msgstr ""
 "*Примечание: ``имя_команды`` должно начинаться с косой черты (например, "
 "``/my_command``), чтобы его можно было распознать как команду.*"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:449 318f344187d94270a1a4d72570885b0e
+#: ../../Network_APIs/TCP_Server_APIs.rst:469 318f344187d94270a1a4d72570885b0e
 msgid "``handler``: The function to call when the command is received."
 msgstr "``handler``: функция, вызываемая при получении команды."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:451 b1975fd3ac9b4b1d881ec7e426bde717
+#: ../../Network_APIs/TCP_Server_APIs.rst:471 b1975fd3ac9b4b1d881ec7e426bde717
 #, fuzzy
 msgid ""
 "*Note: The ``handler`` function must have exactly three parameters: "
@@ -896,11 +937,11 @@ msgstr ""
 "будет принят как адрес клиента, отправившего команду, а параметр ``command``"
 " будет содержать фактическую командную строку.*"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:459 41a12356235c4a84a313c89e9014dfd7
+#: ../../Network_APIs/TCP_Server_APIs.rst:479 41a12356235c4a84a313c89e9014dfd7
 msgid "``where_to_run``: Specifies where the command should be executed."
 msgstr "``where_to_run``: указывает, где должна быть выполнена команда."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:460 dbd6f0bf76c24392a9a8c8881a242f37
+#: ../../Network_APIs/TCP_Server_APIs.rst:480 dbd6f0bf76c24392a9a8c8881a242f37
 msgid ""
 "``run_in_thread``: A boolean indicating whether to run the command in a "
 "separate thread."
@@ -908,7 +949,7 @@ msgstr ""
 "``run_in_thread``: логическое значение, указывающее, следует ли запускать "
 "команду в отдельном потоке."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:462 b01ae3ada1c24cd7893860085676d8ec
+#: ../../Network_APIs/TCP_Server_APIs.rst:482 b01ae3ada1c24cd7893860085676d8ec
 msgid ""
 "This extension API allows server-side and console-side custom commands to be"
 " registered dynamically. Valid values for ``where_to_run`` are "
@@ -923,7 +964,7 @@ msgstr ""
 "означает, что команда будет обработана, когда сервер введет команду в "
 "консоль."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:471 c6e04ec672f840a4b2825d247ea454b1
+#: ../../Network_APIs/TCP_Server_APIs.rst:491 c6e04ec672f840a4b2825d247ea454b1
 #, fuzzy
 msgid ""
 "*Note: It's true that the valid values for ``where_to_run`` are not ideal, "
@@ -932,7 +973,7 @@ msgstr ""
 "*Примечание: это правда, что допустимые значения для ``where_to_run`` "
 "слишком странные, но мы не нашли лучшего способа определить это.*"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:475 c16f63a156b94fec815ca854db5582e5
+#: ../../Network_APIs/TCP_Server_APIs.rst:495 c16f63a156b94fec815ca854db5582e5
 msgid ""
 "The ways to run the command will be different according to the args "
 "``run_in_thread``. If ``run_in_thread`` is ``True``, the command handler "
@@ -946,7 +987,7 @@ msgstr ""
 "сервера. Если ``run_in_thread`` имеет значение ``False``, обработчик команд "
 "будет выполняться синхронно в главном потоке сервера."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:483 5bb8206ec18f4e30b041f59d8f01149b
+#: ../../Network_APIs/TCP_Server_APIs.rst:503 5bb8206ec18f4e30b041f59d8f01149b
 #, fuzzy
 msgid ""
 "*Note: We store the registered commands in a list variable with two "
@@ -973,7 +1014,7 @@ msgstr ""
 "Она содержит все команды, которые должны выполняться в отдельном потоке или "
 "нет.*"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:502 7c89b48e35294024ac14fbe88f8185c0
+#: ../../Network_APIs/TCP_Server_APIs.rst:522 7c89b48e35294024ac14fbe88f8185c0
 msgid ""
 "After that, the command handler will be called according to the command "
 "name, and run them by a command executor which is defined as:"
@@ -981,7 +1022,7 @@ msgstr ""
 "После этого обработчик команд будет вызываться в соответствии с именем "
 "команды и запускать их исполнителем команды, который определяется как:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:516 adad339fc05047dd81c3bd67171a6789
+#: ../../Network_APIs/TCP_Server_APIs.rst:536 adad339fc05047dd81c3bd67171a6789
 msgid ""
 "In this executor function, there is a try-except code block to catch the "
 "error when running the command handler. If there is an error when running "
@@ -999,7 +1040,7 @@ msgstr ""
 "команды с аргументами команды, а также сокетом клиента и адресом клиента, "
 "если команда поступает со стороны клиента."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:526 310214b7550f4c098c28e4f100ef1382
+#: ../../Network_APIs/TCP_Server_APIs.rst:546 310214b7550f4c098c28e4f100ef1382
 #, fuzzy
 msgid ""
 "If the command doesn't run in the thread, the command executor will be "
@@ -1012,7 +1053,7 @@ msgstr ""
 " в отдельном потоке, исполнитель команды будет отправлен в пул потоков "
 "сервера с использованием метода submit_task, который определяется как:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:541 4f8e669268de4c1995128b1a5bc222cf
+#: ../../Network_APIs/TCP_Server_APIs.rst:561 4f8e669268de4c1995128b1a5bc222cf
 msgid ""
 "The `submit_task` method is a helper function that submits a callable to the"
 " server's internal thread pool executor. It accepts a function and its "
@@ -1026,7 +1067,7 @@ msgstr ""
 "позволяет запускать длительные или блокирующие обработчики команд без "
 "блокировки основного цикла сервера."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:548 ca419b79f5ee4a70bf4bb9da3b99b6d5
+#: ../../Network_APIs/TCP_Server_APIs.rst:568 ca419b79f5ee4a70bf4bb9da3b99b6d5
 msgid ""
 "In this high-level TCP network protocol, a temporary TCP server and client "
 "can also be created very simply. The temporary TCP server or client can be "
@@ -1041,11 +1082,11 @@ msgstr ""
 "Например, функции передачи файлов. API для создания временного TCP-сервера и"
 " клиента определяются как:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:576 eae1ee5c47054ae4b41768aa92968c4a
+#: ../../Network_APIs/TCP_Server_APIs.rst:596 eae1ee5c47054ae4b41768aa92968c4a
 msgid "TCP Server console commands"
 msgstr "Консольные команды TCP-сервера"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:578 b98ca5b9177e40598f33d3faba17a3c6
+#: ../../Network_APIs/TCP_Server_APIs.rst:598 b98ca5b9177e40598f33d3faba17a3c6
 msgid ""
 "The server console input thread accepts administrative commands when "
 "``is_input_command_in_console`` is ``True``. Supported console commands "
@@ -1055,20 +1096,20 @@ msgstr ""
 "``is_input_command_in_console`` имеет значение ``True``. Поддерживаемые "
 "консольные команды включают:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:582 682feeccb237422984cfe829eb5c6e47
+#: ../../Network_APIs/TCP_Server_APIs.rst:602 682feeccb237422984cfe829eb5c6e47
 msgid "``/stop``: stops the server and closes all active connections."
 msgstr "``/stop``: останавливает сервер и закрывает все активные соединения."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:583 7faacc60383b4bd8ae73abfa19246238
+#: ../../Network_APIs/TCP_Server_APIs.rst:603 7faacc60383b4bd8ae73abfa19246238
 msgid "``/status``: prints the current connection count and running state."
 msgstr ""
 "``/status``: печатает текущее количество подключений и состояние работы."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:584 ec8be449dbe1480c88dffd6f3122b57b
+#: ../../Network_APIs/TCP_Server_APIs.rst:604 ec8be449dbe1480c88dffd6f3122b57b
 msgid "``/clients``: prints the connected clients and their connection times."
 msgstr "``/clients``: печатает подключенных клиентов и время их подключения."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:585 2b9307a16cd34c37ba22d668072d7597
+#: ../../Network_APIs/TCP_Server_APIs.rst:605 2b9307a16cd34c37ba22d668072d7597
 msgid ""
 "``/send_msg <message...> <client_id1> <client_id2> ...``: sends one or more "
 "messages to specific clients."
@@ -1076,7 +1117,7 @@ msgstr ""
 "``/send_msg <сообщение...> <client_id1> <client_id2> ...``: отправляет одно "
 "или несколько сообщений определенным клиентам."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:586 b962dfd9e7ab46c8886be80f394a35d1
+#: ../../Network_APIs/TCP_Server_APIs.rst:606 b962dfd9e7ab46c8886be80f394a35d1
 msgid ""
 "``/file <file_path> <client_id>``: sends a file from the server to a "
 "specific client."
@@ -1084,7 +1125,7 @@ msgstr ""
 "``/file <путь_файла> <client_id>``: отправляет файл с сервера определенному "
 "клиенту."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:587 0ef5aed4f7394d4aad9114a638940911
+#: ../../Network_APIs/TCP_Server_APIs.rst:607 0ef5aed4f7394d4aad9114a638940911
 msgid ""
 "``/file_folder <folder_path> <client_id>``: sends a folder from the server "
 "to a specific client."
@@ -1092,7 +1133,7 @@ msgstr ""
 "``/file_folder <folder_path> <client_id>``: отправляет папку с сервера "
 "конкретному клиенту."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:588 0f1f7a88823d4b1db348a242bf91b718
+#: ../../Network_APIs/TCP_Server_APIs.rst:608 0f1f7a88823d4b1db348a242bf91b718
 msgid ""
 "``/multiple_file_multiple_client <file1> <file2> ... <client1> <client2> "
 "...``: sends multiple files to multiple clients."
@@ -1100,7 +1141,7 @@ msgstr ""
 "``/multiple_file_multiple_client <file1> <file2> ... <client1> <client2> "
 "...``: отправляет несколько файлов нескольким клиентам."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:589 edd28071a328408494c4a3146b3644c2
+#: ../../Network_APIs/TCP_Server_APIs.rst:609 edd28071a328408494c4a3146b3644c2
 msgid ""
 "``/diff_multiple_file_diff_multiple_client <file1> <file2> ... <client1> "
 "<client2> ...``: sends different file lists to different clients."
@@ -1108,11 +1149,11 @@ msgstr ""
 "``/diff_multiple_file_diff_multiple_client <file1> <file2> ... <client1> "
 "<client2> ...``: отправляет разные списки файлов разным клиентам."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:590 f2e3a54d683c46ddad18f2ab5454bc4d
+#: ../../Network_APIs/TCP_Server_APIs.rst:610 f2e3a54d683c46ddad18f2ab5454bc4d
 msgid "``/help``: prints a help summary of console commands."
 msgstr "``/help``: печатает справку по консольным командам."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:592 7d665ee27bfa445bb3de5b96a7fcbcd4
+#: ../../Network_APIs/TCP_Server_APIs.rst:612 7d665ee27bfa445bb3de5b96a7fcbcd4
 msgid ""
 "These console commands make it easy to manage the active server and perform "
 "server-initiated file transfers without modifying the code."
@@ -1120,7 +1161,7 @@ msgstr ""
 "Эти консольные команды упрощают управление активным сервером и выполнение "
 "инициируемой сервером передачи файлов без изменения кода."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:596 ee9f05c9d0e44e98aa098d39a8c4547f
+#: ../../Network_APIs/TCP_Server_APIs.rst:616 ee9f05c9d0e44e98aa098d39a8c4547f
 #, fuzzy
 msgid ""
 "*Note: It is too long to introduce all the console commands, so for more "
@@ -1130,11 +1171,11 @@ msgstr ""
 "получения более подробной информации см. раздел :ref:`tcp-server-console-"
 "commands`.*"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:600 9a6656e057994b5b8b47f3646d5c5a1d
+#: ../../Network_APIs/TCP_Server_APIs.rst:620 9a6656e057994b5b8b47f3646d5c5a1d
 msgid "TCP Server file transfer API"
 msgstr "API передачи файлов TCP-сервера"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:602 70bed01dc4a7426a9d31f45ccc8a1141
+#: ../../Network_APIs/TCP_Server_APIs.rst:622 70bed01dc4a7426a9d31f45ccc8a1141
 msgid ""
 "The TCP server contains a file transfer subsystem that supports both client-"
 "to-server and server-to-client transfers."
@@ -1142,7 +1183,7 @@ msgstr ""
 "TCP-сервер содержит подсистему передачи файлов, которая поддерживает "
 "передачу как от клиента к серверу, так и от сервера к клиенту."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:606 61227e8f455a4391819284dd6c5dc630
+#: ../../Network_APIs/TCP_Server_APIs.rst:626 61227e8f455a4391819284dd6c5dc630
 #, fuzzy
 msgid ""
 "It's too long to introduce all the file transfer functions, so there is only"
@@ -1153,34 +1194,34 @@ msgstr ""
 "список API для функций передачи файлов. Для получения более подробной "
 "информации о функциях передачи файлов посетите..."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:611 9d0d52331dc8405197df72219eb9d0de
+#: ../../Network_APIs/TCP_Server_APIs.rst:631 9d0d52331dc8405197df72219eb9d0de
 msgid "The file transfer API for you to use includes:"
 msgstr "API передачи файлов, который вы можете использовать, включает в себя:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:613 02c69145e8b2499d8ac7feb19024ff31
+#: ../../Network_APIs/TCP_Server_APIs.rst:633 02c69145e8b2499d8ac7feb19024ff31
 msgid ""
 "The basic function for the server-to-client file transfer is defined as:"
 msgstr ""
 "Основная функция передачи файлов от сервера к клиенту определяется как:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:624 cb4f860a695547b5b02a0a6a4507f508
+#: ../../Network_APIs/TCP_Server_APIs.rst:644 cb4f860a695547b5b02a0a6a4507f508
 msgid ""
 "The file transfer function which will run in the threads is defined as:"
 msgstr ""
 "Функция передачи файлов, которая будет выполняться в потоках, определяется "
 "как:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:635 3f497ac55d4b4b758bd9bdf0fdc60a4c
+#: ../../Network_APIs/TCP_Server_APIs.rst:655 3f497ac55d4b4b758bd9bdf0fdc60a4c
 msgid "The folder transfer function is defined as:"
 msgstr "Функция передачи папки определяется как:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:644 ac2fdd4da021439bb8cfdc33bc6da55a
+#: ../../Network_APIs/TCP_Server_APIs.rst:664 ac2fdd4da021439bb8cfdc33bc6da55a
 msgid ""
 "The multiple files transfer to multiple clients function is defined as:"
 msgstr ""
 "Функция передачи нескольких файлов нескольким клиентам определяется как:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:654 6256d2cfe8eb4c779a7f99795619944c
+#: ../../Network_APIs/TCP_Server_APIs.rst:674 6256d2cfe8eb4c779a7f99795619944c
 msgid ""
 "The different multiple files transfer to the different multiple clients "
 "function is defined as:"
@@ -1188,7 +1229,7 @@ msgstr ""
 "Передача нескольких файлов различным функциям нескольких клиентов "
 "определяется как:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:664 f176a36916364c9ca6dd78d8246226bc
+#: ../../Network_APIs/TCP_Server_APIs.rst:684 f176a36916364c9ca6dd78d8246226bc
 #, fuzzy
 msgid ""
 "We recommend that if you want to use the mono-file transfer function, use "
@@ -1214,7 +1255,7 @@ msgstr ""
 "поэтому не беспокойтесь о одновременной производительности. А если вызывать "
 "их в потоках, то могут возникнуть неожиданные ошибки и ненужная сложность."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:678 8d5b255ca29042509aad566d071c2c58
+#: ../../Network_APIs/TCP_Server_APIs.rst:698 8d5b255ca29042509aad566d071c2c58
 msgid ""
 "*Note: The file transfer API functions are designed to be called from the "
 "command handlers for both client-initiated and server-initiated transfers. "
@@ -1227,16 +1268,16 @@ msgstr ""
 "передачи, клиентских подключений и фактические операции передачи файловых "
 "данных.*"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:684 e267899fa3654422bf36e82e026c0f69
+#: ../../Network_APIs/TCP_Server_APIs.rst:704 e267899fa3654422bf36e82e026c0f69
 msgid "Client-to-server transfer flow:"
 msgstr "Поток передачи данных между клиентом и сервером:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:686 dafc23a2cbc94d29adcba6e27c575daf
+#: ../../Network_APIs/TCP_Server_APIs.rst:706 dafc23a2cbc94d29adcba6e27c575daf
 msgid "The client sends ``/file`` or ``/file_folder`` to request a transfer."
 msgstr ""
 "Клиент отправляет ``/file`` или ``/file_folder`` для запроса передачи."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:688 c82cac6540f445b9a8e8fe1d898958a3
+#: ../../Network_APIs/TCP_Server_APIs.rst:708 c82cac6540f445b9a8e8fe1d898958a3
 msgid ""
 "``handle_command`` starts a dedicated file-server thread using "
 "``file_transfer_server_recv_server_start_thread``."
@@ -1244,7 +1285,7 @@ msgstr ""
 "``handle_command`` запускает выделенный поток файлового сервера, используя "
 "``file_transfer_server_recv_server_start_thread``."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:690 0fb4e13e2f9a4c4f982abff5ce812d75
+#: ../../Network_APIs/TCP_Server_APIs.rst:710 0fb4e13e2f9a4c4f982abff5ce812d75
 msgid ""
 "The server allocates an ephemeral transfer port with ``palloc`` and sends "
 "``/server_file_transfer_port <port> <client_id>`` back to the client."
@@ -1252,7 +1293,7 @@ msgstr ""
 "Сервер выделяет временный порт передачи с помощью palloc и отправляет "
 "``/server_file_transfer_port <port> <client_id>`` обратно клиенту."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:694 66c6621aa97542b49c81ea27f0bc4267
+#: ../../Network_APIs/TCP_Server_APIs.rst:714 66c6621aa97542b49c81ea27f0bc4267
 msgid ""
 "The client connects to that transfer port and sends file metadata, including"
 " length-prefixed filename and file size."
@@ -1260,15 +1301,15 @@ msgstr ""
 "Клиент подключается к этому порту передачи и отправляет метаданные файла, "
 "включая имя файла с префиксом длины и размер файла."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:697 7571fffe513045eaa747dc1b2d2876cc
+#: ../../Network_APIs/TCP_Server_APIs.rst:717 7571fffe513045eaa747dc1b2d2876cc
 msgid "The server receives the file and writes it under ``received_files``."
 msgstr "Сервер получает файл и записывает его в ``received_files``."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:700 5bbe70007f10457890789d86bc17b4c1
+#: ../../Network_APIs/TCP_Server_APIs.rst:720 5bbe70007f10457890789d86bc17b4c1
 msgid "Server-to-client transfer flow:"
 msgstr "Поток передачи от сервера к клиенту:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:702 2a6a841109fc492d8308c012ae74c1fe
+#: ../../Network_APIs/TCP_Server_APIs.rst:722 2a6a841109fc492d8308c012ae74c1fe
 msgid ""
 "``file_transfer_server_recv_client_start`` is used to initiate outgoing "
 "transfers from server to a connected client."
@@ -1276,7 +1317,7 @@ msgstr ""
 "``file_transfer_server_recv_client_start`` используется для инициации "
 "исходящей передачи с сервера на подключенный клиент."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:704 e432fc7c6d80453da278dacde19cabab
+#: ../../Network_APIs/TCP_Server_APIs.rst:724 e432fc7c6d80453da278dacde19cabab
 msgid ""
 "The server sends transfer commands to the client socket and waits for the "
 "client to establish the file transfer connection."
@@ -1284,7 +1325,7 @@ msgstr ""
 "Сервер отправляет команды передачи в клиентский сокет и ждет, пока клиент "
 "установит соединение для передачи файлов."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:706 fe161c64ff2e4c53b7ce7e60589e3a24
+#: ../../Network_APIs/TCP_Server_APIs.rst:726 fe161c64ff2e4c53b7ce7e60589e3a24
 msgid ""
 "Folder transfers are performed recursively, with each file transfer "
 "respecting ``self.max_file_transfer_thread_num`` and the configured "
@@ -1294,11 +1335,11 @@ msgstr ""
 "учитывает ``self.max_file_transfer_thread_num`` и настроенный предел "
 "семафора."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:709 78c1e3f118574ccba8be241f9ee69dc4
+#: ../../Network_APIs/TCP_Server_APIs.rst:729 78c1e3f118574ccba8be241f9ee69dc4
 msgid "Common file transfer helper methods include:"
 msgstr "Общие вспомогательные методы передачи файлов включают в себя:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:711 f9f1a987d43f49898a9e10e1db1f6f77
+#: ../../Network_APIs/TCP_Server_APIs.rst:731 f9f1a987d43f49898a9e10e1db1f6f77
 msgid ""
 "``file_transfer_server_recv_server_start``: receives file data from a "
 "client."
@@ -1306,7 +1347,7 @@ msgstr ""
 "``file_transfer_server_recv_server_start``: получает данные файла от "
 "клиента."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:712 0ee6e0a2d46e443591c8804f9d075576
+#: ../../Network_APIs/TCP_Server_APIs.rst:732 0ee6e0a2d46e443591c8804f9d075576
 msgid ""
 "``file_transfer_server_recv_client_start``: sends a file or folder to a "
 "client."
@@ -1314,7 +1355,7 @@ msgstr ""
 "``file_transfer_server_recv_client_start``: отправляет файл или папку "
 "клиенту."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:713 6eb9f641886740e6a0115b15d5a9cc61
+#: ../../Network_APIs/TCP_Server_APIs.rst:733 6eb9f641886740e6a0115b15d5a9cc61
 msgid ""
 "``file_transfer_mode``: performs the low-level client-side transfer "
 "handshake."
@@ -1322,7 +1363,7 @@ msgstr ""
 "``file_transfer_mode``: выполняет низкоуровневое подтверждение передачи на "
 "стороне клиента."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:714 346b9f84a1a744478abea5beb22dd2d3
+#: ../../Network_APIs/TCP_Server_APIs.rst:734 346b9f84a1a744478abea5beb22dd2d3
 msgid ""
 "``file_transfer_mode_recv``: performs the low-level receive-side transfer "
 "handshake."
@@ -1330,11 +1371,11 @@ msgstr ""
 "``file_transfer_mode_recv``: выполняет низкоуровневое подтверждение передачи"
 " на стороне приема."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:719 d03bc27c716645e5a375244673b67e22
+#: ../../Network_APIs/TCP_Server_APIs.rst:739 d03bc27c716645e5a375244673b67e22
 msgid "Port allocation API"
 msgstr "API распределения портов"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:721 a35924ac9bb34a308b1ff0edac57bd92
+#: ../../Network_APIs/TCP_Server_APIs.rst:741 a35924ac9bb34a308b1ff0edac57bd92
 #, fuzzy
 msgid ""
 "The server allocation APIs allow you to allocate a new port for other "
@@ -1343,7 +1384,7 @@ msgstr ""
 "API выделения серверов позволяют вам выделить новый порт для других "
 "серверов. Существует два типа режимов распределения портов."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:725 c74252dd96b44f1db6b982a5b9888874
+#: ../../Network_APIs/TCP_Server_APIs.rst:745 c74252dd96b44f1db6b982a5b9888874
 msgid ""
 "To change the port allocation mode, you can set the ``is_hand_alloc_port`` "
 "argument on the server instance. When set to ``False``, the server instance "
@@ -1355,7 +1396,7 @@ msgstr ""
 " экземпляр сервера выберет режим автоматического выделения портов, если "
 "установлено значение «True», он выберет режим ручного выделения портов."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:731 7aa3d163bf354e95931c7574b34fc6ba
+#: ../../Network_APIs/TCP_Server_APIs.rst:751 7aa3d163bf354e95931c7574b34fc6ba
 #, fuzzy
 msgid ""
 "We strongly recommend using the automatic port allocation mode, which is the"
@@ -1369,7 +1410,7 @@ msgstr ""
 "ручного выделения портов. В этом режиме при вызове API распределения "
 "возвращается ``0``."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:738 67b8c95463ac4d6ea023a2e7d15c6696
+#: ../../Network_APIs/TCP_Server_APIs.rst:758 67b8c95463ac4d6ea023a2e7d15c6696
 msgid ""
 "*Note: The `bind` function in standard lib `socket` of the python executor, "
 "when input ``0`` to the port parameter, will automatically assign an "
@@ -1379,7 +1420,7 @@ msgstr ""
 "Python при вводе «0» в параметр порта автоматически назначит доступный порт "
 "операционной системой.*"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:743 d18afcec308b4807a16019d98e92165e
+#: ../../Network_APIs/TCP_Server_APIs.rst:763 d18afcec308b4807a16019d98e92165e
 #, fuzzy
 msgid ""
 "The other port allocation mode is the manual port allocation mode, there is "
@@ -1393,7 +1434,7 @@ msgstr ""
 "выделения портов будет конфликтовать и могут возникнуть некоторые "
 "непредвиденные ошибки."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:750 c49291ef0a1b4dcb83297450887242aa
+#: ../../Network_APIs/TCP_Server_APIs.rst:770 c49291ef0a1b4dcb83297450887242aa
 msgid ""
 "The range of the port allocation is configured in the server settings. The "
 "minimum allocatable port is ``self.port-"
@@ -1405,7 +1446,7 @@ msgstr ""
 "максимальный выделяемый порт — "
 "«self.port+1+self.port_add_step*self.port_range_num»."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:756 0e9ecf5c00754955855f07a88e56410e
+#: ../../Network_APIs/TCP_Server_APIs.rst:776 0e9ecf5c00754955855f07a88e56410e
 msgid ""
 "*Note: The ``self.port`` is the ``port`` argument of the server class. The "
 "``self.port_add_step`` is the ``port_add_step`` argument. And the "
@@ -1415,11 +1456,11 @@ msgstr ""
 "Self.port_add_step — это аргумент port_add_step. А ``self.port_range_num`` —"
 " это аргумент ``port_range_num``.*"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:762 3b99f158118341ffaaa6716669fc5703
+#: ../../Network_APIs/TCP_Server_APIs.rst:782 3b99f158118341ffaaa6716669fc5703
 msgid "There are some relevant methods that can be used:"
 msgstr "Можно использовать несколько соответствующих методов:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:769 8e9744f779214f81affafa1f446eaca4
+#: ../../Network_APIs/TCP_Server_APIs.rst:789 8e9744f779214f81affafa1f446eaca4
 msgid ""
 "The `palloc` method allows you to get a port. When using this function, you "
 "don't need to worry about the port allocation mode, because an allocation "
@@ -1429,7 +1470,7 @@ msgstr ""
 "нужно беспокоиться о режиме выделения портов, поскольку детектор режима "
 "выделения уже реализован в этом методе."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:781 b2a5f76b877b465980d6162e869921c4
+#: ../../Network_APIs/TCP_Server_APIs.rst:801 b2a5f76b877b465980d6162e869921c4
 #, fuzzy
 msgid ""
 "The `pfree` method allows you to free a port. Like the `palloc` method, you "
@@ -1439,7 +1480,7 @@ msgstr ""
 "вам не нужно заботиться о режиме выделения портов при использовании этого "
 "метода."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:785 4058b14b49034f64a0c51e7a70f15de0
+#: ../../Network_APIs/TCP_Server_APIs.rst:805 4058b14b49034f64a0c51e7a70f15de0
 msgid ""
 "And there are the main functions for you to call, and for more information "
 "about the port allocation functions, see the :ref:`tcp-server-port-"
@@ -1449,7 +1490,7 @@ msgstr ""
 "информацию о функциях выделения портов см. в разделе :ref:`tcp-server-port-"
 "allocation-api`."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:789 385b478e6ab1489b84066e4f39e4b54a
+#: ../../Network_APIs/TCP_Server_APIs.rst:809 385b478e6ab1489b84066e4f39e4b54a
 msgid ""
 "This mode is useful when you need an individual port for the server or  must"
 " reserve a controlled range of ports for client-file transfers by manual "
@@ -1462,60 +1503,60 @@ msgstr ""
 "тестирования или когда несколько серверных процессов используют один и тот "
 "же хост."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:796 78ff6af82c8646cba4f4f016a457b9ad
+#: ../../Network_APIs/TCP_Server_APIs.rst:816 78ff6af82c8646cba4f4f016a457b9ad
 msgid "TCP Server APIs table"
 msgstr "Таблица API TCP-сервера"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:798 7bad5400d40540eda7a8137322b9bc2e
+#: ../../Network_APIs/TCP_Server_APIs.rst:818 7bad5400d40540eda7a8137322b9bc2e
 msgid "In short, the table of contents of the public APIs are as follows:"
 msgstr ""
 "Короче говоря, содержание общедоступных API выглядит следующим образом:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:801 a0d1218edf0b488ea8c10dd51d49f4a2
+#: ../../Network_APIs/TCP_Server_APIs.rst:821 a0d1218edf0b488ea8c10dd51d49f4a2
 msgid "The server setup APIs:"
 msgstr "API настройки сервера:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:802 6acedad5f298426782dd60752e94c686
+#: ../../Network_APIs/TCP_Server_APIs.rst:822 6acedad5f298426782dd60752e94c686
 msgid "`TCP_Server_Base`"
 msgstr "`TCP_Server_Base`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:803 9518f57bd28c463b845d075f1f013f77
+#: ../../Network_APIs/TCP_Server_APIs.rst:823 9518f57bd28c463b845d075f1f013f77
 msgid "`start_TCP_Server`"
 msgstr "`start_TCP_Server`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:804 4fecb922e3644c8199b8f5f71e031400
+#: ../../Network_APIs/TCP_Server_APIs.rst:824 4fecb922e3644c8199b8f5f71e031400
 msgid "`stop`"
 msgstr "`стоп`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:806 cea599b4dd354d0da4bafe27f332eeb8
+#: ../../Network_APIs/TCP_Server_APIs.rst:826 cea599b4dd354d0da4bafe27f332eeb8
 msgid "The server handling information APIs:"
 msgstr "Серверные API-интерфейсы обработки информации:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:807 c1324a1071514492a94478a260f950e7
+#: ../../Network_APIs/TCP_Server_APIs.rst:827 c1324a1071514492a94478a260f950e7
 msgid "`handle_client`"
 msgstr "`handle_client`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:808 6a16ccedd4b649ce9e351ec1f9b10e73
+#: ../../Network_APIs/TCP_Server_APIs.rst:828 6a16ccedd4b649ce9e351ec1f9b10e73
 msgid "`handle_command`"
 msgstr "`handle_command`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:809 2fde8cdec2f34a46943fedd7ab42768e
+#: ../../Network_APIs/TCP_Server_APIs.rst:829 2fde8cdec2f34a46943fedd7ab42768e
 msgid "`receive_message`"
 msgstr "`receive_message`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:810 03781998f89545eca994ec9e5f9602a5
+#: ../../Network_APIs/TCP_Server_APIs.rst:830 03781998f89545eca994ec9e5f9602a5
 msgid "`send_message`"
 msgstr "`send_message`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:811 756d847defeb4de4acbf3942180a3230
+#: ../../Network_APIs/TCP_Server_APIs.rst:831 756d847defeb4de4acbf3942180a3230
 msgid "`broadcast`"
 msgstr "`трансляция`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:812 2edaae0d2bd84e27826b632834098b9f
+#: ../../Network_APIs/TCP_Server_APIs.rst:832 2edaae0d2bd84e27826b632834098b9f
 msgid "`send_msg_to_specific_client`"
 msgstr "`send_msg_to_specified_client`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:814 cb6a4d4fc9ba4dda90a5763a7364dbc9
+#: ../../Network_APIs/TCP_Server_APIs.rst:834 cb6a4d4fc9ba4dda90a5763a7364dbc9
 msgid ""
 "The server encrypted channel APIs (see :ref:`tcp-server-encrypted-channel-"
 "api`):"
@@ -1523,121 +1564,121 @@ msgstr ""
 "API-интерфейсы зашифрованного канала сервера (см. :ref:`tcp-server-"
 "encrypted-channel-api`):"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:815 6923ec8b2cb948fbbcd2ecfb4a982bc5
+#: ../../Network_APIs/TCP_Server_APIs.rst:835 6923ec8b2cb948fbbcd2ecfb4a982bc5
 msgid "`_crypto_on_client_hello`"
 msgstr "`_crypto_on_client_hello`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:816 4fb3ef785d2b49c69bd2f18aa119c2d9
+#: ../../Network_APIs/TCP_Server_APIs.rst:836 4fb3ef785d2b49c69bd2f18aa119c2d9
 msgid "`_crypto_wait_server_ready`"
 msgstr "`_crypto_wait_server_ready`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:817 2d6682632f5c4193b0f2a7cdcf48c6aa
+#: ../../Network_APIs/TCP_Server_APIs.rst:837 2d6682632f5c4193b0f2a7cdcf48c6aa
 msgid "`_crypto_push_pub_to_client`"
 msgstr "`_crypto_push_pub_to_client`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:818 2d6682632f5c4193b0f2a7cdcf48c6aa
+#: ../../Network_APIs/TCP_Server_APIs.rst:838 2d6682632f5c4193b0f2a7cdcf48c6aa
 msgid "`_crypto_process_line`"
 msgstr "`_crypto_process_line`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:820 9ad151a612894b9282ce451c1e4742f4
+#: ../../Network_APIs/TCP_Server_APIs.rst:840 9ad151a612894b9282ce451c1e4742f4
 msgid "The server command APIs:"
 msgstr "Командные API сервера:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:821 61051fec7b7249ba9e30e23583335975
+#: ../../Network_APIs/TCP_Server_APIs.rst:841 61051fec7b7249ba9e30e23583335975
 msgid "`register_command`"
 msgstr "`register_command`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:822 89f76120884b4b21b59a30cf235646c7
+#: ../../Network_APIs/TCP_Server_APIs.rst:842 89f76120884b4b21b59a30cf235646c7
 msgid "`_execute_custom_handler`"
 msgstr "`_execute_custom_handler`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:823 c07b15d5c2d14d6db98000bc4b2fbc3f
+#: ../../Network_APIs/TCP_Server_APIs.rst:843 c07b15d5c2d14d6db98000bc4b2fbc3f
 msgid "`submit_task`"
 msgstr "`submit_task`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:824 8c7db97993124d7990598ad66596391d
+#: ../../Network_APIs/TCP_Server_APIs.rst:844 8c7db97993124d7990598ad66596391d
 msgid "`create_temporary_server`"
 msgstr "`create_temporary_server`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:825 2d6682632f5c4193b0f2a7cdcf48c6aa
+#: ../../Network_APIs/TCP_Server_APIs.rst:845 2d6682632f5c4193b0f2a7cdcf48c6aa
 msgid "`create_temporary_client`"
 msgstr "`create_temporary_client`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:827 96275784fb424eb5aa199320b37ca29d
+#: ../../Network_APIs/TCP_Server_APIs.rst:847 96275784fb424eb5aa199320b37ca29d
 msgid "The server file transfer APIs:"
 msgstr "API-интерфейсы передачи файлов сервера:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:828 7c06a2027b1f46d5957e6ef82ee2c308
+#: ../../Network_APIs/TCP_Server_APIs.rst:848 7c06a2027b1f46d5957e6ef82ee2c308
 msgid "`file_transfer_server_recv_client_start`"
 msgstr "`file_transfer_server_recv_client_start`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:829 3ac81ed7a85f476a9e24fc77ef770d49
+#: ../../Network_APIs/TCP_Server_APIs.rst:849 3ac81ed7a85f476a9e24fc77ef770d49
 msgid "`file_transfer_server_recv_client_start_thread`"
 msgstr "`file_transfer_server_recv_client_start_thread`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:830 e48af56b8ad24bb088c44a1ef78eb2d7
+#: ../../Network_APIs/TCP_Server_APIs.rst:850 e48af56b8ad24bb088c44a1ef78eb2d7
 msgid "`folder_file_transfer_server_recv_client_start`"
 msgstr "`folder_file_transfer_server_recv_client_start`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:831 3cdc6c6ae7b14e09a1b998af5bcbb89b
+#: ../../Network_APIs/TCP_Server_APIs.rst:851 3cdc6c6ae7b14e09a1b998af5bcbb89b
 msgid "`multiple_file_multiple_client_transfer_server_recv_client_start`"
 msgstr "`multiple_file_multiple_client_transfer_server_recv_client_start`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:832 4f4caf6153294e2ca21576c7c5433ed8
+#: ../../Network_APIs/TCP_Server_APIs.rst:852 4f4caf6153294e2ca21576c7c5433ed8
 msgid ""
 "`diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start`"
 msgstr ""
 "`diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:834 a6696629f8da41b0905886debd505110
+#: ../../Network_APIs/TCP_Server_APIs.rst:854 a6696629f8da41b0905886debd505110
 msgid "The server console commands:"
 msgstr "Команды консоли сервера:"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:835 e0b47d044d1847e7ba34ae2ec85816eb
+#: ../../Network_APIs/TCP_Server_APIs.rst:855 e0b47d044d1847e7ba34ae2ec85816eb
 msgid "`/stop`"
 msgstr "`/стоп`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:836 5031d203c41244fba4f55c2bff44f8e0
+#: ../../Network_APIs/TCP_Server_APIs.rst:856 5031d203c41244fba4f55c2bff44f8e0
 msgid "`/status`"
 msgstr "`/статус`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:837 02750737b2394fe2bce87b2cb4195ff0
+#: ../../Network_APIs/TCP_Server_APIs.rst:857 02750737b2394fe2bce87b2cb4195ff0
 msgid "`/clients`"
 msgstr "`/клиенты`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:838 2e5780c85c1f43eab30511719da6042b
+#: ../../Network_APIs/TCP_Server_APIs.rst:858 2e5780c85c1f43eab30511719da6042b
 msgid "`/send_msg`"
 msgstr "`/send_msg`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:839 755d1109eac54732bb549d57787549cc
+#: ../../Network_APIs/TCP_Server_APIs.rst:859 755d1109eac54732bb549d57787549cc
 msgid "`/file`"
 msgstr "`/файл`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:840 0cb2a82fdae24c4e9e76645e2a2de236
+#: ../../Network_APIs/TCP_Server_APIs.rst:860 0cb2a82fdae24c4e9e76645e2a2de236
 msgid "`/file_folder`"
 msgstr "`/папка_файла`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:841 ae5fe73511e24138840aa6e83360398a
+#: ../../Network_APIs/TCP_Server_APIs.rst:861 ae5fe73511e24138840aa6e83360398a
 msgid "`/multiple_file_multiple_client`"
 msgstr "`/multiple_file_multiple_client`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:842 f220f2ebfbc9427297a13f528828cad9
+#: ../../Network_APIs/TCP_Server_APIs.rst:862 f220f2ebfbc9427297a13f528828cad9
 msgid "`/diff_multiple_file_diff_multiple_client`"
 msgstr "`/diff_multiple_file_diff_multiple_client`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:843 cc95234ff6234774822181df0b372a53
+#: ../../Network_APIs/TCP_Server_APIs.rst:863 cc95234ff6234774822181df0b372a53
 msgid "`/help`"
 msgstr "`/помощь`"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:846 393ce16473754b79817c9951891ff65b
+#: ../../Network_APIs/TCP_Server_APIs.rst:866 393ce16473754b79817c9951891ff65b
 msgid "See Also"
 msgstr "См. также"
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:848 fe86f0dcf46a4097b285a7277637b437
+#: ../../Network_APIs/TCP_Server_APIs.rst:868 fe86f0dcf46a4097b285a7277637b437
 msgid ":doc:`TCP_Client_APIs` — TCP client."
 msgstr ":doc:`TCP_Client_APIs` — TCP-клиент."
 
-#: ../../Network_APIs/TCP_Server_APIs.rst:849 27ef2ad7316a49fbac03a0d49b0f3517
+#: ../../Network_APIs/TCP_Server_APIs.rst:869 27ef2ad7316a49fbac03a0d49b0f3517
 msgid ":doc:`UDP_APIs` — UDP endpoint."
 msgstr ":doc:`UDP_APIs` — конечная точка UDP."
 

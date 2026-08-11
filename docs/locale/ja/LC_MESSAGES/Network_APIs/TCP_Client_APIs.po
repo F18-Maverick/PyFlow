@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-09 01:46+0800\n"
+"POT-Creation-Date: 2026-08-11 21:48+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: ja <LL@li.org>\n"
@@ -610,16 +610,19 @@ msgid "Handshake"
 msgstr "ハンドシェーク"
 
 #: ../../Network_APIs/TCP_Client_APIs.rst:309 69b554ce7128464281cd9cd0c6fd36bb
+#, fuzzy
 msgid ""
-"The client sends a plaintext ``/crypto_key_exchange`` greeting right after "
-"connecting; the server replies with ``/crypto_key_exchange_ack <need-client-"
-"pub> <force>``. Both sides then push their public key files over the file-"
-"transfer mechanism (plaintext) and TOFU-check the received key. Both sides "
-"switch to encrypted mode only after ``/crypto_ready`` has been received from"
-" the peer (so plaintext and ciphertext never interleave on a connection). On"
-" later connections the keys are re-exchanged and TOFU-checked again; the "
-"exchange is never skipped, only the identity check short-circuits for known "
-"keys."
+"The client sends a plaintext ``/crypto_key_exchange <client-nonce>`` "
+"greeting right after connecting; the server replies with "
+"``/crypto_key_exchange_ack <server-nonce> <need-client-pub> <force>``. Both "
+"sides then push their public key files over the file-transfer mechanism "
+"(plaintext) and TOFU-check the received key. Both sides switch to encrypted "
+"mode only after ``/crypto_ready`` has been received from the peer (so "
+"plaintext and ciphertext never interleave on a connection). On later "
+"connections the keys are re-exchanged and TOFU-checked again; the exchange "
+"is never skipped, only the identity check short-circuits for known keys. "
+"Public-key pushes are only accepted while a handshake is in progress, so an "
+"arbitrary unauthenticated server cannot poison the registry."
 msgstr ""
 "クライアントは接続直後に平文の ``/crypto_key_exchange`` "
 "挨拶を送信します。サーバーは「/crypto_key_exchange_ack <need-client-pub> "
@@ -628,11 +631,30 @@ msgstr ""
 "(そのため、平文と暗号文が接続上でインターリーブされることはありません)。その後の接続では、キーが再交換され、再度 TOFU "
 "チェックが行われます。交換は決してスキップされず、既知のキーに対する ID チェックのみがショートします。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:320 9ff4b403c3724791bce01aee45a188fa
+#: ../../Network_APIs/TCP_Client_APIs.rst:323 43377193232247a8bd601f7957e739df
+msgid "Replay protection"
+msgstr "リプレイ保護"
+
+#: ../../Network_APIs/TCP_Client_APIs.rst:325 20d73e77e82143d89234102cbfc40cd1
+msgid ""
+"The handshake exchanges a random session nonce, and every encrypted line on "
+"the wire carries it plus a per-connection sequence number: ``<sender-"
+"nonce>|<seq>|<ciphertext>``. The receiver drops a line whose nonce does not "
+"match the current session (ciphertext replayed from an older connection) or "
+"whose sequence number is not the expected one (ciphertext replayed within "
+"the session / out of order); both counters reset when the socket flips to "
+"encrypted mode after a (re-)exchange."
+msgstr ""
+"ハンドシェイクではランダムなセッション nonce が交換され、回線上のすべての暗号化された回線には、それに加えて接続ごとのシーケンス番号 "
+"``<sender-nonce>|<seq>|<ciphertext>`` が付けられます。受信者は、ノンスが現在のセッションと一致しない行 "
+"(古い接続から再生された暗号文)、またはシーケンス番号が予期したものではない行 (セッション内で再生された暗号文 / 順序が乱れている) "
+"をドロップします。 (再) 交換後にソケットが暗号化モードに切り替わると、両方のカウンタがリセットされます。"
+
+#: ../../Network_APIs/TCP_Client_APIs.rst:334 9ff4b403c3724791bce01aee45a188fa
 msgid "Decode verification and key rotation"
 msgstr "デコード検証とキーローテーション"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:322 13bc192299ae4990a1c93e5284d851ea
+#: ../../Network_APIs/TCP_Client_APIs.rst:336 13bc192299ae4990a1c93e5284d851ea
 msgid ""
 "Every encrypted plaintext carries the fixed suffix ``_VALID`` (separated by "
 "``_``). If a message cannot be decrypted, or the suffix is missing, the "
@@ -653,11 +675,21 @@ msgstr ""
 "セクションを参照)。意図的にキーペアをローテーションするユーザーは、新しいキーを再度信頼するには、ピア側の古い ``pub_key.json`` "
 "エントリ (またはファイル全体) を削除する必要があります。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:336 6d2a02504482470cac47851ab5eebfd3
+#: ../../Network_APIs/TCP_Client_APIs.rst:347 59fdce58b62e438aa9c650451449e11c
+msgid ""
+"Re-exchanges are circuit-broken: after ``MAX_DECODE_FAILURES`` (3) "
+"consecutive decode failures the connection is closed instead of re-"
+"exchanging, so a garbage-injection or persistent-mismatch storm cannot spin "
+"the loop forever. A successful decryption resets the counter."
+msgstr ""
+"再交換はサーキットブレークです。 MAX_DECODE_FAILURES (3) "
+"連続したデコード失敗の後、再交換ではなく接続が閉じられるため、ガベージインジェクションや永続的な不一致のストームによってループが永久に回転することはありません。復号化が成功すると、カウンターがリセットされます。"
+
+#: ../../Network_APIs/TCP_Client_APIs.rst:355 6d2a02504482470cac47851ab5eebfd3
 msgid "TCP Client command API"
 msgstr "TCPクライアントコマンドAPI"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:338 fbd60b293a644abdb0890fca8b54034c
+#: ../../Network_APIs/TCP_Client_APIs.rst:357 fbd60b293a644abdb0890fca8b54034c
 msgid ""
 "The client supports both built-in commands that the user can type in the "
 "console, and a command extension API similar to the server. The main entry "
@@ -668,7 +700,7 @@ msgstr ""
 "コマンドのメイン エントリ ポイントは `handle_server_command` ですが、ユーザーが入力したコマンドは "
 "`interactive_mode` で処理されます。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:344 347c728fa4764b5088117bd8c27ecd45
+#: ../../Network_APIs/TCP_Client_APIs.rst:363 347c728fa4764b5088117bd8c27ecd45
 msgid ""
 "The client supports two modes of operation: interactive console input (when "
 "``is_input_command_in_console`` is ``True``) or programmatic control (when "
@@ -677,20 +709,20 @@ msgstr ""
 "クライアントは、対話型コンソール入力 ( ``is_input_command_in_console`` が ``True`` の場合) "
 "またはプログラムによる制御 (``False`` の場合) の 2 つの動作モードをサポートします。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:348 090639db57e64dfb85e25f193c96409b
+#: ../../Network_APIs/TCP_Client_APIs.rst:367 090639db57e64dfb85e25f193c96409b
 msgid "Built-in client console commands (user-typed) include:"
 msgstr "組み込みのクライアント コンソール コマンド (ユーザー入力) には次のものがあります。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:350 d2228bf3025e4f2b9fd4fa30dadf54d3
+#: ../../Network_APIs/TCP_Client_APIs.rst:369 d2228bf3025e4f2b9fd4fa30dadf54d3
 msgid ""
 "``/quit``: sends a quit message to the server and closes the connection."
 msgstr "``/quit``: サーバーに終了メッセージを送信し、接続を閉じます。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:351 6c8f5298fa434db3b63bc8bc3ffaa777
+#: ../../Network_APIs/TCP_Client_APIs.rst:370 6c8f5298fa434db3b63bc8bc3ffaa777
 msgid "``/file <file_path>``: starts a file transfer from client to server."
 msgstr "``/file <file_path>``: クライアントからサーバーへのファイル転送を開始します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:352 b39ba297ef5d4dad828c32f27c943038
+#: ../../Network_APIs/TCP_Client_APIs.rst:371 b39ba297ef5d4dad828c32f27c943038
 msgid ""
 "``/multiple_file <file1> <file2> ...``: sends multiple files from client to "
 "server (each in its own thread, respecting the semaphore limit)."
@@ -698,14 +730,14 @@ msgstr ""
 "``/multiple_file <file1> <file2> ...``: 複数のファイルをクライアントからサーバに送信します "
 "(セマフォの制限に従って、それぞれが独自のスレッドにあります)。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:354 0b7636b078f54ef1847e5915bef8882b
+#: ../../Network_APIs/TCP_Client_APIs.rst:373 0b7636b078f54ef1847e5915bef8882b
 msgid ""
 "``/file_folder <folder_path>``: sends an entire folder from client to "
 "server, preserving the directory structure."
 msgstr ""
 "``/file_folder <folder_path>``: ディレクトリ構造を維持したまま、フォルダ全体をクライアントからサーバーに送信します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:356 59291bafc5094aeb84fa2df77781c886
+#: ../../Network_APIs/TCP_Client_APIs.rst:375 59291bafc5094aeb84fa2df77781c886
 msgid ""
 "``/multiple_file_folder <folder1> <folder2> ...``: sends multiple folders "
 "from client to server."
@@ -713,7 +745,7 @@ msgstr ""
 "``/multiple_file_folder <folder1> <folder2> ...``: "
 "複数のフォルダをクライアントからサーバーに送信します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:359 e33010b288984dda90858f847a0d721f
+#: ../../Network_APIs/TCP_Client_APIs.rst:378 e33010b288984dda90858f847a0d721f
 msgid ""
 "*Note: Unlike the server, the client does not have built-in ``/help``, "
 "``/time``, or ``/clients`` commands because those are typically handled by "
@@ -724,7 +756,7 @@ msgstr ""
 "コマンドがありません。これらは通常、サーバによって処理されるためです。クライアントの ``/help`` "
 "コマンドは実装されていません。ユーザーは、使用可能なコマンドについてはサーバーのドキュメントを参照する必要があります。*"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:365 e8e2e712f5934a73876d212da574be8b
+#: ../../Network_APIs/TCP_Client_APIs.rst:384 e8e2e712f5934a73876d212da574be8b
 msgid ""
 "If a user types a command that is not built-in, the client will check if it "
 "matches any registered custom commands (see command extension API below). If"
@@ -735,23 +767,23 @@ msgstr ""
 " API を参照)。存在する場合、クライアントは関連するハンドラーを呼び出します。それ以外の場合、メッセージは通常のチャット "
 "メッセージとしてサーバーに送信されます。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:371 c8b40f3f22e141518d0b09a366bb5958
+#: ../../Network_APIs/TCP_Client_APIs.rst:390 c8b40f3f22e141518d0b09a366bb5958
 msgid "The command extension API for the client is defined as:"
 msgstr "クライアントのコマンド拡張 API は次のように定義されます。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:383 90da3c66bdff4263a56ef1142e8e6e3b
+#: ../../Network_APIs/TCP_Client_APIs.rst:402 90da3c66bdff4263a56ef1142e8e6e3b
 msgid ""
 "The arguments of the `register_command` function are the same as on the "
 "server side:"
 msgstr "「register_command」関数の引数はサーバー側の引数と同じです。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:386 35f7277df99f4c8db35f5a2f12f537bf
+#: ../../Network_APIs/TCP_Client_APIs.rst:405 35f7277df99f4c8db35f5a2f12f537bf
 msgid ""
 "``command_name``: The name of the command to register (should start with a "
 "slash, e.g., ``/mycmd``)."
 msgstr "``command_name``: 登録するコマンドの名前 (``/mycmd`` のようにスラッシュで始める必要があります)。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:388 0b4a51502abc48a7a371412df8c98073
+#: ../../Network_APIs/TCP_Client_APIs.rst:407 0b4a51502abc48a7a371412df8c98073
 msgid ""
 "``handler``: The function to call when the command is received. The handler "
 "must accept three parameters: ``client_socket``, ``client_address``, and "
@@ -760,7 +792,7 @@ msgstr ""
 "``handler``: コマンドを受信したときに呼び出す関数。ハンドラは 3 "
 "つのパラメータ、``client_socket``、``client_address``、および ``command`` を受け入れる必要があります。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:390 a861f127c11646b7b19b2964a08ff174
+#: ../../Network_APIs/TCP_Client_APIs.rst:409 a861f127c11646b7b19b2964a08ff174
 msgid ""
 "``where_to_run``: Specifies where the command should be executed. Valid "
 "values are ``\"server\"`` (command sent from the server) or ``\"client\"`` "
@@ -769,13 +801,13 @@ msgstr ""
 "``where_to_run``: コマンドを実行する場所を指定します。有効な値は、``\"server\"`` (サーバーから送信されたコマンド) "
 "または ``\"client\"`` (クライアントのコンソールに入力されたコマンド) です。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:392 107060b5ad244287986f590d2d36e528
+#: ../../Network_APIs/TCP_Client_APIs.rst:411 107060b5ad244287986f590d2d36e528
 msgid ""
 "``run_in_thread``: A boolean indicating whether to run the handler in a "
 "separate thread from the thread pool."
 msgstr "``run_in_thread``: ハンドラをスレッドプールとは別のスレッドで実行するかどうかを示すブール値。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:395 8af67bc690c94fb98e06b19e646ff722
+#: ../../Network_APIs/TCP_Client_APIs.rst:414 8af67bc690c94fb98e06b19e646ff722
 #, python-brace-format
 msgid ""
 "*Note: The client stores registered commands in the same structure as the "
@@ -786,7 +818,7 @@ msgstr ""
 "*注意: クライアントは、登録されたコマンドをサーバーと同じ構造に保存します: ``self._custom_handlers = [{}, "
 "{}]``。インデックス 0 はサーバーからのコマンド用、インデックス 1 はクライアント コンソールに入力されたコマンド用です。*"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:400 8667db3c5e5b47ef8a80bc7b1a57498d
+#: ../../Network_APIs/TCP_Client_APIs.rst:419 8667db3c5e5b47ef8a80bc7b1a57498d
 msgid ""
 "The client also provides the `submit_task` method to submit functions to its"
 " internal thread pool executor, and `_execute_custom_handler` to safely "
@@ -795,7 +827,7 @@ msgstr ""
 "クライアントは、内部スレッド プール エグゼキュータに関数を送信するための `submit_task` "
 "メソッドと、エラー処理を備えた登録済みハンドラーを安全に実行するための `_execute_custom_handler` メソッドも提供します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:414 df897664ab704aa1a7d85b29bfbc860b
+#: ../../Network_APIs/TCP_Client_APIs.rst:433 df897664ab704aa1a7d85b29bfbc860b
 msgid ""
 "The `submit_task` method works identically to the server version: it submits"
 " a callable to the client's thread pool, using a semaphore to limit "
@@ -804,11 +836,11 @@ msgstr ""
 "`submit_task` メソッドはサーバー バージョンと同じように動作します。セマフォを使用して同時実行数を "
 "`max_custom_workers` に制限し、呼び出し可能ファイルをクライアントのスレッド プールに送信します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:419 6c7578e086c448f990ea8b8b37525435
+#: ../../Network_APIs/TCP_Client_APIs.rst:438 6c7578e086c448f990ea8b8b37525435
 msgid "Temporary server and client creation"
 msgstr "一時的なサーバーとクライアントの作成"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:421 c3b3550b66f24bc7874755b2459c5c31
+#: ../../Network_APIs/TCP_Client_APIs.rst:440 c3b3550b66f24bc7874755b2459c5c31
 msgid ""
 "The client also includes temporary TCP server and client creation APIs. They"
 " are similar to those in the server class but use `self.client_host` as the "
@@ -817,7 +849,7 @@ msgstr ""
 "クライアントには、一時的な TCP サーバーとクライアント作成 API も含まれています。これらはサーバー クラスのものと似ていますが、ローカル "
 "バインディング アドレスとして `self.client_host` を使用します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:434 959fa1011635477994608bfcc873caa5
+#: ../../Network_APIs/TCP_Client_APIs.rst:453 959fa1011635477994608bfcc873caa5
 msgid ""
 "`create_temporary_server` binds to ``(self.client_host, port)``. If ``port``"
 " is ``None``, it calls ``self.palloc()`` to obtain a port (in manual mode) "
@@ -828,7 +860,7 @@ msgstr ""
 "``None`` の場合、``self.palloc()`` を呼び出してポートを取得するか (手動モードの場合)、または ``0`` を返します "
 "(OS によって割り当てられます)。タプル「(port,server_thread,stop_event)」を返します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:449 d2f364adb9ed42ea8637ca48dd8d0595
+#: ../../Network_APIs/TCP_Client_APIs.rst:468 d2f364adb9ed42ea8637ca48dd8d0595
 msgid ""
 "`create_temporary_client` connects to the specified server. If ``bind_port``"
 " is given, it binds to ``(self.client_host, bind_port)``. If ``bind_port`` "
@@ -841,7 +873,7 @@ msgstr ""
 "の場合、``self.palloc()`` 経由でポートを取得し、自動的にバインドします。タプル ``(client_sock, "
 "recv_thread, stop_event)`` を返します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:455 a2fa8686e07d4c68949292a6788ec2f6
+#: ../../Network_APIs/TCP_Client_APIs.rst:474 a2fa8686e07d4c68949292a6788ec2f6
 msgid ""
 "These methods allow the client to act as a temporary server or to spawn a "
 "separate client connection for auxiliary tasks (such as file transfers), "
@@ -850,11 +882,11 @@ msgstr ""
 "これらのメソッドを使用すると、クライアントはメインの接続を妨げることなく、一時的なサーバーとして機能したり、補助タスク (ファイル転送など) "
 "のために別のクライアント接続を生成したりできます。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:461 5642f99e69174da78793e6cbc9eb76f4
+#: ../../Network_APIs/TCP_Client_APIs.rst:480 5642f99e69174da78793e6cbc9eb76f4
 msgid "TCP Client console commands (interactive mode)"
 msgstr "TCPクライアントコンソールコマンド(対話モード)"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:463 88b59527ea854c36b08d49fdf25ea0b6
+#: ../../Network_APIs/TCP_Client_APIs.rst:482 88b59527ea854c36b08d49fdf25ea0b6
 msgid ""
 "When the client is started with ``is_input_command_in_console=True`` (the "
 "default), the `interactive_mode` method is invoked. This method reads lines "
@@ -863,19 +895,19 @@ msgstr ""
 "クライアントが ``is_input_command_in_console=True`` (デフォルト) で起動されると、 "
 "`interactive_mode` メソッドが呼び出されます。このメソッドは、標準入力から行を読み取り、処理します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:467 50ba899556a847e1a75d0f25cd7fe2d6
+#: ../../Network_APIs/TCP_Client_APIs.rst:486 50ba899556a847e1a75d0f25cd7fe2d6
 msgid "Supported console commands (user-typed) include:"
 msgstr "サポートされているコンソール コマンド (ユーザー入力) は次のとおりです。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:469 41aff323a0ca45e4956349da8188b827
+#: ../../Network_APIs/TCP_Client_APIs.rst:488 41aff323a0ca45e4956349da8188b827
 msgid "``/quit``: closes the connection and exits the client."
 msgstr "``/quit``: 接続を閉じてクライアントを終了します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:470 79bd91d3227f4a4380a275c7c66badc4
+#: ../../Network_APIs/TCP_Client_APIs.rst:489 79bd91d3227f4a4380a275c7c66badc4
 msgid "``/file <file_path>``: sends a single file to the server."
 msgstr "``/file <file_path>``: 単一のファイルをサーバーに送信します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:471 e052489f58284ed785609691c6faf299
+#: ../../Network_APIs/TCP_Client_APIs.rst:490 e052489f58284ed785609691c6faf299
 msgid ""
 "``/multiple_file <file1> <file2> ...``: sends multiple files to the server "
 "concurrently (limited by ``max_thread_num``)."
@@ -883,26 +915,26 @@ msgstr ""
 "``/multiple_file <file1> <file2> ...``: 複数のファイルをサーバーに同時に送信します "
 "(``max_thread_num`` によって制限されます)。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:472 c02efdf8d4db4093bf7010e9b5cd1190
+#: ../../Network_APIs/TCP_Client_APIs.rst:491 c02efdf8d4db4093bf7010e9b5cd1190
 msgid ""
 "``/file_folder <folder_path>``: sends an entire folder to the server, "
 "recursively."
 msgstr "``/file_folder <folder_path>``: フォルダ全体をサーバーに再帰的に送信します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:473 6890978f8c57457dae871840f2e52d1d
+#: ../../Network_APIs/TCP_Client_APIs.rst:492 6890978f8c57457dae871840f2e52d1d
 msgid ""
 "``/multiple_file_folder <folder1> <folder2> ...``: sends multiple folders to"
 " the server."
 msgstr ""
 "``/multiple_file_folder <folder1> <folder2> ...``: 複数のフォルダをサーバーに送信します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:474 eb50001ce2ef4a62b79e3cc3cf78e31d
+#: ../../Network_APIs/TCP_Client_APIs.rst:493 eb50001ce2ef4a62b79e3cc3cf78e31d
 msgid ""
 "Any other text not starting with ``/`` is sent as a normal chat message to "
 "the server."
 msgstr "「/」で始まらないその他のテキストは、通常のチャット メッセージとしてサーバーに送信されます。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:477 ce5de1ebe30a4545ae4f62426b18df14
+#: ../../Network_APIs/TCP_Client_APIs.rst:496 ce5de1ebe30a4545ae4f62426b18df14
 msgid ""
 "The client does not have a built-in ``/help`` command. Please refer to the "
 "server's help for available commands (e.g., by typing ``/help`` after "
@@ -911,7 +943,7 @@ msgstr ""
 "クライアントには組み込みの ``/help`` コマンドがありません。使用可能なコマンドについては、サーバーのヘルプを参照してください "
 "(サーバーに接続した後、「/help」と入力するなど)。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:481 5ddc240e5bab4f95ac404ece507fbfcb
+#: ../../Network_APIs/TCP_Client_APIs.rst:500 5ddc240e5bab4f95ac404ece507fbfcb
 msgid ""
 "If a user types a custom command that has been registered with "
 "``register_command(..., where_to_run=\"client\")``, the client will execute "
@@ -920,21 +952,21 @@ msgstr ""
 "ユーザーが ``register_command(..., where_to_run=\"client\")`` で登録されたカスタム "
 "コマンドを入力すると、クライアントは関連付けられたハンドラを (同期的に、または設定に従ってスレッド内で) 実行します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:486 78d4d1ea9dac4b429eb10549bd635efb
+#: ../../Network_APIs/TCP_Client_APIs.rst:505 78d4d1ea9dac4b429eb10549bd635efb
 msgid ""
 "*Note: The client will print an error message for unknown commands that "
 "start with ``/``.*"
 msgstr "*注意: クライアントは、「/」で始まる不明なコマンドに対してエラー メッセージを出力します。*"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:489 dd97e2c92f4447e1bf153b30202072cc
+#: ../../Network_APIs/TCP_Client_APIs.rst:508 dd97e2c92f4447e1bf153b30202072cc
 msgid "Example interactive session::"
 msgstr "インタラクティブセッションの例::"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:502 169cd228a1fc4073bc934c73b707d52a
+#: ../../Network_APIs/TCP_Client_APIs.rst:521 169cd228a1fc4073bc934c73b707d52a
 msgid "TCP Client file transfer API"
 msgstr "TCPクライアントファイル転送API"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:504 1f297ae5a02a42f58e750021b8fd8cce
+#: ../../Network_APIs/TCP_Client_APIs.rst:523 1f297ae5a02a42f58e750021b8fd8cce
 msgid ""
 "The TCP client contains a file transfer subsystem that supports both client-"
 "to-server and server-to-client transfers, using the same underlying protocol"
@@ -943,7 +975,7 @@ msgstr ""
 "TCP "
 "クライアントには、サーバーと同じ基盤プロトコルを使用して、クライアントからサーバーへの転送とサーバーからクライアントへの転送の両方をサポートするファイル転送サブシステムが含まれています。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:508 6d315aa1ee264adfb15ae595127cf661
+#: ../../Network_APIs/TCP_Client_APIs.rst:527 6d315aa1ee264adfb15ae595127cf661
 msgid ""
 "As with the server documentation, only the list of APIs is provided here. "
 "For detailed internal flow, please refer to the server documentation or the "
@@ -952,45 +984,45 @@ msgstr ""
 "サーバーのドキュメントと同様に、ここでは API のリストのみを提供します。内部フローの詳細については、サーバーのドキュメントまたはソース "
 "コードを参照してください。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:512 8a23cc9d286f48a5845795ec935cbc1b
+#: ../../Network_APIs/TCP_Client_APIs.rst:531 8a23cc9d286f48a5845795ec935cbc1b
 msgid "The file transfer API for the client includes:"
 msgstr "クライアント用のファイル転送 API には次のものが含まれます。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:514 1b1ab906105541d9a988a8af54e5af94
+#: ../../Network_APIs/TCP_Client_APIs.rst:533 1b1ab906105541d9a988a8af54e5af94
 msgid "The basic function for client-to-server file transfer is:"
 msgstr "クライアントからサーバーへのファイル転送の基本機能は次のとおりです。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:524 882c8313c9d0485886e2ea067b7aaa03
+#: ../../Network_APIs/TCP_Client_APIs.rst:543 882c8313c9d0485886e2ea067b7aaa03
 msgid "The thread-safe version (recommended for direct calls) is:"
 msgstr "スレッドセーフ バージョン (直接呼び出しに推奨) は次のとおりです。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:534 29662fdeaab8494e9f7fe879a62f5f0a
+#: ../../Network_APIs/TCP_Client_APIs.rst:553 29662fdeaab8494e9f7fe879a62f5f0a
 msgid "The folder transfer function (client-to-server) is:"
 msgstr "フォルダー転送機能 (クライアントからサーバー) は次のとおりです。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:543 74145548707a4208a4db45a73312bc51
+#: ../../Network_APIs/TCP_Client_APIs.rst:562 74145548707a4208a4db45a73312bc51
 msgid "The multiple files transfer function (client-to-server) is:"
 msgstr "複数のファイル転送機能 (クライアントからサーバーへ) は次のとおりです。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:552 96baf1f10afd42f48c0b6d79828ff35c
+#: ../../Network_APIs/TCP_Client_APIs.rst:571 96baf1f10afd42f48c0b6d79828ff35c
 msgid "The multiple folders transfer function is:"
 msgstr "複数フォルダー転送機能は次のとおりです。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:561 c3bdbafe138e4af1a03937c9c0ab5987
+#: ../../Network_APIs/TCP_Client_APIs.rst:580 c3bdbafe138e4af1a03937c9c0ab5987
 msgid ""
 "For server-initiated transfers (server-to-client), the client provides these"
 " handlers:"
 msgstr "サーバーが開始する転送 (サーバーからクライアント) の場合、クライアントは次のハンドラーを提供します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:589 33811f9100604b81a291bba70b308a61
+#: ../../Network_APIs/TCP_Client_APIs.rst:608 33811f9100604b81a291bba70b308a61
 msgid "The low-level receive mode function is:"
 msgstr "低レベル受信モード関数は次のとおりです。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:604 06c76a36053e40b2a6bd528a272531bd
+#: ../../Network_APIs/TCP_Client_APIs.rst:623 06c76a36053e40b2a6bd528a272531bd
 msgid "And the low-level send mode function is:"
 msgstr "低レベル送信モード関数は次のとおりです。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:616 26db4a518a9a4f1b9475a7a1ef4f722c
+#: ../../Network_APIs/TCP_Client_APIs.rst:635 26db4a518a9a4f1b9475a7a1ef4f722c
 msgid ""
 "We recommend that for client-to-server file transfers, you use the console "
 "commands (``/file``, ``/file_folder``, etc.) rather than calling these APIs "
@@ -1005,7 +1037,7 @@ msgstr ""
 "を直接呼び出す必要がある場合は、メインスレッドのブロックを避けるために、`_thread` バージョン (例: "
 "`file_transfer_client_recv_client_start_thread`) を使用してください。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:625 6787a427e6b14e8a8e43e8bc076b7b3e
+#: ../../Network_APIs/TCP_Client_APIs.rst:644 6787a427e6b14e8a8e43e8bc076b7b3e
 msgid ""
 "*Note: The file transfer API functions follow the same handshake protocol as"
 " the server: the initiator sends a command over the main connection, then a "
@@ -1016,11 +1048,11 @@ msgstr ""
 "プロトコルに従います。イニシエーターはメイン接続を介してコマンドを送信し、一時ポートがネゴシエートされ、実際のファイル データは別の TCP "
 "接続を介して転送されます。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:632 2fad9776a48344b5ad7538b4fb611529
+#: ../../Network_APIs/TCP_Client_APIs.rst:651 2fad9776a48344b5ad7538b4fb611529
 msgid "Port allocation API"
 msgstr "ポート割り当てAPI"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:634 5268492432ab4b56b31657dbe06a7be3
+#: ../../Network_APIs/TCP_Client_APIs.rst:653 5268492432ab4b56b31657dbe06a7be3
 msgid ""
 "The client port allocation APIs are nearly identical to those of the server."
 " They allow you to allocate ephemeral ports either automatically (by "
@@ -1029,7 +1061,7 @@ msgstr ""
 "クライアントのポート割り当て API はサーバーの API とほぼ同じです。これらを使用すると、一時ポートを自動的に (0 を返して OS "
 "に選択させることで)、または構成された範囲内で手動で割り当てることができます。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:639 0e605c10bcd54a51a8b2b59287deb005
+#: ../../Network_APIs/TCP_Client_APIs.rst:658 0e605c10bcd54a51a8b2b59287deb005
 msgid ""
 "To change the port allocation mode, the client listens to the server's "
 "broadcast of ``/client_alloc_port_range``. When the server sends that "
@@ -1042,7 +1074,7 @@ msgstr ""
 "True`` を設定し、範囲を設定します。サーバーが ``NO_LIMIT`` を送信すると、クライアントは自動割り当てを使用します "
 "(割り当て呼び出しから 0 を返します)。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:646 faa64b601f724aebaf4b7f481e9f41cd
+#: ../../Network_APIs/TCP_Client_APIs.rst:665 faa64b601f724aebaf4b7f481e9f41cd
 msgid ""
 "In manual allocation mode, the port range is determined by the server's "
 "broadcast value. The client maintains its own range based on ``self.port`` "
@@ -1055,11 +1087,11 @@ msgstr ""
 "each_client_port_range」、最大値は「self.port + 1 + self.port_add_step * "
 "each_client_port_range」です。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:654 ecd4af8a50c74013bf03f8eace25b63f
+#: ../../Network_APIs/TCP_Client_APIs.rst:673 ecd4af8a50c74013bf03f8eace25b63f
 msgid "The main methods for port allocation are:"
 msgstr "ポート割り当ての主な方法は次のとおりです。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:661 a83c279f3ce44785994831361b60fca3
+#: ../../Network_APIs/TCP_Client_APIs.rst:680 a83c279f3ce44785994831361b60fca3
 msgid ""
 "`palloc` returns an available port (either 0 for automatic mode, or a "
 "concrete port number from the manual range). It internally calls "
@@ -1069,7 +1101,7 @@ msgstr ""
 "`palloc` は使用可能なポート (自動モードの場合は 0、または手動範囲の具体的なポート番号) を返します。これは、ループ内で内部的に "
 "`file_palloc` (加算的割り当て) と `spy_palloc` (減算的割り当て) を呼び出します。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:673 d9f1616d056947cc919f8b02702e555a
+#: ../../Network_APIs/TCP_Client_APIs.rst:692 d9f1616d056947cc919f8b02702e555a
 msgid ""
 "`pfree` releases a previously allocated port. In manual mode, it removes the"
 " port from the internal list and adjusts the latest port pointers. In "
@@ -1078,7 +1110,7 @@ msgstr ""
 "`pfree` は、以前に割り当てられたポートを解放します。手動モードでは、内部リストからポートを削除し、最新のポート "
 "ポインターを調整します。自動モードでは何も行いません。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:678 e8bec0b5e4f24e35ba4bd8fdde0992da
+#: ../../Network_APIs/TCP_Client_APIs.rst:697 e8bec0b5e4f24e35ba4bd8fdde0992da
 msgid ""
 "As with the server, the automatic mode (returning 0) is recommended for most"
 " use cases because it avoids port conflicts and simplifies code. Manual mode"
@@ -1088,181 +1120,181 @@ msgstr ""
 "サーバーと同様に、ポートの競合を回避し、コードを簡素化するため、ほとんどのユースケースでは自動モード (0 を返す) "
 "をお勧めします。手動モードは、ポート範囲を厳密に制御する必要がある環境 (ファイアウォールやテストなど) に提供されます。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:685 6f8647e930984ea0b55f4974b8c746ee
+#: ../../Network_APIs/TCP_Client_APIs.rst:704 6f8647e930984ea0b55f4974b8c746ee
 msgid "TCP Client APIs table"
 msgstr "TCP クライアント API テーブル"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:687 87f94971d9eb4aedabd77da2e39c5a54
+#: ../../Network_APIs/TCP_Client_APIs.rst:706 87f94971d9eb4aedabd77da2e39c5a54
 msgid "In short, the table of contents of the public APIs is as follows:"
 msgstr "つまり、パブリック API の目次は次のとおりです。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:690 3ef9e8bdf0de4dd6bf1f7fab94791ef0
+#: ../../Network_APIs/TCP_Client_APIs.rst:709 3ef9e8bdf0de4dd6bf1f7fab94791ef0
 msgid "The client setup APIs:"
 msgstr "クライアントセットアップ API:"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:691 3b11e19eee2f4a09990d9066c92b27bc
+#: ../../Network_APIs/TCP_Client_APIs.rst:710 3b11e19eee2f4a09990d9066c92b27bc
 msgid "`TCP_Client_Base`"
 msgstr "`TCP_クライアント_ベース`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:692 c56acd7ebb10410f98295e2c580d6ddd
+#: ../../Network_APIs/TCP_Client_APIs.rst:711 c56acd7ebb10410f98295e2c580d6ddd
 msgid "`start_TCP_client`"
 msgstr "`start_TCP_client`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:693 35928e0cfbda47b082b3c85bee2426c1
+#: ../../Network_APIs/TCP_Client_APIs.rst:712 35928e0cfbda47b082b3c85bee2426c1
 msgid "`connect`"
 msgstr "「接続」"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:694 e42772de8df642888dd617e757f84643
+#: ../../Network_APIs/TCP_Client_APIs.rst:713 e42772de8df642888dd617e757f84643
 msgid "`close`"
 msgstr "「閉じる」"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:696 f8df2e41432a47c0ae4f8f18553dab5f
+#: ../../Network_APIs/TCP_Client_APIs.rst:715 f8df2e41432a47c0ae4f8f18553dab5f
 msgid "The client handling information APIs:"
 msgstr "クライアント処理情報 API:"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:697 da09cd847e734a3ca725874cd4f91820
+#: ../../Network_APIs/TCP_Client_APIs.rst:716 da09cd847e734a3ca725874cd4f91820
 msgid "`receive_messages`"
 msgstr "`メッセージを受信する`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:698 41b2ffc90c654b0a93eb545037f753b1
+#: ../../Network_APIs/TCP_Client_APIs.rst:717 41b2ffc90c654b0a93eb545037f753b1
 msgid "`handle_server_command`"
 msgstr "`ハンドルサーバーコマンド`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:699 51895b485dd34210baaf04545b1ae69a
+#: ../../Network_APIs/TCP_Client_APIs.rst:718 51895b485dd34210baaf04545b1ae69a
 msgid "`receive_message`"
 msgstr "`受信メッセージ`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:700 d57a12920adf4dd983a450ca5700aa85
+#: ../../Network_APIs/TCP_Client_APIs.rst:719 d57a12920adf4dd983a450ca5700aa85
 msgid "`send_message`"
 msgstr "`send_message`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:701 c77756587a9f4be2a4f031823b7c847d
+#: ../../Network_APIs/TCP_Client_APIs.rst:720 c77756587a9f4be2a4f031823b7c847d
 msgid "`interactive_mode`"
 msgstr "`インタラクティブモード`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:703 c63a4a426e284026bb6dc31d17fca506
+#: ../../Network_APIs/TCP_Client_APIs.rst:722 c63a4a426e284026bb6dc31d17fca506
 msgid ""
 "The client encrypted channel APIs (see :ref:`tcp-client-encrypted-channel-"
 "api`):"
 msgstr "クライアント暗号化チャネル API (:ref:`tcp-client-encrypted-channel-api` を参照):"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:704 a2a9b88059524881af129c3a65350735
+#: ../../Network_APIs/TCP_Client_APIs.rst:723 a2a9b88059524881af129c3a65350735
 msgid "`_crypto_exchange_thread`"
 msgstr "`_crypto_exchange_thread`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:705 dca4c6fd6d8048879fbace3cfdcf7b36
+#: ../../Network_APIs/TCP_Client_APIs.rst:724 dca4c6fd6d8048879fbace3cfdcf7b36
 msgid "`_crypto_after_ack`"
 msgstr "`_crypto_after_ack`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:706 adf7e8f1871745b1ba8c889b894b6f36
+#: ../../Network_APIs/TCP_Client_APIs.rst:725 adf7e8f1871745b1ba8c889b894b6f36
 msgid "`_crypto_push_pub_key`"
 msgstr "`_crypto_push_pub_key`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:707 38857e73eb0640e18e428d6ef1f000bf
+#: ../../Network_APIs/TCP_Client_APIs.rst:726 38857e73eb0640e18e428d6ef1f000bf
 msgid "`_crypto_process_line`"
 msgstr "`_crypto_process_line`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:709 2612b604a3824206a4e5dac6ebde241e
+#: ../../Network_APIs/TCP_Client_APIs.rst:728 2612b604a3824206a4e5dac6ebde241e
 msgid "The client command APIs:"
 msgstr "クライアント コマンド API:"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:710 0759f093e3ce4fc6a9eeec5a559f5135
+#: ../../Network_APIs/TCP_Client_APIs.rst:729 0759f093e3ce4fc6a9eeec5a559f5135
 msgid "`register_command`"
 msgstr "`register_command`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:711 adf7e8f1871745b1ba8c889b894b6f36
+#: ../../Network_APIs/TCP_Client_APIs.rst:730 adf7e8f1871745b1ba8c889b894b6f36
 msgid "`_execute_custom_handler`"
 msgstr "`_execute_custom_handler`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:712 dd16a2c2039340829f5ad47171cdfe53
+#: ../../Network_APIs/TCP_Client_APIs.rst:731 dd16a2c2039340829f5ad47171cdfe53
 msgid "`submit_task`"
 msgstr "`submit_task`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:713 1be3026524a04204baa85c94ef80e223
+#: ../../Network_APIs/TCP_Client_APIs.rst:732 1be3026524a04204baa85c94ef80e223
 msgid "`create_temporary_server`"
 msgstr "「一時サーバーの作成」"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:714 38857e73eb0640e18e428d6ef1f000bf
+#: ../../Network_APIs/TCP_Client_APIs.rst:733 38857e73eb0640e18e428d6ef1f000bf
 msgid "`create_temporary_client`"
 msgstr "`create_temporary_client`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:716 d72d840f60154cdf9d90248a15bad9c7
+#: ../../Network_APIs/TCP_Client_APIs.rst:735 d72d840f60154cdf9d90248a15bad9c7
 msgid "The client file transfer APIs:"
 msgstr "クライアント ファイル転送 API:"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:717 a263b56c2d2d435eb5b3c01eb673db14
+#: ../../Network_APIs/TCP_Client_APIs.rst:736 a263b56c2d2d435eb5b3c01eb673db14
 msgid "`file_transfer_client_recv_client_start`"
 msgstr "`file_transfer_client_recv_client_start`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:718 befdda74dd4d46989c8eecc34791474e
+#: ../../Network_APIs/TCP_Client_APIs.rst:737 befdda74dd4d46989c8eecc34791474e
 msgid "`file_transfer_client_recv_client_start_thread`"
 msgstr "`file_transfer_client_recv_client_start_thread`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:719 c6188aba9859499ba0794ce6858693f1
+#: ../../Network_APIs/TCP_Client_APIs.rst:738 c6188aba9859499ba0794ce6858693f1
 msgid "`folder_file_transfer_client_recv_client_start`"
 msgstr "`folder_file_transfer_client_recv_client_start`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:720 ff78436e7eb24dd19cbe4825015f8828
+#: ../../Network_APIs/TCP_Client_APIs.rst:739 ff78436e7eb24dd19cbe4825015f8828
 msgid "`multiple_file_transfer_client_recv_client_start`"
 msgstr "`multiple_file_transfer_client_recv_client_start`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:721 49d8c37f75784a5babf650e6812d1958
+#: ../../Network_APIs/TCP_Client_APIs.rst:740 49d8c37f75784a5babf650e6812d1958
 msgid "`multiple_folder_file_transfer_client_recv_client_start`"
 msgstr "`multiple_folder_file_transfer_client_recv_client_start`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:722 f716310ec8d5413c8d3681abcb8e20c5
+#: ../../Network_APIs/TCP_Client_APIs.rst:741 f716310ec8d5413c8d3681abcb8e20c5
 msgid "`file_transfer_client_recv_server_start`"
 msgstr "`file_transfer_client_recv_server_start`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:723 213d1e20073f48d0ab4bfa40f4802ecc
+#: ../../Network_APIs/TCP_Client_APIs.rst:742 213d1e20073f48d0ab4bfa40f4802ecc
 msgid "`file_transfer_client_recv_server_start_thread`"
 msgstr "`file_transfer_client_recv_server_start_thread`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:724 2904d623fb3945a4bf765161df1010b6
+#: ../../Network_APIs/TCP_Client_APIs.rst:743 2904d623fb3945a4bf765161df1010b6
 msgid "`file_folder_transfer_client_recv_server_start_thread`"
 msgstr "`file_folder_transfer_client_recv_server_start_thread`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:725 2b37749681d04c2189da298afbc37a9c
+#: ../../Network_APIs/TCP_Client_APIs.rst:744 2b37749681d04c2189da298afbc37a9c
 msgid "`file_transfer_mode_recv`"
 msgstr "`file_transfer_mode_recv`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:726 7d808959dd404a37b84751f18f4f97ab
+#: ../../Network_APIs/TCP_Client_APIs.rst:745 7d808959dd404a37b84751f18f4f97ab
 msgid "`file_transfer_mode`"
 msgstr "`ファイル転送モード`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:728 22fff416b2de49b4a990313c09d2bdb8
+#: ../../Network_APIs/TCP_Client_APIs.rst:747 22fff416b2de49b4a990313c09d2bdb8
 msgid "The client console commands (interactive mode):"
 msgstr "クライアント コンソール コマンド (対話モード):"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:729 20deb7f928564eaf9696e9368bcc58ca
+#: ../../Network_APIs/TCP_Client_APIs.rst:748 20deb7f928564eaf9696e9368bcc58ca
 msgid "`/quit`"
 msgstr "`/やめる`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:730 24b2938e2b97479b89830e942cec25f6
+#: ../../Network_APIs/TCP_Client_APIs.rst:749 24b2938e2b97479b89830e942cec25f6
 msgid "`/file`"
 msgstr "`/ファイル`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:731 e8b4dcf8a8b948c7bc387d1bbb80940b
+#: ../../Network_APIs/TCP_Client_APIs.rst:750 e8b4dcf8a8b948c7bc387d1bbb80940b
 msgid "`/multiple_file`"
 msgstr "`/multiple_file`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:732 d8ac3c78f9a4435ebdd46a657d3e9d64
+#: ../../Network_APIs/TCP_Client_APIs.rst:751 d8ac3c78f9a4435ebdd46a657d3e9d64
 msgid "`/file_folder`"
 msgstr "`/ファイルフォルダー`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:733 5dd0f10c02d14eaabbb9aac63a7aabe5
+#: ../../Network_APIs/TCP_Client_APIs.rst:752 5dd0f10c02d14eaabbb9aac63a7aabe5
 msgid "`/multiple_file_folder`"
 msgstr "`/複数のファイルフォルダー`"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:736 999f277a1054439eb06a68030e00efb1
+#: ../../Network_APIs/TCP_Client_APIs.rst:755 999f277a1054439eb06a68030e00efb1
 msgid "See Also"
 msgstr "関連項目"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:738 0eb5ad362c8a481f9f16a441ce19853f
+#: ../../Network_APIs/TCP_Client_APIs.rst:757 0eb5ad362c8a481f9f16a441ce19853f
 msgid ":doc:`TCP_Server_APIs` — TCP server."
 msgstr ":doc:`TCP_Server_APIs` — TCP サーバー。"
 
-#: ../../Network_APIs/TCP_Client_APIs.rst:739 13bb1727ee954f5ebbaef0615f72bf79
+#: ../../Network_APIs/TCP_Client_APIs.rst:758 13bb1727ee954f5ebbaef0615f72bf79
 msgid ":doc:`UDP_APIs` — UDP endpoint."
 msgstr ":doc:`UDP_APIs` — UDP エンドポイント。"
 

@@ -330,14 +330,28 @@ Handshake
 ^^^^^^^^^
 
 The client initiates the exchange by sending a plaintext
-``/crypto_key_exchange`` greeting; the server replies with
-``/crypto_key_exchange_ack <need-client-pub> <force>``. Both sides then
-push their public key files over the file-transfer mechanism (plaintext)
-and TOFU-check the received key. Both sides switch to encrypted mode only
-after ``/crypto_ready`` has been received from the peer (so plaintext and
-ciphertext never interleave on a connection). On later connections the
-keys are re-exchanged and TOFU-checked again; the exchange is never
-skipped, only the identity check short-circuits for known keys.
+``/crypto_key_exchange <client-nonce>`` greeting; the server replies with
+``/crypto_key_exchange_ack <server-nonce> <need-client-pub> <force>``. Both
+sides then push their public key files over the file-transfer mechanism
+(plaintext) and TOFU-check the received key. Both sides switch to
+encrypted mode only after ``/crypto_ready`` has been received from the
+peer (so plaintext and ciphertext never interleave on a connection). On
+later connections the keys are re-exchanged and TOFU-checked again; the
+exchange is never skipped, only the identity check short-circuits for
+known keys. Public-key pushes are only accepted from a connection that
+actually started the handshake, so an arbitrary unauthenticated peer
+cannot poison the registry.
+
+Replay protection
+^^^^^^^^^^^^^^^^^
+
+The handshake exchanges a random session nonce, and every encrypted line
+on the wire carries it plus a per-connection sequence number:
+``<sender-nonce>|<seq>|<ciphertext>``. The receiver drops a line whose
+nonce does not match the current session (ciphertext replayed from an
+older connection) or whose sequence number is not the expected one
+(ciphertext replayed within the session / out of order); both counters
+reset when the socket flips to encrypted mode after a (re-)exchange.
 
 Decode verification and key rotation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -352,6 +366,12 @@ whose key did not change is accepted again, while a peer presenting a
 above). A user who intentionally rotates a keypair must delete the stale
 ``pub_key.json`` entry (or the whole file) on the peer side to re-trust the
 new key.
+
+Re-exchanges are circuit-broken: after ``MAX_DECODE_FAILURES`` (3)
+consecutive decode failures on one connection the connection is closed
+instead of re-exchanging, so a garbage-injection or persistent-mismatch
+storm cannot spin the loop forever. A successful decryption resets the
+counter.
 
 .. code-block:: python
 
