@@ -1,7 +1,7 @@
 # Top-level build for PyFlow.
 #
 # All CMake content lives here at the repository root: the crypto_api C
-# library (sources under src/crypto_api, C tests under test/) plus its
+# library (sources under PyFlow/crypto_api, C tests under test/) plus its
 # install/export rules. The Python package is managed by uv/pytest instead.
 cmake_minimum_required(VERSION 3.16)
 project(pyflow VERSION 0.1.0 LANGUAGES C)
@@ -20,9 +20,9 @@ set(CRYPTO_API_VERSION 1.0.0)
 set(CRYPTO_API_VERSION_MAJOR 1)
 
 set(CRYPTO_API_SOURCES
-  src/crypto_api/pf_crypto.c
-  src/crypto_api/pf_rsa.c
-  src/crypto_api/pf_ecdh.c
+  PyFlow/crypto_api/pf_crypto.c
+  PyFlow/crypto_api/pf_rsa.c
+  PyFlow/crypto_api/pf_ecdh.c
 )
 
 add_library(crypto_api SHARED ${CRYPTO_API_SOURCES})
@@ -34,7 +34,7 @@ if(WIN32)
 endif()
 
 target_include_directories(crypto_api PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/crypto_api/include>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/PyFlow/crypto_api/include>
   $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
 target_link_libraries(crypto_api PUBLIC OpenSSL::Crypto)
@@ -60,7 +60,7 @@ install(TARGETS crypto_api
   LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
   RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
-install(DIRECTORY src/crypto_api/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY PyFlow/crypto_api/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 install(EXPORT crypto_apiTargets
   FILE crypto_apiTargets.cmake

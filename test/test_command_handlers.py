@@ -9,7 +9,7 @@ package_dictionary = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if package_dictionary not in os.sys.path:
     sys.path.insert(0, package_dictionary)
 
-import src.command_control_extension_tcp as ctl
+import PyFlow.command_control_extension_tcp as ctl
 
 
 def test_command_handler_parsing(server):

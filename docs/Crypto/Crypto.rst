@@ -1,7 +1,7 @@
 C/OpenSSL Crypto Module
 ========================
 
-The ``src/crypto_api`` directory contains PyFlow's C/OpenSSL
+The ``PyFlow/crypto_api`` directory contains PyFlow's C/OpenSSL
 cryptography library. The library is independent from the Python runtime
 and is built from the repository root with CMake.
 
@@ -13,7 +13,7 @@ The module provides:
 - AES-256-GCM authenticated encryption for ECDH sessions.
 - PEM key persistence and structured error reporting.
 
-The public headers are located in ``src/crypto_api/include``:
+The public headers are located in ``PyFlow/crypto_api/include``:
 
 - ``pf_crypto.h`` - common errors, OpenSSL diagnostics, and HKDF.
 - ``pf_rsa.h`` - RSA key and encryption APIs.
@@ -42,7 +42,7 @@ The C test suite lives in ``test/`` (``test_hkdf``, ``test_rsa``,
 ``test_ecdh``) and is built and run together with the library.
 
 The library is built as a shared object (``libcrypto_api.so``) so it can
-be loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes
+be loaded from Python: ``PyFlow/network_api/rsa_crypto.py`` is a ctypes
 binding used by the TCP layer to encrypt messages with RSA-OAEP (see the
 ``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The
 binding also implements the TCP layer's anti-MITM identity check (TOFU):

@@ -1,9 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "pyflow"
 version = "0.1.0"
 description = "PyFlow is a lightweight tool used for monitoring server status and simply controlling servers, such as through the command lines or the desktops."
 requires-python = ">=3.10"
 dependencies = []
+
+[tool.setuptools.packages.find]
+include = ["PyFlow*"]
 
 [dependency-groups]
 dev = [

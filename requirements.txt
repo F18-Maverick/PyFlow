@@ -1,0 +1,22 @@
+# PyFlow runtime dependencies.
+#
+# The Python layer is pure standard library (ctypes binding included);
+# there are no third-party runtime packages. The encrypted channel
+# additionally requires the C library to be built (see README "Build"):
+#
+#   cmake -S . -B build && cmake --build build
+#
+# The library is loaded at runtime via ctypes, not pip.
+
+# --- Documentation build (optional) ---
+# Build the Sphinx docs:  python -m sphinx -b html docs build/sphinx_doc
+sphinx>=7.0
+
+# --- Documentation translation (optional) ---
+# Manage the multi-language .po/.mo files under docs/locale
+# (docs/reBuild.sh uses these); deep-translator drives the
+# batch_translate_po.py auto-translation script (calls the Google
+# Translate web API).
+sphinx-intl>=2.2
+polib>=1.2
+deep-translator>=1.11

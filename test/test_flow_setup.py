@@ -11,7 +11,7 @@ package_dictionary = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if package_dictionary not in sys.path:
     sys.path.insert(0, package_dictionary)
 
-import src.flow_setup as fs
+import PyFlow.flow_setup as fs
 
 TEST_PORT = 9000
 

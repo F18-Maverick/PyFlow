@@ -4,13 +4,13 @@ import sys
 
 import pytest
 
-# Only add project root to sys.path if src package is not importable
-if importlib.util.find_spec("src") is None:
+# Only add project root to sys.path if the PyFlow package is not importable
+if importlib.util.find_spec("PyFlow") is None:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import src.command_control_extension_tcp as ctl
-from src.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
-from src.network_api.connect_udp import UDP
+import PyFlow.command_control_extension_tcp as ctl
+from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
+from PyFlow.network_api.connect_udp import UDP
 
 SERVER_PORT = 65001
 CLIENT_PORT = 65000

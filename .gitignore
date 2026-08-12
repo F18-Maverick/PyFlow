@@ -23,7 +23,7 @@ docs/locale/**/*.mo
 docs/.sync
 *.bak
 *~
-src/setup.json
+PyFlow/setup.json
 
 # CLion
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
@@ -42,8 +42,7 @@ test/*.key
 test/*.pem
 
 # crypto keys (never commit private keys or exchanged peer keys)
-src/network_api/.Flow/pvt_key/
-src/network_api/.Flow/pub_key/
+PyFlow/network_api/.Flow
 *.o
 *.d
 *.so

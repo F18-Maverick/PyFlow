@@ -5,7 +5,7 @@ package_dictionary = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if package_dictionary not in os.sys.path:
     sys.path.insert(0, package_dictionary)
 
-from src.network_api.connect_tcp import TCP_Server_Base
+from PyFlow.network_api.connect_tcp import TCP_Server_Base
 
 
 def test_tcp_server_init():

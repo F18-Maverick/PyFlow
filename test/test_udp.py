@@ -9,7 +9,7 @@ package_dictionary = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if package_dictionary not in os.sys.path:
     sys.path.insert(0, package_dictionary)
 
-from src.network_api.connect_udp import UDP
+from PyFlow.network_api.connect_udp import UDP
 
 
 def test_udp_server_init(udp_server):

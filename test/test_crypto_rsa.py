@@ -13,7 +13,7 @@ package_dictionary = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if package_dictionary not in sys.path:
     sys.path.insert(0, package_dictionary)
 
-from src.network_api import rsa_crypto  # noqa: E402
+from PyFlow.network_api import rsa_crypto  # noqa: E402
 
 try:
     rsa_crypto.load_library()
@@ -219,7 +219,7 @@ def test_missing_valid_signature_fails(crypto, peer):
 
     import base64
     import ctypes
-    import src.network_api.rsa_crypto as rc
+    import PyFlow.network_api.rsa_crypto as rc
 
     key = crypto._load_peer_pub(pem_path)
     chunk = b"hello"
