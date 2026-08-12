@@ -1,7 +1,7 @@
 C/OpenSSL Crypto Module
 ========================
 
-The ``src/crypto_api`` directory contains ServSpy's C/OpenSSL
+The ``src/crypto_api`` directory contains PyFlow's C/OpenSSL
 cryptography library. The library is independent from the Python runtime
 and is built from the repository root with CMake.
 
@@ -15,9 +15,9 @@ The module provides:
 
 The public headers are located in ``src/crypto_api/include``:
 
-- ``ss_crypto.h`` - common errors, OpenSSL diagnostics, and HKDF.
-- ``ss_rsa.h`` - RSA key and encryption APIs.
-- ``ss_ecdh.h`` - ECDH key agreement and seal/open APIs.
+- ``pf_crypto.h`` - common errors, OpenSSL diagnostics, and HKDF.
+- ``pf_rsa.h`` - RSA key and encryption APIs.
+- ``pf_ecdh.h`` - ECDH key agreement and seal/open APIs.
 
 Build
 =====
@@ -60,22 +60,22 @@ are ``cmake/crypto_apiConfig.cmake.in`` and ``crypto_api.pc.in``.
 Common API
 ==========
 
-All public functions return ``ss_err_t``. ``SS_OK`` indicates success.
-Use ``ss_err_string`` to convert an error code to readable text and
-``ss_crypto_openssl_errors`` to retrieve the pending OpenSSL error queue.
+All public functions return ``pf_err_t``. ``PF_OK`` indicates success.
+Use ``pf_err_string`` to convert an error code to readable text and
+``pf_crypto_openssl_errors`` to retrieve the pending OpenSSL error queue.
 
 .. code-block:: c
 
-    #include "ss_crypto.h"
+    #include "pf_crypto.h"
 
-    ss_err_t error = ss_crypto_hkdf_sha256(
+    pf_err_t error = pf_crypto_hkdf_sha256(
         ikm, ikm_len,
         salt, salt_len,
         info, info_len,
         session_key, 32);
 
-    if (error != SS_OK) {
-        fprintf(stderr, "crypto error: %s\n", ss_err_string(error));
+    if (error != PF_OK) {
+        fprintf(stderr, "crypto error: %s\n", pf_err_string(error));
     }
 
 The library uses caller-provided output buffers for fixed-size results.
@@ -86,89 +86,89 @@ corresponding ``*_free`` function.
 RSA API
 =======
 
-RSA keys are generated with ``ss_rsa_keygen``. The implementation uses
+RSA keys are generated with ``pf_rsa_keygen``. The implementation uses
 RSA-OAEP with SHA-256 for encryption and decryption. Key sizes from 2048 to
 16384 bits are accepted; 2048, 3072, or 4096 bits are recommended.
 
 .. code-block:: c
 
-    ss_rsa_key_t *key = NULL;
-    ss_err_t error = ss_rsa_keygen(3072, &key);
-    if (error != SS_OK) {
+    pf_rsa_key_t *key = NULL;
+    pf_err_t error = pf_rsa_keygen(3072, &key);
+    if (error != PF_OK) {
         return error;
     }
 
     size_t ciphertext_len = 0;
-    error = ss_rsa_encrypt(key, plaintext, plaintext_len,
+    error = pf_rsa_encrypt(key, plaintext, plaintext_len,
                            NULL, &ciphertext_len);
-    if (error == SS_OK) {
+    if (error == PF_OK) {
         uint8_t *ciphertext = malloc(ciphertext_len);
-        error = ss_rsa_encrypt(key, plaintext, plaintext_len,
+        error = pf_rsa_encrypt(key, plaintext, plaintext_len,
                                ciphertext, &ciphertext_len);
         free(ciphertext);
     }
 
-    ss_rsa_key_free(key);
+    pf_rsa_key_free(key);
 
 The first encryption call with ``out == NULL`` queries the required output
 size. RSA encryption is binary-safe and accepts an explicit input length.
-The maximum plaintext size is returned by ``ss_rsa_max_plaintext_len``.
+The maximum plaintext size is returned by ``pf_rsa_max_plaintext_len``.
 
 Public and private keys can be stored as PEM files:
 
 .. code-block:: c
 
-    ss_rsa_write_pub(key, "server-public.pem");
-    ss_rsa_write_priv(key, "server-private.pem", "passphrase");
+    pf_rsa_write_pub(key, "server-public.pem");
+    pf_rsa_write_priv(key, "server-private.pem", "passphrase");
 
-    ss_rsa_read_pub("server-public.pem", &public_key);
-    ss_rsa_read_priv("server-private.pem", "passphrase", &private_key);
+    pf_rsa_read_pub("server-public.pem", &public_key);
+    pf_rsa_read_priv("server-private.pem", "passphrase", &private_key);
 
 ECDH API
 ========
 
-ECDH key pairs are created with ``ss_ecdh_keypair_generate``. The supported
+ECDH key pairs are created with ``pf_ecdh_keypair_generate``. The supported
 curve names are:
 
-- ``SS_ECDH_CURVE_P256``
-- ``SS_ECDH_CURVE_P384``
-- ``SS_ECDH_CURVE_P521``
+- ``PF_ECDH_CURVE_P256``
+- ``PF_ECDH_CURVE_P384``
+- ``PF_ECDH_CURVE_P521``
 
 Public keys are exchanged as PEM SubjectPublicKeyInfo strings. Parsed peer
 keys are checked before use.
 
 .. code-block:: c
 
-    ss_ecdh_keypair_t *local = NULL;
-    ss_ecdh_pubkey_t *peer = NULL;
+    pf_ecdh_keypair_t *local = NULL;
+    pf_ecdh_pubkey_t *peer = NULL;
     char *public_pem = NULL;
 
-    ss_ecdh_keypair_generate(SS_ECDH_CURVE_P256, &local);
-    ss_ecdh_pub_to_pem(local, &public_pem);
-    ss_ecdh_pub_from_pem(peer_pem, &peer);
+    pf_ecdh_keypair_generate(PF_ECDH_CURVE_P256, &local);
+    pf_ecdh_pub_to_pem(local, &public_pem);
+    pf_ecdh_pub_from_pem(peer_pem, &peer);
 
     uint8_t session_key[32];
-    ss_ecdh_derive_key(local, peer,
+    pf_ecdh_derive_key(local, peer,
                        salt, salt_len,
                        info, info_len,
                        session_key, sizeof(session_key));
 
     free(public_pem);
-    ss_ecdh_pubkey_free(peer);
-    ss_ecdh_keypair_free(local);
+    pf_ecdh_pubkey_free(peer);
+    pf_ecdh_keypair_free(local);
 
-The higher-level ``ss_ecdh_seal`` and ``ss_ecdh_open`` APIs are recommended
+The higher-level ``pf_ecdh_seal`` and ``pf_ecdh_open`` APIs are recommended
 for application payloads. They derive an AES-256-GCM key with HKDF-SHA256,
 include a random salt and IV, and authenticate optional AAD.
 
-The ``ss_ecdh_seal`` output format is:
+The ``pf_ecdh_seal`` output format is:
 
 .. code-block:: text
 
     salt(16 bytes) | iv(12 bytes) | ciphertext(N bytes) | tag(16 bytes)
 
-The fixed overhead is ``SS_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext
-is allowed. A failed tag check returns ``SS_ERR_AUTH_FAILED`` and no
+The fixed overhead is ``PF_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext
+is allowed. A failed tag check returns ``PF_ERR_AUTH_FAILED`` and no
 plaintext is returned.
 
 Security Notes
@@ -187,20 +187,20 @@ Error Handling
 
 The main error codes are:
 
-- ``SS_ERR_INVALID_ARG`` - invalid pointer or length.
-- ``SS_ERR_NOMEM`` - allocation failure.
-- ``SS_ERR_OPENSSL`` - OpenSSL operation failure.
-- ``SS_ERR_IO`` - file operation failure.
-- ``SS_ERR_PARSE`` - malformed PEM/DER input or wrong private-key passphrase.
-- ``SS_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient.
-- ``SS_ERR_AUTH_FAILED`` - AES-GCM authentication failed.
-- ``SS_ERR_UNSUPPORTED`` - unsupported curve or key type.
-- ``SS_ERR_DECRYPT`` - RSA decryption failed.
+- ``PF_ERR_INVALID_ARG`` - invalid pointer or length.
+- ``PF_ERR_NOMEM`` - allocation failure.
+- ``PF_ERR_OPENSSL`` - OpenSSL operation failure.
+- ``PF_ERR_IO`` - file operation failure.
+- ``PF_ERR_PARSE`` - malformed PEM/DER input or wrong private-key passphrase.
+- ``PF_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient.
+- ``PF_ERR_AUTH_FAILED`` - AES-GCM authentication failed.
+- ``PF_ERR_UNSUPPORTED`` - unsupported curve or key type.
+- ``PF_ERR_DECRYPT`` - RSA decryption failed.
 
 For detailed OpenSSL diagnostics:
 
 .. code-block:: c
 
     char details[4096];
-    ss_crypto_openssl_errors(details, sizeof(details));
+    pf_crypto_openssl_errors(details, sizeof(details));
     fprintf(stderr, "%s\n", details);

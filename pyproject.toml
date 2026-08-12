@@ -1,7 +1,7 @@
 [project]
-name = "servspy"
+name = "pyflow"
 version = "0.1.0"
-description = "ServSpy is a lightweight tool used for monitoring server status and simply controlling servers, such as through the command lines or the desktops."
+description = "PyFlow is a lightweight tool used for monitoring server status and simply controlling servers, such as through the command lines or the desktops."
 requires-python = ">=3.10"
 dependencies = []
 

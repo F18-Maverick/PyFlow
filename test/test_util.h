@@ -1,6 +1,6 @@
 /* Shared test harness: check macros with failure accounting. */
-#ifndef SS_CRYPTO_TEST_UTIL_H
-#define SS_CRYPTO_TEST_UTIL_H
+#ifndef PF_CRYPTO_TEST_UTIL_H
+#define PF_CRYPTO_TEST_UTIL_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,14 +20,14 @@ static int g_failures = 0;
 
 #define CHECK_ERR(err, expected)                                                \
     do {                                                                        \
-        ss_err_t _e = (err);                                                    \
+        pf_err_t _e = (err);                                                    \
         g_checks++;                                                             \
         if (_e != (expected)) {                                                 \
             g_failures++;                                                       \
             fprintf(stderr,                                                     \
                     "FAIL %s:%d: %s returned %s (%d), expected %s (%d)\n",      \
-                    __FILE__, __LINE__, #err, ss_err_string(_e), (int)_e,       \
-                    ss_err_string(expected), (int)(expected));                  \
+                    __FILE__, __LINE__, #err, pf_err_string(_e), (int)_e,       \
+                    pf_err_string(expected), (int)(expected));                  \
         }                                                                       \
     } while (0)
 
@@ -42,4 +42,4 @@ static int g_failures = 0;
         return 1;                                                               \
     }
 
-#endif /* SS_CRYPTO_TEST_UTIL_H */
+#endif /* PF_CRYPTO_TEST_UTIL_H */

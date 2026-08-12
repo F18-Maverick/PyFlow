@@ -51,13 +51,13 @@ def _new_keypair(paths, lib=None, bits=None):
         lib = rsa_crypto.load_library()
     handle = ctypes.c_void_p()
     assert (
-        lib.ss_rsa_keygen(bits or rsa_crypto.DEFAULT_KEY_BITS, ctypes.byref(handle))
-        == rsa_crypto.SS_OK
+        lib.pf_rsa_keygen(bits or rsa_crypto.DEFAULT_KEY_BITS, ctypes.byref(handle))
+        == rsa_crypto.PF_OK
     )
     key = rsa_crypto.RsaKey(handle.value, lib)
     pub_path, pvt_path = paths
-    assert lib.ss_rsa_write_priv(key.handle, pvt_path.encode(), None) == 0
-    assert lib.ss_rsa_write_pub(key.handle, pub_path.encode()) == 0
+    assert lib.pf_rsa_write_priv(key.handle, pvt_path.encode(), None) == 0
+    assert lib.pf_rsa_write_pub(key.handle, pub_path.encode()) == 0
     del key
 
 

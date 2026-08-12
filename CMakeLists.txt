@@ -1,10 +1,10 @@
-# Top-level build for ServSpy.
+# Top-level build for PyFlow.
 #
 # All CMake content lives here at the repository root: the crypto_api C
 # library (sources under src/crypto_api, C tests under test/) plus its
 # install/export rules. The Python package is managed by uv/pytest instead.
 cmake_minimum_required(VERSION 3.16)
-project(servspy VERSION 0.1.0 LANGUAGES C)
+project(pyflow VERSION 0.1.0 LANGUAGES C)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -20,17 +20,17 @@ set(CRYPTO_API_VERSION 1.0.0)
 set(CRYPTO_API_VERSION_MAJOR 1)
 
 set(CRYPTO_API_SOURCES
-  src/crypto_api/ss_crypto.c
-  src/crypto_api/ss_rsa.c
-  src/crypto_api/ss_ecdh.c
+  src/crypto_api/pf_crypto.c
+  src/crypto_api/pf_rsa.c
+  src/crypto_api/pf_ecdh.c
 )
 
 add_library(crypto_api SHARED ${CRYPTO_API_SOURCES})
 add_library(crypto_api::crypto_api ALIAS crypto_api)
 
-# Windows shared build needs the export macro (SS_CRYPTO_SHARED).
+# Windows shared build needs the export macro (PF_CRYPTO_SHARED).
 if(WIN32)
-  target_compile_definitions(crypto_api PRIVATE SS_CRYPTO_SHARED)
+  target_compile_definitions(crypto_api PRIVATE PF_CRYPTO_SHARED)
 endif()
 
 target_include_directories(crypto_api PUBLIC

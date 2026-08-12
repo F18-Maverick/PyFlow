@@ -1,11 +1,11 @@
-Contributing to ServSpy
+Contributing to PyFlow
 ==============================
 
 Thanks!
 --------
 First, thank you for your interest in contributing to our project! 
 We welcome contributions from the community, and we appreciate your 
-efforts to help improve ServSpy.
+efforts to help improve PyFlow.
 
 Before contributing:
 --------------------
@@ -17,15 +17,15 @@ Before contributing:
    number or the URL in the description of your pull request, so we can easily
    track the related issue and PR.
 
-2. Please make sure that you have already forked the ServSpy
+2. Please make sure that you have already forked the PyFlow
 repository.
 
 3. After you have forked the repository, please clone it to your local machine:
 
 .. code-block:: bash
 
-   git clone https://github.com/<your-username>/ServSpy.git
-   cd ./ServSpy
+   git clone https://github.com/<your-username>/PyFlow.git
+   cd ./PyFlow
 
 4. If there are new commits in the upstream repository that your fork
 does not have, please pull the latest changes to avoid merge conflicts:

@@ -4,7 +4,7 @@ libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
 includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
 
 Name: crypto_api
-Description: ServSpy C/OpenSSL cryptography library (RSA-OAEP, ECDH, HKDF, AES-256-GCM)
+Description: PyFlow C/OpenSSL cryptography library (RSA-OAEP, ECDH, HKDF, AES-256-GCM)
 Version: @CRYPTO_API_VERSION@
 Libs: -L${libdir} -lcrypto_api
 Libs.private: -lcrypto

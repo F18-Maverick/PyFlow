@@ -82,10 +82,10 @@ def test_ssh_key_is_reused_when_present(tmp_path):
     import ctypes
 
     handle = ctypes.c_void_p()
-    assert lib.ss_rsa_keygen(rsa_crypto.DEFAULT_KEY_BITS, ctypes.byref(handle)) == rsa_crypto.SS_OK
+    assert lib.pf_rsa_keygen(rsa_crypto.DEFAULT_KEY_BITS, ctypes.byref(handle)) == rsa_crypto.PF_OK
     key = rsa_crypto.RsaKey(handle.value, lib)
     id_rsa = ssh_dir / "id_rsa"
-    assert lib.ss_rsa_write_priv(key.handle, str(id_rsa).encode(), None) == 0
+    assert lib.pf_rsa_write_priv(key.handle, str(id_rsa).encode(), None) == 0
     crypto = rsa_crypto.RsaCrypto("server", str(tmp_path), str(ssh_dir))
     crypto.ensure_keys()
     assert crypto.priv_path == str(id_rsa)
@@ -112,12 +112,12 @@ def test_custom_keys_valid_pair_used(tmp_path):
     import ctypes
 
     handle = ctypes.c_void_p()
-    assert lib.ss_rsa_keygen(rsa_crypto.DEFAULT_KEY_BITS, ctypes.byref(handle)) == rsa_crypto.SS_OK
+    assert lib.pf_rsa_keygen(rsa_crypto.DEFAULT_KEY_BITS, ctypes.byref(handle)) == rsa_crypto.PF_OK
     key = rsa_crypto.RsaKey(handle.value, lib)
     pub_path = str(tmp_path / "custom_pub.pem")
     pvt_path = str(tmp_path / "custom_pvt.pem")
-    assert lib.ss_rsa_write_priv(key.handle, pvt_path.encode(), None) == 0
-    assert lib.ss_rsa_write_pub(key.handle, pub_path.encode()) == 0
+    assert lib.pf_rsa_write_priv(key.handle, pvt_path.encode(), None) == 0
+    assert lib.pf_rsa_write_pub(key.handle, pub_path.encode()) == 0
     del key
     crypto = rsa_crypto.RsaCrypto(
         "server", str(tmp_path), str(ssh_dir), custom_keys=[pub_path, pvt_path]
@@ -135,10 +135,10 @@ def test_custom_keys_invalid_pair_ignored(tmp_path):
     import ctypes
 
     handle = ctypes.c_void_p()
-    assert lib.ss_rsa_keygen(rsa_crypto.DEFAULT_KEY_BITS, ctypes.byref(handle)) == rsa_crypto.SS_OK
+    assert lib.pf_rsa_keygen(rsa_crypto.DEFAULT_KEY_BITS, ctypes.byref(handle)) == rsa_crypto.PF_OK
     key = rsa_crypto.RsaKey(handle.value, lib)
     pvt_path = str(tmp_path / "only_pvt.pem")
-    assert lib.ss_rsa_write_priv(key.handle, pvt_path.encode(), None) == 0
+    assert lib.pf_rsa_write_priv(key.handle, pvt_path.encode(), None) == 0
     del key
     crypto = rsa_crypto.RsaCrypto(  # pub file missing -> pair invalid -> default lookup used
 
@@ -162,12 +162,12 @@ def test_custom_keys_unmatched_pair_ignored(tmp_path):
     def gen(pub_path, pvt_path):
         handle = ctypes.c_void_p()
         assert (
-            lib.ss_rsa_keygen(rsa_crypto.DEFAULT_KEY_BITS, ctypes.byref(handle))
-            == rsa_crypto.SS_OK
+            lib.pf_rsa_keygen(rsa_crypto.DEFAULT_KEY_BITS, ctypes.byref(handle))
+            == rsa_crypto.PF_OK
         )
         key = rsa_crypto.RsaKey(handle.value, lib)
-        assert lib.ss_rsa_write_priv(key.handle, pvt_path.encode(), None) == 0
-        assert lib.ss_rsa_write_pub(key.handle, pub_path.encode()) == 0
+        assert lib.pf_rsa_write_priv(key.handle, pvt_path.encode(), None) == 0
+        assert lib.pf_rsa_write_pub(key.handle, pub_path.encode()) == 0
 
     gen(str(tmp_path / "a_pub.pem"), str(tmp_path / "a_pvt.pem"))
     gen(str(tmp_path / "b_pub.pem"), str(tmp_path / "b_pvt.pem"))
@@ -226,12 +226,12 @@ def test_missing_valid_signature_fails(crypto, peer):
     in_buf = (ctypes.c_uint8 * len(chunk)).from_buffer_copy(chunk)
     out_len = ctypes.c_size_t(0)
     assert (
-        lib.ss_rsa_encrypt(key.handle, in_buf, len(chunk), None, ctypes.byref(out_len)) == rc.SS_OK
+        lib.pf_rsa_encrypt(key.handle, in_buf, len(chunk), None, ctypes.byref(out_len)) == rc.PF_OK
     )
     out_buf = (ctypes.c_uint8 * out_len.value)()
     assert (
-        lib.ss_rsa_encrypt(key.handle, in_buf, len(chunk), out_buf, ctypes.byref(out_len))
-        == rc.SS_OK
+        lib.pf_rsa_encrypt(key.handle, in_buf, len(chunk), out_buf, ctypes.byref(out_len))
+        == rc.PF_OK
     )
     wire = base64.b64encode(bytes(out_buf[: out_len.value])).decode("ascii")
     ok, _ = peer.decrypt_with_own(wire)

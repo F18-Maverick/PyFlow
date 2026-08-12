@@ -1,5 +1,5 @@
 /* HKDF-SHA256 tests: RFC 5869 Appendix A test vectors. */
-#include "ss_crypto.h"
+#include "pf_crypto.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,10 +35,10 @@ static void check_rfc5869_case(const char *ikm_hex, const char *salt_hex,
     CHECK(okm_n >= 0 && (size_t)okm_n == out_len);
 
     uint8_t out[255 * 32];
-    ss_err_t err = ss_crypto_hkdf_sha256(
+    pf_err_t err = pf_crypto_hkdf_sha256(
         ikm, (size_t)ikm_n, salt_n > 0 ? salt : NULL, (size_t)salt_n,
         info_n > 0 ? info : NULL, (size_t)info_n, out, out_len);
-    CHECK_ERR(err, SS_OK);
+    CHECK_ERR(err, PF_OK);
     CHECK(memcmp(out, okm, out_len) == 0);
 }
 
@@ -77,17 +77,17 @@ static void run_tests(void) {
     /* Argument validation. */
     uint8_t out[32];
     uint8_t ikm[8] = {1, 2, 3, 4, 5, 6, 7, 8};
-    CHECK_ERR(ss_crypto_hkdf_sha256(NULL, 8, NULL, 0, NULL, 0, out, 32),
-              SS_ERR_INVALID_ARG); /* NULL ikm */
-    CHECK_ERR(ss_crypto_hkdf_sha256(ikm, 0, NULL, 0, NULL, 0, out, 32),
-              SS_ERR_INVALID_ARG); /* empty ikm */
-    CHECK_ERR(ss_crypto_hkdf_sha256(ikm, 8, NULL, 0, NULL, 0, NULL, 32),
-              SS_ERR_INVALID_ARG); /* NULL out */
-    CHECK_ERR(ss_crypto_hkdf_sha256(ikm, 8, NULL, 0, NULL, 0, out, 0),
-              SS_ERR_INVALID_ARG); /* zero length */
-    CHECK_ERR(ss_crypto_hkdf_sha256(ikm, 8, NULL, 0, NULL, 0, out,
-                                    SS_CRYPTO_HKDF_SHA256_MAX_OUT + 1),
-              SS_ERR_INVALID_ARG); /* too long */
+    CHECK_ERR(pf_crypto_hkdf_sha256(NULL, 8, NULL, 0, NULL, 0, out, 32),
+              PF_ERR_INVALID_ARG); /* NULL ikm */
+    CHECK_ERR(pf_crypto_hkdf_sha256(ikm, 0, NULL, 0, NULL, 0, out, 32),
+              PF_ERR_INVALID_ARG); /* empty ikm */
+    CHECK_ERR(pf_crypto_hkdf_sha256(ikm, 8, NULL, 0, NULL, 0, NULL, 32),
+              PF_ERR_INVALID_ARG); /* NULL out */
+    CHECK_ERR(pf_crypto_hkdf_sha256(ikm, 8, NULL, 0, NULL, 0, out, 0),
+              PF_ERR_INVALID_ARG); /* zero length */
+    CHECK_ERR(pf_crypto_hkdf_sha256(ikm, 8, NULL, 0, NULL, 0, out,
+                                    PF_CRYPTO_HKDF_SHA256_MAX_OUT + 1),
+              PF_ERR_INVALID_ARG); /* too long */
 }
 
 TEST_MAIN("test_hkdf")

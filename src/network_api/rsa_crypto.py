@@ -1,4 +1,4 @@
-"""crypto_api (C/OpenSSL) RSA integration for ServSpy's TCP layer.
+"""crypto_api (C/OpenSSL) RSA integration for PyFlow's TCP layer.
 
 A thin ctypes binding to the shared ``libcrypto_api`` plus the key
 lifecycle required by the encrypted TCP channel:
@@ -33,18 +33,18 @@ import uuid
 
 VALID_SIGN = "_VALID"  # plaintext suffix; a decrypt missing it signals a stale/wrong key
 
-SS_OK = 0  # ss_err_t values, must match ss_crypto.h
-SS_ERR_INVALID_ARG = 1
-SS_ERR_NOMEM = 2
-SS_ERR_OPENSSL = 3
-SS_ERR_IO = 4
-SS_ERR_PARSE = 5
-SS_ERR_BUFFER_TOO_SMALL = 6
-SS_ERR_AUTH_FAILED = 7
-SS_ERR_UNSUPPORTED = 8
-SS_ERR_DECRYPT = 9
+PF_OK = 0  # pf_err_t values, must match pf_crypto.h
+PF_ERR_INVALID_ARG = 1
+PF_ERR_NOMEM = 2
+PF_ERR_OPENSSL = 3
+PF_ERR_IO = 4
+PF_ERR_PARSE = 5
+PF_ERR_BUFFER_TOO_SMALL = 6
+PF_ERR_AUTH_FAILED = 7
+PF_ERR_UNSUPPORTED = 8
+PF_ERR_DECRYPT = 9
 
-DEFAULT_KEY_BITS = 2048  # generated keys (bits); ss_rsa_keygen accepts 2048..16384
+DEFAULT_KEY_BITS = 2048  # generated keys (bits); pf_rsa_keygen accepts 2048..16384
 
 
 class CryptoLibraryError(RuntimeError):
@@ -52,7 +52,7 @@ class CryptoLibraryError(RuntimeError):
 
 
 class RsaKey:
-    """Owns an ``ss_rsa_key_t*`` handle; frees it on GC."""
+    """Owns an ``pf_rsa_key_t*`` handle; frees it on GC."""
 
     def __init__(self, handle, lib):
         self._handle = handle
@@ -65,7 +65,7 @@ class RsaKey:
     def __del__(self):
         if self._handle:
             try:
-                self._lib.ss_rsa_key_free(self._handle)
+                self._lib.pf_rsa_key_free(self._handle)
             except Exception:
                 pass
             self._handle = None
@@ -89,38 +89,38 @@ def _configure(lib):
     c_size_t = ctypes.c_size_t
     c_uint8_p = ctypes.POINTER(ctypes.c_uint8)
 
-    lib.ss_rsa_keygen.argtypes = [ctypes.c_int, ctypes.POINTER(c_void_p)]
-    lib.ss_rsa_keygen.restype = ctypes.c_int
-    lib.ss_rsa_read_pub.argtypes = [ctypes.c_char_p, ctypes.POINTER(c_void_p)]
-    lib.ss_rsa_read_pub.restype = ctypes.c_int
-    lib.ss_rsa_read_priv.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(c_void_p)]
-    lib.ss_rsa_read_priv.restype = ctypes.c_int
-    lib.ss_rsa_write_pub.argtypes = [c_void_p, ctypes.c_char_p]
-    lib.ss_rsa_write_pub.restype = ctypes.c_int
-    lib.ss_rsa_write_priv.argtypes = [c_void_p, ctypes.c_char_p, ctypes.c_char_p]
-    lib.ss_rsa_write_priv.restype = ctypes.c_int
-    lib.ss_rsa_encrypt.argtypes = [
+    lib.pf_rsa_keygen.argtypes = [ctypes.c_int, ctypes.POINTER(c_void_p)]
+    lib.pf_rsa_keygen.restype = ctypes.c_int
+    lib.pf_rsa_read_pub.argtypes = [ctypes.c_char_p, ctypes.POINTER(c_void_p)]
+    lib.pf_rsa_read_pub.restype = ctypes.c_int
+    lib.pf_rsa_read_priv.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.POINTER(c_void_p)]
+    lib.pf_rsa_read_priv.restype = ctypes.c_int
+    lib.pf_rsa_write_pub.argtypes = [c_void_p, ctypes.c_char_p]
+    lib.pf_rsa_write_pub.restype = ctypes.c_int
+    lib.pf_rsa_write_priv.argtypes = [c_void_p, ctypes.c_char_p, ctypes.c_char_p]
+    lib.pf_rsa_write_priv.restype = ctypes.c_int
+    lib.pf_rsa_encrypt.argtypes = [
         c_void_p,
         c_uint8_p,
         c_size_t,
         c_uint8_p,
         ctypes.POINTER(c_size_t),
     ]
-    lib.ss_rsa_encrypt.restype = ctypes.c_int
-    lib.ss_rsa_decrypt.argtypes = [
+    lib.pf_rsa_encrypt.restype = ctypes.c_int
+    lib.pf_rsa_decrypt.argtypes = [
         c_void_p,
         c_uint8_p,
         c_size_t,
         c_uint8_p,
         ctypes.POINTER(c_size_t),
     ]
-    lib.ss_rsa_decrypt.restype = ctypes.c_int
-    lib.ss_rsa_max_plaintext_len.argtypes = [c_void_p]
-    lib.ss_rsa_max_plaintext_len.restype = c_size_t
-    lib.ss_rsa_ciphertext_len.argtypes = [c_void_p]
-    lib.ss_rsa_ciphertext_len.restype = c_size_t
-    lib.ss_rsa_key_free.argtypes = [c_void_p]
-    lib.ss_rsa_key_free.restype = None
+    lib.pf_rsa_decrypt.restype = ctypes.c_int
+    lib.pf_rsa_max_plaintext_len.argtypes = [c_void_p]
+    lib.pf_rsa_max_plaintext_len.restype = c_size_t
+    lib.pf_rsa_ciphertext_len.argtypes = [c_void_p]
+    lib.pf_rsa_ciphertext_len.restype = c_size_t
+    lib.pf_rsa_key_free.argtypes = [c_void_p]
+    lib.pf_rsa_key_free.restype = None
     return lib
 
 
@@ -244,9 +244,9 @@ class RsaCrypto:
                 os.remove(self.pub_path)
             except OSError:
                 pass
-        err = lib.ss_rsa_write_pub(priv_key.handle, self.pub_path.encode("utf-8"))
-        if err != SS_OK:
-            raise RuntimeError("ss_rsa_write_pub failed: {}".format(err))
+        err = lib.pf_rsa_write_pub(priv_key.handle, self.pub_path.encode("utf-8"))
+        if err != PF_OK:
+            raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
         self._priv_key = priv_key
 
     def reload_own_key(self):
@@ -257,8 +257,8 @@ class RsaCrypto:
 
     def _read_priv_handle(self, lib, path):
         handle = ctypes.c_void_p()
-        err = lib.ss_rsa_read_priv(path.encode("utf-8"), None, ctypes.byref(handle))
-        if err != SS_OK or not handle.value:
+        err = lib.pf_rsa_read_priv(path.encode("utf-8"), None, ctypes.byref(handle))
+        if err != PF_OK or not handle.value:
             raise ValueError("cannot parse private key {} (err {})".format(path, err))
         return RsaKey(handle.value, lib)
 
@@ -278,38 +278,38 @@ class RsaCrypto:
             return False
         try:
             pub_handle = ctypes.c_void_p()
-            if lib.ss_rsa_read_pub(
+            if lib.pf_rsa_read_pub(
                 pub_path.encode("utf-8"), ctypes.byref(pub_handle)
-            ) != SS_OK or not pub_handle.value:
+            ) != PF_OK or not pub_handle.value:
                 return False
             pub_key = RsaKey(pub_handle.value, lib)
             priv_handle = ctypes.c_void_p()
-            if lib.ss_rsa_read_priv(
+            if lib.pf_rsa_read_priv(
                 pvt_path.encode("utf-8"), None, ctypes.byref(priv_handle)
-            ) != SS_OK or not priv_handle.value:
+            ) != PF_OK or not priv_handle.value:
                 return False
             priv_key = RsaKey(priv_handle.value, lib)
             probe = b"custom-key-pair-check"  # pairing probe: pub-encrypt -> priv-decrypt must round-trip
             in_buf = (ctypes.c_uint8 * len(probe)).from_buffer_copy(probe)
             out_len = ctypes.c_size_t(0)
-            if lib.ss_rsa_encrypt(
+            if lib.pf_rsa_encrypt(
                 pub_key.handle, in_buf, len(probe), None, ctypes.byref(out_len)
-            ) != SS_OK:
+            ) != PF_OK:
                 return False
             out_buf = (ctypes.c_uint8 * out_len.value)()
-            if lib.ss_rsa_encrypt(
+            if lib.pf_rsa_encrypt(
                 pub_key.handle, in_buf, len(probe), out_buf, ctypes.byref(out_len)
-            ) != SS_OK:
+            ) != PF_OK:
                 return False
             dec_len = ctypes.c_size_t(0)
-            if lib.ss_rsa_decrypt(
+            if lib.pf_rsa_decrypt(
                 priv_key.handle, out_buf, out_len.value, None, ctypes.byref(dec_len)
-            ) != SS_OK:
+            ) != PF_OK:
                 return False
             dec_buf = (ctypes.c_uint8 * dec_len.value)()
-            if lib.ss_rsa_decrypt(
+            if lib.pf_rsa_decrypt(
                 priv_key.handle, out_buf, out_len.value, dec_buf, ctypes.byref(dec_len)
-            ) != SS_OK:
+            ) != PF_OK:
                 return False
             return bytes(dec_buf[: dec_len.value]) == probe
         except Exception:
@@ -317,20 +317,20 @@ class RsaCrypto:
 
     def _generate_keypair(self, lib, priv_path, pub_path):
         handle = ctypes.c_void_p()
-        err = lib.ss_rsa_keygen(DEFAULT_KEY_BITS, ctypes.byref(handle))
-        if err != SS_OK or not handle.value:
-            raise RuntimeError("ss_rsa_keygen failed: {}".format(err))
+        err = lib.pf_rsa_keygen(DEFAULT_KEY_BITS, ctypes.byref(handle))
+        if err != PF_OK or not handle.value:
+            raise RuntimeError("pf_rsa_keygen failed: {}".format(err))
         key = RsaKey(handle.value, lib)
-        err = lib.ss_rsa_write_priv(key.handle, priv_path.encode("utf-8"), None)
-        if err != SS_OK:
-            raise RuntimeError("ss_rsa_write_priv failed: {}".format(err))
+        err = lib.pf_rsa_write_priv(key.handle, priv_path.encode("utf-8"), None)
+        if err != PF_OK:
+            raise RuntimeError("pf_rsa_write_priv failed: {}".format(err))
         try:
             os.chmod(priv_path, 0o600)  # private key: owner-only
         except OSError:
             pass
-        err = lib.ss_rsa_write_pub(key.handle, pub_path.encode("utf-8"))
-        if err != SS_OK:
-            raise RuntimeError("ss_rsa_write_pub failed: {}".format(err))
+        err = lib.pf_rsa_write_pub(key.handle, pub_path.encode("utf-8"))
+        if err != PF_OK:
+            raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
 
 
     def peer_pem_path(self, peer_role, peer_ip, peer_port):
@@ -466,8 +466,8 @@ class RsaCrypto:
             return cached[1]
         lib = load_library()
         handle = ctypes.c_void_p()
-        err = lib.ss_rsa_read_pub(path.encode("utf-8"), ctypes.byref(handle))
-        if err != SS_OK or not handle.value:
+        err = lib.pf_rsa_read_pub(path.encode("utf-8"), ctypes.byref(handle))
+        if err != PF_OK or not handle.value:
             return None
         key = RsaKey(handle.value, lib)
         self._peer_pub_cache[path] = (mtime, key)
@@ -490,9 +490,9 @@ class RsaCrypto:
             payload = plaintext + VALID_SIGN
             data = payload.encode("utf-8")
             lib = load_library()
-            max_len = lib.ss_rsa_max_plaintext_len(key.handle)
+            max_len = lib.pf_rsa_max_plaintext_len(key.handle)
             if max_len <= 0:
-                raise RuntimeError("ss_rsa_max_plaintext_len returned {}".format(max_len))
+                raise RuntimeError("pf_rsa_max_plaintext_len returned {}".format(max_len))
             parts = []
             for offset in range(0, len(data), max_len):
                 chunk = data[offset : offset + max_len]
@@ -502,13 +502,13 @@ class RsaCrypto:
     def _rsa_encrypt_chunk(self, lib, key, chunk):
         in_buf = (ctypes.c_uint8 * len(chunk)).from_buffer_copy(chunk)
         out_len = ctypes.c_size_t(0)
-        err = lib.ss_rsa_encrypt(key.handle, in_buf, len(chunk), None, ctypes.byref(out_len))
-        if err != SS_OK:
-            raise RuntimeError("ss_rsa_encrypt (query) failed: {}".format(err))
+        err = lib.pf_rsa_encrypt(key.handle, in_buf, len(chunk), None, ctypes.byref(out_len))
+        if err != PF_OK:
+            raise RuntimeError("pf_rsa_encrypt (query) failed: {}".format(err))
         out_buf = (ctypes.c_uint8 * out_len.value)()
-        err = lib.ss_rsa_encrypt(key.handle, in_buf, len(chunk), out_buf, ctypes.byref(out_len))
-        if err != SS_OK:
-            raise RuntimeError("ss_rsa_encrypt failed: {}".format(err))
+        err = lib.pf_rsa_encrypt(key.handle, in_buf, len(chunk), out_buf, ctypes.byref(out_len))
+        if err != PF_OK:
+            raise RuntimeError("pf_rsa_encrypt failed: {}".format(err))
         import base64
 
         return base64.b64encode(bytes(out_buf[: out_len.value])).decode("ascii")
@@ -546,15 +546,15 @@ class RsaCrypto:
     def _rsa_decrypt_chunk(self, lib, chunk):
         in_buf = (ctypes.c_uint8 * len(chunk)).from_buffer_copy(chunk)
         out_len = ctypes.c_size_t(0)
-        err = lib.ss_rsa_decrypt(
+        err = lib.pf_rsa_decrypt(
             self._priv_key.handle, in_buf, len(chunk), None, ctypes.byref(out_len)
         )
-        if err != SS_OK:
+        if err != PF_OK:
             return False, b""
         out_buf = (ctypes.c_uint8 * out_len.value)()
-        err = lib.ss_rsa_decrypt(
+        err = lib.pf_rsa_decrypt(
             self._priv_key.handle, in_buf, len(chunk), out_buf, ctypes.byref(out_len)
         )
-        if err != SS_OK:
+        if err != PF_OK:
             return False, b""
         return True, bytes(out_buf[: out_len.value])
