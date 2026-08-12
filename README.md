@@ -1,6 +1,6 @@
 # PyFlow
 
-PyFlow is a high level network protocal, which support the messages, files or folders transfertation etc..
+PyFlow is a high-level network protocol with APIs for transferring messages, files, and folders, plus extensible interfaces etc..
 
 ## Features
 
