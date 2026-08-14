@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "pyflow"
 version = "0.1.0"
-description = "PyFlow is a lightweight tool used for monitoring server status and simply controlling servers, such as through the command lines or the desktops."
+description = "PyFlow is a high-level network protocol with APIs for transferring messages, files, and folders, plus extensible interfaces etc.."
 requires-python = ">=3.10"
 dependencies = []
 
