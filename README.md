@@ -1,5 +1,7 @@
 # PyFlow
 
+[![CI](https://github.com/F18-Maverick/PyFlow/workflows/CI/badge.svg)](https://github.com/F18-Maverick/PyFlow/actions)
+
 PyFlow is a high-level network protocol with APIs for transferring messages, files, and folders, plus extensible interfaces etc..
 
 ## Features
