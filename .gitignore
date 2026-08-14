@@ -24,6 +24,8 @@ docs/.sync
 *.bak
 *~
 PyFlow/setup.json
+pyflow.egg-info
+dist
 
 # CLion
 #  JetBrains specific template is maintained in a separate JetBrains.gitignore that can
