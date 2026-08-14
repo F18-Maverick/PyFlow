@@ -24,7 +24,7 @@ docs/.sync
 *.bak
 *~
 PyFlow/setup.json
-pyflow.egg-info
+pyflow_net.egg-info
 dist
 
 # CLion
