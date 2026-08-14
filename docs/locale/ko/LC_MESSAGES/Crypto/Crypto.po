@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-09 01:46+0800\n"
+"POT-Creation-Date: 2026-08-14 23:27+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -22,9 +22,10 @@ msgid "C/OpenSSL Crypto Module"
 msgstr "C/OpenSSL 암호화 모듈"
 
 #: ../../Crypto/Crypto.rst:4 3deff5ab02524055987d367c04d45d13
+#, fuzzy
 msgid ""
-"The ``src/crypto_api`` directory contains ServSpy's C/OpenSSL cryptography "
-"library. The library is independent from the Python runtime and is built "
+"The ``PyFlow/crypto_api`` directory contains PyFlow's C/OpenSSL cryptography"
+" library. The library is independent from the Python runtime and is built "
 "from the repository root with CMake."
 msgstr ""
 "``src/crypto_api`` 디렉토리에는 ServSpy의 C/OpenSSL 암호화 라이브러리가 포함되어 있습니다. 라이브러리는 "
@@ -55,19 +56,23 @@ msgid "PEM key persistence and structured error reporting."
 msgstr "PEM 키 지속성 및 구조적 오류 보고."
 
 #: ../../Crypto/Crypto.rst:16 db317eda3fab476da523857722d73b9b
-msgid "The public headers are located in ``src/crypto_api/include``:"
+#, fuzzy
+msgid "The public headers are located in ``PyFlow/crypto_api/include``:"
 msgstr "공개 헤더는 ``src/crypto_api/include``에 있습니다:"
 
 #: ../../Crypto/Crypto.rst:18 0a8708d8e48f4f8aa18996ccdee18a0a
-msgid "``ss_crypto.h`` - common errors, OpenSSL diagnostics, and HKDF."
+#, fuzzy
+msgid "``pf_crypto.h`` - common errors, OpenSSL diagnostics, and HKDF."
 msgstr "``ss_crypto.h`` - 일반적인 오류, OpenSSL 진단 및 HKDF."
 
 #: ../../Crypto/Crypto.rst:19 6ac2383036094fd1b68be1846a94cd13
-msgid "``ss_rsa.h`` - RSA key and encryption APIs."
+#, fuzzy
+msgid "``pf_rsa.h`` - RSA key and encryption APIs."
 msgstr "``ss_rsa.h`` - RSA 키 및 암호화 API."
 
 #: ../../Crypto/Crypto.rst:20 c70e4dccf2bb49988120dbdffbc9b8f5
-msgid "``ss_ecdh.h`` - ECDH key agreement and seal/open APIs."
+#, fuzzy
+msgid "``pf_ecdh.h`` - ECDH key agreement and seal/open APIs."
 msgstr "``ss_ecdh.h`` - ECDH 키 계약 및 봉인/공개 API."
 
 #: ../../Crypto/Crypto.rst:23 1c24f0fe9d3340a698754976ab1d4b42
@@ -95,10 +100,11 @@ msgstr ""
 " 함께 빌드되고 실행됩니다."
 
 #: ../../Crypto/Crypto.rst:44 2d8ebac8b06147e4983c07a6c69296ab
+#, fuzzy
 msgid ""
 "The library is built as a shared object (``libcrypto_api.so``) so it can be "
-"loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes binding "
-"used by the TCP layer to encrypt messages with RSA-OAEP (see the "
+"loaded from Python: ``PyFlow/network_api/rsa_crypto.py`` is a ctypes binding"
+" used by the TCP layer to encrypt messages with RSA-OAEP (see the "
 "``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
 "binding also implements the TCP layer's anti-MITM identity check (TOFU): "
 "peer public keys are exchanged on every connection, recorded under the "
@@ -131,10 +137,11 @@ msgid "Common API"
 msgstr "공통 API"
 
 #: ../../Crypto/Crypto.rst:63 ca2af2dcc11c4432a4e252ae6fb530ec
+#, fuzzy
 msgid ""
-"All public functions return ``ss_err_t``. ``SS_OK`` indicates success. Use "
-"``ss_err_string`` to convert an error code to readable text and "
-"``ss_crypto_openssl_errors`` to retrieve the pending OpenSSL error queue."
+"All public functions return ``pf_err_t``. ``PF_OK`` indicates success. Use "
+"``pf_err_string`` to convert an error code to readable text and "
+"``pf_crypto_openssl_errors`` to retrieve the pending OpenSSL error queue."
 msgstr ""
 "모든 공개 함수는 ``ss_err_t``를 반환합니다. ``SS_OK``는 성공을 나타냅니다. ``ss_err_string``을 사용하여"
 " 오류 코드를 읽을 수 있는 텍스트로 변환하고 ``ss_crypto_openssl_errors``를 사용하여 보류 중인 OpenSSL "
@@ -155,8 +162,9 @@ msgid "RSA API"
 msgstr "RSA API"
 
 #: ../../Crypto/Crypto.rst:89 1e0209363c764cfe9b270d3f7221ef40
+#, fuzzy
 msgid ""
-"RSA keys are generated with ``ss_rsa_keygen``. The implementation uses RSA-"
+"RSA keys are generated with ``pf_rsa_keygen``. The implementation uses RSA-"
 "OAEP with SHA-256 for encryption and decryption. Key sizes from 2048 to "
 "16384 bits are accepted; 2048, 3072, or 4096 bits are recommended."
 msgstr ""
@@ -164,10 +172,11 @@ msgstr ""
 "OAEP를 사용합니다. 2048~16384비트의 키 크기가 허용됩니다. 2048, 3072 또는 4096비트가 권장됩니다."
 
 #: ../../Crypto/Crypto.rst:113 3e26320f16ab47a0af87bf5dc89e647a
+#, fuzzy
 msgid ""
 "The first encryption call with ``out == NULL`` queries the required output "
 "size. RSA encryption is binary-safe and accepts an explicit input length. "
-"The maximum plaintext size is returned by ``ss_rsa_max_plaintext_len``."
+"The maximum plaintext size is returned by ``pf_rsa_max_plaintext_len``."
 msgstr ""
 "``out == NULL``을 사용한 첫 번째 암호화 호출은 필요한 출력 크기를 쿼리합니다. RSA 암호화는 바이너리 안전하며 명시적인 "
 "입력 길이를 허용합니다. 최대 일반 텍스트 크기는 ``ss_rsa_max_plaintext_len``에 의해 반환됩니다."
@@ -181,23 +190,24 @@ msgid "ECDH API"
 msgstr "ECDH API"
 
 #: ../../Crypto/Crypto.rst:130 67c165608ff34545ad59d22f734c0266
+#, fuzzy
 msgid ""
-"ECDH key pairs are created with ``ss_ecdh_keypair_generate``. The supported "
+"ECDH key pairs are created with ``pf_ecdh_keypair_generate``. The supported "
 "curve names are:"
 msgstr ""
 "ECDH 키 쌍은 ``ss_ecdh_keypair_generate``를 사용하여 생성됩니다. 지원되는 곡선 이름은 다음과 같습니다."
 
 #: ../../Crypto/Crypto.rst:133 737f5f74529f452da38ae54c1e6bdcea
-msgid "``SS_ECDH_CURVE_P256``"
-msgstr "``SS_ECDH_CURVE_P256``"
+msgid "``PF_ECDH_CURVE_P256``"
+msgstr "``PF_ECDH_CURVE_P256``"
 
 #: ../../Crypto/Crypto.rst:134 4e6a452663d84c9eac9615a421d54edb
-msgid "``SS_ECDH_CURVE_P384``"
-msgstr "``SS_ECDH_CURVE_P384``"
+msgid "``PF_ECDH_CURVE_P384``"
+msgstr "``PF_ECDH_CURVE_P384``"
 
 #: ../../Crypto/Crypto.rst:135 e421bbf3383e4079820642816c90e921
-msgid "``SS_ECDH_CURVE_P521``"
-msgstr "``SS_ECDH_CURVE_P521``"
+msgid "``PF_ECDH_CURVE_P521``"
+msgstr "``PF_ECDH_CURVE_P521``"
 
 #: ../../Crypto/Crypto.rst:137 5f2b04819c5a4d7b8e96512bca6cf86e
 msgid ""
@@ -206,8 +216,9 @@ msgid ""
 msgstr "공개 키는 PEM SubjectPublicKeyInfo 문자열로 교환됩니다. 구문 분석된 피어 키는 사용 전에 확인됩니다."
 
 #: ../../Crypto/Crypto.rst:160 0f40f41880b94e828bbd58ac631754a1
+#, fuzzy
 msgid ""
-"The higher-level ``ss_ecdh_seal`` and ``ss_ecdh_open`` APIs are recommended "
+"The higher-level ``pf_ecdh_seal`` and ``pf_ecdh_open`` APIs are recommended "
 "for application payloads. They derive an AES-256-GCM key with HKDF-SHA256, "
 "include a random salt and IV, and authenticate optional AAD."
 msgstr ""
@@ -215,13 +226,15 @@ msgstr ""
 "SHA256을 사용하여 AES-256-GCM 키를 파생하고 임의의 솔트와 IV를 포함하며 선택적 AAD를 인증합니다."
 
 #: ../../Crypto/Crypto.rst:164 84614363b3104ac4a44f044dad010eeb
-msgid "The ``ss_ecdh_seal`` output format is:"
+#, fuzzy
+msgid "The ``pf_ecdh_seal`` output format is:"
 msgstr "``ss_ecdh_seal`` 출력 형식은 다음과 같습니다:"
 
 #: ../../Crypto/Crypto.rst:170 77967b230b95484a836884d1d717eab3
+#, fuzzy
 msgid ""
-"The fixed overhead is ``SS_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext "
-"is allowed. A failed tag check returns ``SS_ERR_AUTH_FAILED`` and no "
+"The fixed overhead is ``PF_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext "
+"is allowed. A failed tag check returns ``PF_ERR_AUTH_FAILED`` and no "
 "plaintext is returned."
 msgstr ""
 "고정 오버헤드는 ``SS_ECDH_SEAL_OVERHEAD``(44바이트)입니다. 빈 일반 텍스트가 허용됩니다. 실패한 태그 확인은 "
@@ -258,40 +271,49 @@ msgid "The main error codes are:"
 msgstr "주요 오류 코드는 다음과 같습니다."
 
 #: ../../Crypto/Crypto.rst:190 a20ad03d7c334f02b5ff41c9b5bbee92
-msgid "``SS_ERR_INVALID_ARG`` - invalid pointer or length."
+#, fuzzy
+msgid "``PF_ERR_INVALID_ARG`` - invalid pointer or length."
 msgstr "``SS_ERR_INVALID_ARG`` - 포인터 또는 길이가 잘못되었습니다."
 
 #: ../../Crypto/Crypto.rst:191 00d6efea688847c79215e48f3a13b2d1
-msgid "``SS_ERR_NOMEM`` - allocation failure."
+#, fuzzy
+msgid "``PF_ERR_NOMEM`` - allocation failure."
 msgstr "``SS_ERR_NOMEM`` - 할당 실패."
 
 #: ../../Crypto/Crypto.rst:192 186f19fb4245429e9d15af05cad0f907
-msgid "``SS_ERR_OPENSSL`` - OpenSSL operation failure."
-msgstr "``SS_ERR_OPENSSL`` - OpenSSL 작업 실패."
+#, fuzzy
+msgid "``PF_ERR_OPENSSL`` - OpenSSL operation failure."
+msgstr "``SS_ERR_IO`` - 파일 작업 실패."
 
 #: ../../Crypto/Crypto.rst:193 599dddb1941c4b1cba7c1d5d9d8b1034
-msgid "``SS_ERR_IO`` - file operation failure."
+#, fuzzy
+msgid "``PF_ERR_IO`` - file operation failure."
 msgstr "``SS_ERR_IO`` - 파일 작업 실패."
 
 #: ../../Crypto/Crypto.rst:194 dbb3eeecaf6c4d078923d7ffe0e2ec62
+#, fuzzy
 msgid ""
-"``SS_ERR_PARSE`` - malformed PEM/DER input or wrong private-key passphrase."
+"``PF_ERR_PARSE`` - malformed PEM/DER input or wrong private-key passphrase."
 msgstr "``SS_ERR_PARSE`` - 잘못된 PEM/DER 입력 또는 잘못된 개인 키 암호."
 
 #: ../../Crypto/Crypto.rst:195 aadaaf69feba491eaff6dce2aa27b6e8
-msgid "``SS_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient."
+#, fuzzy
+msgid "``PF_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient."
 msgstr "``SS_ERR_BUFFER_TOO_SMALL`` - 호출자 출력 버퍼가 부족합니다."
 
 #: ../../Crypto/Crypto.rst:196 50170c9fc49648a1a701a4aaf21d7fed
-msgid "``SS_ERR_AUTH_FAILED`` - AES-GCM authentication failed."
+#, fuzzy
+msgid "``PF_ERR_AUTH_FAILED`` - AES-GCM authentication failed."
 msgstr "``SS_ERR_AUTH_FAILED`` - AES-GCM 인증에 실패했습니다."
 
 #: ../../Crypto/Crypto.rst:197 8c7401db6f7e4cb6bdb2c6d3a2eba0e1
-msgid "``SS_ERR_UNSUPPORTED`` - unsupported curve or key type."
+#, fuzzy
+msgid "``PF_ERR_UNSUPPORTED`` - unsupported curve or key type."
 msgstr "``SS_ERR_UNSUPPORTED`` - 지원되지 않는 곡선 또는 키 유형입니다."
 
 #: ../../Crypto/Crypto.rst:198 a2d89fdafbf645b48d94f9cb888e953a
-msgid "``SS_ERR_DECRYPT`` - RSA decryption failed."
+#, fuzzy
+msgid "``PF_ERR_DECRYPT`` - RSA decryption failed."
 msgstr "``SS_ERR_DECRYPT`` - RSA 암호 해독에 실패했습니다."
 
 #: ../../Crypto/Crypto.rst:200 153dd51810da4fce893f4cfb3b2b1365
@@ -310,3 +332,15 @@ msgstr "자세한 OpenSSL 진단:"
 #~ "``src/network_api/rsa_crypto.py``는 RSA-OAEP로 메시지를 암호화하기 위해 TCP 계층에서 사용하는 "
 #~ "ctypes 바인딩입니다(``TCP_Server_APIs`` / ``TCP_Client_APIs`` 암호화된 채널 섹션 참조). 바인딩은"
 #~ " ``ctypes.util.find_library``를 통해 그리고 저장소 루트 옆에 있는 ``build/``에서 라이브러리를 찾습니다."
+
+#~ msgid "``SS_ECDH_CURVE_P256``"
+#~ msgstr "``SS_ECDH_CURVE_P256``"
+
+#~ msgid "``SS_ECDH_CURVE_P384``"
+#~ msgstr "``SS_ECDH_CURVE_P384``"
+
+#~ msgid "``SS_ECDH_CURVE_P521``"
+#~ msgstr "``SS_ECDH_CURVE_P521``"
+
+#~ msgid "``SS_ERR_OPENSSL`` - OpenSSL operation failure."
+#~ msgstr "``SS_ERR_OPENSSL`` - OpenSSL 작업 실패."

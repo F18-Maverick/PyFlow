@@ -43,7 +43,7 @@ Run the script without any arguments:
 
 .. code-block:: bash
 
-    python flow_setup.py
+    python -m PyFlow
 
 The script will ask you to:
 
@@ -85,21 +85,21 @@ Examples
 
 .. code-block:: bash
 
-    python flow_setup.py --type 0 --setup_addr_port 127.0.0.1:8000
+    python -m PyFlow --type 0 --setup_addr_port 127.0.0.1:8000
 
 **Launch a client** bound to port ``9000``, connecting 
 to a server at ``127.0.0.1:8000``:
 
 .. code-block:: bash
 
-    python flow_setup.py --type 1 --setup_addr_port 127.0.0.1:9000 --connect_addr_port 127.0.0.1:8000
+    python -m PyFlow --type 1 --setup_addr_port 127.0.0.1:9000 --connect_addr_port 127.0.0.1:8000
 
 **Launch from an existing configuration** 
 (if ``setup.json`` is present):
 
 .. code-block:: bash
 
-    python flow_setup.py   # then answer 'N' when asked to overwrite
+    python -m PyFlow   # then answer 'N' when asked to overwrite
 
 Configuration File
 ==================

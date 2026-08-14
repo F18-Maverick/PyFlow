@@ -10,7 +10,7 @@ PyFlow is a high-level network protocol with APIs for transferring messages, fil
 - **UDP communication** — connectionless messaging (`PyFlow/network_api/connect_udp.py`).
 - **Encrypted TCP channel** — RSA-OAEP message encryption with a TOFU (trust-on-first-use) peer-key registry, session nonces and sequence numbers against replay, and a circuit breaker against re-exchange storms. See [docs/Crypto](docs/Crypto/Crypto.rst) and the encrypted-channel sections of the TCP API docs.
 - **C/OpenSSL cryptography library** — `libcrypto_api` provides RSA-OAEP, ECDH (P-256/384/521), HKDF-SHA256 and AES-256-GCM with a stable C API (`pf_*` prefix) usable from C, CMake or pkg-config.
-- **Multi-instance launcher** — `PyFlow/flow_setup.py` starts one or more server/client instances from a CLI, an interactive prompt, or a `setup.json` configuration file.
+- **Multi-instance launcher** — `python -m PyFlow` (package entry point backed by `PyFlow/flow_setup.py`) starts one or more server/client instances from a CLI, an interactive prompt, or a `setup.json` configuration file.
 
 ## Architecture
 
@@ -24,8 +24,9 @@ PyFlow/
 │   ├── rsa_crypto.py        ctypes binding to libcrypto_api + TOFU key registry
 │   └── decode_command_table.json   wire-format table for the file-transfer protocol
 ├── command_control_extension_tcp.py  command-control extension over TCP
-├── flow_setup.py            multi-instance launcher
-└── setup.json               default launcher configuration (generated)
+├── __init__.py / __main__.py         package launcher entry (`python -m PyFlow`)
+├── flow_setup.py                     launcher implementation
+└── setup.json                        default launcher configuration (generated)
 test/                        C tests (test_hkdf/test_rsa/test_ecdh) + Python tests
 docs/                        Sphinx documentation (multi-language)
 CMakeLists.txt               top-level build for the C library and C tests
@@ -72,7 +73,7 @@ pip install -r requirements-dev.txt      # development: pytest (plus the above)
 ### Interactive launcher
 
 ```bash
-python -m PyFlow.flow_setup
+python -m PyFlow
 ```
 
 Prompts for server/client configuration, writes `setup.json`, and launches the instances.
@@ -82,13 +83,13 @@ Prompts for server/client configuration, writes `setup.json`, and launches the i
 Start a server listening on `127.0.0.1:12345`:
 
 ```bash
-python -m PyFlow.flow_setup --type 0 --setup_addr_port 127.0.0.1:12345
+python -m PyFlow --type 0 --setup_addr_port 127.0.0.1:12345
 ```
 
 Start a client that connects to that server (and binds its own local address/port):
 
 ```bash
-python -m PyFlow.flow_setup --type 1 --setup_addr_port 127.0.0.1:23456 --connect_addr_port 127.0.0.1:12345
+python -m PyFlow --type 1 --setup_addr_port 127.0.0.1:23456 --connect_addr_port 127.0.0.1:12345
 ```
 
 ### `setup.json`

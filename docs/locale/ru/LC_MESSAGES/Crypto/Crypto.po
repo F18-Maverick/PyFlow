@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-09 01:46+0800\n"
+"POT-Creation-Date: 2026-08-14 23:27+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -22,9 +22,10 @@ msgid "C/OpenSSL Crypto Module"
 msgstr "Крипто-модуль C/OpenSSL"
 
 #: ../../Crypto/Crypto.rst:4 3deff5ab02524055987d367c04d45d13
+#, fuzzy
 msgid ""
-"The ``src/crypto_api`` directory contains ServSpy's C/OpenSSL cryptography "
-"library. The library is independent from the Python runtime and is built "
+"The ``PyFlow/crypto_api`` directory contains PyFlow's C/OpenSSL cryptography"
+" library. The library is independent from the Python runtime and is built "
 "from the repository root with CMake."
 msgstr ""
 "Каталог ``src/crypto_api`` содержит криптографическую библиотеку C/OpenSSL "
@@ -56,20 +57,24 @@ msgid "PEM key persistence and structured error reporting."
 msgstr "Сохранение ключей PEM и структурированные отчеты об ошибках."
 
 #: ../../Crypto/Crypto.rst:16 db317eda3fab476da523857722d73b9b
-msgid "The public headers are located in ``src/crypto_api/include``:"
+#, fuzzy
+msgid "The public headers are located in ``PyFlow/crypto_api/include``:"
 msgstr "Публичные заголовки расположены в ``src/crypto_api/include``:"
 
 #: ../../Crypto/Crypto.rst:18 0a8708d8e48f4f8aa18996ccdee18a0a
-msgid "``ss_crypto.h`` - common errors, OpenSSL diagnostics, and HKDF."
+#, fuzzy
+msgid "``pf_crypto.h`` - common errors, OpenSSL diagnostics, and HKDF."
 msgstr ""
 "``ss_crypto.h`` — распространенные ошибки, диагностика OpenSSL и HKDF."
 
 #: ../../Crypto/Crypto.rst:19 6ac2383036094fd1b68be1846a94cd13
-msgid "``ss_rsa.h`` - RSA key and encryption APIs."
+#, fuzzy
+msgid "``pf_rsa.h`` - RSA key and encryption APIs."
 msgstr "``ss_rsa.h`` — ключ RSA и API шифрования."
 
 #: ../../Crypto/Crypto.rst:20 c70e4dccf2bb49988120dbdffbc9b8f5
-msgid "``ss_ecdh.h`` - ECDH key agreement and seal/open APIs."
+#, fuzzy
+msgid "``pf_ecdh.h`` - ECDH key agreement and seal/open APIs."
 msgstr ""
 "``ss_ecdh.h`` — соглашение о ключах ECDH и API-интерфейсы печати/открытия."
 
@@ -98,10 +103,11 @@ msgstr ""
 "``test_ecdh``) и собирается и запускается вместе с библиотекой."
 
 #: ../../Crypto/Crypto.rst:44 2d8ebac8b06147e4983c07a6c69296ab
+#, fuzzy
 msgid ""
 "The library is built as a shared object (``libcrypto_api.so``) so it can be "
-"loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes binding "
-"used by the TCP layer to encrypt messages with RSA-OAEP (see the "
+"loaded from Python: ``PyFlow/network_api/rsa_crypto.py`` is a ctypes binding"
+" used by the TCP layer to encrypt messages with RSA-OAEP (see the "
 "``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
 "binding also implements the TCP layer's anti-MITM identity check (TOFU): "
 "peer public keys are exchanged on every connection, recorded under the "
@@ -139,10 +145,11 @@ msgid "Common API"
 msgstr "Общий API"
 
 #: ../../Crypto/Crypto.rst:63 ca2af2dcc11c4432a4e252ae6fb530ec
+#, fuzzy
 msgid ""
-"All public functions return ``ss_err_t``. ``SS_OK`` indicates success. Use "
-"``ss_err_string`` to convert an error code to readable text and "
-"``ss_crypto_openssl_errors`` to retrieve the pending OpenSSL error queue."
+"All public functions return ``pf_err_t``. ``PF_OK`` indicates success. Use "
+"``pf_err_string`` to convert an error code to readable text and "
+"``pf_crypto_openssl_errors`` to retrieve the pending OpenSSL error queue."
 msgstr ""
 "Все общедоступные функции возвращают ``ss_err_t``. ``SS_OK`` указывает на "
 "успех. Используйте ss_err_string для преобразования кода ошибки в читаемый "
@@ -167,8 +174,9 @@ msgid "RSA API"
 msgstr "API RSA"
 
 #: ../../Crypto/Crypto.rst:89 1e0209363c764cfe9b270d3f7221ef40
+#, fuzzy
 msgid ""
-"RSA keys are generated with ``ss_rsa_keygen``. The implementation uses RSA-"
+"RSA keys are generated with ``pf_rsa_keygen``. The implementation uses RSA-"
 "OAEP with SHA-256 for encryption and decryption. Key sizes from 2048 to "
 "16384 bits are accepted; 2048, 3072, or 4096 bits are recommended."
 msgstr ""
@@ -177,10 +185,11 @@ msgstr ""
 "2048 до 16384 бит; Рекомендуется 2048, 3072 или 4096 бит."
 
 #: ../../Crypto/Crypto.rst:113 3e26320f16ab47a0af87bf5dc89e647a
+#, fuzzy
 msgid ""
 "The first encryption call with ``out == NULL`` queries the required output "
 "size. RSA encryption is binary-safe and accepts an explicit input length. "
-"The maximum plaintext size is returned by ``ss_rsa_max_plaintext_len``."
+"The maximum plaintext size is returned by ``pf_rsa_max_plaintext_len``."
 msgstr ""
 "Первый вызов шифрования с ``out == NULL`` запрашивает требуемый выходной "
 "размер. Шифрование RSA является двоичным и допускает явную входную длину. "
@@ -196,24 +205,25 @@ msgid "ECDH API"
 msgstr "ECDH API"
 
 #: ../../Crypto/Crypto.rst:130 67c165608ff34545ad59d22f734c0266
+#, fuzzy
 msgid ""
-"ECDH key pairs are created with ``ss_ecdh_keypair_generate``. The supported "
+"ECDH key pairs are created with ``pf_ecdh_keypair_generate``. The supported "
 "curve names are:"
 msgstr ""
 "Пары ключей ECDH создаются с помощью ss_ecdh_keypair_generate. "
 "Поддерживаемые имена кривых:"
 
 #: ../../Crypto/Crypto.rst:133 737f5f74529f452da38ae54c1e6bdcea
-msgid "``SS_ECDH_CURVE_P256``"
-msgstr "``SS_ECDH_CURVE_P256``"
+msgid "``PF_ECDH_CURVE_P256``"
+msgstr "``PF_ECDH_CURVE_P256``"
 
 #: ../../Crypto/Crypto.rst:134 4e6a452663d84c9eac9615a421d54edb
-msgid "``SS_ECDH_CURVE_P384``"
-msgstr "``SS_ECDH_CURVE_P384``"
+msgid "``PF_ECDH_CURVE_P384``"
+msgstr "``PF_ECDH_CURVE_P384``"
 
 #: ../../Crypto/Crypto.rst:135 e421bbf3383e4079820642816c90e921
-msgid "``SS_ECDH_CURVE_P521``"
-msgstr "``SS_ECDH_CURVE_P521``"
+msgid "``PF_ECDH_CURVE_P521``"
+msgstr "``PF_ECDH_CURVE_P521``"
 
 #: ../../Crypto/Crypto.rst:137 5f2b04819c5a4d7b8e96512bca6cf86e
 msgid ""
@@ -224,8 +234,9 @@ msgstr ""
 " ключи одноранговых узлов проверяются перед использованием."
 
 #: ../../Crypto/Crypto.rst:160 0f40f41880b94e828bbd58ac631754a1
+#, fuzzy
 msgid ""
-"The higher-level ``ss_ecdh_seal`` and ``ss_ecdh_open`` APIs are recommended "
+"The higher-level ``pf_ecdh_seal`` and ``pf_ecdh_open`` APIs are recommended "
 "for application payloads. They derive an AES-256-GCM key with HKDF-SHA256, "
 "include a random salt and IV, and authenticate optional AAD."
 msgstr ""
@@ -235,13 +246,15 @@ msgstr ""
 "AAD."
 
 #: ../../Crypto/Crypto.rst:164 84614363b3104ac4a44f044dad010eeb
-msgid "The ``ss_ecdh_seal`` output format is:"
+#, fuzzy
+msgid "The ``pf_ecdh_seal`` output format is:"
 msgstr "Формат вывода ss_ecdh_seal:"
 
 #: ../../Crypto/Crypto.rst:170 77967b230b95484a836884d1d717eab3
+#, fuzzy
 msgid ""
-"The fixed overhead is ``SS_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext "
-"is allowed. A failed tag check returns ``SS_ERR_AUTH_FAILED`` and no "
+"The fixed overhead is ``PF_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext "
+"is allowed. A failed tag check returns ``PF_ERR_AUTH_FAILED`` and no "
 "plaintext is returned."
 msgstr ""
 "Фиксированные служебные данные составляют ``SS_ECDH_SEAL_OVERHEAD`` (44 "
@@ -282,44 +295,53 @@ msgid "The main error codes are:"
 msgstr "Основные коды ошибок:"
 
 #: ../../Crypto/Crypto.rst:190 a20ad03d7c334f02b5ff41c9b5bbee92
-msgid "``SS_ERR_INVALID_ARG`` - invalid pointer or length."
+#, fuzzy
+msgid "``PF_ERR_INVALID_ARG`` - invalid pointer or length."
 msgstr "``SS_ERR_INVALID_ARG`` — неверный указатель или длина."
 
 #: ../../Crypto/Crypto.rst:191 00d6efea688847c79215e48f3a13b2d1
-msgid "``SS_ERR_NOMEM`` - allocation failure."
+#, fuzzy
+msgid "``PF_ERR_NOMEM`` - allocation failure."
 msgstr "``SS_ERR_NOMEM`` - ошибка выделения."
 
 #: ../../Crypto/Crypto.rst:192 186f19fb4245429e9d15af05cad0f907
-msgid "``SS_ERR_OPENSSL`` - OpenSSL operation failure."
-msgstr "``SS_ERR_OPENSSL`` - сбой операции OpenSSL."
+#, fuzzy
+msgid "``PF_ERR_OPENSSL`` - OpenSSL operation failure."
+msgstr "``SS_ERR_IO`` - сбой файловой операции."
 
 #: ../../Crypto/Crypto.rst:193 599dddb1941c4b1cba7c1d5d9d8b1034
-msgid "``SS_ERR_IO`` - file operation failure."
+#, fuzzy
+msgid "``PF_ERR_IO`` - file operation failure."
 msgstr "``SS_ERR_IO`` - сбой файловой операции."
 
 #: ../../Crypto/Crypto.rst:194 dbb3eeecaf6c4d078923d7ffe0e2ec62
+#, fuzzy
 msgid ""
-"``SS_ERR_PARSE`` - malformed PEM/DER input or wrong private-key passphrase."
+"``PF_ERR_PARSE`` - malformed PEM/DER input or wrong private-key passphrase."
 msgstr ""
 "``SS_ERR_PARSE`` — неверный ввод PEM/DER или неверная парольная фраза "
 "закрытого ключа."
 
 #: ../../Crypto/Crypto.rst:195 aadaaf69feba491eaff6dce2aa27b6e8
-msgid "``SS_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient."
+#, fuzzy
+msgid "``PF_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient."
 msgstr ""
 "``SS_ERR_BUFFER_TOO_SMALL`` - буфер вывода вызывающего абонента "
 "недостаточен."
 
 #: ../../Crypto/Crypto.rst:196 50170c9fc49648a1a701a4aaf21d7fed
-msgid "``SS_ERR_AUTH_FAILED`` - AES-GCM authentication failed."
+#, fuzzy
+msgid "``PF_ERR_AUTH_FAILED`` - AES-GCM authentication failed."
 msgstr "``SS_ERR_AUTH_FAILED`` — аутентификация AES-GCM не удалась."
 
 #: ../../Crypto/Crypto.rst:197 8c7401db6f7e4cb6bdb2c6d3a2eba0e1
-msgid "``SS_ERR_UNSUPPORTED`` - unsupported curve or key type."
+#, fuzzy
+msgid "``PF_ERR_UNSUPPORTED`` - unsupported curve or key type."
 msgstr "``SS_ERR_UNSUPPORTED`` - неподдерживаемый тип кривой или ключа."
 
 #: ../../Crypto/Crypto.rst:198 a2d89fdafbf645b48d94f9cb888e953a
-msgid "``SS_ERR_DECRYPT`` - RSA decryption failed."
+#, fuzzy
+msgid "``PF_ERR_DECRYPT`` - RSA decryption failed."
 msgstr "``SS_ERR_DECRYPT`` — расшифровка RSA не удалась."
 
 #: ../../Crypto/Crypto.rst:200 153dd51810da4fce893f4cfb3b2b1365
@@ -340,3 +362,15 @@ msgstr "Для подробной диагностики OpenSSL:"
 #~ " (см. разделы ``TCP_Server_APIs``/``TCP_Client_APIs`` зашифрованных "
 #~ "каналов). Привязка ищет библиотеку через ``ctypes.util.find_library`` и в "
 #~ "``build/`` рядом с корнем репозитория."
+
+#~ msgid "``SS_ECDH_CURVE_P256``"
+#~ msgstr "``SS_ECDH_CURVE_P256``"
+
+#~ msgid "``SS_ECDH_CURVE_P384``"
+#~ msgstr "``SS_ECDH_CURVE_P384``"
+
+#~ msgid "``SS_ECDH_CURVE_P521``"
+#~ msgstr "``SS_ECDH_CURVE_P521``"
+
+#~ msgid "``SS_ERR_OPENSSL`` - OpenSSL operation failure."
+#~ msgstr "``SS_ERR_OPENSSL`` - сбой операции OpenSSL."
