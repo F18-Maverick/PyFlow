@@ -56,12 +56,48 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6.0.2
-      - uses: astral-sh/setup-uv@v8.1.0
+      - name: Checkout code
+        uses: actions/checkout@v6.0.2
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --group dev
-      - run: uv run pytest
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libssl-dev build-essential
+      - name: Setup Windows toolchain
+        if: runner.os == 'Windows'
+        uses: step-security/msvc-dev-cmd@v1
+      - name: Install CMake (Win)
+        if: runner.os == 'Windows'
+        uses: step-security/get-cmake@v4
+
+      - name: Cache C build
+        id: cache-build
+        uses: actions/cache@v6
+        with:
+          path: build
+          key: ${{ runner.os }}-build-${{ hashFiles('CMakeLists.txt', 'PyFlow/crypto_api/**/*.c', 'PyFlow/crypto_api/include/**/*.h') }}
+      - name: Build C lib
+        if: steps.cache-build.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCRYPTO_API_BUILD_TESTS=OFF
+          cmake --build build --config Release --parallel
+
+      - name: Copy OpenSSL DLLs (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          for /r "C:\Program Files\OpenSSL" %%f in (libcrypto*.dll) do copy "%%f" build\Release\
+
+      - name: Install Python deps
+        run: uv sync --group dev
+      - name: Run pytest
+        run: uv run pytest
 
   coverage:
     runs-on: ubuntu-latest

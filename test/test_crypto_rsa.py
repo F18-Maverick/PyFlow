@@ -71,7 +71,8 @@ def test_generated_keys_land_in_pvt_key(crypto):
     assert os.path.exists(crypto.pub_path)
     assert crypto.priv_path.startswith(crypto.pvt_key_dir)
     assert os.path.dirname(crypto.priv_path) == crypto.pvt_key_dir
-    assert os.stat(crypto.priv_path).st_mode & 0o077 == 0  # generated private keys must not be world-readable
+    if sys.platform != "win32":
+        assert os.stat(crypto.priv_path).st_mode & 0o077 == 0  # generated private keys must not be world-readable
 
 
 def test_ssh_key_is_reused_when_present(tmp_path):
