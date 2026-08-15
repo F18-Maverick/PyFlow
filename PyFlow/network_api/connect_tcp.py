@@ -424,7 +424,7 @@ class TCP_Server_Base:  # TCP server class
     def send_message(self, client_socket, message):  # send message to specific client
         if not self.running or not client_socket:
             print("disable the connect to server")
-            return False
+            raise RuntimeError("connection error")
         try:  # add newline character for server to distinguish messages
             with self._crypto_lock:
                 encrypted = client_socket in self._encrypted_sockets
@@ -451,7 +451,7 @@ class TCP_Server_Base:  # TCP server class
         except Exception as e:
             print(f"send msg error: {e}")
             traceback.print_exc()
-            return False
+            raise
 
     def _send_raw(self, client_socket, text):
         """Send a plaintext crypto-protocol message, bypassing encryption."""
@@ -819,7 +819,6 @@ class TCP_Server_Base:  # TCP server class
                         self.send_message(client_socket, response)
         except ConnectionResetError:
             print(f"client disconnected: {client_id}")
-            traceback.print_exc()
         except Exception as e:
             print(f"error while deal with client {client_id} : {e}")
             traceback.print_exc()
@@ -2462,8 +2461,8 @@ class TCP_Client_Base:  # TCP client class
             self._crypto_own_ready_sent = True  # announce readiness: flip only once the server's /crypto_ready arrived too; sent on every handshake path
             try:
                 self._send_raw(self.client_socket, "/crypto_ready")
-            except Exception:
-                traceback.print_exc()
+            except OSError:
+                pass  # connection already closed (reject/breaker): nothing to announce
             self._crypto_exchange_done.set()
 
         threading.Thread(target=_wait_done, daemon=True).start()

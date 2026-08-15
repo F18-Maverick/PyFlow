@@ -119,3 +119,76 @@ def test_command_done_merges_transferred_logs_into_one_file(server, tmp_path, mo
     merged = json.loads(merged_file.read_text(encoding="utf-8"))
     assert merged["cmd1"][0] == {"output": "ok"}
     assert merged["cmd1"][1] == {"error": "none"}
+
+
+def test_command_handler_server_setup_subprocess_error(server_client, monkeypatch, capsys):
+    """subprocess.run raising -> returncode -1 and the error is logged."""
+    server, client = server_client
+    import builtins as _b
+
+    orig_open = _b.open
+
+    def dummy_open(path, mode="r", *a, **kw):
+        if any(m in mode for m in ("w", "a", "x")):
+            return io.StringIO()
+        return orig_open(path, mode, *a, **kw)
+
+    monkeypatch.setattr(_b, "open", dummy_open)
+    monkeypatch.setattr(ctl.os, "makedirs", lambda *a, **k: None)
+    monkeypatch.setattr(ctl.subprocess, "run", lambda *a, **kw: (_ for _ in ()).throw(OSError("boom")))
+
+    cmd = "/command echo 1 0 ('127.0.0.1', 12345)"
+    ctl._command_handler_server_setup(None, ("127.0.0.1", 9999), cmd)
+    out = capsys.readouterr().out
+    assert "Dealing the command successfully" in out
+
+
+def test_command_handler_server_setup_invalid_format(monkeypatch, capsys):
+    ctl._command_handler_server_setup(None, ("127.0.0.1", 9999), "not-a-command")
+    assert "Invalid command format" in capsys.readouterr().out
+
+
+def test_command_done_moves_log_when_destination_missing(tmp_path, monkeypatch):
+    """destination log absent -> the received log is moved into place."""
+    import shutil
+
+    received = tmp_path / "received"
+    received.mkdir()
+    server_inst = SimpleNamespace(file_transfer_dir=str(received))
+    monkeypatch.setattr(ctl, "server_instance", server_inst)
+    logs_dir = tmp_path / "logs"
+    logs_dir.mkdir()
+    monkeypatch.setattr(ctl.os.path, "dirname", lambda path: str(tmp_path))
+    monkeypatch.setattr(ctl, "_merge_all_logs", lambda d: None)
+
+    received_file = received / "logs_7.json"
+    received_file.write_text(json.dumps({"k": [{"o": "v"}]}), encoding="utf-8")
+
+    cmd = '/command_done "logs_7.json" "/tmp/logs/logs_7.json"'
+    ctl._command_done_dealing_server(None, ("127.0.0.1", 9999), cmd)
+
+    dest = logs_dir / "logs_7.json"
+    assert dest.exists()
+    assert json.loads(dest.read_text(encoding="utf-8")) == {"k": [{"o": "v"}]}
+    assert not received_file.exists()
+
+
+def test_command_done_handles_move_failure(tmp_path, monkeypatch, capsys):
+    """move failure -> error message is printed, no crash."""
+    received = tmp_path / "received"
+    received.mkdir()
+    server_inst = SimpleNamespace(file_transfer_dir=str(received))
+    monkeypatch.setattr(ctl, "server_instance", server_inst)
+    monkeypatch.setattr(ctl.os.path, "dirname", lambda path: str(tmp_path))
+
+    def broken_move(*a, **k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(ctl.shutil, "move", broken_move)
+
+    received_file = received / "logs_9.json"
+    received_file.write_text("{}", encoding="utf-8")
+
+    cmd = '/command_done "logs_9.json" "/tmp/logs/logs_9.json"'
+    ctl._command_done_dealing_server(None, ("127.0.0.1", 9999), cmd)
+    assert "ErrorWhileMovingTheLogFile" in capsys.readouterr().out

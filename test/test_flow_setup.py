@@ -265,3 +265,132 @@ def test_interactive_collect(monkeypatch, inputs_seq, expected_servers, expected
     servers, clients = fs.interactive_collect()
     assert servers == expected_servers
     assert clients == expected_clients
+
+
+# ---- main() CLI entry point ------------------------------------------------
+
+@pytest.fixture
+def cli_cleanup(monkeypatch, tmp_path):
+    """Isolate main() from the real filesystem and launch side effects."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(fs, "launch_instance", MagicMock())
+    monkeypatch.setattr(fs, "save_config", MagicMock())
+    monkeypatch.setattr(fs, "interactive_collect", MagicMock(return_value=([], [])))
+    monkeypatch.setattr(fs, "run_launched_instance", MagicMock())
+
+
+def test_main_launch_server_with_config_file(monkeypatch, cli_cleanup):
+    import tempfile
+
+    tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    json.dump({"host": "127.0.0.1", "port": 1}, tmp)
+    tmp.close()
+    monkeypatch.setattr(sys, "argv", ["flow_setup", "--launch_server", "--config-file", tmp.name])
+    fs.main()
+    fs.run_launched_instance.assert_called_once_with("server", tmp.name)
+    os.unlink(tmp.name)
+
+
+def test_main_launch_client_with_config_file(monkeypatch, tmp_path, cli_cleanup):
+    cfg = tmp_path / "c.json"
+    cfg.write_text(json.dumps({"host": "127.0.0.1", "port": 1}))
+    monkeypatch.setattr(
+        sys, "argv", ["flow_setup", "--launch_client", "--config-file", str(cfg)]
+    )
+    fs.main()
+    fs.run_launched_instance.assert_called_once_with("client", str(cfg))
+
+
+def test_main_launch_server_missing_config_file(monkeypatch, cli_cleanup):
+    monkeypatch.setattr(sys, "argv", ["flow_setup", "--launch_server"])
+    with pytest.raises(SystemExit):
+        fs.main()
+
+
+def test_main_type_server(monkeypatch, cli_cleanup):
+    """--type 0 with a bind address saves config and launches a server."""
+    monkeypatch.setattr(
+        sys, "argv", ["flow_setup", "--type", "0", "--setup_addr_port", "127.0.0.1:12345"]
+    )
+    fs.main()
+    servers, clients = fs.save_config.call_args.args
+    assert servers == [{"host": "127.0.0.1", "port": 12345}]
+    assert clients == []
+    fs.launch_instance.assert_called_once_with({"host": "127.0.0.1", "port": 12345}, "server")
+
+
+def test_main_type_client(monkeypatch, cli_cleanup):
+    """--type 1 requires both addresses; launches a client."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "flow_setup",
+            "--type",
+            "1",
+            "--setup_addr_port",
+            "127.0.0.1:23456",
+            "--connect_addr_port",
+            "127.0.0.1:12345",
+        ],
+    )
+    fs.main()
+    servers, clients = fs.save_config.call_args.args
+    assert servers == []
+    assert clients == [{"client_host": "127.0.0.1", "client_port": 23456,
+                        "host": "127.0.0.1", "port": 12345}]
+    fs.launch_instance.assert_called_once_with(
+        {"client_host": "127.0.0.1", "client_port": 23456, "host": "127.0.0.1", "port": 12345},
+        "client",
+    )
+
+
+def test_main_type_server_with_connect_addr_rejected(monkeypatch, cli_cleanup):
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "flow_setup",
+            "--type",
+            "0",
+            "--setup_addr_port",
+            "127.0.0.1:12345",
+            "--connect_addr_port",
+            "127.0.0.1:9999",
+        ],
+    )
+    with pytest.raises(SystemExit):
+        fs.main()
+
+
+def test_main_type_client_missing_args_rejected(monkeypatch, cli_cleanup):
+    monkeypatch.setattr(sys, "argv", ["flow_setup", "--type", "1", "--setup_addr_port", "127.0.0.1:1"])
+    with pytest.raises(SystemExit):
+        fs.main()
+
+
+def test_main_type_server_missing_addr_rejected(monkeypatch, cli_cleanup):
+    monkeypatch.setattr(sys, "argv", ["flow_setup", "--type", "0"])
+    with pytest.raises(SystemExit):
+        fs.main()
+
+
+def test_main_existing_setup_json_keep_existing(monkeypatch, tmp_path, cli_cleanup):
+    """setup.json exists and user answers 'n': load and launch existing config."""
+    (tmp_path / "setup.json").write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []})
+    )
+    monkeypatch.setattr(sys, "argv", ["flow_setup"])
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    fs.main()
+    fs.launch_instance.assert_called_once_with({"host": "127.0.0.1", "port": 7000}, "server")
+    fs.interactive_collect.assert_not_called()
+
+
+def test_main_existing_setup_json_overwrite(monkeypatch, tmp_path, cli_cleanup):
+    """setup.json exists and user answers 'y': interactive collection replaces it."""
+    (tmp_path / "setup.json").write_text(json.dumps({"servers": [], "clients": []}))
+    monkeypatch.setattr(sys, "argv", ["flow_setup"])
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+    fs.main()
+    fs.interactive_collect.assert_called_once()
