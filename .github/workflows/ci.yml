@@ -106,11 +106,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.14'
-      - run: |
+      - name: Installing dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libssl-dev build-essential
           python -m pip install --upgrade pip
           pip install -e .[dev]
           pip install pytest pytest-cov
-      - run: pytest --cov=./PyFlow --cov-report=xml --cov-report=term
+      - name: building the C lib
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
+      - name: Run pytest converage
+        run: pytest --cov=./PyFlow --cov-report=xml --cov-report=term
       - uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
