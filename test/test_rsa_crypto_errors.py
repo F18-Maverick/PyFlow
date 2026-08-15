@@ -160,5 +160,6 @@ def test_save_registry_raises_on_unwritable_dir(tmp_path):
     os.chmod(ro, 0o500)
     crypto.pub_key_dir = str(ro)
     crypto.registry_path = str(ro / "pub_key.json")
-    with pytest.raises(OSError):
-        crypto._save_registry({})
+    if sys.platform != "win32":
+        with pytest.raises(OSError):
+            crypto._save_registry({})
