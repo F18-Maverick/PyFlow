@@ -9,6 +9,11 @@ import subprocess
 import traceback
 from .network_api.connect_tcp import TCP_Server_Base, TCP_Client_Base
 
+config_file_name="setup.json"
+flow_setup_root=os.path.dirname(os.path.abspath(__file__))
+config_file_dir=os.path.join(flow_setup_root, config_file_name)
+project_root = os.path.dirname(flow_setup_root)
+
 SERVER_DEFAULTS = {
     "host": "127.0.0.1",
     "port": 65432,
@@ -47,8 +52,8 @@ def parse_addr_port(addr_port):
 
 
 def load_existing_config():
-    if os.path.exists("setup.json"):
-        with open("setup.json", "r", encoding="utf-8") as f:
+    if os.path.exists(config_file_dir):
+        with open(config_file_dir, "r", encoding="utf-8") as f:
             return json.load(f)
     return {"servers": [], "clients": []}
 
@@ -66,19 +71,25 @@ def complete_client_config(cfg):
 
 
 def save_config(servers, clients):
+    server_config=[]
+    client_config=[]
     if servers:
-        servers = [servers[-1]]
+        pass
     else:
         servers = []
     if clients:
-        clients = [clients[-1]]
+        pass
     else:
         clients = []
+    for server in servers:
+        server_config.append(complete_server_config(server))
+    for client in clients:
+        client_config.append(complete_client_config(client))
     data = {
-        "servers": [complete_server_config(cfg) for cfg in servers],
-        "clients": [complete_client_config(cfg) for cfg in clients],
+        "servers": server_config,
+        "clients": client_config,
     }
-    with open("setup.json", "w", encoding="utf-8") as f:
+    with open(config_file_dir, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
 
 
@@ -86,41 +97,52 @@ def launch_instance(config, instance_type):
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
         json.dump(config, f)
         config_file_path = f.name
-    script = os.path.abspath(__file__)
+    module = "PyFlow.flow_setup"
     python = sys.executable
     launch_arg = f"--launch_{instance_type}"
     system = platform.system()
     try:
         if system == "Windows":
-            cmd = f'start cmd /k {python} {script} {launch_arg} --config-file "{config_file_path}"'
-            subprocess.Popen(cmd, shell=True)
+            cmd = (
+                f'start cmd /k {python} -m {module} {launch_arg} '
+                f'--config-file "{config_file_path}"'
+            )
+            subprocess.Popen(cmd, shell=True, cwd=project_root)
         elif system == "Linux":
             terminals = ["gnome-terminal", "xterm", "x-terminal-emulator"]
             launched = False
             for term in terminals:
                 if shutil.which(term):
-                    cmd = f'{term} -- {python} {script} {launch_arg} --config-file "{config_file_path}"'
-                    subprocess.Popen(cmd, shell=True)
+                    cmd = (
+                        f'{term} -- {python} -m {module} {launch_arg} '
+                        f'--config-file "{config_file_path}"'
+                    )
+                    subprocess.Popen(cmd, shell=True, cwd=project_root)
                     launched = True
                     break
             if not launched:
                 subprocess.Popen(
-                    [python, script, launch_arg, "--config-file", config_file_path],
+                    [python, "-m", module, launch_arg, "--config-file", config_file_path],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                     stdin=subprocess.DEVNULL,
                     start_new_session=True,
+                    cwd=project_root,
                 )
         elif system == "Darwin":
-            cmd = f'open -a Terminal.app {python} {script} {launch_arg} --config-file "{config_file_path}"'
-            subprocess.Popen(cmd, shell=True)
+            cmd = (
+                f'open -a Terminal.app {python} -m {module} {launch_arg} '
+                f'--config-file "{config_file_path}"'
+            )
+            subprocess.Popen(cmd, shell=True, cwd=project_root)
         else:
             subprocess.Popen(
-                [python, script, launch_arg, "--config-file", config_file_path],
+                [python, "-m", module, launch_arg, "--config-file", config_file_path],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 stdin=subprocess.DEVNULL,
                 start_new_session=True,
+                cwd=project_root,
             )
     except Exception as e:
         print(f"Failed to launch instance: {e}")
@@ -132,8 +154,12 @@ def launch_instance(config, instance_type):
 
 
 def interactive_collect():
-    servers = []
-    clients = []
+    servers = None
+    clients = None
+    with open(config_file_dir, "r", encoding="utf-8") as read_config:
+        config_data=json.load(read_config)
+        servers=config_data['servers']
+        clients=config_data['clients']
     while True:
         print("\n--- Add New Instance ---")
         while True:
@@ -150,8 +176,15 @@ def interactive_collect():
             except:
                 print("Invalid format, please retry")
         if is_server:
+            server_len=len(servers)
+            server_index=0
             config = {"host": host, "port": port}
-            servers = [config]
+            for server in servers:
+                if config==server:
+                    break
+                server_index+=1
+            if server_len==server_index:
+                servers.append(config)
             print(f"Server config set to: {host}:{port}")
         else:
             while True:
@@ -164,7 +197,14 @@ def interactive_collect():
                 except:
                     print("Invalid format, please retry")
             config = {"client_host": host, "client_port": port, "host": srv_host, "port": srv_port}
-            clients = [config]
+            client_len=len(clients)
+            client_index=0
+            for client in clients:
+                if config==client:
+                    break
+                client_index+=1
+            if client_len==client_index:
+                clients.append(config)
             print(f"Client config set to: local {host}:{port} -> server {srv_host}:{srv_port}")
         cont = input("Continue adding more instances? (Y/N): ").strip().lower()
         if cont != "y":
@@ -260,7 +300,7 @@ def main():
         for cfg in clients:
             launch_instance(cfg, "client")
         return
-    if os.path.exists("setup.json"):
+    if os.path.exists(config_file_dir):
         choice = input("setup.json exists. Overwrite configuration data? (Y/N): ").strip().lower()
         if choice == "n":
             config_data = load_existing_config()

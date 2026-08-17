@@ -183,6 +183,13 @@ def test_launch_instance_os_branches(  # noqa: PLR0913
     cmd_repr = cmd if isinstance(cmd, str) else " ".join(cmd)
     assert expected_arg in cmd_repr
     assert "--config-file" in cmd_repr
+    # the child must be started as a package (python -m), not as the
+    # script file, so the relative imports in flow_setup.py resolve
+    assert "-m PyFlow.flow_setup" in cmd_repr
+    assert "flow_setup.py" not in cmd_repr
+    # and from the project root, so `PyFlow` is importable
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(fs.__file__)))
+    assert mocked_popen.call_args.kwargs.get("cwd") == project_root
 
 
 def test_launch_instance_popen_failure(monkeypatch, capsys):
