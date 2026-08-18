@@ -9,19 +9,15 @@ import contextlib
 import io
 import os
 import socket
-import sys
 import threading
 
 import pytest
 
-package_dictionary = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if package_dictionary not in sys.path:
-    sys.path.insert(0, package_dictionary)
 
 from test_util import server_ready, wait_until
 
-from PyFlow.network_api import rsa_crypto  # noqa: E402
-from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base  # noqa: E402
+from PyFlow.network_api import rsa_crypto
+from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
 
 try:
     rsa_crypto.load_library()

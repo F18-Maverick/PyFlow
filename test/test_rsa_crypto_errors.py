@@ -7,11 +7,9 @@ import ctypes
 
 import pytest
 
-package_dictionary = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if package_dictionary not in sys.path:
-    sys.path.insert(0, package_dictionary)
+import PyFlow.network_api.rsa_crypto as rc
 
-import PyFlow.network_api.rsa_crypto as rc  # noqa: E402
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 try:
     rc.load_library()
@@ -55,7 +53,7 @@ def test_load_library_falls_back_to_build_dir(tmp_path, monkeypatch):
     # find the actual built .so and simulate only it existing
     import glob
 
-    real = glob.glob(os.path.join(package_dictionary, "build", "libcrypto_api.so"))
+    real = glob.glob(os.path.join(PROJECT_ROOT, "build", "libcrypto_api.so"))
     if not real:
         pytest.skip("no built library in repo build/")
     monkeypatch.setattr(
