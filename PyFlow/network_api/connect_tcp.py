@@ -2238,6 +2238,9 @@ class TCP_Client_Base:  # TCP client class
             print(f"send msg error: {e}")
             traceback.print_exc()
             return False
+        
+    def send_message_to_server(self, message):
+        self.send_message(self.client_socket, shlex.split(message)[1])
 
     def receive_message(self, client_socket, msg_length):  # receive msg
         data = client_socket.recv(msg_length)
@@ -2682,6 +2685,8 @@ class TCP_Client_Base:  # TCP client class
                             self.send_message(self.client_socket, "/quit")
                             time.sleep(0.5)
                             break
+                        elif shlex.split(message.lower())[0]=="/send_msg":
+                            self.send_message_to_server(message)
                         elif shlex.split(message.lower())[0] == "/file":
                             self.file_transfer_client_recv_client_start_thread(message)
                         elif shlex.split(message.lower())[0] == "/multiple_file":
