@@ -3,6 +3,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from unittest.mock import MagicMock
 
 import pytest
@@ -14,6 +15,14 @@ if package_dictionary not in sys.path:
 import PyFlow.flow_setup as fs
 
 TEST_PORT = 9000
+
+
+@pytest.fixture
+def tmp_config(monkeypatch, tmp_path):
+    """Point flow_setup's setup.json at a temp path and return that path."""
+    config_path = tmp_path / "setup.json"
+    monkeypatch.setattr(fs, "config_file_dir", str(config_path))
+    return config_path
 
 
 @pytest.fixture
@@ -112,42 +121,37 @@ def test_generate_configs_ignores_setup_num(capsys):
     assert "ignored" in capsys.readouterr().out
 
 
-def test_save_config_writes_completed_single(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
+def test_save_config_writes_completed_single(tmp_config):
     fs.save_config([{"host": "0.0.0.0", "port": TEST_PORT}], [])
-    data = json.loads((tmp_path / "setup.json").read_text(encoding="utf-8"))
+    data = json.loads(tmp_config.read_text(encoding="utf-8"))
     assert len(data["servers"]) == 1
     assert data["servers"][0]["host"] == "0.0.0.0"
     assert data["servers"][0]["port"] == TEST_PORT
     assert "max_clients" in data["servers"][0]
 
 
-def test_save_config_keeps_only_last_of_each(monkeypatch, tmp_path):
-    # Current behavior: only the last server and last client are persisted.
-    monkeypatch.chdir(tmp_path)
+def test_save_config_preserves_all_configs(tmp_config):
+    # Current behavior: every supplied server/client config is persisted.
     servers = [{"host": "a", "port": 1}, {"host": "b", "port": 2}]
     clients = [{"host": "c", "port": 3}, {"host": "d", "port": 4}]
     fs.save_config(servers, clients)
-    data = json.loads((tmp_path / "setup.json").read_text(encoding="utf-8"))
-    assert [s["host"] for s in data["servers"]] == ["b"]
-    assert [c["host"] for c in data["clients"]] == ["d"]
+    data = json.loads(tmp_config.read_text(encoding="utf-8"))
+    assert [s["host"] for s in data["servers"]] == ["a", "b"]
+    assert [c["host"] for c in data["clients"]] == ["c", "d"]
 
 
-def test_save_config_empty_lists(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
+def test_save_config_empty_lists(tmp_config):
     fs.save_config([], [])
-    data = json.loads((tmp_path / "setup.json").read_text(encoding="utf-8"))
+    data = json.loads(tmp_config.read_text(encoding="utf-8"))
     assert data == {"servers": [], "clients": []}
 
 
-def test_load_existing_config_missing(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
+def test_load_existing_config_missing(tmp_config):
     assert fs.load_existing_config() == {"servers": [], "clients": []}
 
 
-def test_load_existing_config_present(monkeypatch, tmp_path):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "setup.json").write_text(
+def test_load_existing_config_present(tmp_config):
+    tmp_config.write_text(
         json.dumps({"servers": [{"host": "x", "port": 1}], "clients": []}), encoding="utf-8"
     )
     data = fs.load_existing_config()
@@ -266,7 +270,11 @@ def test_run_launched_instance_missing_file_exits(monkeypatch):
         ),
     ],
 )
-def test_interactive_collect(monkeypatch, inputs_seq, expected_servers, expected_clients):
+def test_interactive_collect(
+    monkeypatch, inputs_seq, expected_servers, expected_clients, tmp_config
+):
+    # interactive_collect() seeds from the existing config file.
+    tmp_config.write_text(json.dumps({"servers": [], "clients": []}), encoding="utf-8")
     inputs = iter(inputs_seq)
     monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
     servers, clients = fs.interactive_collect()
@@ -287,8 +295,6 @@ def cli_cleanup(monkeypatch, tmp_path):
 
 
 def test_main_launch_server_with_config_file(monkeypatch, cli_cleanup):
-    import tempfile
-
     tmp = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
     json.dump({"host": "127.0.0.1", "port": 1}, tmp)
     tmp.close()
@@ -371,7 +377,9 @@ def test_main_type_server_with_connect_addr_rejected(monkeypatch, cli_cleanup):
 
 
 def test_main_type_client_missing_args_rejected(monkeypatch, cli_cleanup):
-    monkeypatch.setattr(sys, "argv", ["flow_setup", "--type", "1", "--setup_addr_port", "127.0.0.1:1"])
+    monkeypatch.setattr(
+        sys, "argv", ["flow_setup", "--type", "1", "--setup_addr_port", "127.0.0.1:1"]
+    )
     with pytest.raises(SystemExit):
         fs.main()
 
@@ -382,9 +390,9 @@ def test_main_type_server_missing_addr_rejected(monkeypatch, cli_cleanup):
         fs.main()
 
 
-def test_main_existing_setup_json_keep_existing(monkeypatch, tmp_path, cli_cleanup):
+def test_main_existing_setup_json_keep_existing(monkeypatch, cli_cleanup, tmp_config):
     """setup.json exists and user answers 'n': load and launch existing config."""
-    (tmp_path / "setup.json").write_text(
+    tmp_config.write_text(
         json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []})
     )
     monkeypatch.setattr(sys, "argv", ["flow_setup"])
@@ -394,9 +402,9 @@ def test_main_existing_setup_json_keep_existing(monkeypatch, tmp_path, cli_clean
     fs.interactive_collect.assert_not_called()
 
 
-def test_main_existing_setup_json_overwrite(monkeypatch, tmp_path, cli_cleanup):
+def test_main_existing_setup_json_overwrite(monkeypatch, cli_cleanup, tmp_config):
     """setup.json exists and user answers 'y': interactive collection replaces it."""
-    (tmp_path / "setup.json").write_text(json.dumps({"servers": [], "clients": []}))
+    tmp_config.write_text(json.dumps({"servers": [], "clients": []}))
     monkeypatch.setattr(sys, "argv", ["flow_setup"])
     monkeypatch.setattr("builtins.input", lambda _: "y")
     fs.main()
