@@ -11,6 +11,8 @@ package_dictionary = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if package_dictionary not in sys.path:
     sys.path.insert(0, package_dictionary)
 
+from test_util import server_ready, wait_until
+
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base  # noqa: E402
 
 _PORT_COUNTER = 65420
@@ -33,7 +35,7 @@ def pair(tmp_path):
         is_enable_encrypto=False,
     )
     threading.Thread(target=server.start_TCP_Server, daemon=True).start()
-    time.sleep(0.4)
+    assert server_ready(server), "server did not start"
     client = TCP_Client_Base(
         host="127.0.0.1",
         port=port,
@@ -51,13 +53,14 @@ def pair(tmp_path):
     server.stop()
 
 
-def _wait_port(client, tries=100):
-    for _ in range(tries):
+def _wait_port(client, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         with client.file_transfer_server_port_lock:
             ports = list(client.file_server_port_list)
         if ports:
             return ports[0][0]
-        time.sleep(0.1)
+        time.sleep(0.05)
     return None
 
 
@@ -78,12 +81,8 @@ def test_client_receives_file_from_server(pair, tmp_path):
 
     server.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
 
-    for _ in range(200):
-        files = list(recv_dir.iterdir())
-        if files:
-            break
-        time.sleep(0.1)
-    assert files, "file was not received"
+    assert wait_until(lambda: any(recv_dir.iterdir()), timeout=10), "file was not received"
+    files = list(recv_dir.iterdir())
     assert files[0].read_bytes() == payload
 
 
@@ -102,12 +101,8 @@ def test_client_receives_large_file_from_server(pair, tmp_path):
 
     server.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
 
-    for _ in range(400):
-        files = list(recv_dir.iterdir())
-        if files:
-            break
-        time.sleep(0.1)
-    assert files
+    assert wait_until(lambda: any(recv_dir.iterdir()), timeout=15), "file was not received"
+    files = list(recv_dir.iterdir())
     assert files[0].read_bytes() == payload
 
 
@@ -132,12 +127,10 @@ def test_server_receives_file_from_client(pair, tmp_path):
 
     client.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
 
-    for _ in range(200):
-        files = list(server_recv.iterdir())
-        if files:
-            break
-        time.sleep(0.1)
-    assert files, "server did not receive the file"
+    assert wait_until(lambda: any(server_recv.iterdir()), timeout=10), (
+        "server did not receive the file"
+    )
+    files = list(server_recv.iterdir())
     assert files[0].read_bytes() == payload
 
 
@@ -155,10 +148,8 @@ def test_server_pushes_file_with_quoted_client_addr(pair, tmp_path):
     assert client_addr in server.clients
     cmd = '/file "{}" "({}, {})"'.format(src, repr(client_addr[0]), client_addr[1])
     server.file_transfer_server_recv_client_start(cmd, file_folder_abspath=None)
-    for _ in range(300):
-        files = list(recv_dir.iterdir())
-        if files:
-            break
-        time.sleep(0.1)
-    assert files, "client did not receive the quoted-address transfer"
+    assert wait_until(lambda: any(recv_dir.iterdir()), timeout=10), (
+        "client did not receive the quoted-address transfer"
+    )
+    files = list(recv_dir.iterdir())
     assert files[0].read_bytes() == payload
