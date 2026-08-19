@@ -37,6 +37,7 @@ The Python layer runs on the standard library only; the C library is loaded at r
 ## Requirements
 
 - Python 3.10 or newer
+- Pip 25.1 or newer
 - CMake 3.16 or newer
 - OpenSSL 1.1.1 or newer (development headers, e.g. `libssl-dev` on Debian/Ubuntu)
 - A C compiler (gcc/clang on Linux/macOS, MSVC on Windows)
@@ -64,16 +65,22 @@ uv sync --group dev
 Or with pip:
 
 ```bash
-pip install -r requirements.txt          # runtime (pure stdlib) + docs/translation tooling
-pip install -r requirements-dev.txt      # development: pytest (plus the above)
+python -m venv .venv
+# Windows:
+.venv\Scripts\activate
+# Linux/macOS:
+source .venv/bin/activate
+pip install --group dev -e .
 ```
 
 ## Quick start
 
+The examples below use `uv run` for uv users; if you installed with pip instead, drop the `uv run` prefix and use `python -m` directly.
+
 ### Interactive launcher
 
 ```bash
-python -m PyFlow
+uv run python -m PyFlow
 ```
 
 Prompts for server/client configuration, writes `setup.json`, and launches the instances.
@@ -83,13 +90,13 @@ Prompts for server/client configuration, writes `setup.json`, and launches the i
 Start a server listening on `127.0.0.1:12345`:
 
 ```bash
-python -m PyFlow --type 0 --setup_addr_port 127.0.0.1:12345
+uv run python -m PyFlow --type 0 --setup_addr_port 127.0.0.1:12345
 ```
 
 Start a client that connects to that server (and binds its own local address/port):
 
 ```bash
-python -m PyFlow --type 1 --setup_addr_port 127.0.0.1:23456 --connect_addr_port 127.0.0.1:12345
+uv run python -m PyFlow --type 1 --setup_addr_port 127.0.0.1:23456 --connect_addr_port 127.0.0.1:12345
 ```
 
 ### `setup.json`
@@ -120,7 +127,7 @@ By default both ends enable the encrypted channel (`is_enable_encrypto=True`): k
 ## Testing
 
 ```bash
-pytest                       # full Python suite
+uv run pytest                       # full Python suite
 ctest --test-dir build       # C library tests
 ```
 
@@ -131,10 +138,10 @@ The encrypted-channel tests (`test/test_crypto_rsa.py`, `test/test_crypto_tcp.py
 Sphinx sources live in `docs/` (English source with `ja`/`ko`/`ru`/`zh_CN`/`zh_TW` translations). Build the HTML docs with:
 
 ```bash
-python -m sphinx -b html docs build/sphinx_doc
+uv run python -m sphinx -b html docs build/sphinx_doc
 ```
 
-Rebuild the translations (extract gettext, machine-translate new strings, compile `.mo`) with `docs/reBuild.sh`; it needs the documentation/translation dependencies from `requirements.txt` (`sphinx`, `sphinx-intl`, `polib`, `deep-translator`).
+Rebuild the translations (extract gettext, machine-translate new strings, compile `.mo`) with `docs/reBuild.sh`; it needs the documentation/translation dependencies from `pyproject.toml` (`sphinx`, `sphinx-intl`, `polib`, `deep-translator`).
 
 ## License
 
