@@ -8,15 +8,19 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6.0.2
-      - name: Install C dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake libssl-dev build-essential
+        uses: actions/checkout@v7
+
+      - name: Cache C build
+        id: cache-build
+        uses: actions/cache@v6
+        with:
+          path: build
+          key: ctest-${{ runner.os }}-build-${{ hashFiles('CMakeLists.txt', 'PyFlow/crypto_api/**/*.c', 'PyFlow/crypto_api/include/**/*.h') }}
       - name: Build C code
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-      - name: Compile C code
-        run: cmake --build build --parallel
+        if: steps.cache-build.outputs.cache-hit != 'true'
+        run: |
+          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --parallel
       - name: Run C tests
         run: ctest --test-dir build --output-on-failure
   Lint:
@@ -24,14 +28,14 @@ jobs:
     timeout-minutes: 5
     steps:
     - name: Checkout code
-      uses: actions/checkout@v6.0.2
+      uses: actions/checkout@v7
     - name: Run Ruff linter on Python code
-      uses: astral-sh/ruff-action@v4.0.0
+      uses: astral-sh/ruff-action@v4.1.0
       with:
         args: "check"
       continue-on-error: true
     - name: Check code formatting
-      uses: astral-sh/ruff-action@v4.0.0
+      uses: astral-sh/ruff-action@v4.1.0
       with:
         args: "format --check"
       continue-on-error: true
@@ -40,9 +44,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6.0.2
+      - uses: actions/checkout@v7
       - name: Install uv
-        uses: astral-sh/setup-uv@v8.1.0
+        uses: astral-sh/setup-uv@v10.0.1
       - name: Run ty
         run: uvx ty check
         continue-on-error: true
@@ -57,23 +61,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6.0.2
+        uses: actions/checkout@v7
       - name: Setup uv
-        uses: astral-sh/setup-uv@v8.1.0
+        uses: astral-sh/setup-uv@v10.0.1
         with:
           python-version: ${{ matrix.python-version }}
-
-      - name: Install Linux deps
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake libssl-dev build-essential
-      - name: Setup Windows toolchain
-        if: runner.os == 'Windows'
-        uses: step-security/msvc-dev-cmd@v1
-      - name: Install CMake (Win)
-        if: runner.os == 'Windows'
-        uses: step-security/get-cmake@v4
 
       - name: Cache C build
         id: cache-build
@@ -85,7 +77,11 @@ jobs:
         if: steps.cache-build.outputs.cache-hit != 'true'
         shell: bash
         run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCRYPTO_API_BUILD_TESTS=OFF
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCRYPTO_API_BUILD_TESTS=OFF -G "Visual Studio 17 2022" -A x64
+          else
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCRYPTO_API_BUILD_TESTS=OFF
+          fi
           cmake --build build --config Release --parallel
 
       - name: Copy OpenSSL DLLs (Windows)
@@ -96,30 +92,17 @@ jobs:
 
       - name: Install Python deps
         run: uv sync --group dev
-      - name: Run pytest
+      - name: Run pytest (non-coverage)
+        if: matrix.python-version != '3.14' || runner.os != 'Linux'
         run: uv run pytest
 
-  coverage:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
-      - name: Installing dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake libssl-dev build-essential
-          python -m pip install --upgrade pip
-          pip install -e .[dev]
-          pip install pytest pytest-cov
-      - name: building the C lib
-        run: |
-          cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --parallel
-      - name: Run pytest converage
-        run: pytest --cov=./PyFlow --cov-report=xml --cov-report=term
-      - uses: codecov/codecov-action@v4
+      - name: Run pytest with coverage (linux 3.14 only)
+        if: runner.os == 'Linux' && matrix.python-version == '3.14'
+        run: uv run pytest --cov=./PyFlow --cov-report=xml --cov-report=term
+
+      - name: Upload coverage to Codecov
+        if: runner.os == 'Linux' && matrix.python-version == '3.14'
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: ./coverage.xml
