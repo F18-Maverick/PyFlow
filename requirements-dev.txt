@@ -1,6 +1,0 @@
-# PyFlow development dependencies (mirrors [dependency-groups].dev in pyproject.toml,
-# plus the documentation/translation tooling pulled in via requirements.txt).
-# Install with: pip install -r requirements-dev.txt
--r requirements.txt
-
-pytest>=9.0.0
