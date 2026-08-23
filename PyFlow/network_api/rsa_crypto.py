@@ -221,33 +221,33 @@ class RsaCrypto:
                 self._priv_key = self._read_priv_handle(lib, self.priv_path)
                 return
             priv_candidates = [os.path.join(self.ssh_dir, "id_rsa")]
-        priv_path = None
-        for candidate in priv_candidates:
-            if os.path.exists(candidate):
+            priv_path = None
+            for candidate in priv_candidates:
+                if os.path.exists(candidate):
+                    try:
+                        self._read_priv_handle(lib, candidate)
+                        priv_path = candidate
+                        break
+                    except Exception:
+                        priv_path = None
+                        continue
+            if priv_path is None:
+                priv_path = os.path.join(self.pvt_key_dir, "{}_priv.pem".format(self.role))
+                pub_path = os.path.join(self.pvt_key_dir, "{}_pub.pem".format(self.role))
+                if not os.path.exists(priv_path):
+                    self._generate_keypair(lib, priv_path, pub_path)
+            self.priv_path = priv_path
+            self.pub_path = os.path.join(self.pvt_key_dir, "{}_pub.pem".format(self.role))
+            priv_key = self._read_priv_handle(lib, self.priv_path)  # pub re-derived from priv: ~/.ssh pub file is OpenSSH-format, unparseable here
+            if os.path.exists(self.pub_path):
                 try:
-                    self._read_priv_handle(lib, candidate)
-                    priv_path = candidate
-                    break
-                except Exception:
-                    priv_path = None
-                    continue
-        if priv_path is None:
-            priv_path = os.path.join(self.pvt_key_dir, "{}_priv.pem".format(self.role))
-            pub_path = os.path.join(self.pvt_key_dir, "{}_pub.pem".format(self.role))
-            if not os.path.exists(priv_path):
-                self._generate_keypair(lib, priv_path, pub_path)
-        self.priv_path = priv_path
-        self.pub_path = os.path.join(self.pvt_key_dir, "{}_pub.pem".format(self.role))
-        priv_key = self._read_priv_handle(lib, self.priv_path)  # pub re-derived from priv: ~/.ssh pub file is OpenSSH-format, unparseable here
-        if os.path.exists(self.pub_path):
-            try:
-                os.remove(self.pub_path)
-            except OSError:
-                pass
-        err = lib.pf_rsa_write_pub(priv_key.handle, self.pub_path.encode("utf-8"))
-        if err != PF_OK:
-            raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
-        self._priv_key = priv_key
+                    os.remove(self.pub_path)
+                except OSError:
+                    pass
+            err = lib.pf_rsa_write_pub(priv_key.handle, self.pub_path.encode("utf-8"))
+            if err != PF_OK:
+                raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
+            self._priv_key = priv_key
 
     def reload_own_key(self):
         """Re-read the private key (e.g. after a ~/.ssh rotation)."""

@@ -10,6 +10,7 @@ import io
 import os
 import socket
 import threading
+import time
 
 import pytest
 
@@ -182,6 +183,80 @@ def test_encrypted_roundtrip(tcp_pair):
     assert _wait_flip(client)
     out = _roundtrip(client, "hello encrypted")
     assert "[server] msg send: hello encrypted" in out
+
+
+def test_concurrent_encrypted_sends_not_dropped(tcp_pair):
+    """Concurrent encrypted sends must not overtake each other on the
+    wire: every message must be echoed back exactly once (seq allocation
+    and the send are serialised per connection)."""
+    server, client, _ = tcp_pair
+    assert _wait_flip(client)
+    n_threads, per_thread = 8, 25
+    total = n_threads * per_thread
+    errors = []
+
+    def sender(t):
+        for i in range(per_thread):
+            try:
+                client.send_message(client.client_socket, f"msg-{t}-{i}")
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+    threads = [threading.Thread(target=sender, args=(t,)) for t in range(n_threads)]
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join()
+        echoed = wait_until(
+            lambda: buf.getvalue().count("msg send:") >= total, timeout=30
+        )
+    assert not errors
+    assert echoed, (
+        f"dropped {total - buf.getvalue().count('msg send:')} of {total} messages"
+    )
+
+
+def test_slow_sender_does_not_reorder_frames(tcp_pair):
+    """A thread preempted between seq allocation and the wire write must
+    not let a later sender overtake it (the peer would drop the earlier
+    frame as out-of-order). Deterministic: the first sender's write is
+    delayed under the per-connection send lock."""
+    server, client, _ = tcp_pair
+    assert _wait_flip(client)
+    gate = threading.Event()
+    stalled = [0]
+
+    class _StallingSocket(socket.socket):
+        __slots__ = ()  # keep the exact socket layout so __class__ assignment works
+
+        def sendall(self, data):
+            if stalled[0] == 0:
+                stalled[0] = 1  # stall exactly one (the first) sender after seq allocation
+                gate.wait()
+            super().sendall(data)
+
+    client.client_socket.__class__ = _StallingSocket
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        t1 = threading.Thread(target=client.send_message, args=(client.client_socket, "first"))
+        t1.start()
+        time.sleep(0.05)  # t1 allocates seq 0 and stalls inside sendall
+        t2 = threading.Thread(target=client.send_message, args=(client.client_socket, "second"))
+        t2.start()
+        time.sleep(0.1)  # t2 attempts its send while t1 is still stalled
+        gate.set()
+        t1.join()
+        t2.join()
+        echoed = wait_until(
+            lambda: "msg send: first" in buf.getvalue()
+            and "msg send: second" in buf.getvalue(),
+            timeout=10,
+        )
+    assert echoed, (
+        f"frame reordering dropped a message; echoes: {buf.getvalue()!r}"
+    )
 
 
 def test_second_connection_passes_tofu(tcp_pair, tmp_path):

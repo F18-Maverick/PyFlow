@@ -90,6 +90,7 @@ class TCP_Server_Base:  # TCP server class
         self._encrypted_sockets = set()
         self._encrypted_recv_buffers = {}
         self._crypto_peer = {}  # socket -> (peer_role, peer_pem_path)
+        self._crypto_send_locks = {}  # socket -> Lock: wire order must match seq allocation order
         self._crypto_state = {}  # client_address -> crypto handshake state
         self._crypto_sock_addr = {}  # socket -> client_address
         self._crypto_push_active = set()  # sockets with an in-flight key push
@@ -421,37 +422,52 @@ class TCP_Server_Base:  # TCP server class
                     else:
                         print(f"Client {client_addr} not found, cannot send message: {msg}")
 
+    def _crypto_get_send_lock(self, client_socket):
+        """Per-socket lock serialising encrypt+send for one connection.
+
+        Sequence numbers are allocated inside ``_crypto_encrypt_message``,
+        so the wire write must happen under the same lock or a concurrent
+        sender could overtake it and the peer would drop the frame as
+        out-of-order (no-GIL safe)."""
+        with self._crypto_lock:
+            lock = self._crypto_send_locks.get(client_socket)
+            if lock is None:
+                lock = threading.Lock()
+                self._crypto_send_locks[client_socket] = lock
+            return lock
+
     def send_message(self, client_socket, message):  # send message to specific client
         if not self.running or not client_socket:
             print("disable the connect to server")
             raise RuntimeError("connection error")
-        try:  # add newline character for server to distinguish messages
-            with self._crypto_lock:
-                encrypted = client_socket in self._encrypted_sockets
-            if encrypted:
-                if isinstance(message, bytes):
-                    message = message.decode("utf-8")
-                if not isinstance(message, str):
+        with self._crypto_get_send_lock(client_socket):  # alloc+encrypt+sendall stay ordered per socket
+            try:  # add newline character for server to distinguish messages
+                with self._crypto_lock:
+                    encrypted = client_socket in self._encrypted_sockets
+                if encrypted:
+                    if isinstance(message, bytes):
+                        message = message.decode("utf-8")
+                    if not isinstance(message, str):
+                        print(f"Unsupported message type: {type(message)}")
+                        return False
+                    wire = self._crypto_encrypt_message(client_socket, message)
+                    data = wire.encode("ascii") + b"\n"
+                elif isinstance(message, str):
+                    deal_msg = message.strip()
+                    if not deal_msg.endswith("\n"):
+                        deal_msg += "\n"
+                    data = deal_msg.encode("utf-8")
+                elif isinstance(message, bytes):
+                    data = message
+                else:
                     print(f"Unsupported message type: {type(message)}")
                     return False
-                wire = self._crypto_encrypt_message(client_socket, message)
-                data = wire.encode("ascii") + b"\n"
-            elif isinstance(message, str):
-                deal_msg = message.strip()
-                if not deal_msg.endswith("\n"):
-                    deal_msg += "\n"
-                data = deal_msg.encode("utf-8")
-            elif isinstance(message, bytes):
-                data = message
-            else:
-                print(f"Unsupported message type: {type(message)}")
-                return False
-            client_socket.sendall(data)
-            return True
-        except Exception as e:
-            print(f"send msg error: {e}")
-            traceback.print_exc()
-            raise
+                client_socket.sendall(data)
+                return True
+            except Exception as e:
+                print(f"send msg error: {e}")
+                traceback.print_exc()
+                raise
 
     def _send_raw(self, client_socket, text):
         """Send a plaintext crypto-protocol message, bypassing encryption."""
@@ -611,7 +627,8 @@ class TCP_Server_Base:  # TCP server class
                     daemon=True,
                 ).start()
             try:
-                nonce = state.get("my_nonce") or self._crypto_fresh_nonce()
+                with self._crypto_lock:
+                    nonce = state.get("my_nonce") or self._crypto_fresh_nonce()
                 self._send_raw(client_socket, f"/crypto_key_exchange {nonce} 1")
             except Exception:
                 traceback.print_exc()
@@ -648,23 +665,27 @@ class TCP_Server_Base:  # TCP server class
         passed the TOFU check and both sides announced readiness (no
         plaintext/encrypted interleaving). Resets the sequence counters
         so the fresh session starts at seq 0."""
-        with self._crypto_lock:
-            if (
-                state.get("peer_pub_ok") is True
-                and state.get("peer_pem_path")
-                and state.get("ready_sent")
-                and state.get("peer_ready")
-                and client_socket not in self._encrypted_sockets
-            ):
-                state["send_seq"] = 0
-                state["recv_seq"] = 0
-                self._crypto_mark_encrypted(client_socket, "client", state["peer_pem_path"])
+        # no send may interleave with the seq reset / flip
+        with self._crypto_get_send_lock(client_socket):
+            with self._crypto_lock:
+                if (
+                    state.get("peer_pub_ok") is True
+                    and state.get("peer_pem_path")
+                    and state.get("ready_sent")
+                    and state.get("peer_ready")
+                    and client_socket not in self._encrypted_sockets
+                ):
+                    state["send_seq"] = 0
+                    state["recv_seq"] = 0
+                    self._crypto_mark_encrypted(client_socket, "client", state["peer_pem_path"])
 
     def _crypto_wait_server_ready(self, client_socket, client_address, state):
         """Wait until the client's public key arrived and passed the
         TOFU check, then announce readiness. The socket flips to
         encrypted mode only when the client's /crypto_ready arrives too."""
-        if not state["peer_pub_event"].wait(timeout=60):
+        with self._crypto_lock:
+            peer_pub_event = state.get("peer_pub_event")
+        if peer_pub_event is None or not peer_pub_event.wait(timeout=60):
             print("crypto: waiting for client public key timed out")
             return
         with self._crypto_lock:
@@ -672,7 +693,8 @@ class TCP_Server_Base:  # TCP server class
         if pub_ok is not True:
             print("crypto: client public key rejected, connection dropped")
             return
-        state["ready_sent"] = True
+        with self._crypto_lock:
+            state["ready_sent"] = True
         try:
             self._send_raw(client_socket, "/crypto_ready")
         except Exception:
@@ -833,6 +855,7 @@ class TCP_Server_Base:  # TCP server class
                 self._crypto_push_active.discard(client_socket)
                 self._encrypted_sockets.discard(client_socket)
                 self._encrypted_recv_buffers.pop(client_socket, None)
+                self._crypto_send_locks.pop(client_socket, None)
             client_socket.close()
             print(f"client disconnected: {client_id}")
             print(f"current connection count: {len(self.clients)}")
@@ -1846,6 +1869,9 @@ class TCP_Client_Base:  # TCP client class
         self._crypto_server_pub_event = threading.Event()
         self._crypto_force = False
         self._crypto_push_active = set()
+        self._crypto_send_lock = threading.Lock()  # send+encrypt ordered: wire order == seq order
+        self._crypto_handshake_gen = 0  # bumped on handshake start; stale flows act/close no-op
+
         self._crypto_requested_server_pub = False
         self._crypto_server_ready = False
         self._crypto_own_ready_sent = False
@@ -2144,7 +2170,8 @@ class TCP_Client_Base:  # TCP client class
                 self.receive_thread.daemon = True
                 self.receive_thread.start()
                 if self.is_enable_encrypto and self.crypto is not None:
-                    self._crypto_decode_failures = 0  # fresh connection, fresh breaker
+                    with self._crypto_lock:
+                        self._crypto_decode_failures = 0  # fresh connection, fresh breaker
                     self._crypto_start_exchange()
                 print("connect success! type '/help' to get help.\n")
                 return True
@@ -2211,33 +2238,34 @@ class TCP_Client_Base:  # TCP client class
         if not self.running or not self.client_socket:
             print("disable the connect to server")
             return False
-        try:  # add newline character for server to distinguish messages
-            with self._crypto_lock:
-                encrypted = client_socket in self._encrypted_sockets
-            if encrypted:
-                if isinstance(message, bytes):
-                    message = message.decode("utf-8")
-                if not isinstance(message, str):
+        with self._crypto_send_lock:  # alloc+encrypt+sendall stay ordered (no-GIL safe)
+            try:  # add newline character for server to distinguish messages
+                with self._crypto_lock:
+                    encrypted = client_socket in self._encrypted_sockets
+                if encrypted:
+                    if isinstance(message, bytes):
+                        message = message.decode("utf-8")
+                    if not isinstance(message, str):
+                        print(f"Unsupported message type: {type(message)}")
+                        return False
+                    wire = self._crypto_encrypt_message(client_socket, message)
+                    data = wire.encode("ascii") + b"\n"
+                elif isinstance(message, str):
+                    deal_msg = message.strip()
+                    if not deal_msg.endswith("\n"):
+                        deal_msg += "\n"
+                    data = deal_msg.encode("utf-8")
+                elif isinstance(message, bytes):
+                    data = message
+                else:
                     print(f"Unsupported message type: {type(message)}")
                     return False
-                wire = self._crypto_encrypt_message(client_socket, message)
-                data = wire.encode("ascii") + b"\n"
-            elif isinstance(message, str):
-                deal_msg = message.strip()
-                if not deal_msg.endswith("\n"):
-                    deal_msg += "\n"
-                data = deal_msg.encode("utf-8")
-            elif isinstance(message, bytes):
-                data = message
-            else:
-                print(f"Unsupported message type: {type(message)}")
+                client_socket.sendall(data)
+                return True
+            except Exception as e:
+                print(f"send msg error: {e}")
+                traceback.print_exc()
                 return False
-            client_socket.sendall(data)
-            return True
-        except Exception as e:
-            print(f"send msg error: {e}")
-            traceback.print_exc()
-            return False
         
     def send_message_to_server(self, message):
         self.send_message(self.client_socket, shlex.split(message)[1])
@@ -2366,35 +2394,53 @@ class TCP_Client_Base:  # TCP client class
         """Start the client side of the public-key handshake (daemon)."""
         threading.Thread(target=self._crypto_exchange_thread, daemon=True).start()
 
+    def _crypto_still_current(self, gen):
+        """True while ``gen`` is still the latest handshake generation."""
+        with self._crypto_lock:
+            return self._crypto_handshake_gen == gen
+
     def _crypto_exchange_thread(self, force=False):
         """Drive the client half of the handshake to completion."""
         try:
             self.crypto.ensure_keys()
-            self._crypto_ack_event = threading.Event()
-            self._crypto_exchange_done = threading.Event()
-            self._crypto_server_pub_event = threading.Event()
-            self._crypto_requested_server_pub = False
-            self._crypto_server_pub_ok = None
-            self._crypto_server_pem_path = None
-            self._crypto_my_nonce = self._crypto_fresh_nonce()
-            self._crypto_send_seq = 0
-            self._crypto_recv_seq = 0
-            self._crypto_handshake_started = True
-            hello = f"/crypto_key_exchange {self._crypto_my_nonce}"
-            if force:
-                hello += " 1"
+            with self._crypto_lock:
+                ack_event = threading.Event()
+                done_event = threading.Event()
+                pub_event = threading.Event()
+                self._crypto_ack_event = ack_event
+                self._crypto_exchange_done = done_event
+                self._crypto_server_pub_event = pub_event
+                self._crypto_requested_server_pub = False
+                self._crypto_server_pub_ok = None
+                self._crypto_server_pem_path = None
+                self._crypto_my_nonce = self._crypto_fresh_nonce()
+                self._crypto_send_seq = 0
+                self._crypto_recv_seq = 0
+                self._crypto_handshake_started = True
+                self._crypto_handshake_gen += 1
+                gen = self._crypto_handshake_gen
+                hello = f"/crypto_key_exchange {self._crypto_my_nonce}"
+                if force:
+                    hello += " 1"
             self._send_raw(self.client_socket, hello)
-            if not self._crypto_ack_event.wait(timeout=30):
+            if not ack_event.wait(timeout=30):
+                if not self._crypto_still_current(gen):
+                    return  # superseded by a newer handshake; that flow owns the connection
                 raise TimeoutError("crypto handshake: no ack from server")
-            if not self._crypto_exchange_done.wait(timeout=90):
+            if not done_event.wait(timeout=90):
+                if not self._crypto_still_current(gen):
+                    return
                 raise TimeoutError("crypto handshake: key exchange did not complete")
             self._crypto_try_flip()  # readiness was announced by _wait_done; wait here until the socket actually flipped
             for _ in range(600):
-                if self.client_socket in self._encrypted_sockets:
+                with self._crypto_lock:
+                    flipped = self.client_socket in self._encrypted_sockets
+                if flipped:
                     break
                 time.sleep(0.1)
             else:
-                raise TimeoutError("crypto handshake: server /crypto_ready never arrived")
+                if self._crypto_still_current(gen):
+                    raise TimeoutError("crypto handshake: server /crypto_ready never arrived")
         except Exception as e:
             print(f"crypto handshake failed: {e}")
             traceback.print_exc()
@@ -2407,13 +2453,16 @@ class TCP_Client_Base:  # TCP client class
         """Server initiated the handshake (re-exchange after a decode
         failure): record its session nonce, ack that we need its key
         (every connection re-exchanges), then run our half."""
-        self._crypto_force = force
-        self._crypto_server_nonce = server_nonce
-        self._crypto_handshake_started = True
-        self._crypto_my_nonce = self._crypto_fresh_nonce()
-        self._crypto_send_seq = 0
-        self._crypto_recv_seq = 0
-        ack = f"/crypto_key_exchange_ack {self._crypto_my_nonce} 1 {1 if force else 0}"
+        with self._crypto_lock:
+            self._crypto_force = force
+            self._crypto_server_nonce = server_nonce
+            self._crypto_handshake_started = True
+            self._crypto_my_nonce = self._crypto_fresh_nonce()
+            self._crypto_send_seq = 0
+            self._crypto_recv_seq = 0
+            self._crypto_handshake_gen += 1
+            my_nonce = self._crypto_my_nonce
+        ack = f"/crypto_key_exchange_ack {my_nonce} 1 {1 if force else 0}"
         self._send_raw(self.client_socket, ack)
         self._crypto_after_ack("1" if force else "0", force)
 
@@ -2421,19 +2470,20 @@ class TCP_Client_Base:  # TCP client class
         """Flip to encrypted mode only when the server key passed the
         TOFU check and both sides announced readiness. Resets the
         sequence counters so the fresh session starts at seq 0."""
-        with self._crypto_lock:
-            if (
-                self._crypto_server_ready
-                and self._crypto_own_ready_sent
-                and self._crypto_server_pub_ok is True
-                and self._crypto_server_pem_path
-                and self.client_socket not in self._encrypted_sockets
-            ):
-                self._crypto_send_seq = 0
-                self._crypto_recv_seq = 0
-                self._crypto_mark_encrypted(
-                    self.client_socket, "server", self._crypto_server_pem_path
-                )
+        with self._crypto_send_lock:  # no send may interleave with the seq reset / flip
+            with self._crypto_lock:
+                if (
+                    self._crypto_server_ready
+                    and self._crypto_own_ready_sent
+                    and self._crypto_server_pub_ok is True
+                    and self._crypto_server_pem_path
+                    and self.client_socket not in self._encrypted_sockets
+                ):
+                    self._crypto_send_seq = 0
+                    self._crypto_recv_seq = 0
+                    self._crypto_mark_encrypted(
+                        self.client_socket, "server", self._crypto_server_pem_path
+                    )
 
     @staticmethod
     def _crypto_fresh_nonce():
@@ -2441,35 +2491,50 @@ class TCP_Client_Base:  # TCP client class
 
     def _crypto_after_ack(self, server_needs, force):
         """Server replied to our hello: push our key and request the
-        server's key (every connection re-exchanges), then signal the
-        exchange thread."""
-        need_push = force or server_needs == "1"
-        push_thread = None
-        if need_push:
-            push_thread = threading.Thread(target=self._crypto_push_pub_key, daemon=True)
-            push_thread.start()
-        if not self._crypto_requested_server_pub:
-            self._crypto_requested_server_pub = True
+        server's key (if it needs us to), then signal the exchange
+        thread. Runs under ``_crypto_lock`` so a concurrent handshake
+        cannot interleave (no-GIL safe)."""
+        with self._crypto_lock:
+            gen = self._crypto_handshake_gen
+            need_push = force or server_needs == "1"
+            push_thread = None
+            if need_push:
+                push_thread = threading.Thread(target=self._crypto_push_pub_key, daemon=True)
+                push_thread.start()
+            if not self._crypto_requested_server_pub:
+                self._crypto_requested_server_pub = True
+                request_pub = True
+            else:
+                request_pub = False
+        if request_pub:
             self._send_raw(self.client_socket, "/crypto_pub_key_request")
 
         def _wait_done():
             if push_thread is not None:
                 push_thread.join(timeout=90)
-            if not self._crypto_server_pub_event.wait(timeout=90):
+            with self._crypto_lock:
+                pub_event = self._crypto_server_pub_event
+            if not pub_event.wait(timeout=90):
                 print("crypto: waiting for server public key timed out")
                 return
-            if self._crypto_server_pub_ok is not True:
-                print("crypto: server public key rejected")
+            with self._crypto_lock:
+                if self._crypto_handshake_gen != gen or self._crypto_server_pub_ok is not True:
+                    stale = True
+                else:
+                    stale = False
+                    self._crypto_own_ready_sent = True  # announce readiness: flip only once the server's /crypto_ready arrived too; sent on every handshake path
+            if stale:
                 return
-            self._crypto_own_ready_sent = True  # announce readiness: flip only once the server's /crypto_ready arrived too; sent on every handshake path
             try:
                 self._send_raw(self.client_socket, "/crypto_ready")
             except OSError:
                 pass  # connection already closed (reject/breaker): nothing to announce
-            self._crypto_exchange_done.set()
+            with self._crypto_lock:
+                self._crypto_exchange_done.set()
 
         threading.Thread(target=_wait_done, daemon=True).start()
-        self._crypto_ack_event.set()
+        with self._crypto_lock:
+            self._crypto_ack_event.set()
 
     def _crypto_push_pub_key(self):
         """Push our public key file to the server via the file-transfer
@@ -2551,7 +2616,8 @@ class TCP_Client_Base:  # TCP client class
             except Exception:
                 traceback.print_exc()
             return
-        self._crypto_server_pub_event.set()
+        with self._crypto_lock:
+            self._crypto_server_pub_event.set()
 
     def handle_server_command(self, command):  # deal with special command from server
         client_id = f"{self.client_host}:{self.client_port}"
@@ -2592,7 +2658,8 @@ class TCP_Client_Base:  # TCP client class
             parts = command.split(" ")
             if len(parts) < 3:
                 return
-            self._crypto_server_nonce = parts[1]
+            with self._crypto_lock:
+                self._crypto_server_nonce = parts[1]
             server_needs = parts[2]
             force = len(parts) > 3 and parts[3] == "1"
             self._crypto_after_ack(server_needs, force)
@@ -2609,7 +2676,9 @@ class TCP_Client_Base:  # TCP client class
             and self.crypto is not None
             and command.lower().split(" ")[0] == "/crypto_pub_key"
         ):
-            if not self._crypto_handshake_started:  # only accept key pushes while a handshake is in progress
+            with self._crypto_lock:
+                handshake_started = self._crypto_handshake_started
+            if not handshake_started:  # only accept key pushes while a handshake is in progress
                 print("crypto: ignoring /crypto_pub_key outside a handshake")
                 return
             self.file_transfer_client_recv_server_start_thread(  # server pushes its key file; the receive hook TOFU-checks it
@@ -2620,7 +2689,8 @@ class TCP_Client_Base:  # TCP client class
             and self.crypto is not None
             and command.lower().split(" ")[0] == "/crypto_ready"
         ):
-            self._crypto_server_ready = True
+            with self._crypto_lock:
+                self._crypto_server_ready = True
             self._crypto_try_flip()
         elif shlex.split(command.lower())[0] == "/file":
             self.file_transfer_client_recv_server_start_thread(

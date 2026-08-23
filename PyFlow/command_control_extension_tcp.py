@@ -14,6 +14,7 @@ server_instance = None
 client_instance = None
 command_counter = {}
 command_counter_lock = threading.Lock()
+command_log_lock = threading.Lock()  # serialises the logs_<id>.json read-modify-write
 
 
 def _load_json_file(path):
@@ -172,19 +173,20 @@ def _command_handler_server_setup(sock, addr, cmd):
         "error": error,
         "returncode": returncode,
     }
-    if os.path.exists(log_path):
-        with open(log_path, "r", encoding="utf-8") as f:
-            try:
-                log_data = json.load(f)
-            except Exception:
-                log_data = {}
-    else:
-        log_data = {}
-    if command not in log_data:
-        log_data[command] = []
-    log_data[command].append(log_line)
-    with open(log_path, "w", encoding="utf-8") as f:
-        json.dump(log_data, f, ensure_ascii=False, indent=2)
+    with command_log_lock:  # read-modify-write of the same log file from concurrent executor threads must not lose updates
+        if os.path.exists(log_path):
+            with open(log_path, "r", encoding="utf-8") as f:
+                try:
+                    log_data = json.load(f)
+                except Exception:
+                    log_data = {}
+        else:
+            log_data = {}
+        if command not in log_data:
+            log_data[command] = []
+        log_data[command].append(log_line)
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump(log_data, f, ensure_ascii=False, indent=2)
     print(f"Log written to {log_path}")
     msg = '/file "{}"'.format(log_path)
     if cmd_id == command_total_num:
