@@ -477,3 +477,64 @@ def test_decode_failure_burst_closes_connection(tcp_pair):
         if not _wait_server_reexchanged(server, client):
             break  # breaker fired, connection closed
     assert _wait_disconnected(client)
+
+
+def test_crypto_mode_mismatch_disconnects(tmp_path):
+    """A client whose ``is_enable_encrypto`` differs from the server's
+    must be refused at connect time (both directions)."""
+    ssh_dir = tmp_path / "ssh"
+    ssh_dir.mkdir()
+
+    port = _next_port()
+    server_on = TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=True,
+    )
+    _redirect_crypto(server_on.crypto, tmp_path, ssh_dir, "pub_key")
+    threading.Thread(target=server_on.start_TCP_Server, daemon=True).start()
+    assert server_ready(server_on), "server did not start"
+
+    client_off = TCP_Client_Base(
+        host="127.0.0.1",
+        port=port,
+        client_host="127.0.0.1",
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
+    try:
+        assert not client_off.connect()  # server on / client off: refused
+        assert not client_off.running
+    finally:
+        client_off.close()
+        server_on.stop()
+
+    port = _next_port()
+    server_off = TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
+    threading.Thread(target=server_off.start_TCP_Server, daemon=True).start()
+    assert server_ready(server_off), "server did not start"
+
+    client_on = TCP_Client_Base(
+        host="127.0.0.1",
+        port=port,
+        client_host="127.0.0.1",
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=True,
+    )
+    _redirect_crypto(client_on.crypto, tmp_path, ssh_dir, "pub_key_client")
+    try:
+        assert not client_on.connect()  # server off, client on: rejected and disconnected
+        assert not client_on.running
+    finally:
+        client_on.close()
+        server_off.stop()

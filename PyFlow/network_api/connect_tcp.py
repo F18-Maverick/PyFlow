@@ -804,6 +804,8 @@ class TCP_Server_Base:  # TCP server class
         print(f"connection count mount: {len(self.clients)}")
         welcome_msg = f"Welcome!: {client_id}\n"  # send welcome message
         self.send_message(client_socket, welcome_msg)
+        # announce our encryption mode; a mismatched peer is disconnected in handle_command
+        self._send_raw(client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
         if self.is_hand_alloc_port == True:
             broadcast_clients_port_alloc_range_msg = "/client_alloc_port_range {}".format(
                 self.each_client_port_range
@@ -893,6 +895,22 @@ class TCP_Server_Base:  # TCP server class
         elif command == "/quit":
             send_str = "Bye!" + "\n"
             return send_str
+        elif command.lower().split(" ")[0] == "/crypto_mode":
+            try:
+                client_crypto = int(command.split(" ")[1])
+            except (IndexError, ValueError):
+                client_crypto = -1
+            if client_crypto != (1 if self.is_enable_encrypto else 0):
+                print(
+                    f"crypto: encryption mode mismatch with client {client_id} "
+                    f"(client={client_crypto}, server={1 if self.is_enable_encrypto else 0}), "
+                    f"disconnecting"
+                )
+                try:
+                    client_socket.close()
+                except Exception:
+                    traceback.print_exc()
+            return None
         elif shlex.split(command.lower())[0] == "/file":
             self.file_transfer_server_recv_server_start_thread(client_id, client_socket, command)
         elif shlex.split(command.lower())[0] == "/file_folder":
@@ -1871,6 +1889,8 @@ class TCP_Client_Base:  # TCP client class
         self._crypto_push_active = set()
         self._crypto_send_lock = threading.Lock()  # send+encrypt ordered: wire order == seq order
         self._crypto_handshake_gen = 0  # bumped on handshake start; stale flows act/close no-op
+        self._crypto_mode_event = threading.Event()  # set once the server announced its crypto mode
+        self._crypto_mode_ok = False  # server mode matches ours (negotiated at connect)
 
         self._crypto_requested_server_pub = False
         self._crypto_server_ready = False
@@ -2147,6 +2167,26 @@ class TCP_Client_Base:  # TCP client class
         recv_thread.start()
         return client_sock, recv_thread, stop_event
 
+    def _crypto_negotiate_mode(self):
+        """Announce our encryption mode and wait for the server's.
+
+        Returns True only when both sides agree on ``is_enable_encrypto``.
+        On a mismatch (or a missing announcement) the connection is
+        closed and False is returned.
+        """
+        with self._crypto_lock:
+            self._crypto_mode_event.clear()
+            self._crypto_mode_ok = False
+        self._send_raw(self.client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
+        if not self._crypto_mode_event.wait(timeout=10):
+            print("crypto: server did not announce its encryption mode, disconnecting")
+            self.close()
+            return False
+        if not self._crypto_mode_ok:
+            self.close()  # mismatch: the receive thread signalled the refusal; close idempotently
+            return False
+        return True
+
     def connect(self):  # connect to server
         while True:
             try:
@@ -2169,6 +2209,8 @@ class TCP_Client_Base:  # TCP client class
                 )  # set up get msg thread
                 self.receive_thread.daemon = True
                 self.receive_thread.start()
+                if not self._crypto_negotiate_mode():
+                    return False
                 if self.is_enable_encrypto and self.crypto is not None:
                     with self._crypto_lock:
                         self._crypto_decode_failures = 0  # fresh connection, fresh breaker
@@ -2621,6 +2663,22 @@ class TCP_Client_Base:  # TCP client class
 
     def handle_server_command(self, command):  # deal with special command from server
         client_id = f"{self.client_host}:{self.client_port}"
+        if command.lower().split(" ")[0] == "/crypto_mode":
+            try:
+                peer_mode = int(command.split(" ")[1])
+            except (IndexError, ValueError):
+                peer_mode = -1
+            expected = 1 if self.is_enable_encrypto else 0
+            with self._crypto_lock:
+                self._crypto_mode_ok = peer_mode == expected
+                self._crypto_mode_event.set()
+            if not self._crypto_mode_ok:
+                print(
+                    f"crypto: encryption mode mismatch with server "
+                    f"(server={peer_mode}, client={expected}), disconnecting"
+                )
+                self.close()
+            return
         if command.lower().split(" ")[0] == "/client_alloc_port_range":
             if command.lower().split(" ")[1] == "no_limit":
                 self.is_hand_alloc_port = False
