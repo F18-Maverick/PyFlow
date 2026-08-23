@@ -21,9 +21,9 @@ The C library must be built first (``cmake -S . -B build &&
 cmake --build build``); see ``load_library`` for the search paths.
 """
 
+import contextlib
 import ctypes
 import ctypes.util
-import contextlib
 import hashlib
 import json
 import os
@@ -287,7 +287,10 @@ class RsaCrypto:
                 priv_key = self._read_priv_handle(lib, priv_path)
             self.priv_path = priv_path
             self.pub_path = os.path.join(self.pvt_key_dir, "{}_pub.pem".format(self.role))
-            tmp_pub = self.pub_path + ".tmp"
+            # unique temp name: several instances may rewrite the pub file
+            # concurrently (the rewrite is outside the cross-instance lock);
+            # a shared tmp name would let one replace() steal another's temp
+            tmp_pub = "{}.{}.tmp".format(self.pub_path, uuid.uuid4().hex)
             err = lib.pf_rsa_write_pub(priv_key.handle, tmp_pub.encode("utf-8"))
             if err != PF_OK:
                 raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
@@ -366,7 +369,7 @@ class RsaCrypto:
         if err != PF_OK or not handle.value:
             raise RuntimeError("pf_rsa_keygen failed: {}".format(err))
         key = RsaKey(handle.value, lib)
-        tmp_priv = priv_path + ".tmp"
+        tmp_priv = "{}.{}.tmp".format(priv_path, uuid.uuid4().hex)
         err = lib.pf_rsa_write_priv(key.handle, tmp_priv.encode("utf-8"), None)
         if err != PF_OK:
             raise RuntimeError("pf_rsa_write_priv failed: {}".format(err))
@@ -375,7 +378,7 @@ class RsaCrypto:
             os.chmod(priv_path, 0o600)  # private key: owner-only
         except OSError:
             pass
-        tmp_pub = pub_path + ".tmp"
+        tmp_pub = "{}.{}.tmp".format(pub_path, uuid.uuid4().hex)
         err = lib.pf_rsa_write_pub(key.handle, tmp_pub.encode("utf-8"))
         if err != PF_OK:
             raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
