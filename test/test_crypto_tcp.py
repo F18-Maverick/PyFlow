@@ -479,6 +479,118 @@ def test_decode_failure_burst_closes_connection(tcp_pair):
     assert _wait_disconnected(client)
 
 
+def test_mode_negotiation_survives_server_announcement_race(tmp_path):
+    """The server's /crypto_mode line may be processed by the receive
+    thread before connect() starts waiting for it. The event reset must
+    happen before the receive thread starts; a reset after that point
+    wipes the announcement and connect() times out (flaky CI failure).
+
+    The negotiation call is delayed to force the receive thread to
+    process the server's announcement before the wait begins."""
+    port = _next_port()
+    server = TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
+    threading.Thread(target=server.start_TCP_Server, daemon=True).start()
+    assert server_ready(server), "server did not start"
+    client = TCP_Client_Base(
+        host="127.0.0.1",
+        port=port,
+        client_host="127.0.0.1",
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
+    client._crypto_mode_timeout = 2  # fail fast if the reset race is present
+    real_negotiate = client._crypto_negotiate_mode
+
+    def slow_negotiate():
+        time.sleep(0.5)  # the receive thread processes the server's mode line in this window
+        return real_negotiate()
+
+    client._crypto_negotiate_mode = slow_negotiate
+    try:
+        assert client.connect()
+    finally:
+        client.close()
+        server.stop()
+
+
+def test_concurrent_clients_share_key_exchange(tmp_path):
+    """Several clients handshaking at the same time share the
+    received_files/ directory: public-key pushes must be stored under
+    unique names, or concurrent moves corrupt the exchange (flaky
+    FileNotFoundError under multi-client load)."""
+    ssh_dir = tmp_path / "ssh"
+    ssh_dir.mkdir()
+    port = _next_port()
+    server = TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=True,
+    )
+    _redirect_crypto(server.crypto, tmp_path, ssh_dir, "pub_key")
+    threading.Thread(target=server.start_TCP_Server, daemon=True).start()
+    assert server_ready(server), "server did not start"
+
+    clients = []
+    errors = []
+
+    def connect_one(i):
+        c = TCP_Client_Base(
+            host="127.0.0.1",
+            port=port,
+            client_host="127.0.0.1",
+            is_extend_command=True,
+            is_input_command_in_console=False,
+            is_enable_encrypto=True,
+        )
+        _redirect_crypto(c.crypto, tmp_path, ssh_dir, f"pub_key_client_{i}")
+        try:
+            if c.connect() and wait_until(
+                lambda: c.client_socket in c._encrypted_sockets, timeout=20
+            ):
+                clients.append(c)
+            else:
+                errors.append(f"client {i} failed to connect/flip")
+                c.close()
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"client {i}: {e!r}")
+            c.close()
+
+    threads = [threading.Thread(target=connect_one, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    try:
+        assert not errors, errors
+        assert len(clients) == 4
+        for c in clients:
+            assert c.client_socket in c._encrypted_sockets
+        # all four clients share one keypair (pvt_key dir), so the TOFU
+        # registry keeps a single entry for that key
+        assert len(_registry_entries(server.crypto)) == 1
+        recv_dir = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "PyFlow",
+            "network_api",
+            "received_files",
+        )
+        leftover = [n for n in os.listdir(recv_dir) if n.endswith(".pem")]
+        assert not leftover, f"stale key files left in received_files/: {leftover}"
+    finally:
+        for c in clients:
+            c.close()
+        server.stop()
+
+
 def test_crypto_mode_mismatch_disconnects(tmp_path):
     """A client whose ``is_enable_encrypto`` differs from the server's
     must be refused at connect time (both directions)."""

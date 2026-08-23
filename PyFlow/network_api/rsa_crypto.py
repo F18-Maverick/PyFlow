@@ -441,11 +441,23 @@ class RsaCrypto:
                 return True, "first connection (TOFU)"
 
     def store_peer_pem(self, peer_role, peer_ip, peer_port, src_path):
-        """Move a freshly received public key file into the key cache."""
+        """Move a freshly received public key file into the key cache.
+
+        Idempotent under concurrency: several transfers may deliver the
+        same peer key at once (multi-connection handshakes, several
+        client processes sharing one ``received_files/`` directory); if
+        the source is already gone because a concurrent store moved it,
+        success is assumed when the destination is in place.
+        """
         dest = self.peer_pem_path(peer_role, peer_ip, peer_port)
         import shutil
 
-        shutil.move(src_path, dest)
+        try:
+            shutil.move(src_path, dest)
+        except OSError:
+            if not os.path.exists(src_path) and os.path.exists(dest):
+                return  # a concurrent transfer already stored this key
+            raise
         with self._peer_pub_cache_lock:
             self._peer_pub_cache.pop(dest, None)
 

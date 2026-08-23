@@ -8,6 +8,7 @@ import socket
 import secrets
 import traceback
 import threading
+import uuid
 from . import rsa_crypto
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -777,6 +778,10 @@ class TCP_Server_Base:  # TCP server class
                     state["peer_pub_ok"] = False
                     state["peer_pub_event"].set()
                 print(f"crypto: REJECTED public key from {peer_ip}:{peer_port}: {reason}")
+                try:
+                    os.remove(full_path)  # rejected key: do not leave it in received_files/
+                except OSError:
+                    pass
                 peer_socket = self.clients.get(client_address, {}).get("socket")
         if not ok and peer_socket is not None:
             try:
@@ -1208,6 +1213,10 @@ class TCP_Server_Base:  # TCP server class
                 original_filename = filename
                 if file_name:
                     final_filename = file_name.strip()
+                elif command_part[0] == "/crypto_pub_key":
+                    # concurrent key pushes share received_files/: a fixed name would be
+                    # overwritten/moved by another connection before this one consumes it
+                    final_filename = "{}.pem".format(uuid.uuid4().hex)
                 else:
                     final_filename = os.path.basename(original_filename)
                 full_path = os.path.join(save_path, final_filename).strip()
@@ -1891,6 +1900,7 @@ class TCP_Client_Base:  # TCP client class
         self._crypto_handshake_gen = 0  # bumped on handshake start; stale flows act/close no-op
         self._crypto_mode_event = threading.Event()  # set once the server announced its crypto mode
         self._crypto_mode_ok = False  # server mode matches ours (negotiated at connect)
+        self._crypto_mode_timeout = 10  # seconds to wait for the server's mode announcement
 
         self._crypto_requested_server_pub = False
         self._crypto_server_ready = False
@@ -2174,11 +2184,8 @@ class TCP_Client_Base:  # TCP client class
         On a mismatch (or a missing announcement) the connection is
         closed and False is returned.
         """
-        with self._crypto_lock:
-            self._crypto_mode_event.clear()
-            self._crypto_mode_ok = False
         self._send_raw(self.client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
-        if not self._crypto_mode_event.wait(timeout=10):
+        if not self._crypto_mode_event.wait(timeout=self._crypto_mode_timeout):
             print("crypto: server did not announce its encryption mode, disconnecting")
             self.close()
             return False
@@ -2207,6 +2214,9 @@ class TCP_Client_Base:  # TCP client class
                 self.receive_thread = threading.Thread(
                     target=self.receive_messages
                 )  # set up get msg thread
+                with self._crypto_lock:  # reset before the recv thread starts
+                    self._crypto_mode_event.clear()
+                    self._crypto_mode_ok = False
                 self.receive_thread.daemon = True
                 self.receive_thread.start()
                 if not self._crypto_negotiate_mode():
@@ -2649,6 +2659,10 @@ class TCP_Client_Base:  # TCP client class
             with self._crypto_lock:
                 self._crypto_server_pub_ok = False
             print(f"crypto: REJECTED server public key: {reason}")
+            try:
+                os.remove(full_path)  # rejected key: do not leave it in received_files/
+            except OSError:
+                pass
             try:
                 self._send_raw(self.client_socket, f"/crypto_reject {reason}")
             except Exception:
@@ -3299,6 +3313,10 @@ class TCP_Client_Base:  # TCP client class
                 original_filename = filename
                 if file_name:
                     final_filename = file_name.strip()
+                elif command_part[0] == "/crypto_pub_key":
+                    # concurrent key pushes share received_files/: a fixed name would be
+                    # overwritten/moved by another connection before this one consumes it
+                    final_filename = "{}.pem".format(uuid.uuid4().hex)
                 else:
                     final_filename = os.path.basename(original_filename)
                 full_path = os.path.join(save_path, final_filename).strip()
