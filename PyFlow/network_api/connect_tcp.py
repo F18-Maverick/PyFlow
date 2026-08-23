@@ -9,9 +9,17 @@ import secrets
 import traceback
 import threading
 import uuid
+import errno
 from . import rsa_crypto
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+
+
+def _is_closed_socket_error(exc):
+    """True when the error means a socket that is already closed
+    (errno 9 / EBADF): the normal teardown signal between a closing
+    thread and a receive thread, not a fault worth a traceback."""
+    return isinstance(exc, OSError) and exc.errno in (errno.EBADF, errno.ENOTSOCK)
 
 MAX_DECODE_FAILURES = 3  # circuit breaker: close after N consecutive decode failures (re-exchange storm / garbage injection)
 
@@ -466,8 +474,9 @@ class TCP_Server_Base:  # TCP server class
                 client_socket.sendall(data)
                 return True
             except Exception as e:
-                print(f"send msg error: {e}")
-                traceback.print_exc()
+                if not _is_closed_socket_error(e):
+                    print(f"send msg error: {e}")
+                    traceback.print_exc()
                 raise
 
     def _send_raw(self, client_socket, text):
@@ -847,10 +856,11 @@ class TCP_Server_Base:  # TCP server class
                     if response:  # send response to client
                         self.send_message(client_socket, response)
         except ConnectionResetError:
-            print(f"client disconnected: {client_id}")
+            pass  # peer dropped with RST; the finally block reports the disconnect once
         except Exception as e:
-            print(f"error while deal with client {client_id} : {e}")
-            traceback.print_exc()
+            if not _is_closed_socket_error(e):
+                print(f"error while deal with client {client_id} : {e}")
+                traceback.print_exc()
         finally:
             with self.client_lock:
                 if client_address in self.clients:
@@ -1146,6 +1156,7 @@ class TCP_Server_Base:  # TCP server class
             nonlocal server_file_socket
             nonlocal save_path
             filename = None
+            full_path = None
             self.send_message(client_file_socket, self.server_start_file_transfer_sign)
             try:
                 name_len_bytes = b""
@@ -1237,16 +1248,27 @@ class TCP_Server_Base:  # TCP server class
                             )
                         f.write(chunk)
                         remaining -= len(chunk)
-                self.send_message(client_file_socket, self.server_received_file_data_sign)
+                # TOFU first: the ack is only a notification, and a failed
+                # ack send must not skip the key registration (the server
+                # would never announce readiness and the handshake hangs)
                 print(f"file {filename} received from {client_id}, size {file_size} bytes")
                 if command_part[0] == "/crypto_pub_key":
                     with self._crypto_lock:
                         peer_addr = self._crypto_sock_addr.get(client_socket)
                     if peer_addr:
                         self._crypto_store_received_pub(full_path, "client", peer_addr)
+                try:
+                    self.send_message(client_file_socket, self.server_received_file_data_sign)
+                except Exception:
+                    traceback.print_exc()
                 close_socket()
             except Exception as e:
                 traceback.print_exc()
+                if full_path is not None and os.path.exists(full_path):
+                    try:
+                        os.remove(full_path)  # partial transfer: no half-written leftovers
+                    except OSError:
+                        pass
                 try:
                     self.send_message(client_file_socket, self.error_sign)
                 except:
@@ -1514,7 +1536,9 @@ class TCP_Server_Base:  # TCP server class
             print("invalid command, please use '/file <filename>'")
             traceback.print_exc()
 
-    def file_transfer_mode(self, filename, server_address, server_port, client_port):
+    def file_transfer_mode(  # noqa: PLR0911 - peer-close and timeout exits are distinct outcomes
+        self, filename, server_address, server_port, client_port
+    ):
         print(f"start to send file: {filename}")
         client_file_socket = None
         reset_time = 0
@@ -1587,6 +1611,10 @@ class TCP_Server_Base:  # TCP server class
                 if file_receive_data_from_server == self.error_sign:
                     close_socket()
                     break
+                if not file_running:
+                    # peer closed the file connection: the receive thread
+                    # already cleaned up; nothing more to wait for
+                    return False
                 time.sleep(1)
                 waiting_time += 1
                 if waiting_time >= 10:
@@ -1623,6 +1651,10 @@ class TCP_Server_Base:  # TCP server class
                 if file_receive_data_from_server == self.error_sign:
                     close_socket()
                     break
+                if not file_running:
+                    # peer closed the file connection: the receive thread
+                    # already cleaned up; nothing more to wait for
+                    return False
                 time.sleep(1)
                 waiting_time += 1
                 if waiting_time >= timeout:
@@ -2280,8 +2312,9 @@ class TCP_Client_Base:  # TCP client class
                 self.free_port()
                 break
             except Exception as e:
-                print(f"\nget msg error: {e}")
-                traceback.print_exc()
+                if not _is_closed_socket_error(e):
+                    print(f"\nget msg error: {e}")
+                    traceback.print_exc()
                 self.running = False
                 self.free_port()
                 break
@@ -2315,8 +2348,9 @@ class TCP_Client_Base:  # TCP client class
                 client_socket.sendall(data)
                 return True
             except Exception as e:
-                print(f"send msg error: {e}")
-                traceback.print_exc()
+                if not _is_closed_socket_error(e):
+                    print(f"send msg error: {e}")
+                    traceback.print_exc()
                 return False
         
     def send_message_to_server(self, message):
@@ -2562,13 +2596,15 @@ class TCP_Client_Base:  # TCP client class
             self._send_raw(self.client_socket, "/crypto_pub_key_request")
 
         def _wait_done():
-            if push_thread is not None:
-                push_thread.join(timeout=90)
             with self._crypto_lock:
                 pub_event = self._crypto_server_pub_event
             if not pub_event.wait(timeout=90):
                 print("crypto: waiting for server public key timed out")
                 return
+            if push_thread is not None:
+                # the push is best-effort (its ack can lag behind a slow file
+                # transfer): never gate our readiness on it
+                push_thread.join(timeout=5)
             with self._crypto_lock:
                 if self._crypto_handshake_gen != gen or self._crypto_server_pub_ok is not True:
                     stale = True
@@ -3012,7 +3048,9 @@ class TCP_Client_Base:  # TCP client class
             traceback.print_exc()
             print("invalid command, please use '/file <filename>'")
 
-    def file_transfer_mode(self, filename, server_address, server_port, client_port):
+    def file_transfer_mode(  # noqa: PLR0911 - peer-close and timeout exits are distinct outcomes
+        self, filename, server_address, server_port, client_port
+    ):
         print(f"start to send file: {filename}")
         client_file_socket = None
         reset_time = 0
@@ -3085,6 +3123,10 @@ class TCP_Client_Base:  # TCP client class
                 if file_receive_data_from_server == self.error_sign:
                     close_socket()
                     break
+                if not file_running:
+                    # peer closed the file connection: the receive thread
+                    # already cleaned up; nothing more to wait for
+                    return False
                 time.sleep(1)
                 waiting_time += 1
                 if waiting_time >= 10:
@@ -3121,6 +3163,10 @@ class TCP_Client_Base:  # TCP client class
                 if file_receive_data_from_server == self.error_sign:
                     close_socket()
                     break
+                if not file_running:
+                    # peer closed the file connection: the receive thread
+                    # already cleaned up; nothing more to wait for
+                    return False
                 time.sleep(1)
                 waiting_time += 1
                 if waiting_time >= timeout:
@@ -3246,6 +3292,7 @@ class TCP_Client_Base:  # TCP client class
             nonlocal server_file_socket
             nonlocal save_path
             filename = None
+            full_path = None
             self.send_message(client_file_socket, self.server_start_file_transfer_sign)
             try:
                 name_len_bytes = b""
@@ -3337,13 +3384,24 @@ class TCP_Client_Base:  # TCP client class
                             )
                         f.write(chunk)
                         remaining -= len(chunk)
-                self.send_message(client_file_socket, self.server_received_file_data_sign)
+                # TOFU first: the ack is only a notification, and a failed
+                # ack send must not skip the key registration (readiness
+                # would never be announced and the handshake hangs)
                 print(f"file {filename} received from {client_id}, size {file_size} bytes")
                 if command_part[0] == "/crypto_pub_key":
                     self._crypto_store_received_pub(full_path, "server", (self.host, self.port))
+                try:
+                    self.send_message(client_file_socket, self.server_received_file_data_sign)
+                except Exception:
+                    traceback.print_exc()
                 close_socket()
             except Exception as e:
                 traceback.print_exc()
+                if full_path is not None and os.path.exists(full_path):
+                    try:
+                        os.remove(full_path)  # partial transfer: no half-written leftovers
+                    except OSError:
+                        pass
                 try:
                     self.send_message(client_file_socket, self.error_sign)
                 except:

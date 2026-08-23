@@ -520,6 +520,24 @@ def test_mode_negotiation_survives_server_announcement_race(tmp_path):
         server.stop()
 
 
+def test_flip_completes_even_if_push_ack_is_lost(tcp_pair, monkeypatch):
+    """The server can lose the client-pub push ack (file socket closed
+    right after the key file arrives): readiness must not be gated on the
+    push thread finishing, or the handshake hangs forever."""
+    server, client, _ = tcp_pair
+    orig_send = server.send_message
+
+    def flaky_ack(client_socket, message):
+        if message == server.server_received_file_data_sign:
+            raise OSError(9, "Bad file descriptor")  # the flaky ack send
+        return orig_send(client_socket, message)
+
+    monkeypatch.setattr(server, "send_message", flaky_ack)
+    assert _wait_flip(client)
+    # the server flipped too: the key file did arrive, only its ack was lost
+    assert client.client_socket in client._encrypted_sockets
+
+
 def test_concurrent_clients_share_key_exchange(tmp_path):
     """Several clients handshaking at the same time share the
     received_files/ directory: public-key pushes must be stored under

@@ -8,6 +8,7 @@ import os
 import sys
 
 import pytest
+import threading
 
 
 from PyFlow.network_api import rsa_crypto
@@ -327,3 +328,57 @@ def test_tofu_endpoint_conflict_rejected(crypto, peer):
 
     assert not ok
     assert "claimed" in reason
+
+
+def test_concurrent_key_generation_single_keypair(tmp_path):
+    """Concurrent ``ensure_keys`` from several instances sharing one key
+    directory must converge on a single consistent keypair: no instance
+    may read a half-written key, and every instance's in-memory key must
+    pair with the pub file on disk (the push-time divergence that broke
+    multi-client handshakes)."""
+    ssh_dir = tmp_path / "ssh"
+    ssh_dir.mkdir()
+    pvt_dir = str(tmp_path / "pvt_key")
+    pub_dir = str(tmp_path / "pub_key")
+    os.makedirs(pvt_dir)
+    os.makedirs(pub_dir)
+
+    def make_instance():
+        c = rsa_crypto.RsaCrypto("client", str(tmp_path), str(ssh_dir))
+        c.pvt_key_dir = pvt_dir
+        c.pub_key_dir = pub_dir
+        c.registry_path = os.path.join(pub_dir, "pub_key.json")
+        return c
+
+    n_threads = 8
+    barrier = threading.Barrier(n_threads)
+    errors = []
+
+    def worker(i):
+        c = make_instance()
+        barrier.wait()
+        try:
+            c.ensure_keys()
+            # pairing: the shared pub file must encrypt for our in-memory priv
+            probe = f"probe-{i}"
+            body = c.encrypt_for_peer(c.pub_path, probe)
+            ok, plain = c.decrypt_with_own(body)
+            if not ok or plain != probe:
+                errors.append(f"worker {i}: disk pub does not pair with in-memory priv")
+        except Exception as e:  # noqa: BLE001
+            errors.append(f"worker {i}: {e!r}")
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, errors
+    # one single keypair on disk: every instance derives its pub from it
+    c = make_instance()
+    c.ensure_keys()
+    body = c.encrypt_for_peer(c.pub_path, "diskprobe")
+    ok, plain = c.decrypt_with_own(body)
+    assert ok and plain == "diskprobe"
+    assert not [n for n in os.listdir(pvt_dir) if n.endswith(".tmp")], "stale tmp files"

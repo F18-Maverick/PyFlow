@@ -31,7 +31,49 @@ import tempfile
 import threading
 import uuid
 
+try:
+    import fcntl as _fcntl  # POSIX advisory locks
+except ImportError:  # pragma: no cover - Windows
+    _fcntl = None
+
+try:
+    import msvcrt as _msvcrt  # Windows advisory locks
+except ImportError:  # pragma: no cover - POSIX
+    _msvcrt = None
+
 VALID_SIGN = "_VALID"  # plaintext suffix; a decrypt missing it signals a stale/wrong key
+
+
+@contextlib.contextmanager
+def _exclusive_file_lock(path):
+    """Cross-process advisory lock via a sidecar file (``path + ".lock"``).
+
+    POSIX uses ``fcntl.flock``, Windows uses ``msvcrt.locking``. Serialises
+    keypair generation across RsaCrypto instances (threads or processes)
+    sharing one key directory, so concurrent handshakes cannot generate
+    diverging keys over each other or read a half-written key file
+    (no-GIL safe).
+    """
+    lock_path = path + ".lock"
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        if _msvcrt is not None:  # Windows
+            if os.fstat(fd).st_size < 1:
+                os.write(fd, b"\0")
+            os.lseek(fd, 0, os.SEEK_SET)
+            _msvcrt.locking(fd, _msvcrt.LK_LOCK, 1)
+        else:
+            _fcntl.flock(fd, _fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if _msvcrt is not None:  # Windows
+                os.lseek(fd, 0, os.SEEK_SET)
+                _msvcrt.locking(fd, _msvcrt.LK_UNLCK, 1)
+            else:
+                _fcntl.flock(fd, _fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
 
 PF_OK = 0  # pf_err_t values, must match pf_crypto.h
 PF_ERR_INVALID_ARG = 1
@@ -234,19 +276,22 @@ class RsaCrypto:
             if priv_path is None:
                 priv_path = os.path.join(self.pvt_key_dir, "{}_priv.pem".format(self.role))
                 pub_path = os.path.join(self.pvt_key_dir, "{}_pub.pem".format(self.role))
-                if not os.path.exists(priv_path):
-                    self._generate_keypair(lib, priv_path, pub_path)
+                # cross-instance lock: concurrent handshakes sharing one key
+                # directory must not generate diverging keys over each other
+                # or read a half-written key file (no-GIL / multi-process safe)
+                with _exclusive_file_lock(priv_path):
+                    if not os.path.exists(priv_path):
+                        self._generate_keypair(lib, priv_path, pub_path)
+                    priv_key = self._read_priv_handle(lib, priv_path)
+            else:
+                priv_key = self._read_priv_handle(lib, priv_path)
             self.priv_path = priv_path
             self.pub_path = os.path.join(self.pvt_key_dir, "{}_pub.pem".format(self.role))
-            priv_key = self._read_priv_handle(lib, self.priv_path)  # pub re-derived from priv: ~/.ssh pub file is OpenSSH-format, unparseable here
-            if os.path.exists(self.pub_path):
-                try:
-                    os.remove(self.pub_path)
-                except OSError:
-                    pass
-            err = lib.pf_rsa_write_pub(priv_key.handle, self.pub_path.encode("utf-8"))
+            tmp_pub = self.pub_path + ".tmp"
+            err = lib.pf_rsa_write_pub(priv_key.handle, tmp_pub.encode("utf-8"))
             if err != PF_OK:
                 raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
+            os.replace(tmp_pub, self.pub_path)
             self._priv_key = priv_key
 
     def reload_own_key(self):
@@ -321,16 +366,20 @@ class RsaCrypto:
         if err != PF_OK or not handle.value:
             raise RuntimeError("pf_rsa_keygen failed: {}".format(err))
         key = RsaKey(handle.value, lib)
-        err = lib.pf_rsa_write_priv(key.handle, priv_path.encode("utf-8"), None)
+        tmp_priv = priv_path + ".tmp"
+        err = lib.pf_rsa_write_priv(key.handle, tmp_priv.encode("utf-8"), None)
         if err != PF_OK:
             raise RuntimeError("pf_rsa_write_priv failed: {}".format(err))
+        os.replace(tmp_priv, priv_path)  # atomic: a concurrent reader never sees a half-written key
         try:
             os.chmod(priv_path, 0o600)  # private key: owner-only
         except OSError:
             pass
-        err = lib.pf_rsa_write_pub(key.handle, pub_path.encode("utf-8"))
+        tmp_pub = pub_path + ".tmp"
+        err = lib.pf_rsa_write_pub(key.handle, tmp_pub.encode("utf-8"))
         if err != PF_OK:
             raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
+        os.replace(tmp_pub, pub_path)
 
 
     def peer_pem_path(self, peer_role, peer_ip, peer_port):
