@@ -273,9 +273,9 @@ class RsaCrypto:
                     except Exception:
                         priv_path = None
                         continue
+            pub_path = os.path.join(self.pvt_key_dir, "{}_pub.pem".format(self.role))
             if priv_path is None:
                 priv_path = os.path.join(self.pvt_key_dir, "{}_priv.pem".format(self.role))
-                pub_path = os.path.join(self.pvt_key_dir, "{}_pub.pem".format(self.role))
                 # cross-instance lock: concurrent handshakes sharing one key
                 # directory must not generate diverging keys over each other
                 # or read a half-written key file (no-GIL / multi-process safe)
@@ -283,19 +283,40 @@ class RsaCrypto:
                     if not os.path.exists(priv_path):
                         self._generate_keypair(lib, priv_path, pub_path)
                     priv_key = self._read_priv_handle(lib, priv_path)
+                    self._ensure_pub_file(lib, priv_key.handle, pub_path)
             else:
                 priv_key = self._read_priv_handle(lib, priv_path)
+                self._ensure_pub_file(lib, priv_key.handle, pub_path)
             self.priv_path = priv_path
-            self.pub_path = os.path.join(self.pvt_key_dir, "{}_pub.pem".format(self.role))
-            # unique temp name: several instances may rewrite the pub file
-            # concurrently (the rewrite is outside the cross-instance lock);
-            # a shared tmp name would let one replace() steal another's temp
-            tmp_pub = "{}.{}.tmp".format(self.pub_path, uuid.uuid4().hex)
-            err = lib.pf_rsa_write_pub(priv_key.handle, tmp_pub.encode("utf-8"))
-            if err != PF_OK:
-                raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
-            os.replace(tmp_pub, self.pub_path)
+            self.pub_path = pub_path
             self._priv_key = priv_key
+
+    def _ensure_pub_file(self, lib, priv_handle, pub_path):
+        """Write the public key file when missing (idempotent, locked).
+
+        The pub file is produced atomically by ``_generate_keypair``, so an
+        existing file is left alone: rewriting it on every ``ensure_keys``
+        raced with concurrent readers on Windows, where ``os.replace()``
+        fails with EACCES ("Access is denied") while another handle is open.
+        The lock serialises repairs; ``os.replace`` keeps them atomic.
+        """
+        if os.path.exists(pub_path):
+            return
+        with _exclusive_file_lock(pub_path):
+            if os.path.exists(pub_path):
+                return
+            tmp_pub = "{}.{}.tmp".format(pub_path, uuid.uuid4().hex)
+            try:
+                err = lib.pf_rsa_write_pub(priv_handle, tmp_pub.encode("utf-8"))
+                if err != PF_OK:
+                    raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
+                os.replace(tmp_pub, pub_path)
+            except Exception:
+                try:
+                    os.unlink(tmp_pub)
+                except Exception:
+                    pass
+                raise
 
     def reload_own_key(self):
         """Re-read the private key (e.g. after a ~/.ssh rotation)."""

@@ -17,9 +17,14 @@ from concurrent.futures import ThreadPoolExecutor
 
 def _is_closed_socket_error(exc):
     """True when the error means a socket that is already closed
-    (errno 9 / EBADF): the normal teardown signal between a closing
-    thread and a receive thread, not a fault worth a traceback."""
-    return isinstance(exc, OSError) and exc.errno in (errno.EBADF, errno.ENOTSOCK)
+    (EBADF / ENOTSOCK, or Windows winsock WSAENOTSOCK 10038): the normal
+    teardown signal between a closing thread and a receive thread, not a
+    fault worth a traceback."""
+    return isinstance(exc, OSError) and exc.errno in (
+        errno.EBADF,
+        errno.ENOTSOCK,
+        10038,  # WSAENOTSOCK (Windows)
+    )
 
 MAX_DECODE_FAILURES = 3  # circuit breaker: close after N consecutive decode failures (re-exchange storm / garbage injection)
 
@@ -1722,8 +1727,9 @@ class TCP_Server_Base:  # TCP server class
                         target=self.handle_client, args=(client_socket, client_address), daemon=True
                     )
                     client_thread.start()
-                except OSError:
-                    traceback.print_exc()
+                except OSError as e:
+                    if not _is_closed_socket_error(e):
+                        traceback.print_exc()
                     break  # server socket closed, exit loop
         except Exception as e:
             print(f"Server error: {e}")

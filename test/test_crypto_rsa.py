@@ -382,3 +382,47 @@ def test_concurrent_key_generation_single_keypair(tmp_path):
     ok, plain = c.decrypt_with_own(body)
     assert ok and plain == "diskprobe"
     assert not [n for n in os.listdir(pvt_dir) if n.endswith(".tmp")], "stale tmp files"
+
+
+def test_ensure_keys_never_rewrites_existing_pub(monkeypatch, tmp_path):
+    """A second instance must not replace the existing pub file.
+
+    Windows rejects ``os.replace`` with EACCES ("Access is denied") while
+    another instance keeps the file open for reading; the pub file is only
+    written when missing, so concurrent ``ensure_keys`` cannot race with
+    readers over the same path (the CI flake fixed by making the write
+    idempotent and locked)."""
+    ssh_dir = tmp_path / "ssh"
+    ssh_dir.mkdir()
+    pvt_dir = str(tmp_path / "pvt_key")
+    os.makedirs(pvt_dir)
+
+    def make_instance():
+        c = rsa_crypto.RsaCrypto("client", str(tmp_path), str(ssh_dir))
+        c.pvt_key_dir = pvt_dir
+        return c
+
+    c1 = make_instance()
+    c1.ensure_keys()
+    pub = c1.pub_path
+
+    real_replace = os.replace
+    replaced_pub = []
+
+    def spy_replace(src, dst):
+        if dst == pub:
+            replaced_pub.append(dst)
+        return real_replace(src, dst)
+
+    monkeypatch.setattr(rsa_crypto.os, "replace", spy_replace)
+    try:
+        c2 = make_instance()
+        c2.ensure_keys()
+    finally:
+        monkeypatch.undo()
+    assert not replaced_pub, "pub file was replaced by a second ensure_keys"
+    # the cached file still pairs with the freshly loaded private key
+    c2.ensure_keys()
+    body = c2.encrypt_for_peer(pub, "probe")
+    ok, plain = c2.decrypt_with_own(body)
+    assert ok and plain == "probe"
