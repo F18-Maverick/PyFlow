@@ -1,13 +1,33 @@
-import os
-import sys
-import json
-import shutil
-import platform
-import tempfile
 import argparse
+import json
+import os
+import platform
+import shutil
 import subprocess
+import sys
+import tempfile
+import time
 import traceback
-from .network_api.connect_tcp import TCP_Server_Base, TCP_Client_Base
+
+try:
+    import msvcrt as _msvcrt
+except ImportError:  # Windows only
+    _msvcrt = None
+try:
+    import select as _select
+except ImportError:  # POSIX only
+    _select = None  # type: ignore[invalid-assignment]
+
+try:
+    import termios as _termios
+except ImportError:  # POSIX only
+    _termios = None  # type: ignore[invalid-assignment]
+
+try:
+    import tty as _tty
+except ImportError:  # POSIX only
+    _tty = None
+from .network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
 
 config_file_name="setup.json"
 flow_setup_root=os.path.dirname(os.path.abspath(__file__))
@@ -153,23 +173,547 @@ def launch_instance(config, instance_type):
             pass
 
 
-def interactive_collect():
-    servers = None
-    clients = None
-    with open(config_file_dir, "r", encoding="utf-8") as read_config:
-        config_data=json.load(read_config)
-        servers=config_data['servers']
-        clients=config_data['clients']
+# ---- instance editor: reduce/change existing instances ----------------------
+
+_MENU_ENTRY_START_ROW = 2
+_MOUSE_WHEEL_UP = 64
+_MOUSE_WHEEL_DOWN = 65
+_DOUBLE_CLICK_SECONDS = 0.3
+_ESC_SEQUENCE_WAIT = 0.08
+
+EDITOR_USAGE = """\
+Instance editor usage (instance menu):
+  up/down arrows or j/k ......... move the selection (first instance selected
+                                  by default, works without a UI)
+  mouse click ................... select the clicked instance
+  double click / Enter .......... open the selected instance's config editor
+  Delete / Backspace, dd ........ delete the selected instance
+  :w ............................ write setup.json (save without exiting)
+  :wq ........................... write setup.json and exit the editor
+  :q ............................ exit (refused while there are unsaved changes)
+  :q! ........................... exit and discard all changes
+  Fix_Config ................... write setup.json and exit (same as :wq);
+                              at field-value prompts it returns to the list
+  Help .......................... show this help
+Config editor (opened with Enter): type a field index or press Enter to edit
+the selected field, j/k move the selection, Esc/back returns to the menu.
+Config fields (empty input keeps the current value):
+  server: host, port, max_clients, port_add_step, port_range_num,
+          max_file_transfer_thread_num, is_hand_alloc_port,
+          is_input_command_in_console, max_custom_workers, is_extend_command,
+          is_enable_encrypto, is_custom_keys
+  client: host, client_host, port, client_port, timeout, port_add_step,
+          max_thread_num, is_input_command_in_console, is_wait_server,
+          max_custom_workers, is_extend_command, is_enable_encrypto,
+          is_custom_keys
+Booleans accept true/false/1/0/y/n; integers are parsed with int(). Type
+"none" to reset a nullable field (host/client_port/timeout/is_custom_keys).
+Help and Fix_Config work at every prompt, including field values.
+"""
+
+COLLECT_USAGE = """\
+Setup flow usage:
+  0/1 ......... instance type (0 = server, 1 = client)
+  host:port ... bind address, e.g. 127.0.0.1:65432; clients are also asked
+                for the server host:port they connect to
+  Y/N ......... confirmations: y = yes, n = no (case-insensitive)
+  Help ........ show this help
+  Fix_Config .. jump to the instance editor, where startup parameters can
+                be changed (works at every prompt)
+Help and Fix_Config work at every prompt. In the instance editor (reached
+with Y on the reduce question) 'Help' prints all config fields and the
+vim-style commands.
+"""
+
+
+class _EnterEditor(Exception):
+    """Entering Fix_Config at any prompt jumps to the instance editor."""
+
+
+def _input(prompt, help_text=COLLECT_USAGE):
+    """Ask one question; 'Help' reprints usage, 'Fix_Config' enters editor.
+
+    The returned line has surrounding whitespace stripped; the caller
+    decides case handling for its own answers.
+    """
+    while True:
+        answer = input(prompt).strip()
+        low = answer.lower()
+        if low == "help":
+            print(help_text, flush=True)
+            continue
+        if low == "fix_config":
+            raise _EnterEditor()
+        return answer
+
+
+def _stdin_is_tty():
+    try:
+        return sys.stdin.isatty()
+    except Exception:
+        return False
+
+
+def _raw_mode_active():
+    # Interactive terminals get real keys; pipes, CI and tests (which set
+    # PYTEST_CURRENT_TEST) fall back to line commands (plain input()).
+    if not _stdin_is_tty():
+        return False
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return False
+    return _termios is not None or _msvcrt is not None
+
+
+def _enter_raw():
+    """Switch stdin to raw byte mode with mouse tracking; return saved attrs."""
+    if _termios is None or _tty is None or not _stdin_is_tty():
+        return None
+    fd = sys.stdin.fileno()
+    saved_attr = _termios.tcgetattr(fd)
+    _tty.setraw(fd)
+    sys.stdout.write("\x1b[?1000h\x1b[?1006h\x1b[?25l")
+    sys.stdout.flush()
+    return saved_attr
+
+
+_pending_bytes = bytearray()
+
+
+def _leave_raw(saved_attr):
+    if _termios is None or saved_attr is None:
+        return
+    sys.stdout.write("\x1b[?1000l\x1b[?1006l\x1b[?25h")
+    sys.stdout.flush()
+    _termios.tcsetattr(sys.stdin.fileno(), _termios.TCSADRAIN, saved_attr)
+
+
+def _read_posix_key():
+    fd = sys.stdin.fileno()
+    first = os.read(fd, 1)
+    if first != b"\x1b":
+        return first
+    seq = first
+    while True:
+        assert _select is not None
+        ready, _, _ = _select.select([fd], [], [], _ESC_SEQUENCE_WAIT)
+        if not ready:
+            break
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        seq += chunk
+    return seq
+
+
+def _decode_posix_seq(seq):  # noqa: PLR0911
+    if not seq:
+        return ("eof",)
+    if seq == b"\x1b[A":
+        return ("up",)
+    if seq == b"\x1b[B":
+        return ("down",)
+    if seq in (b"\x1b[3~", b"\x1b[3;2~", b"\x1b[3;5~"):
+        return ("delete",)
+    if seq in (b"\r", b"\n"):
+        return ("enter",)
+    if seq in (b"\x7f", b"\x08"):
+        return ("backspace",)
+    if seq == b"\x1b":
+        return ("esc",)
+    if seq == b"\x03":
+        raise KeyboardInterrupt
+    if seq.startswith(b"\x1b[<") and seq[-1:] in (b"M", b"m"):
+        try:
+            button, x, y = (int(p) for p in seq[3:-1].decode("ascii", "replace").split(";"))
+            return ("mouse", button, x, y)
+        except ValueError:
+            pass
+    if len(seq) == 1:
+        return ("char", seq.decode("utf-8", "replace"))
+    if seq.startswith(b"\x1b"):
+        # Unknown escape sequence: keep the trailing bytes for the next reads
+        # and surface the leading ESC, so pasted text after ESC is not lost.
+        _pending_bytes[0:0] = seq[1:]
+        return ("esc",)
+    return None
+
+
+def _read_win_key():
+    if _msvcrt is None:
+        return None
+    ch = _msvcrt.getwch()  # ty: ignore[unresolved-attribute]
+    if ch in ("\x00", "\xe0"):
+        second = _msvcrt.getwch()  # ty: ignore[unresolved-attribute]
+        return ({"H": "up", "P": "down", "S": "delete"}.get(second, "unknown"),)
+    if ch == "\r":
+        return ("enter",)
+    if ch == "\x08":
+        return ("backspace",)
+    if ch == "\x1b":
+        return ("esc",)
+    if ch == "\x03":
+        raise KeyboardInterrupt
+    return ("char", ch)
+
+
+def _read_key():
+    if _pending_bytes:
+        return ("char", bytes([_pending_bytes.pop(0)]).decode("utf-8", "replace"))
+    if _termios is not None and _stdin_is_tty():
+        return _decode_posix_seq(_read_posix_key())
+    if _msvcrt is not None and _stdin_is_tty():
+        return _read_win_key()
+    return None
+
+
+def _menu_action_from_line(command):  # noqa: PLR0911
+    low = command.lower()
+    if command == "":
+        return ("edit", None)
+    if low in ("j", "down", "+"):
+        return ("select", 1)
+    if low in ("k", "up", "-"):
+        return ("select", -1)
+    if low in ("dd", "del", "delete", "backspace"):
+        return ("delete", None)
+    if low == ":wq":
+        return ("write_quit", None)
+    if low == ":w":
+        return ("write", None)
+    if low == ":q!":
+        return ("abort", None)
+    if low == ":q":
+        return ("quit", None)
+    if low in (":help", ":h", "help", "h"):
+        return ("help", None)
+    if low == "fix_config":
+        return ("write_quit", None)
+    if command.isdigit():
+        return ("select_abs", int(command))
+    return ("noop", command)
+
+
+def _detail_command(command, num_fields):  # noqa: PLR0911
+    low = command.lower()
+    if command == "":
+        return ("edit", None)
+    if command.isdigit():
+        index = int(command)
+        if 0 <= index < num_fields:
+            return ("edit", index)
+        return ("noop", command)
+    if low in ("j", "down"):
+        return ("select", 1)
+    if low in ("k", "up"):
+        return ("select", -1)
+    if low in ("b", "back", "esc"):
+        return ("back", None)
+    if low == "fix_config":
+        return ("back", None)
+    if low in ("help", "h"):
+        return ("help", None)
+    return ("noop", command)
+
+
+def _instance_label(kind, cfg):
+    if kind == "server":
+        return f"{cfg.get('host', '?')}:{cfg.get('port', '?')}"
+    return (
+        f"{cfg.get('client_host', '?')}:{cfg.get('client_port', '?')}"
+        f" -> {cfg.get('host', '?')}:{cfg.get('port', '?')}"
+    )
+
+
+def _instance_entries(servers, clients):
+    entries = [("server", s) for s in servers]
+    entries.extend(("client", c) for c in clients)
+    return entries
+
+
+def _print_menu(servers, clients, selection, raw, typed, status_msg):  # noqa: PLR0913, PLR0917
+    """Render the instance menu; returns the screen row of the first entry."""
+    entries = _instance_entries(servers, clients)
+    lines = []
+    if raw:
+        lines.append("\x1b[2J\x1b[H")
+    lines.append("=== Instance Manager === (:wq save&exit | :q! / Fix_Config | Help)")
+    for index, (kind, cfg) in enumerate(entries):
+        marker = "> " if index == selection else "  "
+        lines.append(f"{marker}[{index}] [{kind}] {_instance_label(kind, cfg)}")
+    if not entries:
+        lines.append("  (no instances)")
+    if typed:
+        lines.append(f"command: {typed}")
+    if status_msg:
+        lines.append(status_msg)
+    for line in lines:
+        print(line, flush=True)
+    return _MENU_ENTRY_START_ROW  # row 1 is the title, entries start on row 2
+
+
+def _delete_at(servers, clients, selection):
+    entries = _instance_entries(servers, clients)
+    if not entries or not (0 <= selection < len(entries)):
+        return None
+    kind, cfg = entries[selection]
+    if kind == "server":
+        del servers[selection]
+    else:
+        del clients[selection - len(servers)]
+    return kind, cfg
+
+
+def _parse_field_value(default, raw_value):  # noqa: PLR0911
+    if isinstance(default, bool):
+        low = raw_value.lower()
+        if low in ("true", "1", "y", "yes"):
+            return True, None
+        if low in ("false", "0", "n", "no"):
+            return False, None
+        return None, f"invalid boolean {raw_value!r} (use true/false/1/0/y/n)"
+    if isinstance(default, int):
+        try:
+            return int(raw_value), None
+        except ValueError:
+            return None, f"invalid integer {raw_value!r}"
+    if default is None and raw_value.lower() in ("none", "null"):
+        return None, None
+    return raw_value, None
+
+
+def _edit_field_value(cfg, field):
+    key, default = field
+    current = cfg.get(key, default)
+    while True:
+        raw_value = _input(
+            f"{key} (current={current!r}, empty keeps): ", help_text=EDITOR_USAGE
+        )
+        if raw_value == "":
+            return False
+        value, error = _parse_field_value(default, raw_value)
+        if error:
+            print(error, flush=True)
+            continue
+        cfg[key] = value
+        print(f"{key} = {value!r}", flush=True)
+        return True
+
+
+def _edit_instance_detail(kind, cfg, raw, saved_attr):  # noqa: PLR0912, PLR0915
+    """Edit every startup field of one instance; returns True when changed."""
+    defaults = SERVER_DEFAULTS if kind == "server" else CLIENT_DEFAULTS
+    fields = list(defaults.items())
+    selection = 0
+    changed = False
+    typed = ""
+    status_msg = ""
+    while True:
+        if selection >= len(fields):
+            selection = len(fields) - 1
+        lines = []
+        if raw:
+            lines.append("\x1b[2J\x1b[H")
+        lines.append(f"=== Editing {kind}: {_instance_label(kind, cfg)} ===")
+        lines.append("(field index/Enter = edit, j/k = move, Esc/back = return, Fix_Config)")
+
+        for index, (key, default) in enumerate(fields):
+            marker = "> " if index == selection else "  "
+            lines.append(f"{marker}[{index}] {key} = {cfg.get(key, default)}")
+        if typed:
+            lines.append(f"command: {typed}")
+        if status_msg:
+            lines.append(status_msg)
+        for line in lines:
+            print(line, flush=True)
+        status_msg = ""
+        if raw:
+            key = None
+            while key is None:
+                key = _read_key()
+            kind_key = key[0]
+            if kind_key == "eof":
+                return changed  # stdin closed: leave the field editor
+            if kind_key == "char":
+                typed += key[1]
+                continue
+            if kind_key == "backspace":
+                typed = typed[:-1]
+                continue
+            if kind_key == "esc":
+                if typed:
+                    typed = ""
+                    continue
+                return changed
+            if kind_key == "enter":
+                command, typed = typed, ""
+            else:
+                typed = ""
+                if kind_key == "up":
+                    selection = (selection - 1) % len(fields)
+                elif kind_key == "down":
+                    selection = (selection + 1) % len(fields)
+                continue
+        else:
+            command = input("Field> ").strip()
+        name, arg = _detail_command(command, len(fields))
+        if name == "edit":
+            index = selection if arg is None else arg
+            _leave_raw(saved_attr)
+            try:
+                if _edit_field_value(cfg, fields[index]):
+                    changed = True
+            except _EnterEditor:
+                # Fix_Config at the value prompt: keep the edits made so far
+                # and return to the instance menu.
+                return changed
+            finally:
+                saved_attr = _enter_raw()
+            selection = index
+        elif name == "select":
+            selection = (selection + arg) % len(fields)
+        elif name == "back":
+            return changed
+        elif name == "help":
+            print(EDITOR_USAGE, flush=True)
+            if raw:
+                _read_key()  # let the user read the help before the redraw
+        else:
+            status_msg = f"unknown command {command!r} (field index, j/k, back)"
+
+
+def _menu_driver(servers, clients, raw, saved_attr):  # noqa: PLR0912, PLR0915
+    """Selection menu over existing instances; returns 'saved' or 'discarded'."""
+    selection = 0
+    modified = False
+    status_msg = ""
+    typed = ""
+    last_click = (None, 0.0)
+    while True:
+        entries = _instance_entries(servers, clients)
+        if entries and selection >= len(entries):
+            selection = len(entries) - 1
+        entry_start_row = _print_menu(servers, clients, selection, raw, typed, status_msg)
+        status_msg = ""
+        if raw:
+            key = None
+            while key is None:
+                key = _read_key()
+            kind = key[0]
+            if kind == "eof":
+                return "discarded"  # stdin closed: leave the editor
+            if kind == "char":
+                typed += key[1]
+                action = None
+            elif kind == "enter":
+                action = _menu_action_from_line(typed) if typed else ("edit", None)
+                typed = ""
+            else:
+                if kind == "esc" and typed:
+                    status_msg = "command cancelled"
+                typed = ""
+                if kind in ("up", "down"):
+                    action = ("select", 1 if kind == "down" else -1)
+                elif kind in ("delete", "backspace"):
+                    action = ("delete", None)
+                elif kind == "mouse":
+                    button, _, y = key[1], key[2], key[3]
+                    if button == _MOUSE_WHEEL_UP:
+                        action = ("select", -1)
+                    elif button == _MOUSE_WHEEL_DOWN:
+                        action = ("select", 1)
+                    elif button == 0 and 0 <= y - entry_start_row < len(entries):
+                        row = y - entry_start_row
+                        now = time.monotonic()
+                        if row == last_click[0] and now - last_click[1] < _DOUBLE_CLICK_SECONDS:
+                            selection = row
+                            action = ("edit", None)  # double click opens the editor
+                        else:
+                            selection = row
+                            action = ("select_abs", row)
+                        last_click = (row, now)
+                    else:
+                        action = None
+                else:
+                    action = None
+        else:
+            action = _menu_action_from_line(input("Menu> ").strip())
+        if action is None:
+            continue
+        name, arg = action
+        if name == "select":
+            if entries and arg is not None:
+                selection = (selection + arg) % len(entries)
+        elif name == "select_abs":
+            if arg is not None and 0 <= arg < len(entries):
+                selection = arg
+            else:
+                status_msg = f"invalid index: {arg}"
+        elif name == "delete":
+            deleted = _delete_at(servers, clients, selection)
+            if deleted:
+                modified = True
+                status_msg = f"deleted [{deleted[0]}] {_instance_label(*deleted)}"
+        elif name == "edit":
+            if entries:
+                kind, cfg = entries[selection]
+                if _edit_instance_detail(kind, cfg, raw, saved_attr):
+                    modified = True
+        elif name == "help":
+            print(EDITOR_USAGE, flush=True)
+            if raw:
+                _read_key()  # let the user read the help before the redraw
+        elif name == "write":
+            save_config(servers, clients)
+            modified = False
+            status_msg = "saved"
+        elif name == "write_quit":
+            save_config(servers, clients)
+            return "saved"
+        elif name == "quit":
+            if modified:
+                status_msg = "No write since last change (use :q! to discard)"
+            else:
+                return "discarded"
+        elif name == "abort":
+            return "discarded"
+        elif name == "noop":
+            status_msg = f"unknown command: {arg}"
+
+
+def edit_existing_instances(servers, clients):
+    """Vim-style editor to delete/change existing instances.
+
+    Returns (status, servers, clients):
+      status == "saved"     -> setup.json was written (:w / :wq); keep the
+                               returned edited lists
+      status == "discarded" -> the editor was exited without saving
+                               (:q! / :q) and the original lists are
+                               returned unchanged
+    """
+    edited_servers = [dict(s) for s in servers]
+    edited_clients = [dict(c) for c in clients]
+    raw = _raw_mode_active()
+    saved_attr = _enter_raw() if raw else None
+    try:
+        status = _menu_driver(edited_servers, edited_clients, raw, saved_attr)
+    finally:
+        _leave_raw(saved_attr)
+    if status == "saved":
+        return "saved", edited_servers, edited_clients
+    return "discarded", servers, clients
+
+
+def _add_instances_loop(servers, clients):
     while True:
         print("\n--- Add New Instance ---")
         while True:
-            type_choice = input("Select type (0=Server, 1=Client): ").strip()
+            type_choice = _input("Select type (0=Server, 1=Client): ")
             if type_choice in ("0", "1"):
                 break
             print("Invalid input, please enter 0 or 1")
         is_server = type_choice == "0"
         while True:
-            setup_addr = input("Enter bind address and port (format host:port): ").strip()
+            setup_addr = _input("Enter bind address and port (format host:port): ")
             try:
                 host, port = parse_addr_port(setup_addr)
                 break
@@ -188,9 +732,9 @@ def interactive_collect():
             print(f"Server config set to: {host}:{port}")
         else:
             while True:
-                conn_addr = input(
+                conn_addr = _input(
                     "Enter server address and port to connect (format host:port): "
-                ).strip()
+                )
                 try:
                     srv_host, srv_port = parse_addr_port(conn_addr)
                     break
@@ -206,10 +750,47 @@ def interactive_collect():
             if client_len==client_index:
                 clients.append(config)
             print(f"Client config set to: local {host}:{port} -> server {srv_host}:{srv_port}")
-        cont = input("Continue adding more instances? (Y/N): ").strip().lower()
-        if cont != "y":
+        cont = _input("Continue adding more instances? (Y/N): ")
+        if cont.lower() != "y":
             break
     return servers, clients
+
+
+def _collect_after_editor(servers, clients):
+    """Open the instance editor over existing configs, then keep collecting.
+
+    Fix_Config entered at any prompt funnels here. After the editor is left
+    with :wq / Fix_Config the user is asked whether new instances are wanted.
+    """
+    while True:
+        try:
+            status, servers, clients = edit_existing_instances(servers, clients)
+            if status == "saved":
+                choice = _input("Add new instances? (Y/N): ")
+                if choice.lower() != "y":
+                    return servers, clients
+            return _add_instances_loop(servers, clients)
+        except _EnterEditor:
+            continue  # Fix_Config at the follow-up prompt: edit again
+
+
+def interactive_collect():
+    config_data = load_existing_config()
+    servers = config_data["servers"]
+    clients = config_data["clients"]
+    try:
+        if servers or clients:
+            # Instances already exist: first ask whether to delete/change
+            # them. An empty config skips this question and goes straight to
+            # the add flow. Help/Fix_Config work at every prompt via _input().
+            choice = _input("Delete or change existing instances or configs? (Y/N): ")
+            if choice.lower() == "y":
+                return _collect_after_editor(servers, clients)
+        return _add_instances_loop(servers, clients)
+    except _EnterEditor:
+        # Fix_Config entered at any prompt: jump to the instance editor,
+        # where startup parameters can be changed, then keep collecting.
+        return _collect_after_editor(servers, clients)
 
 
 def generate_configs_from_args(args):
@@ -301,8 +882,22 @@ def main():
             launch_instance(cfg, "client")
         return
     if os.path.exists(config_file_dir):
-        choice = input("setup.json exists. Overwrite configuration data? (Y/N): ").strip().lower()
-        if choice == "n":
+        try:
+            choice = _input("setup.json exists. Overwrite configuration data? (Y/N): ")
+        except _EnterEditor:
+            # Fix_Config: skip the question and edit the existing instances
+            # (startup parameters) before launching them.
+            config_data = load_existing_config()
+            servers, clients = _collect_after_editor(
+                config_data["servers"], config_data["clients"]
+            )
+            save_config(servers, clients)
+            for cfg in servers:
+                launch_instance(cfg, "server")
+            for cfg in clients:
+                launch_instance(cfg, "client")
+            return
+        if choice.lower() == "n":
             config_data = load_existing_config()
             for cfg in config_data.get("servers", []):
                 launch_instance(cfg, "server")

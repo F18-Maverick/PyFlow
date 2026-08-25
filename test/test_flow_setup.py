@@ -406,3 +406,293 @@ def test_main_existing_setup_json_overwrite(monkeypatch, cli_cleanup, tmp_config
     monkeypatch.setattr("builtins.input", lambda _: "y")
     fs.main()
     fs.interactive_collect.assert_called_once()
+
+
+# ---- instance editor: reduce/change existing instances ---------------------
+
+
+@pytest.fixture
+def line_mode(monkeypatch):
+    """Force the instance editor into line-command mode (no raw terminal)."""
+    monkeypatch.setattr(fs, "_raw_mode_active", lambda: False)
+
+
+def test_reduce_prompt_no_continues_add_flow(monkeypatch, line_mode, tmp_config):
+    """N on the reduce question keeps everything and continues the add flow."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []}),
+        encoding="utf-8",
+    )
+    inputs = iter(["n", "0", "127.0.0.1:8080", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert servers == [
+        {"host": "127.0.0.1", "port": 7000},
+        {"host": "127.0.0.1", "port": 8080},
+    ]
+    assert clients == []
+
+
+def test_reduce_prompt_yes_delete_default_selection(monkeypatch, line_mode, tmp_config):
+    """Y: dd deletes the first (default-selected) instance, :wq saves."""
+    tmp_config.write_text(
+        json.dumps(
+            {
+                "servers": [
+                    {"host": "127.0.0.1", "port": 7000},
+                    {"host": "127.0.0.1", "port": 7001},
+                ],
+                "clients": [{"client_host": "127.0.0.1", "client_port": 7002}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    inputs = iter(["y", "dd", ":wq", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert servers == [{"host": "127.0.0.1", "port": 7001}]
+    assert clients == [{"client_host": "127.0.0.1", "client_port": 7002}]
+
+
+def test_reduce_prompt_yes_wq_keeps_all_without_edit(monkeypatch, line_mode, tmp_config):
+    """:wq with no edits keeps all instances and asks about new ones."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "a", "port": 1}], "clients": []}),
+        encoding="utf-8",
+    )
+    inputs = iter(["y", ":wq", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert servers == [{"host": "a", "port": 1}]
+    assert clients == []
+
+
+def test_reduce_prompt_yes_wq_then_add_new_instances(monkeypatch, line_mode, tmp_config):
+    """After :wq the add loop is skipped and 'add new instances' is asked."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "a", "port": 1}], "clients": []}),
+        encoding="utf-8",
+    )
+    inputs = iter(["y", ":wq", "y", "0", "127.0.0.1:8080", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert [s["host"] for s in servers] == ["a", "127.0.0.1"]
+    assert clients == []
+
+
+def test_reduce_prompt_yes_fix_config_saves_and_exits(monkeypatch, line_mode, tmp_config):
+    """Fix_Config in the menu saves like :wq and exits the editor."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []}),
+        encoding="utf-8",
+    )
+    inputs = iter(["y", "dd", "Fix_Config", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert servers == []
+    assert clients == []
+
+
+def test_reduce_prompt_yes_qbang_discards_changes(monkeypatch, line_mode, tmp_config):
+    """:q! also discards changes and returns to the normal add flow."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []}),
+        encoding="utf-8",
+    )
+    inputs = iter(["y", "dd", ":q!", "0", "127.0.0.1:8080", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert servers == [
+        {"host": "127.0.0.1", "port": 7000},
+        {"host": "127.0.0.1", "port": 8080},
+    ]
+    assert clients == []
+
+
+def test_reduce_prompt_yes_help_prints_usage(monkeypatch, line_mode, tmp_config, capsys):
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []}),
+        encoding="utf-8",
+    )
+    inputs = iter(["y", "Help", ":wq", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    captured = capsys.readouterr().out
+    assert ":wq" in captured
+    assert "Fix_Config" in captured
+    assert "Delete" in captured
+    assert servers == [{"host": "127.0.0.1", "port": 7000}]
+    assert clients == []
+
+
+def test_reduce_prompt_yes_enter_edits_selected_field(monkeypatch, line_mode, tmp_config):
+    """Enter opens the full config; a field can be changed and saved with :wq."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []}),
+        encoding="utf-8",
+    )
+    # menu -> Enter -> edit field 0 (host) -> new value -> back -> :wq -> n
+    inputs = iter(["y", "", "0", "10.0.0.1", "back", ":wq", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert servers == [{"host": "10.0.0.1", "port": 7000}]
+    assert clients == []
+
+
+def test_reduce_prompt_yes_edit_rejects_invalid_value(monkeypatch, line_mode, tmp_config, capsys):
+    """Invalid typed values are rejected and the field keeps its old value."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []}),
+        encoding="utf-8",
+    )
+    # edit field 1 (port): first try a bad value, then a good one
+    inputs = iter(["y", "", "1", "not-a-port", "9000", "back", ":wq", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert servers == [{"host": "127.0.0.1", "port": 9000}]
+    assert "invalid integer" in capsys.readouterr().out
+
+
+# ---- instance editor: raw key decoding (terminal mode) ---------------------
+
+
+def test_decode_posix_seq_keys():
+    assert fs._decode_posix_seq(b"\x1b[A") == ("up",)
+    assert fs._decode_posix_seq(b"\x1b[B") == ("down",)
+    assert fs._decode_posix_seq(b"\x1b[3~") == ("delete",)
+    assert fs._decode_posix_seq(b"\r") == ("enter",)
+    assert fs._decode_posix_seq(b"\x7f") == ("backspace",)
+    assert fs._decode_posix_seq(b"\x1b") == ("esc",)
+    assert fs._decode_posix_seq(b"x") == ("char", "x")
+    assert fs._decode_posix_seq(b"") == ("eof",)
+    with pytest.raises(KeyboardInterrupt):
+        fs._decode_posix_seq(b"\x03")
+
+
+def test_decode_posix_seq_mouse():
+    assert fs._decode_posix_seq(b"\x1b[<0;10;5M") == ("mouse", 0, 10, 5)
+    assert fs._decode_posix_seq(b"\x1b[<64;3;2M") == ("mouse", 64, 3, 2)  # wheel up
+    assert fs._decode_posix_seq(b"\x1b[<65;3;2M") == ("mouse", 65, 3, 2)  # wheel down
+
+
+def test_decode_posix_seq_unknown_escape_buffers_tail():
+    """Unknown escape sequences keep trailing bytes for the next reads."""
+    try:
+        assert fs._decode_posix_seq(b"\x1b[99~rst") == ("esc",)
+        assert fs._pending_bytes == b"[99~rst"
+        assert fs._read_key() == ("char", "[")
+    finally:
+        fs._pending_bytes = b""
+
+
+def test_menu_action_from_line_commands():
+    assert fs._menu_action_from_line("") == ("edit", None)
+    assert fs._menu_action_from_line("j") == ("select", 1)
+    assert fs._menu_action_from_line("k") == ("select", -1)
+    assert fs._menu_action_from_line("dd") == ("delete", None)
+    assert fs._menu_action_from_line("backspace") == ("delete", None)
+    assert fs._menu_action_from_line(":wq") == ("write_quit", None)
+    assert fs._menu_action_from_line(":w") == ("write", None)
+    assert fs._menu_action_from_line(":q") == ("quit", None)
+    assert fs._menu_action_from_line(":q!") == ("abort", None)
+    assert fs._menu_action_from_line("Fix_Config") == ("write_quit", None)
+    assert fs._menu_action_from_line("Help") == ("help", None)
+    assert fs._menu_action_from_line("2") == ("select_abs", 2)
+    assert fs._menu_action_from_line("nonsense")[0] == "noop"
+
+
+def test_detail_command():
+    assert fs._detail_command("", 12) == ("edit", None)
+    assert fs._detail_command("4", 12) == ("edit", 4)
+    assert fs._detail_command("j", 12) == ("select", 1)
+    assert fs._detail_command("back", 12) == ("back", None)
+    assert fs._detail_command("Fix_Config", 12) == ("back", None)
+    assert fs._detail_command("99", 12)[0] == "noop"  # out of range field index
+
+
+# ---- Help / Fix_Config at any prompt ---------------------------------------
+
+
+def test_input_help_at_reduce_prompt_reasks(monkeypatch, line_mode, tmp_config, capsys):
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "a", "port": 1}], "clients": []}),
+        encoding="utf-8",
+    )
+    inputs = iter(["Help", "n", "0", "127.0.0.1:8080", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert "Fix_Config" in capsys.readouterr().out
+    assert [s["host"] for s in servers] == ["a", "127.0.0.1"]
+    assert clients == []
+
+
+def test_input_fix_config_at_reduce_prompt_opens_editor(monkeypatch, line_mode, tmp_config):
+    """Fix_Config at the reduce prompt opens the editor; :wq keeps config."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "a", "port": 1}], "clients": []}),
+        encoding="utf-8",
+    )
+    inputs = iter(["Fix_Config", ":wq", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert servers == [{"host": "a", "port": 1}]
+    assert clients == []
+
+
+def test_input_help_at_type_prompt_reasks(monkeypatch, line_mode, tmp_config, capsys):
+    tmp_config.write_text(json.dumps({"servers": [], "clients": []}), encoding="utf-8")
+    inputs = iter(["Help", "0", "127.0.0.1:8080", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert "Fix_Config" in capsys.readouterr().out
+    assert servers == [{"host": "127.0.0.1", "port": 8080}]
+    assert clients == []
+
+
+def test_input_fix_config_mid_add_loop_opens_editor(monkeypatch, line_mode, tmp_config):
+    """Fix_Config in the add loop opens the editor over the collection."""
+    tmp_config.write_text(json.dumps({"servers": [], "clients": []}), encoding="utf-8")
+    inputs = iter(["0", "127.0.0.1:8080", "Fix_Config", ":wq", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert servers == [{"host": "127.0.0.1", "port": 8080}]
+    assert clients == []
+
+
+def test_input_fix_config_at_field_value_returns_to_menu(monkeypatch, line_mode, tmp_config):
+    """Fix_Config at a value prompt returns to the instance menu, no launch."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []}),
+        encoding="utf-8",
+    )
+    # reduce y -> menu Enter -> field 0 -> Fix_Config at the value prompt
+    inputs = iter(["y", "", "0", "Fix_Config", ":wq", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    servers, clients = fs.interactive_collect()
+    assert servers == [{"host": "127.0.0.1", "port": 7000}]
+    assert clients == []
+
+
+def test_main_overwrite_fix_config_opens_editor(monkeypatch, cli_cleanup, tmp_config):
+    """Fix_Config at the overwrite prompt opens the editor, then launches."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []})
+    )
+    monkeypatch.setattr(sys, "argv", ["flow_setup"])
+    inputs = iter(["Fix_Config", ":wq", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    fs.main()
+    fs.save_config.assert_called()
+    fs.launch_instance.assert_called_once_with({"host": "127.0.0.1", "port": 7000}, "server")
+    fs.interactive_collect.assert_not_called()
+
+
+def test_main_overwrite_help_reprints_usage(monkeypatch, cli_cleanup, tmp_config, capsys):
+    tmp_config.write_text(json.dumps({"servers": [], "clients": []}))
+    monkeypatch.setattr(sys, "argv", ["flow_setup"])
+    inputs = iter(["Help", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    fs.main()
+    assert "Fix_Config" in capsys.readouterr().out
+    fs.launch_instance.assert_not_called()
+    fs.interactive_collect.assert_not_called()
