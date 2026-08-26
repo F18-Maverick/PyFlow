@@ -426,3 +426,32 @@ def test_ensure_keys_never_rewrites_existing_pub(monkeypatch, tmp_path):
     body = c2.encrypt_for_peer(pub, "probe")
     ok, plain = c2.decrypt_with_own(body)
     assert ok and plain == "probe"
+
+
+def test_exclusive_file_lock_windows_retries(monkeypatch, tmp_path):
+    """The Windows lock path retries instead of failing after LK_LOCK's ten
+    1s attempts: a slow keypair generation may hold the lock longer than
+    that, and flock() never gives up (the CI flake fixed by looping on
+    LK_NBLCK with a short sleep)."""
+    nb_lock_calls = []
+
+    class FakeMsvcrt:
+        LK_NBLCK = 0x0002
+        LK_UNLCK = 0
+
+        def locking(self, fd, mode, nbytes):
+            if mode == FakeMsvcrt.LK_NBLCK:
+                nb_lock_calls.append(True)
+                if len(nb_lock_calls) <= 2:  # two busy-wait rounds, then free
+                    raise OSError(13, "Permission denied")
+            if mode == FakeMsvcrt.LK_UNLCK:
+                nb_lock_calls.append(False)  # unlock marker
+
+    monkeypatch.setattr(rsa_crypto, "_msvcrt", FakeMsvcrt())
+    entered = []
+    with rsa_crypto._exclusive_file_lock(str(tmp_path / "k.pem")):
+        entered.append(True)
+    assert entered
+    busy_rounds = 2  # failed attempts before the lock frees
+    assert len(nb_lock_calls) >= busy_rounds + 1  # then success
+    assert nb_lock_calls[-1] is False  # and the lock is released again

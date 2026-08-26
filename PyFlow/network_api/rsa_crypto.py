@@ -29,6 +29,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import uuid
 
 try:
@@ -61,7 +62,16 @@ def _exclusive_file_lock(path):
             if os.fstat(fd).st_size < 1:
                 os.write(fd, b"\0")
             os.lseek(fd, 0, os.SEEK_SET)
-            _msvcrt.locking(fd, _msvcrt.LK_LOCK, 1)
+            while True:
+                try:
+                    # LK_LOCK would give up after 10x1s retries and raise
+                    # EACCES, while flock() blocks forever; on a slow CI
+                    # runner a keypair generation can hold the lock longer
+                    # than those 10 seconds, so retry like flock instead.
+                    _msvcrt.locking(fd, _msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    time.sleep(0.05)
         else:
             _fcntl.flock(fd, _fcntl.LOCK_EX)
         yield
