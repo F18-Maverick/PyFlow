@@ -194,6 +194,9 @@ Instance editor usage (instance menu):
   :q! ........................... exit and discard all changes
   Fix_Config ................... write setup.json and exit (same as :wq);
                               at field-value prompts it returns to the list
+  Setup ......................... launch every instance from setup.json and
+                              exit (works at every prompt)
+  Quit .......................... exit the setup program immediately
   Help .......................... show this help
 Config editor (opened with Enter): type a field index or press Enter to edit
 the selected field, j/k move the selection, Esc/back returns to the menu.
@@ -208,7 +211,8 @@ Config fields (empty input keeps the current value):
           is_custom_keys
 Booleans accept true/false/1/0/y/n; integers are parsed with int(). Type
 "none" to reset a nullable field (host/client_port/timeout/is_custom_keys).
-Help and Fix_Config work at every prompt, including field values.
+Help, Fix_Config, Setup and Quit work at every prompt, including field
+values.
 """
 
 COLLECT_USAGE = """\
@@ -220,9 +224,12 @@ Setup flow usage:
   Help ........ show this help
   Fix_Config .. jump to the instance editor, where startup parameters can
                 be changed (works at every prompt)
-Help and Fix_Config work at every prompt. In the instance editor (reached
-with Y on the reduce question) 'Help' prints all config fields and the
-vim-style commands.
+  Setup ....... launch every instance from setup.json and exit (works at
+                every prompt)
+  Quit ........ exit the setup program immediately
+Help, Fix_Config, Setup and Quit work at every prompt. In the instance editor
+(reached with Y on the reduce question) 'Help' prints all config fields and
+the vim-style commands.
 """
 
 
@@ -230,8 +237,47 @@ class _EnterEditor(Exception):
     """Entering Fix_Config at any prompt jumps to the instance editor."""
 
 
+class _LaunchFromSetup(Exception):
+    """Entering Setup at any prompt launches every instance from setup.json."""
+
+
+class _QuitFlow(Exception):
+    """Entering Quit at any prompt exits the setup program immediately."""
+
+
+def _launch_all_from_setup():
+    """Start every instance configured in setup.json; True when launched.
+
+    Used by the global ``Setup`` command: the current interactive flow is
+    abandoned and the configured instances are started as-is. Returns False
+    (with a message) when setup.json is missing, unreadable or empty, so the
+    caller can keep asking instead of silently doing nothing.
+    """
+    if not os.path.exists(config_file_dir):
+        print("setup.json not found - nothing to launch")
+        return False
+    try:
+        with open(config_file_dir, "r", encoding="utf-8") as f:
+            config_data = json.load(f)
+    except Exception as e:  # noqa: BLE001
+        print(f"setup.json could not be read: {e}")
+        return False
+    servers = config_data.get("servers", [])
+    clients = config_data.get("clients", [])
+    if not servers and not clients:
+        print("setup.json contains no instances - nothing to launch")
+        return False
+    for cfg in servers:
+        launch_instance(cfg, "server")
+    for cfg in clients:
+        launch_instance(cfg, "client")
+    return True
+
+
 def _input(prompt, help_text=COLLECT_USAGE):
-    """Ask one question; 'Help' reprints usage, 'Fix_Config' enters editor.
+    """Ask one question; 'Help' reprints usage, 'Fix_Config' enters the
+    instance editor, 'Setup' launches every instance from setup.json,
+    'Quit' exits the program.
 
     The returned line has surrounding whitespace stripped; the caller
     decides case handling for its own answers.
@@ -244,6 +290,12 @@ def _input(prompt, help_text=COLLECT_USAGE):
             continue
         if low == "fix_config":
             raise _EnterEditor()
+        if low == "setup":
+            if _launch_all_from_setup():
+                raise _LaunchFromSetup()
+            continue  # nothing usable in setup.json: ask again
+        if low == "quit":
+            raise _QuitFlow()
         return answer
 
 
@@ -366,7 +418,7 @@ def _read_key():
     return None
 
 
-def _menu_action_from_line(command):  # noqa: PLR0911
+def _menu_action_from_line(command):  # noqa: PLR0911, PLR0912
     low = command.lower()
     if command == "":
         return ("edit", None)
@@ -388,6 +440,10 @@ def _menu_action_from_line(command):  # noqa: PLR0911
         return ("help", None)
     if low == "fix_config":
         return ("write_quit", None)
+    if low == "setup":
+        return ("setup", None)
+    if low == "quit":
+        return ("quit_flow", None)
     if command.isdigit():
         return ("select_abs", int(command))
     return ("noop", command)
@@ -410,6 +466,10 @@ def _detail_command(command, num_fields):  # noqa: PLR0911
         return ("back", None)
     if low == "fix_config":
         return ("back", None)
+    if low == "setup":
+        return ("setup", None)
+    if low == "quit":
+        return ("quit_flow", None)
     if low in ("help", "h"):
         return ("help", None)
     return ("noop", command)
@@ -573,6 +633,12 @@ def _edit_instance_detail(kind, cfg, raw, saved_attr):  # noqa: PLR0912, PLR0915
             selection = (selection + arg) % len(fields)
         elif name == "back":
             return changed
+        elif name == "setup":
+            if _launch_all_from_setup():
+                raise _LaunchFromSetup()
+            status_msg = "nothing to launch (setup.json missing or empty)"
+        elif name == "quit_flow":
+            raise _QuitFlow()
         elif name == "help":
             print(EDITOR_USAGE, flush=True)
             if raw:
@@ -662,6 +728,12 @@ def _menu_driver(servers, clients, raw, saved_attr):  # noqa: PLR0912, PLR0915
             print(EDITOR_USAGE, flush=True)
             if raw:
                 _read_key()  # let the user read the help before the redraw
+        elif name == "setup":
+            if _launch_all_from_setup():
+                raise _LaunchFromSetup()
+            status_msg = "nothing to launch (setup.json missing or empty)"
+        elif name == "quit_flow":
+            raise _QuitFlow()
         elif name == "write":
             save_config(servers, clients)
             modified = False
@@ -825,7 +897,7 @@ def run_launched_instance(instance_type, config_file_path):
         sys.exit(1)
 
 
-def main():
+def main():  # noqa: PLR0911, PLR0912, PLR0915
     if "--launch_server" in sys.argv:
         idx = sys.argv.index("--launch_server")
         try:
@@ -888,15 +960,22 @@ def main():
             # Fix_Config: skip the question and edit the existing instances
             # (startup parameters) before launching them.
             config_data = load_existing_config()
-            servers, clients = _collect_after_editor(
-                config_data["servers"], config_data["clients"]
-            )
+            try:
+                servers, clients = _collect_after_editor(
+                    config_data["servers"], config_data["clients"]
+                )
+            except (_LaunchFromSetup, _QuitFlow):
+                return  # Setup/Quit typed inside the editor
             save_config(servers, clients)
             for cfg in servers:
                 launch_instance(cfg, "server")
             for cfg in clients:
                 launch_instance(cfg, "client")
             return
+        except _LaunchFromSetup:
+            return  # every configured instance was launched from setup.json
+        except _QuitFlow:
+            return  # user asked to exit the setup program
         if choice.lower() == "n":
             config_data = load_existing_config()
             for cfg in config_data.get("servers", []):
@@ -906,7 +985,12 @@ def main():
             return
     else:
         choice = "y"
-    servers, clients = interactive_collect()
+    try:
+        servers, clients = interactive_collect()
+    except _LaunchFromSetup:
+        return  # every configured instance was launched from setup.json
+    except _QuitFlow:
+        return  # user asked to exit the setup program
     save_config(servers, clients)
     for cfg in servers:
         launch_instance(cfg, "server")

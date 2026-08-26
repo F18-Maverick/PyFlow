@@ -596,6 +596,8 @@ def test_menu_action_from_line_commands():
     assert fs._menu_action_from_line(":q") == ("quit", None)
     assert fs._menu_action_from_line(":q!") == ("abort", None)
     assert fs._menu_action_from_line("Fix_Config") == ("write_quit", None)
+    assert fs._menu_action_from_line("Setup") == ("setup", None)
+    assert fs._menu_action_from_line("Quit") == ("quit_flow", None)
     assert fs._menu_action_from_line("Help") == ("help", None)
     assert fs._menu_action_from_line("2") == ("select_abs", 2)
     assert fs._menu_action_from_line("nonsense")[0] == "noop"
@@ -607,6 +609,8 @@ def test_detail_command():
     assert fs._detail_command("j", 12) == ("select", 1)
     assert fs._detail_command("back", 12) == ("back", None)
     assert fs._detail_command("Fix_Config", 12) == ("back", None)
+    assert fs._detail_command("Setup", 12) == ("setup", None)
+    assert fs._detail_command("Quit", 12) == ("quit_flow", None)
     assert fs._detail_command("99", 12)[0] == "noop"  # out of range field index
 
 
@@ -696,3 +700,144 @@ def test_main_overwrite_help_reprints_usage(monkeypatch, cli_cleanup, tmp_config
     assert "Fix_Config" in capsys.readouterr().out
     fs.launch_instance.assert_not_called()
     fs.interactive_collect.assert_not_called()
+
+
+# ---- Setup: launch every instance from setup.json ---------------------------
+
+
+def test_main_overwrite_setup_launches_all_instances(monkeypatch, cli_cleanup, tmp_config):
+    """Setup at the overwrite prompt starts every instance from setup.json."""
+    tmp_config.write_text(
+        json.dumps(
+            {
+                "servers": [{"host": "127.0.0.1", "port": 7000}],
+                "clients": [{"client_host": "127.0.0.1", "client_port": 7002}],
+            }
+        )
+    )
+    monkeypatch.setattr(sys, "argv", ["flow_setup"])
+    monkeypatch.setattr("builtins.input", lambda _: "Setup")
+    fs.main()
+    expected_launches = 2  # one server + one client
+    assert fs.launch_instance.call_count == expected_launches
+    fs.launch_instance.assert_any_call({"host": "127.0.0.1", "port": 7000}, "server")
+    fs.launch_instance.assert_any_call(
+        {"client_host": "127.0.0.1", "client_port": 7002}, "client"
+    )
+    fs.interactive_collect.assert_not_called()
+
+
+def test_main_setup_with_empty_setup_json_asks_again(monkeypatch, cli_cleanup, tmp_config, capsys):
+    """Setup with nothing configured prints a message and re-asks."""
+    tmp_config.write_text(json.dumps({"servers": [], "clients": []}))
+    monkeypatch.setattr(sys, "argv", ["flow_setup"])
+    inputs = iter(["Setup", "n"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    fs.main()
+    captured = capsys.readouterr().out
+    assert "nothing to launch" in captured
+    fs.launch_instance.assert_not_called()
+    fs.interactive_collect.assert_not_called()
+
+
+def test_input_setup_in_add_loop_launches_all(monkeypatch, line_mode, tmp_config):
+    """Setup typed in the add loop launches setup.json instances and stops."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []}),
+        encoding="utf-8",
+    )
+    launched = []
+    monkeypatch.setattr(fs, "launch_instance", lambda cfg, kind: launched.append((cfg, kind)))
+    # reduce prompt: n -> add loop -> Setup at the type prompt
+    inputs = iter(["n", "Setup"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    with pytest.raises(fs._LaunchFromSetup):
+        fs.interactive_collect()
+    assert launched == [({"host": "127.0.0.1", "port": 7000}, "server")]
+
+
+def test_setup_in_instance_menu_launches_all(monkeypatch, line_mode, tmp_config):
+    """Setup typed in the instance menu launches setup.json and stops."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []}),
+        encoding="utf-8",
+    )
+    launched = []
+    monkeypatch.setattr(fs, "launch_instance", lambda cfg, kind: launched.append((cfg, kind)))
+    # reduce y -> menu -> Setup
+    inputs = iter(["y", "Setup"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    with pytest.raises(fs._LaunchFromSetup):
+        fs.interactive_collect()
+    assert launched == [({"host": "127.0.0.1", "port": 7000}, "server")]
+
+
+# ---- Quit: exit the setup program -------------------------------------------
+
+
+def test_main_overwrite_quit_exits(monkeypatch, cli_cleanup, tmp_config):
+    """Quit at the overwrite prompt ends the program without launching."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []})
+    )
+    monkeypatch.setattr(sys, "argv", ["flow_setup"])
+    monkeypatch.setattr("builtins.input", lambda _: "Quit")
+    fs.main()  # returns normally: the program ends right here
+    fs.launch_instance.assert_not_called()
+    fs.save_config.assert_not_called()
+    fs.interactive_collect.assert_not_called()
+
+
+def test_input_quit_in_add_loop_exits(monkeypatch, line_mode, tmp_config):
+    """Quit typed in the add loop aborts the whole flow without launching."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []}),
+        encoding="utf-8",
+    )
+    launched = []
+    monkeypatch.setattr(fs, "launch_instance", lambda cfg, kind: launched.append((cfg, kind)))
+    inputs = iter(["n", "Quit"])  # reduce: n -> add loop -> Quit
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    with pytest.raises(fs._QuitFlow):
+        fs.interactive_collect()
+    assert launched == []
+
+
+def test_quit_in_instance_menu_exits(monkeypatch, line_mode, tmp_config):
+    """Quit typed in the instance menu exits without saving or launching."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []}),
+        encoding="utf-8",
+    )
+    launched = []
+    monkeypatch.setattr(fs, "launch_instance", lambda cfg, kind: launched.append((cfg, kind)))
+    inputs = iter(["y", "Quit"])  # reduce y -> menu -> Quit
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    with pytest.raises(fs._QuitFlow):
+        fs.interactive_collect()
+    assert launched == []
+
+
+def test_main_fix_config_then_quit_in_editor_exits(monkeypatch, cli_cleanup, tmp_config):
+    """Quit inside the editor reached via Fix_Config ends the program cleanly."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []})
+    )
+    monkeypatch.setattr(sys, "argv", ["flow_setup"])
+    inputs = iter(["Fix_Config", "Quit"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    fs.main()  # must return normally, no traceback
+    fs.launch_instance.assert_not_called()
+    fs.save_config.assert_not_called()
+
+
+def test_main_fix_config_then_setup_in_editor_launches(monkeypatch, cli_cleanup, tmp_config):
+    """Setup inside the editor reached via Fix_Config launches and ends."""
+    tmp_config.write_text(
+        json.dumps({"servers": [{"host": "127.0.0.1", "port": 7000}], "clients": []})
+    )
+    monkeypatch.setattr(sys, "argv", ["flow_setup"])
+    inputs = iter(["Fix_Config", "Setup"])
+    monkeypatch.setattr("builtins.input", lambda *a, **k: next(inputs))
+    fs.main()  # must return normally, no traceback
+    fs.launch_instance.assert_called_once_with({"host": "127.0.0.1", "port": 7000}, "server")
