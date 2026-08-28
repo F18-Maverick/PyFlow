@@ -78,7 +78,7 @@ jobs:
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
-            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCRYPTO_API_BUILD_TESTS=OFF -G "Visual Studio 17 2022" -A x64
+            cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCRYPTO_API_BUILD_TESTS=OFF -A x64
           else
             cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCRYPTO_API_BUILD_TESTS=OFF
           fi
