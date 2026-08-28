@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import time
 import traceback
 
@@ -175,7 +176,6 @@ def launch_instance(config, instance_type):
 
 # ---- instance editor: reduce/change existing instances ----------------------
 
-_MENU_ENTRY_START_ROW = 2
 _MOUSE_WHEEL_UP = 64
 _MOUSE_WHEEL_DOWN = 65
 _DOUBLE_CLICK_SECONDS = 0.3
@@ -490,16 +490,51 @@ def _instance_entries(servers, clients):
     return entries
 
 
+def _terminal_width():
+    """Current terminal width in columns (80 when it cannot be determined)."""
+    try:
+        return shutil.get_terminal_size().columns
+    except Exception:
+        return 80
+
+
+def _row_to_entry(y, entry_rows):
+    """Map a 1-based screen row back to the entry index it belongs to."""
+    for index, start in enumerate(entry_rows):
+        end = entry_rows[index + 1] if index + 1 < len(entry_rows) else start + 1
+        if start <= y < end:
+            return index
+    return None
+
+
 def _print_menu(servers, clients, selection, raw, typed, status_msg):  # noqa: PLR0913, PLR0917
-    """Render the instance menu; returns the screen row of the first entry."""
+    """Render the instance menu with dynamically aligned columns.
+
+    Column widths (index, kind, label) are derived from the current
+    content; rows wider than the terminal wrap with the continuation
+    indented to the label column. Returns the 1-based screen row where
+    every entry starts, used to map mouse clicks back to entries.
+    """
     entries = _instance_entries(servers, clients)
+    width = _terminal_width()
+    index_w = len(str(max(len(entries) - 1, 0))) if entries else 1
+    kind_w = max((len(k) for k, _ in entries), default=6)
     lines = []
     if raw:
         lines.append("\x1b[2J\x1b[H")
     lines.append("=== Instance Manager === (:wq save&exit | :q! / Fix_Config | Help)")
+    entry_rows = []
+    screen_row = 2  # row 1 is the title
     for index, (kind, cfg) in enumerate(entries):
         marker = "> " if index == selection else "  "
-        lines.append(f"{marker}[{index}] [{kind}] {_instance_label(kind, cfg)}")
+        label = _instance_label(kind, cfg)
+        prefix = f"{marker}[{index:>{index_w}}] [{kind:<{kind_w}}] "
+        entry_rows.append(screen_row)
+        pieces = textwrap.wrap(label, max(width - len(prefix), 10)) or [""]
+        lines.append(prefix + pieces[0])
+        for extra in pieces[1:]:
+            lines.append(" " * len(prefix) + extra)
+        screen_row += len(pieces)
     if not entries:
         lines.append("  (no instances)")
     if typed:
@@ -508,7 +543,7 @@ def _print_menu(servers, clients, selection, raw, typed, status_msg):  # noqa: P
         lines.append(status_msg)
     for line in lines:
         print(line, flush=True)
-    return _MENU_ENTRY_START_ROW  # row 1 is the title, entries start on row 2
+    return entry_rows
 
 
 def _delete_at(servers, clients, selection):
@@ -570,15 +605,22 @@ def _edit_instance_detail(kind, cfg, raw, saved_attr):  # noqa: PLR0912, PLR0915
     while True:
         if selection >= len(fields):
             selection = len(fields) - 1
+        width = _terminal_width()
+        idx_w = len(str(len(fields) - 1))
+        key_w = max(len(key) for key, _ in fields)
         lines = []
         if raw:
             lines.append("\x1b[2J\x1b[H")
         lines.append(f"=== Editing {kind}: {_instance_label(kind, cfg)} ===")
         lines.append("(field index/Enter = edit, j/k = move, Esc/back = return, Fix_Config)")
-
         for index, (key, default) in enumerate(fields):
             marker = "> " if index == selection else "  "
-            lines.append(f"{marker}[{index}] {key} = {cfg.get(key, default)}")
+            value = str(cfg.get(key, default))
+            prefix = f"{marker}[{index:>{idx_w}}] {key:<{key_w}} = "
+            pieces = textwrap.wrap(value, max(width - len(prefix), 10)) or [""]
+            lines.append(prefix + pieces[0])
+            for extra in pieces[1:]:
+                lines.append(" " * len(prefix) + extra)
         if typed:
             lines.append(f"command: {typed}")
         if status_msg:
@@ -658,7 +700,7 @@ def _menu_driver(servers, clients, raw, saved_attr):  # noqa: PLR0912, PLR0915
         entries = _instance_entries(servers, clients)
         if entries and selection >= len(entries):
             selection = len(entries) - 1
-        entry_start_row = _print_menu(servers, clients, selection, raw, typed, status_msg)
+        entry_rows = _print_menu(servers, clients, selection, raw, typed, status_msg)
         status_msg = ""
         if raw:
             key = None
@@ -687,16 +729,22 @@ def _menu_driver(servers, clients, raw, saved_attr):  # noqa: PLR0912, PLR0915
                         action = ("select", -1)
                     elif button == _MOUSE_WHEEL_DOWN:
                         action = ("select", 1)
-                    elif button == 0 and 0 <= y - entry_start_row < len(entries):
-                        row = y - entry_start_row
-                        now = time.monotonic()
-                        if row == last_click[0] and now - last_click[1] < _DOUBLE_CLICK_SECONDS:
-                            selection = row
-                            action = ("edit", None)  # double click opens the editor
+                    elif button == 0:
+                        row_index = _row_to_entry(y, entry_rows)
+                        if row_index is None:
+                            action = None
                         else:
-                            selection = row
-                            action = ("select_abs", row)
-                        last_click = (row, now)
+                            now = time.monotonic()
+                            if (
+                                row_index == last_click[0]
+                                and now - last_click[1] < _DOUBLE_CLICK_SECONDS
+                            ):
+                                selection = row_index
+                                action = ("edit", None)  # double click opens the editor
+                            else:
+                                selection = row_index
+                                action = ("select_abs", row_index)
+                            last_click = (row_index, now)
                     else:
                         action = None
                 else:

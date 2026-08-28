@@ -611,6 +611,52 @@ def test_detail_command():
     assert fs._detail_command("Fix_Config", 12) == ("back", None)
     assert fs._detail_command("Setup", 12) == ("setup", None)
     assert fs._detail_command("Quit", 12) == ("quit_flow", None)
+
+
+def test_print_menu_aligns_columns(capsys):
+    """Menu rows share aligned columns: index is right-aligned, kind and
+    label start at the same column on every row."""
+    servers = [{"host": "10.0.0.1", "port": 1000 + i} for i in range(10)]
+    clients = [{"client_host": "10.0.0.1", "client_port": 2000}]
+    fs._print_menu(servers, clients, 0, False, "", "")
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].startswith("=== Instance Manager ===")
+    entry_lines = lines[1:]
+    expected_entries = 11  # 10 servers + 1 client
+    assert len(entry_lines) == expected_entries
+    # index column: every ']' sits at the same column (right-aligned index)
+    close_cols = {line.index("]") for line in entry_lines}
+    assert len(close_cols) == 1
+    # kind column: [server]/[client] start at the same column
+    kind_cols = {
+        line.index("[server]") if "[server]" in line else line.index("[client]")
+        for line in entry_lines
+    }
+    assert len(kind_cols) == 1
+
+
+def test_print_menu_wraps_long_labels(capsys, monkeypatch):
+    """Rows wider than the terminal wrap, indented to the label column."""
+    monkeypatch.setattr(fs, "_terminal_width", lambda: 25)
+    servers = [{"host": "127.0.0.1", "port": 65432}]
+    fs._print_menu(servers, [], 0, False, "", "")
+    lines = capsys.readouterr().out.splitlines()
+    wrapped_rows = 3  # title + wrapped entry (two rows)
+    assert len(lines) == wrapped_rows
+    prefix = "> [0] [server] "  # selected marker + aligned columns
+    assert lines[1].startswith(prefix)
+    # continuation line is indented to the label column
+    assert len(lines[2]) - len(lines[2].lstrip()) == len(prefix)
+
+
+def test_detail_rows_align_key_column(monkeypatch, capsys):
+    """Field rows align the '=' sign: keys are padded to the longest key."""
+    monkeypatch.setattr("builtins.input", lambda *a, **k: "back")
+    cfg = {"host": "127.0.0.1", "port": 65432}
+    fs._edit_instance_detail("server", cfg, False, None)
+    lines = capsys.readouterr().out.splitlines()
+    eq_cols = {line.index(" =") for line in lines[2:] if "=" in line}
+    assert len(eq_cols) == 1
     assert fs._detail_command("99", 12)[0] == "noop"  # out of range field index
 
 
