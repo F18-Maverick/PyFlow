@@ -187,3 +187,13 @@ def test_command_done_handles_move_failure(tmp_path, monkeypatch, capsys):
     cmd = '/command_done "logs_9.json" "/tmp/logs/logs_9.json"'
     ctl._command_done_dealing_server(None, ("127.0.0.1", 9999), cmd)
     assert "ErrorWhileMovingTheLogFile" in capsys.readouterr().out
+
+
+def test_injectable_setup_registers_commands(server, client):
+    """setup_server_commands/setup_client_commands register the control
+    extension on existing instances (used by flow_setup's unified launch)."""
+    ctl.setup_server_commands(server)
+    ctl.setup_client_commands(client)
+    assert "/command" in server._custom_handlers[1]  # server console group
+    assert "/command_done" in server._custom_handlers[0]  # client messages group
+    assert "/command" in client._custom_handlers[0]  # server messages group

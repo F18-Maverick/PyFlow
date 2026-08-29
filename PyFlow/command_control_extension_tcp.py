@@ -53,6 +53,9 @@ def _merge_all_logs(log_dir, merged_filename="merged_logs.json"):
 
 
 def _setup_command():
+    if server_instance is None:
+        print("control extension: server instance is not set up")
+        return
     print("Setting up server command...")
     server_instance.register_command(
         command_name="/command", handler=_command_handler, where_to_run="client", run_in_thread=True
@@ -66,6 +69,9 @@ def _setup_command():
 
 
 def _setup_client_command():
+    if client_instance is None:
+        print("control extension: client instance is not set up")
+        return
     print("Setting up client command...")
     client_instance.register_command(
         command_name="/command",
@@ -228,6 +234,20 @@ def _command_done_dealing_server(sock, addr, cmd):
         print("ErrorWhileMovingTheLogFile: moving log file failed.")
 
 
+def setup_server_commands(server):
+    """Register the control-extension commands on a server instance."""
+    global server_instance  # noqa: PLW0603
+    server_instance = server
+    _setup_command()
+
+
+def setup_client_commands(client):
+    """Register the control-extension commands on a client instance."""
+    global client_instance  # noqa: PLW0603
+    client_instance = client
+    _setup_client_command()
+
+
 def client_setup():
     global client_instance
     client_instance = connect_tcp.TCP_Client_Base(
@@ -237,7 +257,7 @@ def client_setup():
         is_input_command_in_console=True,
         is_extend_command=True,
     )
-    _setup_client_command()
+    setup_client_commands(client_instance)
     client_instance.start_TCP_client()
 
 
@@ -250,5 +270,5 @@ def server_setup():
         is_input_command_in_console=True,
         is_extend_command=True,
     )
-    _setup_command()
+    setup_server_commands(server_instance)
     server_instance.start_TCP_Server()

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import textwrap
+import threading
 import time
 import traceback
 
@@ -28,6 +29,7 @@ try:
     import tty as _tty
 except ImportError:  # POSIX only
     _tty = None
+from . import command_control_extension_tcp, forward_extension_tcp
 from .network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
 
 config_file_name="setup.json"
@@ -926,6 +928,34 @@ def generate_configs_from_args(args):
         return [], [config]
 
 
+def _load_extensions(instance, instance_type):
+    """Register the extension protocols on an instance (is_extend_command)."""
+    if instance_type == "server":
+        command_control_extension_tcp.setup_server_commands(instance)
+        forward_extension_tcp.setup_server_commands(instance)
+    else:
+        command_control_extension_tcp.setup_client_commands(instance)
+        forward_extension_tcp.setup_client_commands(instance)
+
+
+def _keep_alive(instance):
+    """Keep the process alive while the instance runs in a background thread.
+
+    Used when is_input_command_in_console=False: the instance runs in a
+    daemon thread and the main thread only waits for it to stop.
+    """
+    try:
+        while instance.running:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        stop = getattr(instance, "stop", None) or getattr(instance, "close", None)
+        if stop is not None:
+            try:
+                stop()
+            except Exception:
+                traceback.print_exc()
+
+
 def run_launched_instance(instance_type, config_file_path):
     try:
         with open(config_file_path, "r", encoding="utf-8") as f:
@@ -936,8 +966,22 @@ def run_launched_instance(instance_type, config_file_path):
             pass
         if instance_type == "server":
             server = TCP_Server_Base(**config)
+            if config.get("is_extend_command", False):
+                _load_extensions(server, "server")
+            if config.get("is_input_command_in_console", True):
+                server.start_TCP_Server()
+            else:
+                threading.Thread(target=server.start_TCP_Server, daemon=True).start()
+                _keep_alive(server)
         else:
             client = TCP_Client_Base(**config)
+            if config.get("is_extend_command", False):
+                _load_extensions(client, "client")
+            if config.get("is_input_command_in_console", True):
+                client.start_TCP_client()
+            else:
+                threading.Thread(target=client.start_TCP_client, daemon=True).start()
+                _keep_alive(client)
     except Exception as e:
         print(f"Failed to start instance: {e}")
         traceback.print_exc()

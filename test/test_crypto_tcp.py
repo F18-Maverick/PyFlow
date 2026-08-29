@@ -554,6 +554,20 @@ def test_concurrent_clients_share_key_exchange(tmp_path):
         is_enable_encrypto=True,
     )
     _redirect_crypto(server.crypto, tmp_path, ssh_dir, "pub_key")
+    recv_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "PyFlow",
+        "network_api",
+        "received_files",
+    )
+    # a failed earlier run may have left stale key files behind; the
+    # assertion below checks this run leaves nothing behind, so start clean
+    for leftover_name in os.listdir(recv_dir):
+        if leftover_name.endswith(".pem"):
+            try:
+                os.remove(os.path.join(recv_dir, leftover_name))
+            except OSError:
+                pass
     threading.Thread(target=server.start_TCP_Server, daemon=True).start()
     assert server_ready(server), "server did not start"
 
@@ -595,12 +609,6 @@ def test_concurrent_clients_share_key_exchange(tmp_path):
         # all four clients share one keypair (pvt_key dir), so the TOFU
         # registry keeps a single entry for that key
         assert len(_registry_entries(server.crypto)) == 1
-        recv_dir = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-            "PyFlow",
-            "network_api",
-            "received_files",
-        )
         leftover = [n for n in os.listdir(recv_dir) if n.endswith(".pem")]
         assert not leftover, f"stale key files left in received_files/: {leftover}"
     finally:

@@ -4,6 +4,8 @@ import os
 import re
 import sys
 import tempfile
+import threading
+import time
 from unittest.mock import MagicMock
 
 import pytest
@@ -246,6 +248,111 @@ def test_run_launched_instance_missing_file_exits(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda *a, **k: "")
     with pytest.raises(SystemExit):
         fs.run_launched_instance("server", "/no/such/file.json")
+
+
+def test_run_launched_instance_extensions_loaded_and_threaded(monkeypatch, tmp_path):
+    """is_extend_command=True loads the extensions; is_input_command_in_console=False
+    starts the instance in a background thread and keeps the process alive."""
+    server_mock = MagicMock()
+    monkeypatch.setattr(fs, "TCP_Server_Base", server_mock)
+    loaded = []
+    monkeypatch.setattr(
+        fs.command_control_extension_tcp,
+        "setup_server_commands",
+        lambda s: loaded.append("ctl"),
+    )
+    monkeypatch.setattr(
+        fs.forward_extension_tcp, "setup_server_commands", lambda s: loaded.append("fwd")
+    )
+    monkeypatch.setattr(fs, "_keep_alive", lambda inst: None)
+    cfg = {
+        "host": "127.0.0.1",
+        "port": 65000,
+        "is_extend_command": True,
+        "is_input_command_in_console": False,
+    }
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    fs.run_launched_instance("server", str(path))
+    assert loaded == ["ctl", "fwd"]
+    for _ in range(50):  # the instance starts in a background thread
+        if server_mock.return_value.start_TCP_Server.called:
+            break
+        time.sleep(0.01)
+    assert server_mock.return_value.start_TCP_Server.called
+    assert not path.exists()
+
+
+def test_run_launched_instance_no_extensions_without_flag(monkeypatch, tmp_path):
+    """is_extend_command=False (or missing) starts the raw protocol only."""
+    server_mock = MagicMock()
+    monkeypatch.setattr(fs, "TCP_Server_Base", server_mock)
+    loaded = []
+    monkeypatch.setattr(
+        fs.command_control_extension_tcp,
+        "setup_server_commands",
+        lambda s: loaded.append("ctl"),
+    )
+    monkeypatch.setattr(
+        fs.forward_extension_tcp, "setup_server_commands", lambda s: loaded.append("fwd")
+    )
+    cfg = {"host": "127.0.0.1", "port": 65000}  # no extension flag
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    fs.run_launched_instance("server", str(path))
+    assert loaded == []
+    for _ in range(50):  # the instance starts in a background thread
+        if server_mock.return_value.start_TCP_Server.called:
+            break
+        time.sleep(0.01)
+    assert server_mock.return_value.start_TCP_Server.called
+
+
+def test_run_launched_instance_console_mode_starts_inline(monkeypatch, tmp_path):
+    """is_input_command_in_console=True calls start directly (blocking)."""
+    client_mock = MagicMock()
+    monkeypatch.setattr(fs, "TCP_Client_Base", client_mock)
+    started = []
+    real_thread = threading.Thread
+
+    def spy_thread(*args, **kwargs):
+        started.append(kwargs.get("target"))
+        return real_thread(*args, **kwargs)
+
+    monkeypatch.setattr(fs.threading, "Thread", spy_thread)
+    cfg = {"host": "127.0.0.1", "port": 65000, "is_input_command_in_console": True}
+    path = tmp_path / "cfg.json"
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    fs.run_launched_instance("client", str(path))
+    assert started == []  # no background thread: started inline
+    assert client_mock.return_value.start_TCP_client.called
+
+
+def test_keep_alive_waits_while_running(monkeypatch):
+    class FakeInstance:
+        running = True
+
+    fake = FakeInstance()
+
+    def stop_after_first_sleep(_):
+        fake.running = False
+
+    monkeypatch.setattr(fs.time, "sleep", stop_after_first_sleep)
+    fs._keep_alive(fake)  # returns after one wait round
+
+
+def test_keep_alive_stops_on_keyboard_interrupt(monkeypatch):
+    class FakeInstance:
+        running = True
+        stopped = False
+
+        def stop(self):
+            self.stopped = True
+
+    fake = FakeInstance()
+    monkeypatch.setattr(fs.time, "sleep", lambda _: (_ for _ in ()).throw(KeyboardInterrupt()))
+    fs._keep_alive(fake)
+    assert fake.stopped
 
 
 @pytest.mark.parametrize(

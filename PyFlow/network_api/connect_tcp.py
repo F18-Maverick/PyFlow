@@ -1262,6 +1262,13 @@ class TCP_Server_Base:  # TCP server class
                         peer_addr = self._crypto_sock_addr.get(client_socket)
                     if peer_addr:
                         self._crypto_store_received_pub(full_path, "client", peer_addr)
+                    else:
+                        # the peer mapping is already gone (connection torn
+                        # down mid-handshake): store nothing, leave nothing
+                        try:
+                            os.remove(full_path)
+                        except OSError:
+                            pass
                 try:
                     self.send_message(client_file_socket, self.server_received_file_data_sign)
                 except Exception:
