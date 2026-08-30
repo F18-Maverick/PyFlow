@@ -27,7 +27,6 @@ classifiers = [
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Operating System :: Microsoft :: Windows",
-    "Topic :: Networking",
     "Topic :: Internet",
     "Topic :: System :: Networking",
     "Topic :: Software Development :: Libraries",
