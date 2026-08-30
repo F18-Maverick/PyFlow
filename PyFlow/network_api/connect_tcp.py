@@ -17,9 +17,12 @@ from concurrent.futures import ThreadPoolExecutor
 
 def _is_closed_socket_error(exc):
     """True when the error means a socket that is already closed
-    (EBADF / ENOTSOCK, or Windows winsock WSAENOTSOCK 10038): the normal
-    teardown signal between a closing thread and a receive thread, not a
-    fault worth a traceback."""
+    (EBADF / ENOTSOCK, Windows winsock WSAENOTSOCK 10038, or the
+    "connection error" RuntimeError raised by send_message after the
+    instance stopped): the normal teardown signal between a closing
+    thread and a receive thread, not a fault worth a traceback."""
+    if isinstance(exc, RuntimeError) and str(exc) == "connection error":
+        return True
     return isinstance(exc, OSError) and exc.errno in (
         errno.EBADF,
         errno.ENOTSOCK,
@@ -822,7 +825,14 @@ class TCP_Server_Base:  # TCP server class
         print(f"new connection: {client_id}")
         print(f"connection count mount: {len(self.clients)}")
         welcome_msg = f"Welcome!: {client_id}\n"  # send welcome message
-        self.send_message(client_socket, welcome_msg)
+        try:
+            self.send_message(client_socket, welcome_msg)
+        except Exception as e:
+            # the server is stopping (or the peer vanished): the finally
+            # block below cleans up; never let this escape the thread
+            if not _is_closed_socket_error(e):
+                print(f"error while welcoming client {client_id} : {e}")
+            return
         # announce our encryption mode; a mismatched peer is disconnected in handle_command
         self._send_raw(client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
         if self.is_hand_alloc_port == True:
@@ -3468,7 +3478,8 @@ class TCP_Client_Base:  # TCP client class
             if self.is_input_command_in_console:
                 self.interactive_mode()
             else:
-                pass
+                while self.running:
+                    time.sleep(1)
         except KeyboardInterrupt:
             print("\nclient shutting down...")
             traceback.print_exc()

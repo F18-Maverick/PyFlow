@@ -1,7 +1,9 @@
 import builtins
 import io
 import json
+import socket
 import threading
+import time
 from types import SimpleNamespace
 
 
@@ -200,19 +202,47 @@ def test_injectable_setup_registers_commands(server, client):
     assert "/command" in client._custom_handlers[0]  # server messages group
 
 
-def test_client_setup_with_existing_instance_threaded(client, monkeypatch):
+def test_client_setup_with_existing_instance_threaded():
     """client_setup(instance=..., is_input_command_in_console=False) registers
-    the control extension on the given instance and starts it in a thread."""
-    started = []
-    real_thread = threading.Thread
-
-    def spy_thread(*args, **kwargs):
-        started.append(kwargs.get("target"))
-        return real_thread(*args, **kwargs)
-
-    monkeypatch.setattr(ctl.threading, "Thread", spy_thread)
-    ctl.client_setup(instance=client, is_input_command_in_console=False)
-    assert ctl.client_instance is client
-    assert len(started) == 1
-    assert started[0] == client.start_TCP_client
-    assert "/command" in client._custom_handlers[0]
+    the control extension on the given instance and really starts it in a
+    background thread: the client connects to a live server and returns."""
+    with socket.socket() as s0:
+        s0.bind(("127.0.0.1", 0))
+        port = s0.getsockname()[1]
+    s = ctl.connect_tcp.TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
+    threading.Thread(target=s.start_TCP_Server, daemon=True).start()
+    c = None
+    try:
+        for _ in range(50):
+            if s.running:
+                break
+            time.sleep(0.02)
+        assert s.running
+        c = ctl.connect_tcp.TCP_Client_Base(
+            host="127.0.0.1",
+            port=port,
+            client_host="127.0.0.1",
+            is_extend_command=True,
+            is_input_command_in_console=False,
+            is_enable_encrypto=False,
+        )
+        ctl.client_setup(instance=c, is_input_command_in_console=False)
+        assert ctl.client_instance is c
+        assert "/command" in c._custom_handlers[0]
+        for _ in range(50):
+            if c.running:
+                break
+            time.sleep(0.02)
+        assert c.running  # the background thread really connected
+        assert c.client_socket is not None
+        assert c.send_message(c.client_socket, "ping")  # and the link is usable
+    finally:
+        if c is not None:
+            c.close()
+        s.stop()

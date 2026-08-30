@@ -1,7 +1,10 @@
 """Tests for the TCP forward extension (forward_extension_tcp.py)."""
 
 import os
+import socket
 import threading
+import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -218,20 +221,33 @@ def test_server_setup_creates_instance(monkeypatch, tmp_path, capsys):
         assert relay in fwd.server_instance._custom_handlers[0]
 
 
-def test_server_setup_with_existing_instance_threaded(server, monkeypatch):
+def test_server_setup_with_existing_instance_threaded(monkeypatch):
     """server_setup(instance=..., is_input_command_in_console=False) registers
-    the relays on the given instance and starts it in a background thread."""
-    started = []
-    real_thread = threading.Thread
-
-    def spy_thread(*args, **kwargs):
-        started.append(kwargs.get("target"))
-        return real_thread(*args, **kwargs)
-
-    monkeypatch.setattr(fwd.threading, "Thread", spy_thread)
-    fwd.server_setup(instance=server, is_input_command_in_console=False)
-    assert fwd.server_instance is server
-    assert len(started) == 1
-    assert started[0] == server.start_TCP_Server
-    for relay in ("/forward_send_msg", "/forward_file", "/forward_folder"):
-        assert relay in server._custom_handlers[0]
+    the relays on the given instance and really starts it in a background
+    thread: the accept loop is live and accepts a plain connection."""
+    with socket.socket() as s0:
+        s0.bind(("127.0.0.1", 0))
+        port = s0.getsockname()[1]
+    s = fwd.connect_tcp.TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
+    try:
+        fwd.server_setup(instance=s, is_input_command_in_console=False)
+        assert fwd.server_instance is s
+        for relay in ("/forward_send_msg", "/forward_file", "/forward_folder"):
+            assert relay in s._custom_handlers[0]
+        for _ in range(50):
+            if s.running:
+                break
+            time.sleep(0.02)
+        assert s.running  # the background thread really started the server
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.settimeout(2)
+        probe.connect(("127.0.0.1", port))
+        probe.close()
+    finally:
+        s.stop()

@@ -266,8 +266,8 @@ msgid ""
 "the launcher keeps the process alive until the instance stops (useful for "
 "headless deployments)."
 msgstr ""
-"- ``False`` – インスタンスはバックグラウンド スレッドで実行され、ランチャーはインスタンスが停止するまでプロセスを維持します "
-"(ヘッドレス展開に便利)。"
+"``start_TCP_client()`` が直接呼び出され、コンソール入力ループは独自のスレッドで実行されます。 - ``False`` – "
+"インスタンスはバックグラウンド スレッドで実行され、ランチャーはインスタンスが停止するまでプロセスを維持します (ヘッドレス展開に便利)。"
 
 #: ../../Instance_Setup/Instance_Setup.rst:177
 #: c2925f0f85154040bcdd1252a228fd7f
