@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyflow-net"
-version = "0.1.1"
+version = "0.5.0"
 description = "PyFlow is a high-level network protocol with APIs for transferring messages, files, and folders, plus extensible interfaces etc.."
 requires-python = ">=3.10"
 dependencies = []
