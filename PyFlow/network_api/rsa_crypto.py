@@ -56,7 +56,13 @@ def _exclusive_file_lock(path):
     (no-GIL safe).
     """
     lock_path = path + ".lock"
-    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    while True:
+        try:
+            fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+            break
+        except OSError:
+            # transient sharing/AV conflict on Windows: retry like the lock
+            time.sleep(0.05)
     try:
         if _msvcrt is not None:  # Windows
             if os.fstat(fd).st_size < 1:
@@ -82,6 +88,8 @@ def _exclusive_file_lock(path):
                 _msvcrt.locking(fd, _msvcrt.LK_UNLCK, 1)
             else:
                 _fcntl.flock(fd, _fcntl.LOCK_UN)
+        except OSError:
+            pass  # the close below releases the lock anyway
         finally:
             os.close(fd)
 
