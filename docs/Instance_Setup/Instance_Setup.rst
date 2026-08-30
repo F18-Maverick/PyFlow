@@ -141,10 +141,46 @@ parameter accepted by ``TCP_Server_Base`` or ``TCP_Client_Base``
 values are retained when the launcher overwrites the 
 configuration (since the script reads the existing config 
 and updates it with user‑provided values, but if you 
-choose to overwrite, the old config is discarded and 
+choose to overwrite, the old config is discarded and
 only the new fields are saved – so if you want custom 
 parameters, you should add them after the first launch 
 or edit the file manually).
+
+Extension Protocols and Startup Mode
+-------------------------------------
+
+Two extension protocols ship with the launcher and are
+loaded automatically for every instance whose ``setup.json``
+entry sets ``is_extend_command=True``:
+
+- ``command_control_extension_tcp.py`` – remote command
+execution with per-client log collection (``/command``).
+- ``forward_extension_tcp.py`` – forwarding messages,
+files, multiple files, folders and multiple folders to
+any number of destination clients (``/send_msg_forward``,
+``/file_forward``, ``/multiple_file_forward``,
+``/folder_forward``, ``/multiple_folder_forward``).
+
+With ``is_extend_command=False`` (the default) only the
+raw TCP protocol is started.
+
+The ``is_input_command_in_console`` flag selects how the
+instance is started:
+
+- ``True`` (default) – ``start_TCP_Server()`` /
+``start_TCP_client()`` is called directly and the
+console input loop runs in its own thread.
+- ``False`` – the instance runs in a background thread
+and the launcher keeps the process alive until the
+instance stops (useful for headless deployments).
+
+Both extensions also expose injectable registration
+(``setup_server_commands(instance)`` /
+``setup_client_commands(instance)``) and a convenience
+``client_setup(instance=None, is_input_command_in_console=True)`` /
+``server_setup(instance=None, is_input_command_in_console=True)``
+that accepts an existing instance, so several extensions
+can be loaded onto the same instance from code.
 
 Internal Operation
 ==================

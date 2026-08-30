@@ -248,27 +248,39 @@ def setup_client_commands(client):
     _setup_client_command()
 
 
-def client_setup():
+def client_setup(instance=None, is_input_command_in_console=True):
     global client_instance
-    client_instance = connect_tcp.TCP_Client_Base(
-        host="127.0.0.1",
-        port=65000,
-        client_host="127.0.0.1",
-        is_input_command_in_console=True,
-        is_extend_command=True,
-    )
+    if instance is None:
+        client_instance = connect_tcp.TCP_Client_Base(
+            host="127.0.0.1",
+            port=65000,
+            client_host="127.0.0.1",
+            is_input_command_in_console=is_input_command_in_console,
+            is_extend_command=True,
+        )
+    else:
+        client_instance = instance
     setup_client_commands(client_instance)
-    client_instance.start_TCP_client()
+    if is_input_command_in_console:
+        client_instance.start_TCP_client()
+    else:
+        threading.Thread(target=client_instance.start_TCP_client, daemon=True).start()
 
 
-def server_setup():
+def server_setup(instance=None, is_input_command_in_console=True):
     global server_instance
-    server_instance = connect_tcp.TCP_Server_Base(
-        host="127.0.0.1",
-        port=65000,
-        max_clients=10,
-        is_input_command_in_console=True,
-        is_extend_command=True,
-    )
+    if instance is None:
+        server_instance = connect_tcp.TCP_Server_Base(
+            host="127.0.0.1",
+            port=65000,
+            max_clients=10,
+            is_input_command_in_console=is_input_command_in_console,
+            is_extend_command=True,
+        )
+    else:
+        server_instance = instance
     setup_server_commands(server_instance)
-    server_instance.start_TCP_Server()
+    if is_input_command_in_console:
+        server_instance.start_TCP_Server()
+    else:
+        threading.Thread(target=server_instance.start_TCP_Server, daemon=True).start()

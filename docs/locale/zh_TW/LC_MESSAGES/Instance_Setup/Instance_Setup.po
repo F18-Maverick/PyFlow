@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-14 16:43+0800\n"
+"POT-Creation-Date: 2026-08-30 23:45+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -193,61 +193,136 @@ msgstr ""
 " - 因此，如果您需要自訂參數，您應該在首次啟動後新增它們或手動編輯檔案）。"
 
 #: ../../Instance_Setup/Instance_Setup.rst:150
+#: 6b90a320b39147c7ac5287c51b028da3
+msgid "Extension Protocols and Startup Mode"
+msgstr "擴展協定和啟動模式"
+
+#: ../../Instance_Setup/Instance_Setup.rst:152
+#: 81cf1090db0240e19aecfb16cdafb622
+msgid ""
+"Two extension protocols ship with the launcher and are loaded automatically "
+"for every instance whose ``setup.json`` entry sets "
+"``is_extend_command=True``:"
+msgstr "啟動器隨附兩個擴充協議，並為每個「setup.json」條目設定「is_extend_command=True」的實例自動載入："
+
+#: ../../Instance_Setup/Instance_Setup.rst:156
+#: e89028b886064e8ab1e94e5e6a6cdaa0
+msgid "``command_control_extension_tcp.py`` – remote command"
+msgstr "``command_control_extension_tcp.py`` – 遠端命令"
+
+#: ../../Instance_Setup/Instance_Setup.rst:157
+#: 86a457e4e5bf4791bcbef5bb12612391
+msgid ""
+"execution with per-client log collection (``/command``). - "
+"``forward_extension_tcp.py`` – forwarding messages, files, multiple files, "
+"folders and multiple folders to any number of destination clients "
+"(``/send_msg_forward``, ``/file_forward``, ``/multiple_file_forward``, "
+"``/folder_forward``, ``/multiple_folder_forward``)."
+msgstr ""
+"使用每個客戶端日誌收集執行（``/command``）。 -``forward_extension_tcp.py`` - "
+"将消息、文件、多个文件、文件夹和多个文件夹转发到任意数量的目标客户端（``/send_msg_forward``、``/file_forward``、``/multiple_file_forward``、``/folder_forward``、``/multiple_folder_forward``）。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:164
+#: baee7200e5634507a28b2f69309c3c49
+msgid ""
+"With ``is_extend_command=False`` (the default) only the raw TCP protocol is "
+"started."
+msgstr "使用“is_extend_command=False”（預設）僅啟動原始 TCP 協定。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:167
+#: f140a881acba4933bd83af5bb35737d1
+msgid ""
+"The ``is_input_command_in_console`` flag selects how the instance is "
+"started:"
+msgstr "``is_input_command_in_console`` 標誌選擇實例的啟動方式："
+
+#: ../../Instance_Setup/Instance_Setup.rst:170
+#: a40aa238baac4503a0dc0c9cea0745ee
+msgid "``True`` (default) – ``start_TCP_Server()`` /"
+msgstr "``True``（預設）-``start_TCP_Server()`` /"
+
+#: ../../Instance_Setup/Instance_Setup.rst:171
+#: fca5c2c0fe914740a931957b30a9927b
+msgid ""
+"``start_TCP_client()`` is called directly and the console input loop runs in"
+" its own thread. - ``False`` – the instance runs in a background thread and "
+"the launcher keeps the process alive until the instance stops (useful for "
+"headless deployments)."
+msgstr ""
+"直接呼叫“start_TCP_client()”，控制台輸入循環在其自己的執行緒中運行。 -``False`` - "
+"實例在後台執行緒中執行，啟動器可讓進程保持活動狀態，直到實例停止（對於無頭部署很有用）。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:177
+#: c2925f0f85154040bcdd1252a228fd7f
+msgid ""
+"Both extensions also expose injectable registration "
+"(``setup_server_commands(instance)`` / ``setup_client_commands(instance)``) "
+"and a convenience ``client_setup(instance=None, "
+"is_input_command_in_console=True)`` / ``server_setup(instance=None, "
+"is_input_command_in_console=True)`` that accepts an existing instance, so "
+"several extensions can be loaded onto the same instance from code."
+msgstr ""
+"這兩個擴充功能也公開可注入註冊（``setup_server_commands(instance)`` "
+"/``setup_client_commands(instance)``）和一個方便的``client_setup(instance=None, "
+"is_input_command_in_console=True)`` /``server_`` /``server_ "
+"is_input_command_in_console=True)`` 接受現有實例，因此可以載入多個擴充功能從程式碼到同一個實例。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:186
 #: e58290a2c5f3492bafa47f15b7c2958f
 msgid "Internal Operation"
 msgstr "內部運作"
 
-#: ../../Instance_Setup/Instance_Setup.rst:152
+#: ../../Instance_Setup/Instance_Setup.rst:188
 #: 6655764b01644b92910338c01d38b0cb
 msgid "Each instance is launched in a new terminal window"
 msgstr "每個實例都在新的終端機視窗中啟動"
 
-#: ../../Instance_Setup/Instance_Setup.rst:153
+#: ../../Instance_Setup/Instance_Setup.rst:189
 #: 6824028a99254c77a55fb56d51b5e9a5
 msgid "(or background process)."
 msgstr "（或後台進程）。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:154
+#: ../../Instance_Setup/Instance_Setup.rst:190
 #: 0a09353648d44ba2a840fc1cf8a850bc
 msgid "The configuration is passed via a temporary JSON"
 msgstr "配置透過臨時 JSON 傳遞"
 
-#: ../../Instance_Setup/Instance_Setup.rst:155
+#: ../../Instance_Setup/Instance_Setup.rst:191
 #: f6327281e35a4304b404563d00301a1a
 msgid "file to avoid shell escaping issues."
 msgstr "文件以避免 shell 轉義問題。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:156
+#: ../../Instance_Setup/Instance_Setup.rst:192
 #: 997e364f35714b18b1e47af641ce58db
 msgid "If an instance fails to start, the error is"
 msgstr "如果實例無法啟動，則錯誤為"
 
-#: ../../Instance_Setup/Instance_Setup.rst:157
+#: ../../Instance_Setup/Instance_Setup.rst:193
 #: 4404c088296e4c35b49ed59eca3b6678
 msgid "displayed and the window pauses for inspection."
 msgstr "顯示並且視窗暫停以進行檢查。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:160
+#: ../../Instance_Setup/Instance_Setup.rst:196
 #: 2b8f982006184d36b06d4ac5579a36f4
 msgid "Requirements"
 msgstr "要求"
 
-#: ../../Instance_Setup/Instance_Setup.rst:162
+#: ../../Instance_Setup/Instance_Setup.rst:198
 #: f10fabd9883942b780cd0822da245837
 msgid "Python 3.6+"
 msgstr "Python 3.6+"
 
-#: ../../Instance_Setup/Instance_Setup.rst:163
+#: ../../Instance_Setup/Instance_Setup.rst:199
 #: f464e1a571fa46388937f3236b36d3bf
 msgid "The ``network_api.connect_tcp`` module must be"
 msgstr "``network_api.connect_tcp`` 模組必須是"
 
-#: ../../Instance_Setup/Instance_Setup.rst:164
+#: ../../Instance_Setup/Instance_Setup.rst:200
 #: fc6ca227cd904333916e81b4a7093acc
 msgid "importable (the script imports ``TCP_Server_Base``"
 msgstr "可匯入（腳本匯入``TCP_Server_Base``"
 
-#: ../../Instance_Setup/Instance_Setup.rst:165
+#: ../../Instance_Setup/Instance_Setup.rst:201
 #: dcc9c410853247b0a3302c2c41f6fe13
 msgid "and ``TCP_Client_Base`` from there)."
 msgstr "和來自那裡的“TCP_Client_Base”）。"

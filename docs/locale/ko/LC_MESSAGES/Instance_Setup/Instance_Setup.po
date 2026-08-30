@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-14 16:43+0800\n"
+"POT-Creation-Date: 2026-08-30 23:45+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -202,61 +202,142 @@ msgstr ""
 "수동으로 편집해야 합니다)."
 
 #: ../../Instance_Setup/Instance_Setup.rst:150
+#: 6b90a320b39147c7ac5287c51b028da3
+msgid "Extension Protocols and Startup Mode"
+msgstr "확장 프로토콜 및 시작 모드"
+
+#: ../../Instance_Setup/Instance_Setup.rst:152
+#: 81cf1090db0240e19aecfb16cdafb622
+msgid ""
+"Two extension protocols ship with the launcher and are loaded automatically "
+"for every instance whose ``setup.json`` entry sets "
+"``is_extend_command=True``:"
+msgstr ""
+"두 가지 확장 프로토콜이 런처와 함께 제공되며 ``setup.json`` 항목이 ``is_extend_command=True``로 설정된"
+" 모든 인스턴스에 대해 자동으로 로드됩니다."
+
+#: ../../Instance_Setup/Instance_Setup.rst:156
+#: e89028b886064e8ab1e94e5e6a6cdaa0
+msgid "``command_control_extension_tcp.py`` – remote command"
+msgstr "``command_control_extension_tcp.py`` – 원격 명령"
+
+#: ../../Instance_Setup/Instance_Setup.rst:157
+#: 86a457e4e5bf4791bcbef5bb12612391
+msgid ""
+"execution with per-client log collection (``/command``). - "
+"``forward_extension_tcp.py`` – forwarding messages, files, multiple files, "
+"folders and multiple folders to any number of destination clients "
+"(``/send_msg_forward``, ``/file_forward``, ``/multiple_file_forward``, "
+"``/folder_forward``, ``/multiple_folder_forward``)."
+msgstr ""
+"클라이언트별 로그 수집(``/command``)을 통한 실행. - ``forward_extension_tcp.py`` – 메시지, 파일,"
+" 여러 파일, 폴더 및 여러 폴더를 원하는 수의 대상 클라이언트(``/send_msg_forward``, "
+"``/file_forward``, ``/multiple_file_forward``, ``/folder_forward``, "
+"``/multiple_folder_forward``)에 전달합니다."
+
+#: ../../Instance_Setup/Instance_Setup.rst:164
+#: baee7200e5634507a28b2f69309c3c49
+msgid ""
+"With ``is_extend_command=False`` (the default) only the raw TCP protocol is "
+"started."
+msgstr "``is_extend_command=False``(기본값)를 사용하면 원시 TCP 프로토콜만 시작됩니다."
+
+#: ../../Instance_Setup/Instance_Setup.rst:167
+#: f140a881acba4933bd83af5bb35737d1
+msgid ""
+"The ``is_input_command_in_console`` flag selects how the instance is "
+"started:"
+msgstr "``is_input_command_in_console`` 플래그는 인스턴스가 시작되는 방법을 선택합니다:"
+
+#: ../../Instance_Setup/Instance_Setup.rst:170
+#: a40aa238baac4503a0dc0c9cea0745ee
+msgid "``True`` (default) – ``start_TCP_Server()`` /"
+msgstr "``True`` (기본값) – ``start_TCP_Server()`` /"
+
+#: ../../Instance_Setup/Instance_Setup.rst:171
+#: fca5c2c0fe914740a931957b30a9927b
+msgid ""
+"``start_TCP_client()`` is called directly and the console input loop runs in"
+" its own thread. - ``False`` – the instance runs in a background thread and "
+"the launcher keeps the process alive until the instance stops (useful for "
+"headless deployments)."
+msgstr ""
+"``start_TCP_client()``는 직접 호출되며 콘솔 입력 루프는 자체 스레드에서 실행됩니다. - ``False`` – "
+"인스턴스가 백그라운드 스레드에서 실행되고 실행 프로그램은 인스턴스가 중지될 때까지 프로세스를 활성 상태로 유지합니다(헤드리스 배포에 "
+"유용함)."
+
+#: ../../Instance_Setup/Instance_Setup.rst:177
+#: c2925f0f85154040bcdd1252a228fd7f
+msgid ""
+"Both extensions also expose injectable registration "
+"(``setup_server_commands(instance)`` / ``setup_client_commands(instance)``) "
+"and a convenience ``client_setup(instance=None, "
+"is_input_command_in_console=True)`` / ``server_setup(instance=None, "
+"is_input_command_in_console=True)`` that accepts an existing instance, so "
+"several extensions can be loaded onto the same instance from code."
+msgstr ""
+"두 확장 모두 또한 주입 가능한 등록(``setup_server_commands(instance)`` / "
+"``setup_client_commands(instance)``)과 기존 ``client_setup(instance=None, "
+"is_input_command_in_console=True)`` / ``server_setup(instance=None, "
+"is_input_command_in_console=True)``를 허용하는 편의 기능을 제공합니다. 인스턴스이므로 코드에서 동일한 "
+"인스턴스에 여러 확장을 로드할 수 있습니다."
+
+#: ../../Instance_Setup/Instance_Setup.rst:186
 #: e58290a2c5f3492bafa47f15b7c2958f
 msgid "Internal Operation"
 msgstr "내부 운영"
 
-#: ../../Instance_Setup/Instance_Setup.rst:152
+#: ../../Instance_Setup/Instance_Setup.rst:188
 #: 6655764b01644b92910338c01d38b0cb
 msgid "Each instance is launched in a new terminal window"
 msgstr "각 인스턴스는 새 터미널 창에서 시작됩니다."
 
-#: ../../Instance_Setup/Instance_Setup.rst:153
+#: ../../Instance_Setup/Instance_Setup.rst:189
 #: 6824028a99254c77a55fb56d51b5e9a5
 msgid "(or background process)."
 msgstr "(또는 백그라운드 프로세스)."
 
-#: ../../Instance_Setup/Instance_Setup.rst:154
+#: ../../Instance_Setup/Instance_Setup.rst:190
 #: 0a09353648d44ba2a840fc1cf8a850bc
 msgid "The configuration is passed via a temporary JSON"
 msgstr "구성은 임시 JSON을 통해 전달됩니다."
 
-#: ../../Instance_Setup/Instance_Setup.rst:155
+#: ../../Instance_Setup/Instance_Setup.rst:191
 #: f6327281e35a4304b404563d00301a1a
 msgid "file to avoid shell escaping issues."
 msgstr "쉘 이스케이프 문제를 방지하기 위한 파일입니다."
 
-#: ../../Instance_Setup/Instance_Setup.rst:156
+#: ../../Instance_Setup/Instance_Setup.rst:192
 #: 997e364f35714b18b1e47af641ce58db
 msgid "If an instance fails to start, the error is"
 msgstr "인스턴스가 시작되지 않으면 오류는 다음과 같습니다."
 
-#: ../../Instance_Setup/Instance_Setup.rst:157
+#: ../../Instance_Setup/Instance_Setup.rst:193
 #: 4404c088296e4c35b49ed59eca3b6678
 msgid "displayed and the window pauses for inspection."
 msgstr "표시되고 검사를 위해 창이 일시 중지됩니다."
 
-#: ../../Instance_Setup/Instance_Setup.rst:160
+#: ../../Instance_Setup/Instance_Setup.rst:196
 #: 2b8f982006184d36b06d4ac5579a36f4
 msgid "Requirements"
 msgstr "요구사항"
 
-#: ../../Instance_Setup/Instance_Setup.rst:162
+#: ../../Instance_Setup/Instance_Setup.rst:198
 #: f10fabd9883942b780cd0822da245837
 msgid "Python 3.6+"
 msgstr "파이썬 3.6+"
 
-#: ../../Instance_Setup/Instance_Setup.rst:163
+#: ../../Instance_Setup/Instance_Setup.rst:199
 #: f464e1a571fa46388937f3236b36d3bf
 msgid "The ``network_api.connect_tcp`` module must be"
 msgstr "``network_api.connect_tcp`` 모듈은 다음과 같아야 합니다."
 
-#: ../../Instance_Setup/Instance_Setup.rst:164
+#: ../../Instance_Setup/Instance_Setup.rst:200
 #: fc6ca227cd904333916e81b4a7093acc
 msgid "importable (the script imports ``TCP_Server_Base``"
 msgstr "가져오기 가능(스크립트는 ``TCP_Server_Base``를 가져옵니다)"
 
-#: ../../Instance_Setup/Instance_Setup.rst:165
+#: ../../Instance_Setup/Instance_Setup.rst:201
 #: dcc9c410853247b0a3302c2c41f6fe13
 msgid "and ``TCP_Client_Base`` from there)."
 msgstr "및 거기에서 ``TCP_Client_Base``)."

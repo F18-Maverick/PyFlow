@@ -1,6 +1,7 @@
 import builtins
 import io
 import json
+import threading
 from types import SimpleNamespace
 
 
@@ -197,3 +198,21 @@ def test_injectable_setup_registers_commands(server, client):
     assert "/command" in server._custom_handlers[1]  # server console group
     assert "/command_done" in server._custom_handlers[0]  # client messages group
     assert "/command" in client._custom_handlers[0]  # server messages group
+
+
+def test_client_setup_with_existing_instance_threaded(client, monkeypatch):
+    """client_setup(instance=..., is_input_command_in_console=False) registers
+    the control extension on the given instance and starts it in a thread."""
+    started = []
+    real_thread = threading.Thread
+
+    def spy_thread(*args, **kwargs):
+        started.append(kwargs.get("target"))
+        return real_thread(*args, **kwargs)
+
+    monkeypatch.setattr(ctl.threading, "Thread", spy_thread)
+    ctl.client_setup(instance=client, is_input_command_in_console=False)
+    assert ctl.client_instance is client
+    assert len(started) == 1
+    assert started[0] == client.start_TCP_client
+    assert "/command" in client._custom_handlers[0]

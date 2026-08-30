@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-07-14 16:43+0800\n"
+"POT-Creation-Date: 2026-08-30 23:45+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -203,61 +203,161 @@ msgstr ""
 " パラメーターが必要な場合は、最初の起動後に追加するか、ファイルを手動で編集する必要があります)。"
 
 #: ../../Instance_Setup/Instance_Setup.rst:150
+#: 6b90a320b39147c7ac5287c51b028da3
+msgid "Extension Protocols and Startup Mode"
+msgstr "拡張プロトコルと起動モード"
+
+#: ../../Instance_Setup/Instance_Setup.rst:152
+#: 81cf1090db0240e19aecfb16cdafb622
+msgid ""
+"Two extension protocols ship with the launcher and are loaded automatically "
+"for every instance whose ``setup.json`` entry sets "
+"``is_extend_command=True``:"
+msgstr ""
+"ランチャーには 2 つの拡張プロトコルが同梱されており、``setup.json`` のエントリで ``is_extend_command=True``"
+" が設定されているすべてのインスタンスに自動的にロードされます:"
+
+#: ../../Instance_Setup/Instance_Setup.rst:156
+#: e89028b886064e8ab1e94e5e6a6cdaa0
+#, fuzzy
+msgid "``command_control_extension_tcp.py`` – remote command"
+msgstr ""
+"- ``command_control_extension_tcp.py`` – クライアントごとのログ収集を伴うリモートコマンド実行 "
+"(``/command``)。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:157
+#: 86a457e4e5bf4791bcbef5bb12612391
+msgid ""
+"execution with per-client log collection (``/command``). - "
+"``forward_extension_tcp.py`` – forwarding messages, files, multiple files, "
+"folders and multiple folders to any number of destination clients "
+"(``/send_msg_forward``, ``/file_forward``, ``/multiple_file_forward``, "
+"``/folder_forward``, ``/multiple_folder_forward``)."
+msgstr ""
+"クライアントごとのログ収集 (``/command``) を使用して実行します。 - `forward_extension_tcp.py` – "
+"メッセージ、ファイル、複数のファイル、フォルダー、および複数のフォルダーを任意の数の宛先クライアントに転送します "
+"(`/send_msg_forward`、`/file_forward`、`/multiple_file_forward`、`/folder_forward`、`/multiple_folder_forward`)。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:164
+#: baee7200e5634507a28b2f69309c3c49
+msgid ""
+"With ``is_extend_command=False`` (the default) only the raw TCP protocol is "
+"started."
+msgstr "``is_extend_command=False`` (デフォルト) の場合、生の TCP プロトコルのみが起動されます。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:167
+#: f140a881acba4933bd83af5bb35737d1
+msgid ""
+"The ``is_input_command_in_console`` flag selects how the instance is "
+"started:"
+msgstr "``is_input_command_in_console`` フラグは、インスタンスの起動方法を選択します:"
+
+#: ../../Instance_Setup/Instance_Setup.rst:170
+#: a40aa238baac4503a0dc0c9cea0745ee
+msgid "``True`` (default) – ``start_TCP_Server()`` /"
+msgstr "``True`` (デフォルト) – ``start_TCP_Server()`` /"
+
+#: ../../Instance_Setup/Instance_Setup.rst:171
+#: fca5c2c0fe914740a931957b30a9927b
+#, fuzzy
+msgid ""
+"``start_TCP_client()`` is called directly and the console input loop runs in"
+" its own thread. - ``False`` – the instance runs in a background thread and "
+"the launcher keeps the process alive until the instance stops (useful for "
+"headless deployments)."
+msgstr ""
+"- ``False`` – インスタンスはバックグラウンド スレッドで実行され、ランチャーはインスタンスが停止するまでプロセスを維持します "
+"(ヘッドレス展開に便利)。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:177
+#: c2925f0f85154040bcdd1252a228fd7f
+msgid ""
+"Both extensions also expose injectable registration "
+"(``setup_server_commands(instance)`` / ``setup_client_commands(instance)``) "
+"and a convenience ``client_setup(instance=None, "
+"is_input_command_in_console=True)`` / ``server_setup(instance=None, "
+"is_input_command_in_console=True)`` that accepts an existing instance, so "
+"several extensions can be loaded onto the same instance from code."
+msgstr ""
+"両方の拡張機能は、注入可能な登録 (``setup_server_commands(instance)`` / "
+"``setup_client_commands(instance)``) と、既存のインスタンスを受け入れる便利な "
+"``client_setup(instance=None, is_input_command_in_console=True)`` / "
+"``server_setup(instance=None, is_input_command_in_console=True)`` "
+"も公開しているため、コードから複数の拡張機能を同じインスタンスにロードできます。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:186
 #: e58290a2c5f3492bafa47f15b7c2958f
 msgid "Internal Operation"
 msgstr "内部操作"
 
-#: ../../Instance_Setup/Instance_Setup.rst:152
+#: ../../Instance_Setup/Instance_Setup.rst:188
 #: 6655764b01644b92910338c01d38b0cb
 msgid "Each instance is launched in a new terminal window"
 msgstr "各インスタンスは新しいターミナル ウィンドウで起動されます"
 
-#: ../../Instance_Setup/Instance_Setup.rst:153
+#: ../../Instance_Setup/Instance_Setup.rst:189
 #: 6824028a99254c77a55fb56d51b5e9a5
 msgid "(or background process)."
 msgstr "(またはバックグラウンドプロセス)。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:154
+#: ../../Instance_Setup/Instance_Setup.rst:190
 #: 0a09353648d44ba2a840fc1cf8a850bc
 msgid "The configuration is passed via a temporary JSON"
 msgstr "設定は一時的な JSON 経由で渡されます"
 
-#: ../../Instance_Setup/Instance_Setup.rst:155
+#: ../../Instance_Setup/Instance_Setup.rst:191
 #: f6327281e35a4304b404563d00301a1a
 msgid "file to avoid shell escaping issues."
 msgstr "シェルエスケープの問題を回避するためのファイル。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:156
+#: ../../Instance_Setup/Instance_Setup.rst:192
 #: 997e364f35714b18b1e47af641ce58db
 msgid "If an instance fails to start, the error is"
 msgstr "インスタンスの起動に失敗した場合、次のエラーが発生します。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:157
+#: ../../Instance_Setup/Instance_Setup.rst:193
 #: 4404c088296e4c35b49ed59eca3b6678
 msgid "displayed and the window pauses for inspection."
 msgstr "と表示され、検査のためにウィンドウが一時停止します。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:160
+#: ../../Instance_Setup/Instance_Setup.rst:196
 #: 2b8f982006184d36b06d4ac5579a36f4
 msgid "Requirements"
 msgstr "要件"
 
-#: ../../Instance_Setup/Instance_Setup.rst:162
+#: ../../Instance_Setup/Instance_Setup.rst:198
 #: f10fabd9883942b780cd0822da245837
 msgid "Python 3.6+"
 msgstr "Python 3.6+"
 
-#: ../../Instance_Setup/Instance_Setup.rst:163
+#: ../../Instance_Setup/Instance_Setup.rst:199
 #: f464e1a571fa46388937f3236b36d3bf
 msgid "The ``network_api.connect_tcp`` module must be"
 msgstr "``network_api.connect_tcp`` モジュールは次のようにする必要があります。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:164
+#: ../../Instance_Setup/Instance_Setup.rst:200
 #: fc6ca227cd904333916e81b4a7093acc
 msgid "importable (the script imports ``TCP_Server_Base``"
 msgstr "importable (スクリプトは ``TCP_Server_Base`` をインポートします)"
 
-#: ../../Instance_Setup/Instance_Setup.rst:165
+#: ../../Instance_Setup/Instance_Setup.rst:201
 #: dcc9c410853247b0a3302c2c41f6fe13
 msgid "and ``TCP_Client_Base`` from there)."
 msgstr "そこから ``TCP_Client_Base`` となります)。"
+
+#~ msgid ""
+#~ "- ``forward_extension_tcp.py`` – forwarding messages, files, multiple files,"
+#~ " folders and multiple folders to any number of destination clients "
+#~ "(``/send_msg_forward``, ``/file_forward``, ``/multiple_file_forward``, "
+#~ "``/folder_forward``, ``/multiple_folder_forward``)."
+#~ msgstr ""
+#~ "- ``forward_extension_tcp.py`` – "
+#~ "メッセージ、ファイル、複数ファイル、フォルダー、複数フォルダーを任意の数の宛先クライアントに転送します "
+#~ "(``/send_msg_forward``、``/file_forward``、``/multiple_file_forward``、``/folder_forward``、``/multiple_folder_forward``)。"
+
+#~ msgid ""
+#~ "- ``True`` (default) – ``start_TCP_Server()`` / ``start_TCP_client()`` is "
+#~ "called directly and the console input loop runs in its own thread."
+#~ msgstr ""
+#~ "- ``True`` (デフォルト) – ``start_TCP_Server()`` / ``start_TCP_client()`` "
+#~ "が直接呼び出され、コンソール入力ループは独自のスレッドで実行されます。"

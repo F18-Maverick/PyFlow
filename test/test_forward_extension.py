@@ -1,6 +1,7 @@
 """Tests for the TCP forward extension (forward_extension_tcp.py)."""
 
 import os
+import threading
 
 import pytest
 
@@ -215,3 +216,22 @@ def test_server_setup_creates_instance(monkeypatch, tmp_path, capsys):
     assert fwd.server_instance is not None
     for relay in ("/forward_send_msg", "/forward_file", "/forward_folder"):
         assert relay in fwd.server_instance._custom_handlers[0]
+
+
+def test_server_setup_with_existing_instance_threaded(server, monkeypatch):
+    """server_setup(instance=..., is_input_command_in_console=False) registers
+    the relays on the given instance and starts it in a background thread."""
+    started = []
+    real_thread = threading.Thread
+
+    def spy_thread(*args, **kwargs):
+        started.append(kwargs.get("target"))
+        return real_thread(*args, **kwargs)
+
+    monkeypatch.setattr(fwd.threading, "Thread", spy_thread)
+    fwd.server_setup(instance=server, is_input_command_in_console=False)
+    assert fwd.server_instance is server
+    assert len(started) == 1
+    assert started[0] == server.start_TCP_Server
+    for relay in ("/forward_send_msg", "/forward_file", "/forward_folder"):
+        assert relay in server._custom_handlers[0]

@@ -11,6 +11,7 @@ PyFlow is a high-level network protocol with APIs for transferring messages, fil
 - **Encrypted TCP channel** — RSA-OAEP message encryption with a TOFU (trust-on-first-use) peer-key registry, session nonces and sequence numbers against replay, and a circuit breaker against re-exchange storms. See [docs/Crypto](docs/Crypto/Crypto.rst) and the encrypted-channel sections of the TCP API docs.
 - **C/OpenSSL cryptography library** — `libcrypto_api` provides RSA-OAEP, ECDH (P-256/384/521), HKDF-SHA256 and AES-256-GCM with a stable C API (`pf_*` prefix) usable from C, CMake or pkg-config.
 - **Multi-instance launcher** — `python -m PyFlow` (package entry point backed by `PyFlow/flow_setup.py`) starts one or more server/client instances from a CLI, an interactive prompt, or a `setup.json` configuration file.
+- **Extension protocols** — `command_control_extension_tcp.py` (remote command execution with log collection) and `forward_extension_tcp.py` (forwarding messages/files/folders to multiple destinations) plug into any instance via `setup_*_commands()`; `flow_setup.py` loads them automatically for every instance whose `setup.json` config sets `is_extend_command=True`, and starts instances in a background thread when `is_input_command_in_console=False`.
 
 ## Architecture
 
@@ -24,6 +25,7 @@ PyFlow/
 │   ├── rsa_crypto.py        ctypes binding to libcrypto_api + TOFU key registry
 │   └── decode_command_table.json   wire-format table for the file-transfer protocol
 ├── command_control_extension_tcp.py  command-control extension over TCP
+├── forward_extension_tcp.py          forward extension over TCP (messages/files/folders to multiple destinations)
 ├── __init__.py / __main__.py         package launcher entry (`python -m PyFlow`)
 ├── flow_setup.py                     launcher implementation
 └── setup.json                        default launcher configuration (generated)

@@ -36,6 +36,7 @@ import ast
 import functools
 import os
 import shlex
+import threading
 
 from .network_api import connect_tcp
 
@@ -108,9 +109,7 @@ def _upload_files_sync(paths):
         if not os.path.isfile(path):
             print(f"forward: {path} is not a valid file, skipped")
             continue
-        client_instance.file_transfer_client_recv_client_start(
-            f"/file {shlex.quote(path)}", None
-        )
+        client_instance.file_transfer_client_recv_client_start(f"/file {shlex.quote(path)}", None)
 
 
 def _upload_folder_sync(folder_path):
@@ -165,7 +164,7 @@ def _client_forward_handler(kind, allow_multiple, sock, addr, cmd):
     if not items or not addrs:
         print(
             f"{kind}: need at least one item and one destination, "
-            "e.g. /send_msg_forward \"msg\" \"('127.0.0.1', 3000)\""
+            'e.g. /send_msg_forward "msg" "(\'127.0.0.1\', 3000)"'
         )
         return None
     if not allow_multiple and len(items) != 1:
@@ -298,29 +297,41 @@ def setup_server_commands(server):  # noqa: PLW0603
     )
 
 
-def client_setup():
+def client_setup(instance=None, is_input_command_in_console=True):
     """Create and start a forwarding-capable client (mirrors the control extension)."""
     global client_instance  # noqa: PLW0603
-    client_instance = connect_tcp.TCP_Client_Base(
-        host="127.0.0.1",
-        port=65000,
-        client_host="127.0.0.1",
-        is_input_command_in_console=True,
-        is_extend_command=True,
-    )
+    if instance is None:
+        client_instance = connect_tcp.TCP_Client_Base(
+            host="127.0.0.1",
+            port=65000,
+            client_host="127.0.0.1",
+            is_input_command_in_console=is_input_command_in_console,
+            is_extend_command=True,
+        )
+    else:
+        client_instance = instance
     setup_client_commands(client_instance)
-    client_instance.start_TCP_client()
+    if is_input_command_in_console:
+        client_instance.start_TCP_client()
+    else:
+        threading.Thread(target=client_instance.start_TCP_client, daemon=True).start()
 
 
-def server_setup():
+def server_setup(instance=None, is_input_command_in_console=True):
     """Create and start a forwarding-capable server (mirrors the control extension)."""
     global server_instance  # noqa: PLW0603
-    server_instance = connect_tcp.TCP_Server_Base(
-        host="127.0.0.1",
-        port=65000,
-        max_clients=10,
-        is_input_command_in_console=True,
-        is_extend_command=True,
-    )
+    if instance is None:
+        server_instance = connect_tcp.TCP_Server_Base(
+            host="127.0.0.1",
+            port=65000,
+            max_clients=10,
+            is_input_command_in_console=is_input_command_in_console,
+            is_extend_command=True,
+        )
+    else:
+        server_instance = instance
     setup_server_commands(server_instance)
-    server_instance.start_TCP_Server()
+    if is_input_command_in_console:
+        server_instance.start_TCP_Server()
+    else:
+        threading.Thread(target=server_instance.start_TCP_Server, daemon=True).start()
