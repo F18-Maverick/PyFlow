@@ -17,15 +17,18 @@ from concurrent.futures import ThreadPoolExecutor
 
 def _is_closed_socket_error(exc):
     """True when the error means a socket that is already closed
-    (EBADF / ENOTSOCK, Windows winsock WSAENOTSOCK 10038, or the
-    "connection error" RuntimeError raised by send_message after the
-    instance stopped): the normal teardown signal between a closing
-    thread and a receive thread, not a fault worth a traceback."""
+    (EBADF / ENOTSOCK, Windows winsock WSAENOTSOCK 10038, ECONNRESET /
+    EPIPE from a peer that dropped the connection, or the "connection
+    error" RuntimeError raised by send_message after the instance
+    stopped): the normal teardown signal between a closing thread and a
+    receive thread, not a fault worth a traceback."""
     if isinstance(exc, RuntimeError) and str(exc) == "connection error":
         return True
     return isinstance(exc, OSError) and exc.errno in (
         errno.EBADF,
         errno.ENOTSOCK,
+        errno.ECONNRESET,
+        errno.EPIPE,
         10038,  # WSAENOTSOCK (Windows)
     )
 
