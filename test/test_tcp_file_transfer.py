@@ -339,18 +339,22 @@ def test_windows_paths_need_quoting_through_shlex():
     # folder creation with a quoted Windows destination
     tokens = shlex.split('/file_folder "/data" "C:\\dest"')
     assert _parse_destination_path(tokens) == "C:\\dest"
+    # the folder command name is matched case-insensitively: an uppercase
+    # /FILE_FOLDER from a console must still deliver the destination
+    tokens = shlex.split('/FILE_FOLDER "/data" "C:\\dest"')
+    assert _parse_destination_path(tokens) == "C:\\dest"
 
 def test_server_console_file_command_preserves_path_case(pair, tmp_path, monkeypatch):
-    """The server console lowercases the command for dispatch, but a file
-    path must reach the transfer unchanged (POSIX paths are case-sensitive).
-    A mixed-case path typed on the console used to fail with
-    FileNotFoundError."""
+    """The server console matches command names case-insensitively (an
+    uppercase /FILE must dispatch) while the file path reaches the transfer
+    unchanged (POSIX paths are case-sensitive). A mixed-case path typed on
+    the console used to fail with FileNotFoundError."""
     server, client, recv_dir = pair
     src = tmp_path / "MiXeD_Case.bin"
     payload = os.urandom(2048)
     src.write_bytes(payload)
     client_addr = client.client_socket.getsockname()
-    cmd = '/file "{}" "({}, {})"'.format(src, repr(client_addr[0]), client_addr[1])
+    cmd = '/FILE "{}" "({}, {})"'.format(src, repr(client_addr[0]), client_addr[1])
     inputs = iter([cmd, "/stop"])
 
     def fake_input():

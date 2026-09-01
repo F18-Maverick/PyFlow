@@ -54,7 +54,7 @@ def _parse_destination_path(command_part):
     """
     if len(command_part) < 3:
         return None
-    if command_part[0] == "/file_folder":
+    if command_part[0].lower() == "/file_folder":
         if len(command_part) == 3:
             return command_part[-1]  # creation + destination, no client id
         if len(command_part) >= 4 and command_part[-2] != command_part[2]:
@@ -1864,36 +1864,33 @@ class TCP_Server_Base:  # TCP server class
         while self.running:
             try:
                 cmd = input()
-                deal_cmd = cmd.lower().strip()
-                if deal_cmd == "/stop":
+                deal_cmd = cmd.strip()
+                if deal_cmd.lower() == "/stop":
                     print("shutting down...")
                     self.running = False
                     self.stop()
-                elif deal_cmd == "/status":
+                elif deal_cmd.lower() == "/status":
                     print(f"current connection count: {len(self.clients)}")
                     print(f"server running: {self.running}")
-                elif deal_cmd == "/clients":
+                elif deal_cmd.lower() == "/clients":
                     with self.client_lock:
                         for addr, info in self.clients.items():
                             print(f"  {info['id']} - connection time: {info['connected_time']}")
-                elif shlex.split(deal_cmd)[0] == "/send_msg":
+                elif shlex.split(deal_cmd)[0].lower() == "/send_msg":
                     self.send_msg_to_specific_client(deal_cmd)
-                elif shlex.split(deal_cmd)[0] == "/file":
-                    # dispatch on the lowercased name, but hand the original
-                    # command to the handler: file paths are case-sensitive
-                    # on POSIX and must not be lowercased
-                    self.file_transfer_server_recv_client_start_thread(cmd.strip())
-                elif shlex.split(deal_cmd)[0] == "/file_folder":
-                    self.folder_file_transfer_server_recv_client_start(cmd.strip())
-                elif shlex.split(deal_cmd)[0] == "/multiple_file_multiple_client":
+                elif shlex.split(deal_cmd)[0].lower() == "/file":
+                    self.file_transfer_server_recv_client_start_thread(deal_cmd)
+                elif shlex.split(deal_cmd)[0].lower() == "/file_folder":
+                    self.folder_file_transfer_server_recv_client_start(deal_cmd)
+                elif shlex.split(deal_cmd)[0].lower() == "/multiple_file_multiple_client":
                     self.multiple_file_multiple_client_transfer_server_recv_client_start(
-                        cmd.strip()
+                        deal_cmd
                     )
-                elif shlex.split(deal_cmd)[0] == "/diff_multiple_file_diff_multiple_client":
+                elif shlex.split(deal_cmd)[0].lower() == "/diff_multiple_file_diff_multiple_client":
                     self.diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(
-                        cmd.strip()
+                        deal_cmd
                     )
-                elif shlex.split(deal_cmd)[0] == "/help":
+                elif shlex.split(deal_cmd)[0].lower() == "/help":
                     help_text = [
                         "avalable commands:",
                         "/stop - stop the server\n",
