@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-06-16 19:17+0800\n"
+"POT-Creation-Date: 2026-09-01 16:26+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: ru <LL@li.org>\n"
@@ -19,11 +19,11 @@ msgstr ""
 "Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: ../../File_Transfer/File_Transfer.rst:2 03d69218ecaa46458bdd71955990e301
+#: ../../File_Transfer/File_Transfer.rst:2 d9c92006bc3e49c9a5d184d74f2e7824
 msgid "TCP File Transfer Mechanism"
 msgstr "Механизм передачи файлов TCP"
 
-#: ../../File_Transfer/File_Transfer.rst:4 602a01d8a2844e4f8fdef73039b77092
+#: ../../File_Transfer/File_Transfer.rst:4 b32ed3356f814a369d9d4bc153c017fa
 msgid ""
 "This document describes the file transfer subsystem implemented in both the "
 "``TCP_Server_Base`` and ``TCP_Client_Base`` classes. The file transfer "
@@ -37,16 +37,16 @@ msgstr ""
 "файлов и несколько папок между сервером и подключенными к нему клиентами. Он"
 " также поддерживает передачу, инициированную сервером, с консоли сервера."
 
-#: ../../File_Transfer/File_Transfer.rst:14 dccebe80f23a40c1841fe7c4e8a9dea7
+#: ../../File_Transfer/File_Transfer.rst:14 ad6d3cd551694899ba6998e43167bb10
 msgid "The design follows a **two-phase handshake** pattern:"
 msgstr "Конструкция соответствует схеме **двухфазного рукопожатия**:"
 
-#: ../../File_Transfer/File_Transfer.rst:16 3303fc62a4664cc2ba7e713eac03f214
+#: ../../File_Transfer/File_Transfer.rst:16 f67e58b5ae8b4e2a8f9a9021efba0b5c
 msgid "A transfer command is exchanged over the main control connection."
 msgstr ""
 "Обмен командой передачи осуществляется через главное соединение управления."
 
-#: ../../File_Transfer/File_Transfer.rst:18 7ee5cf2535c0443cb109aa62fe7411e0
+#: ../../File_Transfer/File_Transfer.rst:18 4d267488a6cf4911bc2c3cb7801dce8d
 msgid ""
 "A separate TCP connection is established on a dynamically allocated port to "
 "transfer the actual file data (metadata + payload)."
@@ -54,7 +54,7 @@ msgstr ""
 "Отдельное TCP-соединение устанавливается на динамически выделяемом порту для"
 " передачи фактических данных файла (метаданные + полезная нагрузка)."
 
-#: ../../File_Transfer/File_Transfer.rst:22 959e61c285b747d09a78308b1682a762
+#: ../../File_Transfer/File_Transfer.rst:22 a0490aac6cc74a8f9de5e9872378b87c
 msgid ""
 "All file transfers use **stream-oriented reading/writing** with fixed-size "
 "chunks (by default 64 KiB) to avoid blocking and to handle large files "
@@ -64,7 +64,7 @@ msgstr ""
 "фрагментами фиксированного размера (по умолчанию 64 КБ), чтобы избежать "
 "блокировки и эффективно обрабатывать большие файлы."
 
-#: ../../File_Transfer/File_Transfer.rst:27 65f5b20c1794489a8722cfb2f967c719
+#: ../../File_Transfer/File_Transfer.rst:27 9ad33f3c1a2e4164b384a71388b895f5
 msgid ""
 "*Note: For a high-level overview of the server and client classes, please "
 "refer to :doc:`TCP_Server_APIs` and :doc:`TCP_Client_APIs`.*"
@@ -72,11 +72,11 @@ msgstr ""
 "*Примечание. Общий обзор классов сервера и клиента см. в документах "
 ":doc:`TCP_Server_APIs` и :doc:`TCP_Client_APIs`.*"
 
-#: ../../File_Transfer/File_Transfer.rst:34 b08cb986dad449aa85eeda74879da605
+#: ../../File_Transfer/File_Transfer.rst:34 2c31714fc81743fa9fbb8701d87347ac
 msgid "File Transfer Protocol"
 msgstr "Протокол передачи файлов"
 
-#: ../../File_Transfer/File_Transfer.rst:36 d2ba363be2ec4ed5856650490bd62cc1
+#: ../../File_Transfer/File_Transfer.rst:36 61af0fc38ea74fcfae8b2a1316d2e6ea
 msgid ""
 "The protocol is symmetric: the same low-level exchange is used regardless of"
 " whether the server sends to a client or the client sends to the server. The"
@@ -89,7 +89,7 @@ msgstr ""
 "выступает в роли **отправителя** данных файла; другая сторона выступает в "
 "роли **получателя**."
 
-#: ../../File_Transfer/File_Transfer.rst:45 f1490bc791d14f7eb3507bea07070400
+#: ../../File_Transfer/File_Transfer.rst:45 4d8e8c2542ff4559975e412dd2977061
 msgid ""
 "The protocol uses a set of predefined string constants, loaded from "
 "``decode_command_table.json``:"
@@ -97,7 +97,7 @@ msgstr ""
 "Протокол использует набор предопределённых строковых констант, загруженных "
 "из ``decode_command_table.json``:"
 
-#: ../../File_Transfer/File_Transfer.rst:49 4e5390ed5e4940a88a35d589a2253c2c
+#: ../../File_Transfer/File_Transfer.rst:49 c108474c9cb84951af9f471c2d63c395
 msgid ""
 "``server_start_file_transfer_sign`` - sent by the receiver to the sender, "
 "indicating that the receiver is ready."
@@ -105,7 +105,7 @@ msgstr ""
 "``server_start_file_transfer_sign`` — отправляется получателем отправителю, "
 "указывая, что получатель готов."
 
-#: ../../File_Transfer/File_Transfer.rst:52 b18c8eb1b23f42feb6e2d36bd68dbd80
+#: ../../File_Transfer/File_Transfer.rst:52 c3a6d818c4d74484ae1fcf398cb77e65
 msgid ""
 "``server_received_file_header_sign`` - sent by the receiver after it has "
 "successfully read the filename and file size."
@@ -113,7 +113,7 @@ msgstr ""
 "``server_received_file_header_sign`` — отправляется получателем после того, "
 "как он успешно прочитал имя и размер файла."
 
-#: ../../File_Transfer/File_Transfer.rst:55 139fa468bd3d407089a5d6d26d4bcce7
+#: ../../File_Transfer/File_Transfer.rst:55 3d7385155fea45049c349603a29b5cf8
 msgid ""
 "``server_received_file_data_sign`` - sent by the receiver after the complete"
 " file has been written to disk."
@@ -121,7 +121,7 @@ msgstr ""
 "``server_received_file_data_sign`` — отправляется получателем после того, "
 "как полный файл был записан на диск."
 
-#: ../../File_Transfer/File_Transfer.rst:58 49a93159724543adbd499f6bd0db52bb
+#: ../../File_Transfer/File_Transfer.rst:58 0fc372ae19be49029aa105a95e480640
 msgid ""
 "``error_sign`` - sent by either side when an error occurs, causing the "
 "transfer socket to be closed."
@@ -129,11 +129,11 @@ msgstr ""
 "``error_sign`` — отправляется любой стороной при возникновении ошибки, "
 "приводящей к закрытию сокета передачи."
 
-#: ../../File_Transfer/File_Transfer.rst:62 9e6adab382034b53ab3fe71cc88959bc
+#: ../../File_Transfer/File_Transfer.rst:62 45a36aa9239d4caba8752e4dc4fd551b
 msgid "### Metadata Exchange"
 msgstr "### Обмен метаданными"
 
-#: ../../File_Transfer/File_Transfer.rst:64 55f93295f9e64f59bf2e78902da12a97
+#: ../../File_Transfer/File_Transfer.rst:64 d4ace80bc05f4bafb8144e1de31060dc
 msgid ""
 "The sender performs the following steps after the dedicated file-transfer "
 "socket is connected:"
@@ -141,7 +141,7 @@ msgstr ""
 "После подключения выделенного сокета для передачи файлов отправитель "
 "выполняет следующие шаги:"
 
-#: ../../File_Transfer/File_Transfer.rst:68 93b6db7ff60448c2af7f5a1385f7f5da
+#: ../../File_Transfer/File_Transfer.rst:68 5df80a71cd274a92975e8d010f564872
 msgid ""
 "Wait for the receiver's start signal (``server_start_file_transfer_sign``) "
 "with a 10-second timeout."
@@ -149,27 +149,27 @@ msgstr ""
 "Дождитесь стартового сигнала получателя (server_start_file_transfer_sign) с "
 "таймаутом 10 секунд."
 
-#: ../../File_Transfer/File_Transfer.rst:71 0e3264f3b4dd4fa0ac83b7dc5e4d52bc
+#: ../../File_Transfer/File_Transfer.rst:71 d68741e000fe48d3857ec0b0363d4182
 msgid "Send the filename length as a 4-byte unsigned integer (big-endian)."
 msgstr ""
 "Отправьте длину имени файла как 4-байтовое целое число без знака (с обратным"
 " порядком байтов)."
 
-#: ../../File_Transfer/File_Transfer.rst:73 2e454d2bc8964d5c99243588090c0104
+#: ../../File_Transfer/File_Transfer.rst:73 95260b76f4524ddb8700ca05352f294d
 msgid "Send the filename encoded in UTF-8."
 msgstr "Отправьте имя файла в кодировке UTF-8."
 
-#: ../../File_Transfer/File_Transfer.rst:74 83a28bb4097d438c8d5a176dc99d3ce3
+#: ../../File_Transfer/File_Transfer.rst:74 7efa294dbe7e4921974628e8fb08cc00
 msgid "Send the file size as an 8-byte unsigned integer (big-endian)."
 msgstr ""
 "Отправьте размер файла как 8-байтовое целое число без знака (с обратным "
 "порядком байтов)."
 
-#: ../../File_Transfer/File_Transfer.rst:76 e7b1e4b9682a4635b65c59fee8af4d4a
+#: ../../File_Transfer/File_Transfer.rst:76 2a3c86e2dbea42c4b37016380a4c9004
 msgid "Send the file content in 64 KiB chunks until EOF."
 msgstr "Отправляйте содержимое файла частями по 64 КиБ до EOF."
 
-#: ../../File_Transfer/File_Transfer.rst:77 a7ea63bf139a40158d3bd703bfde5c65
+#: ../../File_Transfer/File_Transfer.rst:77 aeec7f8ff0ab424cbc5b7c1a32ff9433
 msgid ""
 "Wait for the completion acknowledgement (``server_received_file_data_sign``)"
 " with a dynamic timeout (base 30 seconds plus 10 seconds per 100 MiB)."
@@ -178,31 +178,31 @@ msgstr ""
 "динамическим таймаутом (базовое значение 30 секунд плюс 10 секунд на 100 "
 "МБ)."
 
-#: ../../File_Transfer/File_Transfer.rst:82 248f909bb710424bba6a56c1796b4df2
+#: ../../File_Transfer/File_Transfer.rst:82 b80094b922a24c409f10eb9c8b05373b
 msgid "The receiver performs the complementary steps:"
 msgstr "Приемник выполняет дополнительные шаги:"
 
-#: ../../File_Transfer/File_Transfer.rst:84 aebf63e5988c4b8a86412393d951c7d5
+#: ../../File_Transfer/File_Transfer.rst:84 5f71fc707ffe4b06a275b3db9f77178d
 msgid "Send the start signal."
 msgstr "Подайте сигнал старта."
 
-#: ../../File_Transfer/File_Transfer.rst:85 f3c4f82de422462287505659f3206b25
+#: ../../File_Transfer/File_Transfer.rst:85 7132d6fe15ce42a3bef64e0073e9baff
 msgid "Read the 4-byte length, then the filename, then the 8-byte size."
 msgstr "Прочитайте длину 4 байта, затем имя файла, затем размер 8 байт."
 
-#: ../../File_Transfer/File_Transfer.rst:87 cc55b5b9422b43b78ee76820347ba1d5
+#: ../../File_Transfer/File_Transfer.rst:87 7e0fcaec6d704455b94fc9f7defbef55
 msgid "Acknowledge the header with ``server_received_file_header_sign``."
 msgstr "Подтвердите заголовок с помощью ``server_received_file_header_sign``."
 
-#: ../../File_Transfer/File_Transfer.rst:89 c3f7880955a240e8af0737f3bfbb62fc
+#: ../../File_Transfer/File_Transfer.rst:89 d6a854d18d404082bdec0e2cf355ea62
 msgid "Receive the file data in chunks and write to disk."
 msgstr "Получайте данные файла частями и записывайте на диск."
 
-#: ../../File_Transfer/File_Transfer.rst:90 4e1e81c46ed54668ba11626b2dd3c32a
+#: ../../File_Transfer/File_Transfer.rst:90 69981b7e399e4de89858906b286aaf06
 msgid "Acknowledge completion with ``server_received_file_data_sign``."
 msgstr "Подтвердите завершение с помощью ``server_received_file_data_sign``."
 
-#: ../../File_Transfer/File_Transfer.rst:93 c78eee29443549389195514e46f1926e
+#: ../../File_Transfer/File_Transfer.rst:93 b98957309caf49eba2657154bffbaf90
 msgid ""
 "Any error during the exchange causes the failing side to send "
 "``error_sign``, and both sides close the transfer socket. The main control "
@@ -212,11 +212,11 @@ msgstr ""
 "отправляет ``error_sign``, и обе стороны закрывают сокет передачи. Основное "
 "соединение управления остается неизменным."
 
-#: ../../File_Transfer/File_Transfer.rst:102 11c11b8cc65e48bbbdca10cbf91f1b8a
+#: ../../File_Transfer/File_Transfer.rst:102 f289e3c6e5b445f48eda6ed3434c9de8
 msgid "Client-Initiated Transfer (Client → Server)"
 msgstr "Передача, инициированная клиентом (Клиент → Сервер)"
 
-#: ../../File_Transfer/File_Transfer.rst:104 bac050d5bc064c91a35a2effcf3008e0
+#: ../../File_Transfer/File_Transfer.rst:104 17e1ddd91efe4690ad00f85f54875eda
 msgid ""
 "When the user types a file-related command in the client's interactive "
 "console, the call chain proceeds as follows."
@@ -224,11 +224,11 @@ msgstr ""
 "Когда пользователь вводит команду, связанную с файлом, в интерактивной "
 "консоли клиента, цепочка вызовов выполняется следующим образом."
 
-#: ../../File_Transfer/File_Transfer.rst:108 4e539659dd8c41b18ce752812451d592
+#: ../../File_Transfer/File_Transfer.rst:108 9cacd6ea79a14ff6ae602d7ed47926c8
 msgid "### Console Input Handling"
 msgstr "### Обработка ввода в консоль"
 
-#: ../../File_Transfer/File_Transfer.rst:110 6c898fbff54f491b9ad378d9b9118d56
+#: ../../File_Transfer/File_Transfer.rst:110 07a7b69b45d04950877f071f25ad7c2c
 msgid ""
 "In ``TCP_Client_Base.interactive_mode()``, user input is read line by line. "
 "Commands starting with ``/file``, ``/multiple_file``, ``/file_folder``, or "
@@ -242,11 +242,11 @@ msgstr ""
 "каждой такой команды клиент вызывает соответствующую потокобезопасную точку "
 "входа (методы, заканчивающиеся на ``_thread``)."
 
-#: ../../File_Transfer/File_Transfer.rst:120 f3f980738b484b69b57844c2173ff271
+#: ../../File_Transfer/File_Transfer.rst:120 250bb94df2a14d339b150a70e8fed215
 msgid "### Thread-Safe Entry Points"
 msgstr "### Потокобезопасные точки входа"
 
-#: ../../File_Transfer/File_Transfer.rst:122 9c634a527b074269ba50851ca48781fe
+#: ../../File_Transfer/File_Transfer.rst:122 b68a1268c9ff4a66af1319323af766ae
 msgid ""
 "The client provides the following thread-safe methods for initiating "
 "transfers:"
@@ -254,7 +254,7 @@ msgstr ""
 "Клиент предоставляет следующие потокобезопасные методы для инициации "
 "передачи:"
 
-#: ../../File_Transfer/File_Transfer.rst:125 d1b1aaefbeb14bdfa96b144280aff663
+#: ../../File_Transfer/File_Transfer.rst:125 d4c40b89eb6245f8bfdf2f69e37861da
 msgid ""
 "``file_transfer_client_recv_client_start_thread(message, "
 "file_folder_abspath=None)``"
@@ -262,19 +262,19 @@ msgstr ""
 "``file_transfer_client_recv_client_start_thread(сообщение, "
 "file_folder_abspath=None)``"
 
-#: ../../File_Transfer/File_Transfer.rst:127 739dd4f31f714f4cae73cf8b324158e1
+#: ../../File_Transfer/File_Transfer.rst:127 9d60213404014fbe8bee542f67d80398
 msgid "``folder_file_transfer_client_recv_client_start(message)``"
 msgstr "``folder_file_transfer_client_recv_client_start(сообщение)``"
 
-#: ../../File_Transfer/File_Transfer.rst:128 80b0f9269123459fbfa1bb5d7470d161
+#: ../../File_Transfer/File_Transfer.rst:128 2e6c7b2b820349ebac90f27d835477d0
 msgid "``multiple_file_transfer_client_recv_client_start(message)``"
 msgstr "``multiple_file_transfer_client_recv_client_start(сообщение)``"
 
-#: ../../File_Transfer/File_Transfer.rst:129 b74969f443834de5bcf3fb147a213892
+#: ../../File_Transfer/File_Transfer.rst:129 bdee0e9084194b45b5fad3a44e9aaf85
 msgid "``multiple_folder_file_transfer_client_recv_client_start(message)``"
 msgstr "``multiple_folder_file_transfer_client_recv_client_start(сообщение)``"
 
-#: ../../File_Transfer/File_Transfer.rst:131 da30d215a2d64a77881970574e7c1a35
+#: ../../File_Transfer/File_Transfer.rst:131 0ea3256bc8944b1b97265f488b71bd90
 msgid ""
 "Each of these methods creates a new daemon thread that executes the actual "
 "worker function (the non-``_thread`` version). This prevents the console "
@@ -284,11 +284,11 @@ msgstr ""
 "фактическую рабочую функцию (версия, отличная от ``_thread``). Это "
 "предотвращает блокировку консольного потока."
 
-#: ../../File_Transfer/File_Transfer.rst:137 92852280c4d84ad5a75c01a4c55c1022
+#: ../../File_Transfer/File_Transfer.rst:137 8e945e4bdc124e749ee0a5976249a787
 msgid "### Worker Function (Client Side)"
 msgstr "### Рабочая функция (клиентская сторона)"
 
-#: ../../File_Transfer/File_Transfer.rst:139 7e5de3d5a9314fdaaf9cfbf6ca50252a
+#: ../../File_Transfer/File_Transfer.rst:139 cc8b9fc35bfb4cf395a2114786c01718
 msgid ""
 "The core worker function for a single file is "
 "``file_transfer_client_recv_client_start(message, "
@@ -298,13 +298,13 @@ msgstr ""
 "``file_transfer_client_recv_client_start(message, "
 "file_folder_abspath=None)``. Ее логика следующая:"
 
-#: ../../File_Transfer/File_Transfer.rst:144 77e5467567ad4962812650a497cf7694
+#: ../../File_Transfer/File_Transfer.rst:144 e3d81c4f4e724d81b426fdbfedb9c062
 msgid "Allocate a unique client ID using the lock ``file_client_id_lock``."
 msgstr ""
 "Выделите уникальный идентификатор клиента, используя блокировку "
 "file_client_id_lock."
 
-#: ../../File_Transfer/File_Transfer.rst:146 4987ab4c46534e7c807195f8c648af70
+#: ../../File_Transfer/File_Transfer.rst:146 81b9ac67e27341c0a17468f3b6787d14
 msgid ""
 "Extend the original command string with the client ID (e.g., ``/file "
 "mydoc.txt`` becomes ``/file mydoc.txt 42``) and send it to the server over "
@@ -314,7 +314,7 @@ msgstr ""
 "``/file mydoc.txt`` станет ``/file mydoc.txt 42``) и отправьте ее на сервер "
 "через основное управляющее соединение с помощью ``send_message()``."
 
-#: ../../File_Transfer/File_Transfer.rst:152 2d16693f2df14eb0838802f4ecf827fd
+#: ../../File_Transfer/File_Transfer.rst:152 af07c5ef546a4102bbb836b65b2fd3be
 msgid ""
 "Obtain a local port for the outgoing file transfer socket by calling "
 "``palloc()``."
@@ -322,7 +322,7 @@ msgstr ""
 "Получите локальный порт для исходящего сокета передачи файлов, вызвав "
 "``palloc()``."
 
-#: ../../File_Transfer/File_Transfer.rst:155 34fa74988b1642618455c52b6f5c82df
+#: ../../File_Transfer/File_Transfer.rst:155 37226a4f2e1e4a878ba325fca05df9bf
 msgid ""
 "Wait (up to 20 seconds) for the server to reply with a port number. The "
 "server's reply (``/server_file_transfer_port <port> <client_id>``) is "
@@ -334,7 +334,7 @@ msgstr ""
 "соединением и сохраняется в ``file_server_port_list``. Когда соответствующая"
 " запись найдена, порт извлекается."
 
-#: ../../File_Transfer/File_Transfer.rst:163 6eae880c0d22480ba26febf4e95ee9bf
+#: ../../File_Transfer/File_Transfer.rst:163 e9cd68239fe3498597f07ccfa774ae22
 msgid ""
 "Call the low-level send function ``file_transfer_mode(filename, server_host,"
 " server_port, client_port)``."
@@ -342,7 +342,7 @@ msgstr ""
 "Вызовите низкоуровневую функцию отправки ``file_transfer_mode(filename, "
 "server_host, server_port, client_port)``."
 
-#: ../../File_Transfer/File_Transfer.rst:167 7290f6272e274e44be63919a4a743c93
+#: ../../File_Transfer/File_Transfer.rst:167 145c524c53654e84a0bb45d3a065733e
 msgid ""
 "For folder transfers, the worker function "
 "``folder_file_transfer_client_recv_client_start(message)`` recursively walks"
@@ -364,11 +364,11 @@ msgstr ""
 "(file_semaphore) ограничивает количество одновременных передач файлов до "
 "max_thread_num."
 
-#: ../../File_Transfer/File_Transfer.rst:183 54995f3ab2f74de6a4310bc25c4b36ab
+#: ../../File_Transfer/File_Transfer.rst:183 4ae4777e086a48558cbe3dda0ecdb3fb
 msgid "### Server-Side Handler (Receiving)"
 msgstr "### Серверный обработчик (прием)"
 
-#: ../../File_Transfer/File_Transfer.rst:185 4f200dde4f3047ea94474034ed278ac1
+#: ../../File_Transfer/File_Transfer.rst:185 66a812ac1ac84ad2b912deb843f3c059
 msgid ""
 "When the server receives an extended command like ``/file mydoc.txt 42`` on "
 "the main control connection, ``handle_command`` detects it and calls:"
@@ -377,7 +377,7 @@ msgstr ""
 "главному управляющему соединению, ``handle_command`` обнаруживает ее и "
 "вызывает:"
 
-#: ../../File_Transfer/File_Transfer.rst:190 9c6cc054024c4ddd8dc5415b121f3543
+#: ../../File_Transfer/File_Transfer.rst:190 081e020d3e674d01bfde15c0922aa25c
 msgid ""
 "``file_transfer_server_recv_server_start_thread(client_id, client_socket, "
 "command)``"
@@ -385,11 +385,11 @@ msgstr ""
 "``file_transfer_server_recv_server_start_thread(client_id, client_socket, "
 "команда)``"
 
-#: ../../File_Transfer/File_Transfer.rst:193 b4f302e5908c4f31b03d1e4bd4b94007
+#: ../../File_Transfer/File_Transfer.rst:193 4b5b5057002a457db83aed00c6148a7f
 msgid "The server then:"
 msgstr "Затем сервер:"
 
-#: ../../File_Transfer/File_Transfer.rst:195 eeeb2636294e4fb8bed2c40f2e198580
+#: ../../File_Transfer/File_Transfer.rst:195 e2ad0e97b7854be4a3dded6cf7d602b7
 msgid ""
 "Creates a new thread via ``file_transfer_server_recv_server_start(client_id,"
 " client_socket, command, new_save_path=None, file_name=None)``."
@@ -398,11 +398,11 @@ msgstr ""
 "``file_transfer_server_recv_server_start(client_id, client_socket, команда, "
 "new_save_path=None, file_name=None)``."
 
-#: ../../File_Transfer/File_Transfer.rst:199 1ca5347385cc4dde90479df4f70c110c
+#: ../../File_Transfer/File_Transfer.rst:199 ee8cdc9ae93c4579a05e37b32c86f705
 msgid "Allocates a transfer port with ``palloc()``."
 msgstr "Выделяет порт передачи с помощью palloc()."
 
-#: ../../File_Transfer/File_Transfer.rst:200 73130518d2ac4960952a69aae160ae63
+#: ../../File_Transfer/File_Transfer.rst:200 ac8a87e1e481417284d90ba8cb843415
 msgid ""
 "Calls ``file_transfer_mode_recv(host, port, client_socket, client_id, "
 "new_save_path, file_name, command)``."
@@ -410,7 +410,7 @@ msgstr ""
 "Вызывает ``file_transfer_mode_recv(хост, порт, client_socket, client_id, "
 "new_save_path, file_name, команда)``."
 
-#: ../../File_Transfer/File_Transfer.rst:203 6bc18f509b1443ab9ccce5f9120aa754
+#: ../../File_Transfer/File_Transfer.rst:203 2f6675b7698c41938542b09cbfb482e8
 msgid ""
 "This low-level receive function sets up a listening socket on the allocated "
 "port, sends the port number back to the client (as "
@@ -426,7 +426,7 @@ msgstr ""
 "protocol`. Полученный файл сохраняется в папке ``received_files/`` (или в "
 "подкаталоге, если была запрошена передача папки)."
 
-#: ../../File_Transfer/File_Transfer.rst:213 8ec43e20c1ac4938b4178c97ddc56ac4
+#: ../../File_Transfer/File_Transfer.rst:213 9fe861572b8746aeaa8266d8d30f963f
 msgid ""
 "After the transfer completes (or fails), the port is released with "
 "``pfree()``."
@@ -434,11 +434,11 @@ msgstr ""
 "После завершения передачи (или неудачи) порт освобождается с помощью "
 "``pfree()``."
 
-#: ../../File_Transfer/File_Transfer.rst:220 dd3bdc1f3f624f39a1354dec7f34b58c
+#: ../../File_Transfer/File_Transfer.rst:220 3e4e81fa8cea4ef5ab2a39602eb29355
 msgid "Server-Initiated Transfer (Server → Client)"
 msgstr "Передача, инициированная сервером (Сервер → Клиент)"
 
-#: ../../File_Transfer/File_Transfer.rst:222 035365529d4549399779ee529d3d51f1
+#: ../../File_Transfer/File_Transfer.rst:222 3ab21d4beefb41be83651eec10fd3899
 msgid ""
 "When the server administrator types a command in the server console, for "
 "example ``/file /path/to/file.txt (127.0.0.1,54321)``, the console input "
@@ -450,11 +450,11 @@ msgstr ""
 "(``console_input``) анализирует команду и вызывает соответствующий API "
 "передачи файлов на стороне сервера."
 
-#: ../../File_Transfer/File_Transfer.rst:230 51137f859ce04e4f87ad8b9502a84089
+#: ../../File_Transfer/File_Transfer.rst:230 fa019410dca84c04b24bf9334131aa8d
 msgid "The recommended entry points for server-to-client transfers are:"
 msgstr "Рекомендуемые точки входа для передачи данных с сервера на клиент:"
 
-#: ../../File_Transfer/File_Transfer.rst:233 46a99d55256a43f98d7378e430e5ecc0
+#: ../../File_Transfer/File_Transfer.rst:233 99103b4e1f234e2dac2ffc955ab5b23e
 msgid ""
 "``file_transfer_server_recv_client_start_thread(message, "
 "file_folder_abspath=None)`` for a single file."
@@ -462,12 +462,12 @@ msgstr ""
 "``file_transfer_server_recv_client_start_thread(message, "
 "file_folder_abspath=None)`` для одного файла."
 
-#: ../../File_Transfer/File_Transfer.rst:236 815b1ce1593c44e795e0a39943766727
+#: ../../File_Transfer/File_Transfer.rst:236 a1560a9b45c043618778f38beb1c3cb2
 msgid ""
 "``folder_file_transfer_server_recv_client_start(message)`` for a folder."
 msgstr "``folder_file_transfer_server_recv_client_start(message)`` для папки."
 
-#: ../../File_Transfer/File_Transfer.rst:238 02bd31b9d5ff4799aa1d3716ab9262e8
+#: ../../File_Transfer/File_Transfer.rst:238 c18cb827a52f48d6b2883b708e2c871e
 msgid ""
 "``multiple_file_multiple_client_transfer_server_recv_client_start(message)``"
 " for multiple files to multiple clients."
@@ -475,7 +475,7 @@ msgstr ""
 "``multiple_file_multiple_client_transfer_server_recv_client_start(message)``"
 " для нескольких файлов нескольким клиентам."
 
-#: ../../File_Transfer/File_Transfer.rst:240 4125040f7dcf4db3b064471f0c8557e3
+#: ../../File_Transfer/File_Transfer.rst:240 1b9fd8eea75e46899f68c6ca1312e896
 msgid ""
 "``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(message)``"
 " for different file lists to different clients."
@@ -483,7 +483,7 @@ msgstr ""
 "``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(message)``"
 " для разных списков файлов разным клиентам."
 
-#: ../../File_Transfer/File_Transfer.rst:243 09dfeb4554ef4777ba0f3227ff44946f
+#: ../../File_Transfer/File_Transfer.rst:243 d34ac75777c74fe4bc63e1a100fd2aa3
 msgid ""
 "The worker function ``file_transfer_server_recv_client_start(message, "
 "file_folder_abspath=None)`` performs the following steps:"
@@ -491,7 +491,7 @@ msgstr ""
 "Рабочая функция file_transfer_server_recv_client_start(message, "
 "file_folder_abspath=None) выполняет следующие шаги:"
 
-#: ../../File_Transfer/File_Transfer.rst:248 eb283caaba9145dc82d00edf97782f39
+#: ../../File_Transfer/File_Transfer.rst:248 29d03e172fd346e2a7928b55510df4f1
 msgid ""
 "Extract the target client address from the last part of the command (e.g., "
 "``(127.0.0.1,54321)``) using ``ast.literal_eval()``. Obtain the client's "
@@ -501,7 +501,7 @@ msgstr ""
 "``(127.0.0.1,54321)``), используя ``ast.literal_eval()``. Получите сокет "
 "клиента из self.clients."
 
-#: ../../File_Transfer/File_Transfer.rst:253 c92bd433e10343e987d321e6afdc4670
+#: ../../File_Transfer/File_Transfer.rst:253 7a8d8ed423524d6e91a311a3aa3d5a9a
 msgid ""
 "Allocate a unique client ID and extend the command with it, then send the "
 "extended command to the client over the main connection."
@@ -509,11 +509,11 @@ msgstr ""
 "Выделите уникальный идентификатор клиента и дополните им команду, а затем "
 "отправьте расширенную команду клиенту через основное соединение."
 
-#: ../../File_Transfer/File_Transfer.rst:257 ed45e1769e0248b5b69a032a80111183
+#: ../../File_Transfer/File_Transfer.rst:257 94b6c1f8a6a240e4ba4be8cf20f87c7f
 msgid "Allocate a local port with ``palloc()``."
 msgstr "Выделите локальный порт с помощью palloc()."
 
-#: ../../File_Transfer/File_Transfer.rst:258 59557d2f253c4a6880bf93e3102a38d6
+#: ../../File_Transfer/File_Transfer.rst:258 723a05b6c3974b65a539af723f1e0872
 msgid ""
 "Wait for the client to reply with its own port number (via "
 "``/server_file_transfer_port``), which is stored in "
@@ -523,7 +523,7 @@ msgstr ""
 "``/server_file_transfer_port``), который хранится в "
 "``file_server_port_list`` обработчиком сообщений основного соединения."
 
-#: ../../File_Transfer/File_Transfer.rst:263 a10c2cb75f77412aa967478235f1c114
+#: ../../File_Transfer/File_Transfer.rst:263 878572ca3d2948a9acbb6741f00ddd62
 msgid ""
 "Call ``file_transfer_mode(filename, client_host, client_port, local_port)`` "
 "to send the file."
@@ -531,7 +531,7 @@ msgstr ""
 "Вызовите ``file_transfer_mode(filename, client_host, client_port, "
 "local_port)``, чтобы отправить файл."
 
-#: ../../File_Transfer/File_Transfer.rst:267 22e01a24b7e0400aa768e37c8b62116d
+#: ../../File_Transfer/File_Transfer.rst:267 ca517571b2d34c0497fcf5d5b12c93a1
 msgid ""
 "On the client side, when it receives a command like ``/file "
 "/path/to/file.txt (127.0.0.1,54321) 42``, ``handle_server_command`` calls "
@@ -549,11 +549,11 @@ msgstr ""
 "``/server_file_transfer_port`` и вызывает ``file_transfer_mode_recv`` для "
 "получения и сохранения файла."
 
-#: ../../File_Transfer/File_Transfer.rst:283 109835a4f0ed434fb16426201b2e27be
+#: ../../File_Transfer/File_Transfer.rst:283 cb7bdf5091e54e039de9d5578c273b93
 msgid "Folder Transfer Mechanism (Detailed)"
 msgstr "Механизм передачи папок (подробно)"
 
-#: ../../File_Transfer/File_Transfer.rst:285 3dfa5c871a5e4f0f93b165dad72cc536
+#: ../../File_Transfer/File_Transfer.rst:285 b282df0b45bd4bb087ae10816fd3f06d
 msgid ""
 "Transferring a folder is implemented as a **recursive walk** that sends "
 "separate commands for subdirectories and files. The logic is symmetric on "
@@ -563,11 +563,11 @@ msgstr ""
 "отдельные команды для подкаталогов и файлов. Логика симметрична как на "
 "клиенте, так и на сервере."
 
-#: ../../File_Transfer/File_Transfer.rst:291 3cab4bc9929643d7b04abdeeba1affbc
+#: ../../File_Transfer/File_Transfer.rst:291 fb34b1f5d8a4488b9aef8b71dcb764ec
 msgid "### Creating Directories"
 msgstr "### Создание каталогов"
 
-#: ../../File_Transfer/File_Transfer.rst:293 d1456dc424634cc99a49cb6e6ca2e57e
+#: ../../File_Transfer/File_Transfer.rst:293 6b67f2390d914745a253523cef9a2e0b
 msgid ""
 "For a directory that needs to be created on the receiver side, the sender "
 "sends a command of the form:"
@@ -575,11 +575,11 @@ msgstr ""
 "Для каталога, который необходимо создать на стороне получателя, отправитель "
 "отправляет команду вида:"
 
-#: ../../File_Transfer/File_Transfer.rst:297 f56644cae3b7414f904c357ecb1dfed3
+#: ../../File_Transfer/File_Transfer.rst:297 7aaf85bf38fa4621a760dc56b6f99ad6
 msgid "``/file_folder <relative_path>``"
 msgstr "``/file_folder <относительный_путь>``"
 
-#: ../../File_Transfer/File_Transfer.rst:299 ab449f8fe3324f3a80fb264c22cbddc6
+#: ../../File_Transfer/File_Transfer.rst:299 046f125a1f6e41e4808a9cd703e34ee4
 msgid ""
 "The receiver's handler for this command (in either "
 "``file_folder_transfer_server_recv_server_start_thread`` or "
@@ -595,19 +595,19 @@ msgstr ""
 "сервера, тот же каталог для клиента). Относительный путь использует косую "
 "черту, чтобы быть независимым от платформы."
 
-#: ../../File_Transfer/File_Transfer.rst:310 740ee30724314d6aa3922798e5dd8a30
+#: ../../File_Transfer/File_Transfer.rst:310 3fb5d6322ccd47f79e601e38684fe234
 msgid "### Sending Files Inside a Folder"
 msgstr "### Отправка файлов внутри папки"
 
-#: ../../File_Transfer/File_Transfer.rst:312 ce7dd84d0d90410cab1689483e19450b
+#: ../../File_Transfer/File_Transfer.rst:312 c9f77546ed49407fa57c57f0b0a76acf
 msgid "For each file, the sender sends a command of the form:"
 msgstr "Для каждого файла отправитель отправляет команду вида:"
 
-#: ../../File_Transfer/File_Transfer.rst:314 3b0bedc84a084d63a6988e0171297e3d
+#: ../../File_Transfer/File_Transfer.rst:314 f5a164466b0d4d4382b7d880bd320e3d
 msgid "``/file_folder <relative_path> <file_name>``"
 msgstr "``/file_folder <относительный_путь> <имя_файла>``"
 
-#: ../../File_Transfer/File_Transfer.rst:316 b0867ccc65fc485f93f57af901ce5ba9
+#: ../../File_Transfer/File_Transfer.rst:316 c507cca92d1c463ea9f4d429a38a9b6a
 msgid ""
 "The receiver treats this as a file transfer request. The second argument "
 "(``file_name``) is used as the final filename, and the relative path "
@@ -623,11 +623,11 @@ msgstr ""
 "протокола (через ``file_transfer_client_recv_client_start`` или "
 "``file_transfer_server_recv_client_start``, в зависимости от направления)."
 
-#: ../../File_Transfer/File_Transfer.rst:327 60ddc4ea0f36444982923f350e2e8a10
+#: ../../File_Transfer/File_Transfer.rst:327 e1e2b8dd57524ecfabd47c2c8386dfea
 msgid "### Concurrency Control for Folders"
 msgstr "### Управление параллелизмом для папок"
 
-#: ../../File_Transfer/File_Transfer.rst:329 01d231046a284f0ba86d3d0281ff272c
+#: ../../File_Transfer/File_Transfer.rst:329 32b26f72bba4482490f38968dcee5837
 msgid ""
 "Because a folder can contain many files, the sender uses a semaphore "
 "(``file_semaphore``) to limit the number of concurrently active file "
@@ -643,11 +643,114 @@ msgstr ""
 "параметром max_thread_num на клиенте и max_file_transfer_thread_num на "
 "сервере."
 
-#: ../../File_Transfer/File_Transfer.rst:342 f7e437a506564b899057748cc9d3ccb5
+#: ../../File_Transfer/File_Transfer.rst:342 8ce424a7f1de4933b3113a0e3ab98155
+msgid "Custom Destination Directory"
+msgstr "Пользовательский целевой каталог"
+
+#: ../../File_Transfer/File_Transfer.rst:344 6ca8ee9f021842939f446e999c067dfb
+msgid ""
+"Every transfer family accepts an optional trailing ``destination_file_path``"
+" argument that replaces the receiver's default save directory "
+"(``received_files/`` or the configured ``file_transfer_dir``). When it is "
+"omitted, the transfer goes to the default location exactly as before."
+msgstr ""
+"Каждое семейство передачи принимает необязательный завершающий аргумент "
+"«destination_file_path», который заменяет каталог сохранения получателя по "
+"умолчанию («received_files/» или настроенный «file_transfer_dir»). Если он "
+"опущен, передача осуществляется в местоположение по умолчанию точно так же, "
+"как и раньше."
+
+#: ../../File_Transfer/File_Transfer.rst:352 6291da89ffa542dfbd94f599a9321216
+msgid ""
+"The destination is **always the last argument** of the command and names a "
+"*directory* on the receiving machine: the received file keeps its own name "
+"(``<destination>/<filename>``), and a transferred folder keeps its structure"
+" under the destination (``<destination>/<folder_name>/...`` ). An absolute "
+"path is used as-is; a relative path is resolved under the default save "
+"directory. Missing directories are created."
+msgstr ""
+"Назначением является **всегда последний аргумент** команды и указывается "
+"*каталог* на принимающем компьютере: полученный файл сохраняет свое "
+"собственное имя (``<destination>/<filename>``), а переданная папка сохраняет"
+" свою структуру под местом назначения (``<destination>/<folder_name>/...`` "
+"). Абсолютный путь используется как есть; относительный путь определяется в "
+"каталоге сохранения по умолчанию. Отсутствующие каталоги создаются."
+
+#: ../../File_Transfer/File_Transfer.rst:364 76243e0349c1474bbdf14e1ef2a8e52b
+msgid "Command syntax:"
+msgstr "Синтаксис команды:"
+
+#: ../../File_Transfer/File_Transfer.rst:366 0c055bfc5ba4465a98a3555f8aa124c3
+msgid "Client console (the receiver is the server):"
+msgstr "Клиентская консоль (приемник — сервер):"
+
+#: ../../File_Transfer/File_Transfer.rst:368 c9fa612895bc4f92839d2de77b6cbc7f
+msgid "``/file <file_path> [destination_file_path]``"
+msgstr "``/file <путь_файла> [путь_назначающего_файла]``"
+
+#: ../../File_Transfer/File_Transfer.rst:370 2d34a030a1804d299a0b56c14984b1b5
+msgid "``/multiple_file <file1> <file2> ... [destination_file_path]``"
+msgstr "``/multiple_file <файл1> <файл2> ... [путь_файла_назначения]``"
+
+#: ../../File_Transfer/File_Transfer.rst:372 a7dd1e241a4346d4b873072c5948f187
+#, fuzzy
+msgid "``/file_folder <folder_path> [destination_file_path]``"
+msgstr "``/file_folder <относительный_путь>``"
+
+#: ../../File_Transfer/File_Transfer.rst:374 953993d920eb4959987d98423440ce61
+msgid ""
+"``/multiple_file_folder <folder1> <folder2> ... [destination_file_path]``"
+msgstr ""
+"``/multiple_file_folder <папка1> <папка2> ... [путь_файла_назначения]``"
+
+#: ../../File_Transfer/File_Transfer.rst:376 886c8b7d760044cabe48ce044412ca64
+msgid ""
+"Server console (the receiver is the target client, given as a quoted address"
+" tuple):"
+msgstr ""
+"Консоль сервера (получателем является целевой клиент, заданный в виде "
+"кортежа адресов в кавычках):"
+
+#: ../../File_Transfer/File_Transfer.rst:379 48d3bf6084224062867313a9597044d7
+msgid "``/file <file_path> <client_id> [destination_file_path]``"
+msgstr "``/file <путь_файла> <id_клиента> [путь_файла_назначения]``"
+
+#: ../../File_Transfer/File_Transfer.rst:381 684fa9b22136418b94cbb4202f702cd2
+#, fuzzy
+msgid "``/file_folder <folder_path> <client_id> [destination_file_path]``"
+msgstr "``/file_folder <относительный_путь> <имя_файла>``"
+
+#: ../../File_Transfer/File_Transfer.rst:383 9380dc31685947e3a835107f435deed2
+msgid ""
+"``/multiple_file_multiple_client <file1> <file2> ... <client_id1> "
+"<client_id2> ... [destination_file_path]``"
+msgstr ""
+"``/multiple_file_multiple_client <файл1> <файл2> ... <client_id1> "
+"<client_id2> ... [destination_file_path]``"
+
+#: ../../File_Transfer/File_Transfer.rst:385 62488b8bb4e149be86c1d655bd80b6a8
+#, fuzzy
+msgid ""
+"``/diff_multiple_file_diff_multiple_client <file1> ... <client_id1> ... "
+"[destination_file_path]``"
+msgstr ""
+"``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``"
+
+#: ../../File_Transfer/File_Transfer.rst:387 f2dd27e5697a4b1284def2f67c3fc44b
+msgid ""
+"For the multiple-item commands the destination is the last argument; when "
+"the last argument is an existing local file/folder it is treated as another "
+"item to transfer instead."
+msgstr ""
+"Для команд с несколькими элементами пунктом назначения является последний "
+"аргумент; когда последним аргументом является существующий локальный "
+"файл/папка, он рассматривается как еще один элемент для передачи."
+
+#: ../../File_Transfer/File_Transfer.rst:396 0aa14deaf6474437b421a65e21fce7d8
 msgid "Concurrency and Threading"
 msgstr "Параллелизм и многопоточность"
 
-#: ../../File_Transfer/File_Transfer.rst:344 4e65544df14748018fe23062f42decf7
+#: ../../File_Transfer/File_Transfer.rst:398 825c5e1a8b9b405c967ca49a1861e258
 msgid ""
 "Both the server and the client use multiple levels of concurrency control to"
 " ensure stability during file transfers."
@@ -655,15 +758,15 @@ msgstr ""
 "И сервер, и клиент используют несколько уровней управления параллелизмом для"
 " обеспечения стабильности во время передачи файлов."
 
-#: ../../File_Transfer/File_Transfer.rst:348 15cade7404054ce7933408ac33142c5f
+#: ../../File_Transfer/File_Transfer.rst:402 0d48b1245cd54597928cfc28d5b3c248
 msgid "### File Transfer Semaphore"
 msgstr "### Семафор передачи файлов"
 
-#: ../../File_Transfer/File_Transfer.rst:350 93d59898ddf14a27ba864487c9e27e85
+#: ../../File_Transfer/File_Transfer.rst:404 e2674ee9e0584513bc53aa815603fd24
 msgid "Client: ``self.file_semaphore = threading.Semaphore(max_thread_num)``"
 msgstr "Клиент: ``self.file_semaphore = threading.Semaphore(max_thread_num)``"
 
-#: ../../File_Transfer/File_Transfer.rst:352 e3ee4ebd6a4b4ade9e735405a09d5f68
+#: ../../File_Transfer/File_Transfer.rst:406 1c0d27d13ad844159d29c6e662d51d09
 msgid ""
 "Server: ``self.file_semaphore = "
 "threading.Semaphore(max_file_transfer_thread_num)``"
@@ -671,7 +774,7 @@ msgstr ""
 "Сервер: ``self.file_semaphore = "
 "threading.Semaphore(max_file_transfer_thread_num)``"
 
-#: ../../File_Transfer/File_Transfer.rst:355 4748537720d847c4813d56424ac2adc8
+#: ../../File_Transfer/File_Transfer.rst:409 5b0c8289b2c9460cb7305101226b66a7
 msgid ""
 "This semaphore limits the number of simultaneous file transfers (used "
 "primarily when sending folders or multiple files). Each transfer runs in its"
@@ -682,11 +785,11 @@ msgstr ""
 "передача выполняется в своем собственном потоке, и семафор получается до "
 "запуска потока."
 
-#: ../../File_Transfer/File_Transfer.rst:362 5753e1521710478dbbba30e9e2f228d1
+#: ../../File_Transfer/File_Transfer.rst:416 6d93783b298e4ce98b999ff890d4a5f4
 msgid "### Threading Model"
 msgstr "### Модель потоков"
 
-#: ../../File_Transfer/File_Transfer.rst:364 82be42abc90b40dd9c930d6dbb62dbea
+#: ../../File_Transfer/File_Transfer.rst:418 036a972600e645119d8a523fa08a52db
 msgid ""
 "Each file transfer runs in a dedicated daemon thread, created by the "
 "``_thread`` wrapper functions (e.g., "
@@ -698,7 +801,7 @@ msgstr ""
 "``file_transfer_client_recv_client_start_thread``). Это предотвращает "
 "блокировку основного контура управления при медленной передаче."
 
-#: ../../File_Transfer/File_Transfer.rst:370 0d5dc5c46cf34c76b927a8769fc263fb
+#: ../../File_Transfer/File_Transfer.rst:424 a84aaf5f9fb64d92b97c32185a1e7cb5
 msgid ""
 "The thread that receives the transfer command (e.g., the server's "
 "``handle_command`` thread) does not wait for the transfer to complete; it "
@@ -708,7 +811,7 @@ msgstr ""
 "сервера), не ждет завершения передачи; он возвращается сразу после создания "
 "рабочего потока."
 
-#: ../../File_Transfer/File_Transfer.rst:375 07576dad1e9c4faca131956834478bf1
+#: ../../File_Transfer/File_Transfer.rst:429 669fb6da8e7444dd829a6e14295648b1
 msgid ""
 "The low-level receive function (``file_transfer_mode_recv``) blocks while "
 "reading from the transfer socket, but because it runs in a dedicated thread,"
@@ -718,11 +821,11 @@ msgstr ""
 "чтении из сокета передачи, но поскольку она выполняется в выделенном потоке,"
 " основное соединение остается отзывчивым."
 
-#: ../../File_Transfer/File_Transfer.rst:381 95dfe5f6f5194a14a6e304c7ada89790
+#: ../../File_Transfer/File_Transfer.rst:435 e39f8ae06ae84a6b84de8a3008ca17cb
 msgid "### Thread Pool for Custom Commands"
 msgstr "### Пул потоков для пользовательских команд"
 
-#: ../../File_Transfer/File_Transfer.rst:383 446e1bf72ecf41278269e8b3bfd7b411
+#: ../../File_Transfer/File_Transfer.rst:437 3ad49853529d4563bacdfb4ca6eee115
 msgid ""
 "Both classes also provide a ``ThreadPoolExecutor`` "
 "(``self._custom_executor``) for custom command handlers. When a handler is "
@@ -738,11 +841,11 @@ msgstr ""
 "``max_custom_workers``. Этот механизм **независим** от семафора передачи "
 "файлов и предназначен для обработки команд общего назначения."
 
-#: ../../File_Transfer/File_Transfer.rst:398 f4c82a53eeb143c09b83234317818540
+#: ../../File_Transfer/File_Transfer.rst:452 1862d74da28a40219f82cfd7af89c126
 msgid "Port Allocation and Management"
 msgstr "Распределение портов и управление ими"
 
-#: ../../File_Transfer/File_Transfer.rst:400 6fb459e9e113454a821c07ee5c99edc2
+#: ../../File_Transfer/File_Transfer.rst:454 bd53ec8aa4ef498aa0815db16ed03140
 msgid ""
 "File transfers require ephemeral ports for the secondary data connections. "
 "The ``palloc()`` and ``pfree()`` methods are used to obtain and release "
@@ -752,7 +855,7 @@ msgstr ""
 "данным. Методы palloc() и pfree() используются для получения и освобождения "
 "этих портов. Доступны два режима:"
 
-#: ../../File_Transfer/File_Transfer.rst:406 a58ba4d2e50047a580cdcd5d910e58c4
+#: ../../File_Transfer/File_Transfer.rst:460 eeaa9379d7d941159ac34f30ff6bb5f9
 msgid ""
 "**Automatic mode** (``is_hand_alloc_port=False``): ``palloc()`` returns "
 "``0``, and the operating system assigns a free port when the socket is "
@@ -763,7 +866,7 @@ msgstr ""
 "сокет привязан. Это рекомендуемый режим для большинства случаев "
 "использования."
 
-#: ../../File_Transfer/File_Transfer.rst:411 a3bc71d703464dc88772122fe576e24d
+#: ../../File_Transfer/File_Transfer.rst:465 80e08ac6614b4dcd88cd0e4d31a3da64
 msgid ""
 "**Manual mode** (``is_hand_alloc_port=True``): Ports are drawn from a "
 "configurable range ``[self.min_port, self.max_port]`` with a step size "
@@ -777,7 +880,7 @@ msgstr ""
 "``/client_alloc_port_range``, и клиенты затем используют ту же логику "
 "ручного выделения."
 
-#: ../../File_Transfer/File_Transfer.rst:421 4f3ad2263f5c421bb6a11a80c0548796
+#: ../../File_Transfer/File_Transfer.rst:475 29cfdab183eb4f9f83de41ef62a60785
 msgid ""
 "*Note: For more details about port allocation, please visit the Port "
 "Allocation API sections in :doc:`TCP_Server_APIs` and "
@@ -787,15 +890,15 @@ msgstr ""
 " посетите разделы API распределения портов в документах "
 ":doc:`TCP_Server_APIs` и :doc:`TCP_Client_APIs`.*"
 
-#: ../../File_Transfer/File_Transfer.rst:429 c66a5d94b9d94565b46a7ab14974164c
+#: ../../File_Transfer/File_Transfer.rst:483 189736d8d1f8464b8d301f219700fda4
 msgid "Error Handling and Timeouts"
 msgstr "Обработка ошибок и тайм-ауты"
 
-#: ../../File_Transfer/File_Transfer.rst:431 b56a326907d8444da4b7bd5006c50ae6
+#: ../../File_Transfer/File_Transfer.rst:485 bcc373777989436f9df3657446d1a7f2
 msgid "### Timeout Values"
 msgstr "### Значения тайм-аута"
 
-#: ../../File_Transfer/File_Transfer.rst:433 369f6b75fb1940cb9fe561d0b9395e99
+#: ../../File_Transfer/File_Transfer.rst:487 27d75d097a804ec28ebec5c67469c9c6
 msgid ""
 "**Start signal timeout**: 10 seconds. If the receiver does not send "
 "``server_start_file_transfer_sign`` within this time, the sender aborts."
@@ -804,7 +907,7 @@ msgstr ""
 "``server_start_file_transfer_sign`` в течение этого времени, отправитель "
 "прерывает работу."
 
-#: ../../File_Transfer/File_Transfer.rst:437 bfc8b6cb6eb340df8df8f1478386f576
+#: ../../File_Transfer/File_Transfer.rst:491 93e877c411eb4c96bd7861ff61f35e7a
 msgid ""
 "**Port negotiation timeout**: 20 seconds. The initiator waits for the peer's"
 " ``/server_file_transfer_port`` response."
@@ -812,7 +915,7 @@ msgstr ""
 "**Тайм-аут согласования порта**: 20 секунд. Инициатор ожидает ответа узла "
 "``/server_file_transfer_port``."
 
-#: ../../File_Transfer/File_Transfer.rst:440 6525d07f76bc4ac7891cf316a500c826
+#: ../../File_Transfer/File_Transfer.rst:494 9e1d395bb59540a49393bebe6630e5eb
 msgid ""
 "**Completion acknowledgement timeout**: ``30 + (file_size // (100 * 1024 * "
 "1024)) * 10`` seconds. Larger files get proportionally more time."
@@ -821,11 +924,11 @@ msgstr ""
 "1024)) * 10`` секунд. Файлам большего размера требуется пропорционально "
 "больше времени."
 
-#: ../../File_Transfer/File_Transfer.rst:444 b9ecc7cc81a949c98577bd7805c674f3
+#: ../../File_Transfer/File_Transfer.rst:498 6b4e6135669b41178fdbb47ea5975381
 msgid "### Error Signalling"
 msgstr "### Сигнализация об ошибках"
 
-#: ../../File_Transfer/File_Transfer.rst:446 13d209df2efc4c8292e059a5d78aefae
+#: ../../File_Transfer/File_Transfer.rst:500 448fdc6ba3dd4d9eae925e7e241f8cb8
 msgid ""
 "Any error during the handshake or data transfer causes the failing side to "
 "send ``error_sign`` over the transfer socket."
@@ -833,7 +936,7 @@ msgstr ""
 "Любая ошибка во время установления связи или передачи данных приводит к "
 "тому, что сбойная сторона отправляет ``error_sign`` через сокет передачи."
 
-#: ../../File_Transfer/File_Transfer.rst:449 c0dc9a3c45d3405e8e2e18085db94909
+#: ../../File_Transfer/File_Transfer.rst:503 5b4c23a93e984ce0af2e43cf4752225b
 msgid ""
 "The other side, upon receiving the error sign, closes the transfer socket "
 "and aborts the transfer."
@@ -841,7 +944,7 @@ msgstr ""
 "Другая сторона, получив знак ошибки, закрывает сокет передачи и прерывает "
 "передачу."
 
-#: ../../File_Transfer/File_Transfer.rst:452 31addd5dedb54f30a9044efe82231f8c
+#: ../../File_Transfer/File_Transfer.rst:506 b337a2726ded4d619c5e8026bef3f6ea
 msgid ""
 "The main control connection remains unaffected; only the transfer socket is "
 "closed."
@@ -849,11 +952,11 @@ msgstr ""
 "Главное соединение управления остается неизменным; закрыт только "
 "передаточный сокет."
 
-#: ../../File_Transfer/File_Transfer.rst:456 fa4ce5d909224831a4bc80b0d1ebdc63
+#: ../../File_Transfer/File_Transfer.rst:510 68be52c8e5ce447a9c5ec51a661229cf
 msgid "### Exception Handling"
 msgstr "### Обработка исключений"
 
-#: ../../File_Transfer/File_Transfer.rst:458 bd73fcfbcfa94806964e99a66a3d4f9b
+#: ../../File_Transfer/File_Transfer.rst:512 036db9bc1858417ca589816028b83f80
 msgid ""
 "All socket operations are wrapped in try-except blocks. When an exception "
 "occurs (e.g., connection reset, file not found), the error is logged with "
@@ -866,11 +969,11 @@ msgstr ""
 "прерывается. Если возможно, отправляется ``error_sign``, и сокет передачи "
 "закрывается."
 
-#: ../../File_Transfer/File_Transfer.rst:470 547eb6fe20d04b2eb864b138fafa4804
+#: ../../File_Transfer/File_Transfer.rst:524 fe9377db9cf04b9da0dbe4d07c730adf
 msgid "Related API Definitions"
 msgstr "Связанные определения API"
 
-#: ../../File_Transfer/File_Transfer.rst:472 e75e0493322b47b8b9002f9087a64ecd
+#: ../../File_Transfer/File_Transfer.rst:526 cc71cb9b1d6642a2acc89d45a49022cc
 msgid ""
 "This section lists all public file-transfer related methods in "
 "``TCP_Server_Base`` and ``TCP_Client_Base``. For a complete list of all "
@@ -880,11 +983,11 @@ msgstr ""
 "файлов, в TCP_Server_Base и TCP_Client_Base. Полный список всех "
 "общедоступных API см. в таблицах в конце этого документа."
 
-#: ../../File_Transfer/File_Transfer.rst:478 3a5fbc14807e44b5aa3f525c8dc5924d
+#: ../../File_Transfer/File_Transfer.rst:532 d6683e415f794c5bb693f8c24370e7f9
 msgid "### Server-Side File Transfer APIs"
 msgstr "### API-интерфейсы передачи файлов на стороне сервера"
 
-#: ../../File_Transfer/File_Transfer.rst:488 abe3b4b8b3ca4716b8411172ef6196af
+#: ../../File_Transfer/File_Transfer.rst:542 9123c69197c34d93bb68d088897ebeca
 msgid ""
 "Initiates a server-to-client file transfer. ``message`` is the command "
 "string (e.g., ``/file /path/to/file.txt (127.0.0.1,54321)``). If "
@@ -896,11 +999,11 @@ msgstr ""
 "указан ``file_folder_abspath`` (для передачи папок), он указывает абсолютный"
 " путь к родительской папке."
 
-#: ../../File_Transfer/File_Transfer.rst:503 0b3a86e342f4416fb9b139641a441606
+#: ../../File_Transfer/File_Transfer.rst:557 367dfd82c95c413d963a15152469fc44
 msgid "Thread-safe version that starts a new thread for the transfer."
 msgstr "Потокобезопасная версия, запускающая новый поток для передачи."
 
-#: ../../File_Transfer/File_Transfer.rst:512 e5a9c3152e114e73817673b44abf47bf
+#: ../../File_Transfer/File_Transfer.rst:566 d4aa76b7eb2c46c29adee0120a939b66
 msgid ""
 "Sends an entire folder from server to client. ``message`` should be of the "
 "form ``/file_folder <folder_path> <client_address>``."
@@ -908,7 +1011,7 @@ msgstr ""
 "Отправляет всю папку с сервера клиенту. ``сообщение`` должно иметь форму "
 "``/папка_файла <путь_к папке> <адрес_клиента>``."
 
-#: ../../File_Transfer/File_Transfer.rst:522 c549616c4b744a1eb280a353ca50b341
+#: ../../File_Transfer/File_Transfer.rst:576 fcb785ff144746fab81e95ec2ab056e1
 msgid ""
 "Sends multiple files to multiple clients. The message format is "
 "``/multiple_file_multiple_client <file1> <file2> ... <client_addr1> "
@@ -918,7 +1021,7 @@ msgstr ""
 "``/multiple_file_multiple_client <file1> <file2> ... <client_addr1> "
 "<client_addr2> ...``. Файлы должны появляться перед клиентами."
 
-#: ../../File_Transfer/File_Transfer.rst:534 08427b1c4e1244fb86724a8ea27cf04a
+#: ../../File_Transfer/File_Transfer.rst:588 9c6f024528f344e399b62023c7f8c858
 msgid ""
 "Sends different file lists to different clients. The message alternates "
 "between groups: a list of files, then a list of client addresses, then the "
@@ -930,7 +1033,7 @@ msgstr ""
 "список файлов и т. д. Пример: ``/diff_multiple_file_diff_multiple_client "
 "a.txt b.txt (ip1,port1) (ip2,port2) c.txt (ip3,port3)``"
 
-#: ../../File_Transfer/File_Transfer.rst:552 9dd2505af77649a8a34fe8d548af2606
+#: ../../File_Transfer/File_Transfer.rst:606 f8a880287b7b49d4bdc2239ecf4a0577
 msgid ""
 "Receives a file from a client. Called internally when the server receives a "
 "``/file`` command from a client."
@@ -938,7 +1041,7 @@ msgstr ""
 "Получает файл от клиента. Вызывается внутренне, когда сервер получает "
 "команду ``/file`` от клиента."
 
-#: ../../File_Transfer/File_Transfer.rst:568 308923fd608e4b7199a0b6f8e5bc3cb4
+#: ../../File_Transfer/File_Transfer.rst:622 97bfaa9c24ae47c39328707b8f17a91a
 msgid ""
 "Low-level receive function that performs the handshake and writes the "
 "incoming file to disk."
@@ -946,7 +1049,7 @@ msgstr ""
 "Функция приема низкого уровня, которая выполняет подтверждение связи и "
 "записывает входящий файл на диск."
 
-#: ../../File_Transfer/File_Transfer.rst:581 8ef7e3b08c274ebfb8bd36924c309d3d
+#: ../../File_Transfer/File_Transfer.rst:635 db6a97ca42ba43e59d5c20695039d4ee
 msgid ""
 "Low-level send function that connects to the receiver and transmits the "
 "file."
@@ -954,11 +1057,11 @@ msgstr ""
 "Функция отправки низкого уровня, которая подключается к получателю и "
 "передает файл."
 
-#: ../../File_Transfer/File_Transfer.rst:583 af1aff9b7f4e4db7ae0505d4b552f053
+#: ../../File_Transfer/File_Transfer.rst:637 3e7b689215e840bebd368b4d29104ebc
 msgid "### Client-Side File Transfer APIs"
 msgstr "### API передачи файлов на стороне клиента"
 
-#: ../../File_Transfer/File_Transfer.rst:593 abdaf3e3f36b4406bb96dbdaba883797
+#: ../../File_Transfer/File_Transfer.rst:647 1e97e492d6504579a9a265eb1242395e
 msgid ""
 "Initiates a client-to-server file transfer. ``message`` is the user command "
 "(e.g., ``/file mydoc.txt``). Used internally by the interactive console."
@@ -967,51 +1070,51 @@ msgstr ""
 "пользователя (например, ``/file mydoc.txt``). Используется внутри "
 "интерактивной консоли."
 
-#: ../../File_Transfer/File_Transfer.rst:605
-#: ../../File_Transfer/File_Transfer.rst:656 9a4cfd164239479c8eeabd8dd4ab9c5d
-#: cbe0bb36c8ec4e8aaeaffd3d585cfb6e
+#: ../../File_Transfer/File_Transfer.rst:659
+#: ../../File_Transfer/File_Transfer.rst:710 0cd2695763114a0b831df0bfa80a3d56
+#: f6b7f2f1b2f64f1a9755058bb175b542
 msgid "Thread-safe version."
 msgstr "Потокобезопасная версия."
 
-#: ../../File_Transfer/File_Transfer.rst:614 3ad6121bacc14703a9e3d59e40a18edf
+#: ../../File_Transfer/File_Transfer.rst:668 261399ca508d463eafa7f03a00bfc658
 msgid "Sends a folder from client to server."
 msgstr "Отправляет папку с клиента на сервер."
 
-#: ../../File_Transfer/File_Transfer.rst:623 64550cf9041d4ad5b1a3cde6d7f99ad6
+#: ../../File_Transfer/File_Transfer.rst:677 ef5e3b92b11c4530960c1c344a51c73b
 msgid "Sends multiple files from client to server."
 msgstr "Отправляет несколько файлов с клиента на сервер."
 
-#: ../../File_Transfer/File_Transfer.rst:632 f3da12ec8cc74645ba344a9bc58c3775
+#: ../../File_Transfer/File_Transfer.rst:686 f2c90ee949d7484480cbb2cd5310bf26
 msgid "Sends multiple folders from client to server."
 msgstr "Отправляет несколько папок с клиента на сервер."
 
-#: ../../File_Transfer/File_Transfer.rst:645 efe7a7580d54406788d18ad37caa5da7
+#: ../../File_Transfer/File_Transfer.rst:699 0b13d26a40174243a15698b4bfcbb69f
 msgid ""
 "Receives a file from the server (called when the server initiates a "
 "transfer)."
 msgstr ""
 "Получает файл с сервера (вызывается, когда сервер инициирует передачу)."
 
-#: ../../File_Transfer/File_Transfer.rst:667 5e2ea96cffe44d75baddd75a3b837ebd
+#: ../../File_Transfer/File_Transfer.rst:721 3b78a4355d7f4ee2bbbe6bf934a962c0
 msgid "Receives a folder from the server."
 msgstr "Получает папку с сервера."
 
-#: ../../File_Transfer/File_Transfer.rst:682 1ea53f97af484b6ab513cb07c3234528
+#: ../../File_Transfer/File_Transfer.rst:736 3d044e0754b94d1289b491502ce83610
 msgid "Low-level receive function on the client side."
 msgstr "Низкоуровневая функция приема на стороне клиента."
 
-#: ../../File_Transfer/File_Transfer.rst:694 60e09d635dc54d149a36c8faa62307c0
+#: ../../File_Transfer/File_Transfer.rst:748 7311023a7fa644ed9b57a2873cd3bca8
 msgid ""
 "Low‑level send function on the client side (identical to server's version)."
 msgstr ""
 "Функция отправки низкого уровня на стороне клиента (идентична серверной "
 "версии)."
 
-#: ../../File_Transfer/File_Transfer.rst:699 1b3ff86642ad424d93026604fde98317
+#: ../../File_Transfer/File_Transfer.rst:753 7e74e9a09a8a4cf2a8a372a50b1ee51b
 msgid "Public API Summary"
 msgstr "Сводка общедоступного API"
 
-#: ../../File_Transfer/File_Transfer.rst:701 0afff0b6ca9748e495c15958ffc94e79
+#: ../../File_Transfer/File_Transfer.rst:755 87aaf0a5d3b44f41a419d97b6567f6d0
 msgid ""
 "All public APIs (including non-file-transfer methods) are listed below for "
 "reference."
@@ -1019,33 +1122,33 @@ msgstr ""
 "Все общедоступные API (включая методы, не связанные с передачей файлов) "
 "перечислены ниже для справки."
 
-#: ../../File_Transfer/File_Transfer.rst:705 c71597367a8b485991770dd1edd02f7c
+#: ../../File_Transfer/File_Transfer.rst:759 a195ee393f2a442c810e59811a6ae126
 msgid "### TCP_Server_Base Public APIs"
 msgstr "### Общедоступные API TCP_Server_Base"
 
-#: ../../File_Transfer/File_Transfer.rst:707 e7103c9963e94824a2451f9992d36f12
+#: ../../File_Transfer/File_Transfer.rst:761 0408d74a9140472e9a774143a60e5749
 msgid "``file_transfer_server_recv_client_start``"
 msgstr "``file_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:708 6fb1ae44a56c400591a222a32f14e1ed
+#: ../../File_Transfer/File_Transfer.rst:762 24a33cb212844e04a8a271ada32412f0
 msgid "``file_transfer_server_recv_client_start_thread``"
 msgstr "``file_transfer_server_recv_client_start_thread``"
 
-#: ../../File_Transfer/File_Transfer.rst:709 650c858ef1e648c4a452898ef06f4a0e
+#: ../../File_Transfer/File_Transfer.rst:763 7e286d1ece6940868bea6b937486e617
 msgid "``folder_file_transfer_server_recv_client_start``"
 msgstr "``folder_file_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:710 21e88c61eeda4e0b9a2083e54734a30e
+#: ../../File_Transfer/File_Transfer.rst:764 37fc5bd346c84415bb15138a42508fbe
 msgid "``multiple_file_multiple_client_transfer_server_recv_client_start``"
 msgstr "``multiple_file_multiple_client_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:711 2efa736dd88949028e54d48afaa259bd
+#: ../../File_Transfer/File_Transfer.rst:765 38a2b16e3ab648688cf7e8d1cae8be72
 msgid ""
 "``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``"
 msgstr ""
 "``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:713 f3791b7cc13e466aae9f0a94cbaa5ba6
+#: ../../File_Transfer/File_Transfer.rst:767 11476e0eaa3b4a4286612812e4e2c004
 msgid ""
 "(The low-level helpers ``file_transfer_server_recv_server_start``, "
 "``file_transfer_mode_recv``, and ``file_transfer_mode`` are not considered "
@@ -1055,53 +1158,53 @@ msgstr ""
 "``file_transfer_mode_recv`` и ``file_transfer_mode`` не считаются "
 "общедоступными, но для полноты документированы.)"
 
-#: ../../File_Transfer/File_Transfer.rst:719 bb2f693253444f4bb64734f94f9167eb
+#: ../../File_Transfer/File_Transfer.rst:773 907e861cebe648fbacb799bae8bb15e0
 msgid "### TCP_Client_Base Public APIs"
 msgstr "### Публичные API TCP_Client_Base"
 
-#: ../../File_Transfer/File_Transfer.rst:721 b50080ad24454e8fa0446c700513cf0e
+#: ../../File_Transfer/File_Transfer.rst:775 88bd80083f754caeb026f9ce1b8c6b55
 msgid "``file_transfer_client_recv_client_start``"
 msgstr "``file_transfer_client_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:722 2a8108815561452d887fcc4aaa2681ff
+#: ../../File_Transfer/File_Transfer.rst:776 3b21ff73da694465906482412b4fb4e3
 msgid "``file_transfer_client_recv_client_start_thread``"
 msgstr "``file_transfer_client_recv_client_start_thread``"
 
-#: ../../File_Transfer/File_Transfer.rst:723 303148e7d6074c87a7f3d4e05d24fb70
+#: ../../File_Transfer/File_Transfer.rst:777 c8af43896a2443a5b14bd29863731c2c
 msgid "``folder_file_transfer_client_recv_client_start``"
 msgstr "``folder_file_transfer_client_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:724 78bec580abbf44be8bce54dd9110de57
+#: ../../File_Transfer/File_Transfer.rst:778 7a3d3e4a52334b169a62d3b30d7a3190
 msgid "``multiple_file_transfer_client_recv_client_start``"
 msgstr "``multiple_file_transfer_client_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:725 3187d468e797422abad9b98a88513899
+#: ../../File_Transfer/File_Transfer.rst:779 19e18754c4674842ad5116f709588e03
 msgid "``multiple_folder_file_transfer_client_recv_client_start``"
 msgstr "``multiple_folder_file_transfer_client_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:726 fd1967eed08a4a6e8809b227dbf2d88b
+#: ../../File_Transfer/File_Transfer.rst:780 4cf80f9f34e045c59a680d0450c9103a
 msgid "``file_transfer_client_recv_server_start``"
 msgstr "``file_transfer_client_recv_server_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:727 f9d84c731c1c4a7faea75e5c5779de68
+#: ../../File_Transfer/File_Transfer.rst:781 c09f5fcba03f461f89238dd31abf6e88
 msgid "``file_transfer_client_recv_server_start_thread``"
 msgstr "``file_transfer_client_recv_server_start_thread``"
 
-#: ../../File_Transfer/File_Transfer.rst:728 fd34946df41745c1ae4658c177936928
+#: ../../File_Transfer/File_Transfer.rst:782 ad39bc6b71f048b09bca3b895e9d32f8
 msgid "``file_folder_transfer_client_recv_server_start_thread``"
 msgstr "``file_folder_transfer_client_recv_server_start_thread``"
 
-#: ../../File_Transfer/File_Transfer.rst:730 f9e55fc936a446e780fd074f6c8e2ffa
+#: ../../File_Transfer/File_Transfer.rst:784 99140d0be72649199911a57a26e2f2cf
 msgid "(The low-level helpers are documented but not part of the public API.)"
 msgstr ""
 "(Помощники низкого уровня документированы, но не являются частью "
 "общедоступного API.)"
 
-#: ../../File_Transfer/File_Transfer.rst:734 21874da02a944238a0ae6bc8fdd2f6fc
+#: ../../File_Transfer/File_Transfer.rst:788 60355543ac904504af8529431ce2c1fa
 msgid "See Also"
 msgstr "См. также"
 
-#: ../../File_Transfer/File_Transfer.rst:736 28e174a189a04ae3b4edc1ae0c8e625e
+#: ../../File_Transfer/File_Transfer.rst:790 7a5902ad3de64bf79d54d7f2f83ecbfb
 msgid ""
 "For more information about the TCP server and client base classes, please "
 "refer to:"
@@ -1109,15 +1212,15 @@ msgstr ""
 "Дополнительные сведения о базовых классах TCP-сервера и клиента см. по "
 "адресу:"
 
-#: ../../File_Transfer/File_Transfer.rst:740 754ce802cd6e4d4aabb6d4dc61655954
+#: ../../File_Transfer/File_Transfer.rst:794 f10c29f467b849e8b4254998b44f99ba
 msgid ":doc:`../Network_APIs/TCP_Server_APIs`"
 msgstr ":doc:`../Network_APIs/TCP_Server_APIs`"
 
-#: ../../File_Transfer/File_Transfer.rst:741 7d290194706f41649e3094a0f29a3554
+#: ../../File_Transfer/File_Transfer.rst:795 335ba244d28342449db065c252d7e14c
 msgid ":doc:`../Network_APIs/TCP_Client_APIs`"
 msgstr ":doc:`../Network_APIs/TCP_Client_APIs`"
 
-#: ../../File_Transfer/File_Transfer.rst:743 9234af7762954e8f82577e6c40e4dad6
+#: ../../File_Transfer/File_Transfer.rst:797 92d0227c356447a098cba072d5b43c98
 msgid ""
 "For details on port allocation, see the Port Allocation API sections in "
 "those documents."

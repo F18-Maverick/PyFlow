@@ -34,6 +34,42 @@ def _is_closed_socket_error(exc):
 
 MAX_DECODE_FAILURES = 3  # circuit breaker: close after N consecutive decode failures (re-exchange storm / garbage injection)
 
+def _parse_destination_path(command_part):
+    """Extract the trailing destination directory from a received transfer
+    command, or None when the command carries no destination.
+
+    ``<id>`` is the file-client id appended by the sender; ``<addr>`` is a
+    quoted client address tuple. The destination (when present) is the token
+    before ``<id>``, except for folder-creation commands, which carry no id
+    and put the destination last:
+
+      /file <src> <id>
+      /file <src> <dest> <id>
+      /file <src> <addr> <id>
+      /file <src> <addr> <dest> <id>
+      /file_folder <rel>            folder creation, default location
+      /file_folder <rel> <dest>     folder creation with destination
+      /file_folder <rel> <file> <id>
+      /file_folder <rel> <file> <dest> <id>
+    """
+    if len(command_part) < 3:
+        return None
+    if command_part[0] == "/file_folder":
+        if len(command_part) == 3:
+            return command_part[-1]  # creation + destination, no client id
+        if len(command_part) >= 4 and command_part[-2] != command_part[2]:
+            if not (
+                command_part[-2].startswith("(") and command_part[-2].endswith(")")
+            ):
+                return command_part[-2]
+    elif len(command_part) >= 4:
+        if not (
+            command_part[-2].startswith("(") and command_part[-2].endswith(")")
+        ):
+            return command_part[-2]
+    return None
+
+
 
 class TCP_Server_Base:  # TCP server class
     def __init__(
@@ -907,11 +943,11 @@ class TCP_Server_Base:  # TCP server class
                 "/help - print help meg\n",
                 "\t/time - display server time\n",
                 "\t/clients - display connected clients\n",
-                "\t/file <file_path> - send file to server\n",
-                "\t/multiple_file <file1> <file2> ... ",
+                "\t/file <file_path> [destination_file_path] - send file to server\n",
+                "\t/multiple_file <file1> <file2> ... [destination_file_path] ",
                 "- send multiple files to server\n",
-                "\t/file_folder <folder_path> - send folder to server\n",
-                "\t/multiple_file_folder <folder1> <folder2> ... ",
+                "\t/file_folder <folder_path> [destination_file_path] - send folder to server\n",
+                "\t/multiple_file_folder <folder1> <folder2> ... [destination_file_path] ",
                 "- send multiple folders to server\n",
                 "\t/quit - disconnect",
             ]
@@ -1089,22 +1125,17 @@ class TCP_Server_Base:  # TCP server class
     def file_folder_transfer_server_recv_server_start_thread(  # start a file folder server thread on server
         self, command, client_id, client_socket
     ):
-        relative_folder_path = shlex.split(command)[1]
-        try:
-            file_name = shlex.split(command)[2]
-            folder_transfer_server_recv_server_start_thread = threading.Thread(
-                target=self.file_transfer_server_recv_server_start,
-                args=(client_id, client_socket, command, relative_folder_path, file_name),
-                daemon=True,
-            )
-            folder_transfer_server_recv_server_start_thread.start()
-        except:
-            folder_transfer_server_recv_server_start_thread = threading.Thread(
-                target=self.file_transfer_server_recv_server_start,
-                args=(client_id, client_socket, command, relative_folder_path),
-                daemon=True,
-            )
-            folder_transfer_server_recv_server_start_thread.start()
+        command_part = shlex.split(command)
+        relative_folder_path = command_part[1]
+        # >= 4 tokens means a file transfer (/file_folder <rel> <file> [<dest>] <id>);
+        # 2-3 tokens is folder creation (optional destination, no client id)
+        file_name = command_part[2] if len(command_part) >= 4 else None
+        folder_transfer_server_recv_server_start_thread = threading.Thread(
+            target=self.file_transfer_server_recv_server_start,
+            args=(client_id, client_socket, command, relative_folder_path, file_name),
+            daemon=True,
+        )
+        folder_transfer_server_recv_server_start_thread.start()
 
     def file_transfer_server_recv_server_start_thread(  # start a file server thread on server
         self, client_id, client_socket, command
@@ -1157,12 +1188,19 @@ class TCP_Server_Base:  # TCP server class
         def setting_file_save_path():
             nonlocal save_path
             save_path = self.file_transfer_dir
-            if new_save_path:
-                path_list = new_save_path.split("/")
-                del path_list[0]
-                for node in path_list:
-                    save_path = os.path.join(save_path, node)
-                    os.makedirs(save_path, exist_ok=True)
+            if new_save_path or destination_path:
+                if destination_path:
+                    if os.path.isabs(destination_path):
+                        save_path = destination_path
+                    else:
+                        save_path = os.path.join(save_path, destination_path)
+                if new_save_path:
+                    path_list = new_save_path.split("/")
+                    if path_list and path_list[0] == "":
+                        del path_list[0]
+                    for node in path_list:
+                        save_path = os.path.join(save_path, node)
+                os.makedirs(save_path, exist_ok=True)
             if file_name or new_save_path == None:
                 return save_path
             close_socket()
@@ -1312,6 +1350,7 @@ class TCP_Server_Base:  # TCP server class
         file_transfer_server_port = server_file_socket.getsockname()[1]
         command_part = shlex.split(command)
         file_client_id = command_part[len(command_part) - 1]
+        destination_path = _parse_destination_path(command_part)
         transfer_server_port_msg = "/server_file_transfer_port {} {}\n".format(
             file_transfer_server_port, file_client_id
         )
@@ -1336,6 +1375,14 @@ class TCP_Server_Base:  # TCP server class
     def diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(self, message):
         command_part = shlex.split(message)
         del command_part[0]
+        # optional destination directory is the last argument, after the
+        # client addresses (which are always tuples)
+        destination_path = None
+        if command_part and not (
+            command_part[-1].startswith("(") and command_part[-1].endswith(")")
+        ):
+            destination_path = command_part[-1]
+            del command_part[-1]
         file_client_pair_list = []
         file_list = []
         client_list = []
@@ -1392,6 +1439,13 @@ class TCP_Server_Base:  # TCP server class
                     file_folder_transfer_command_message += " {}".format(
                         shlex.quote(str(client_addr))
                     )
+            if destination_path:
+                if file_transfer_command_message != "":
+                    file_transfer_command_message += " {}".format(shlex.quote(destination_path))
+                if file_folder_transfer_command_message != "":
+                    file_folder_transfer_command_message += " {}".format(
+                        shlex.quote(destination_path)
+                    )
             if file_transfer_command_message != "":
                 self.multiple_file_multiple_client_transfer_server_recv_client_start(
                     file_transfer_command_message
@@ -1405,6 +1459,14 @@ class TCP_Server_Base:  # TCP server class
         command_part = shlex.split(message)
         command_type = command_part[0]
         del command_part[0]
+        # optional destination directory is the last argument, after the
+        # client addresses (which are always tuples)
+        destination_path = None
+        if command_part and not (
+            command_part[-1].startswith("(") and command_part[-1].endswith(")")
+        ):
+            destination_path = command_part[-1]
+            del command_part[-1]
         transfer_file_list = []
         client_addr_list = []
         for part in command_part:
@@ -1418,18 +1480,40 @@ class TCP_Server_Base:  # TCP server class
                 transfer_file_list.append(part)
         for client_addr in client_addr_list:
             for transfer_file in transfer_file_list:
-                if command_type == "/file":
+                if command_type == "/multiple_file_multiple_client":
+                    # console form: classify each item by its own type
+                    if os.path.isfile(transfer_file):
+                        item_type = "/file"
+                    elif os.path.isdir(transfer_file):
+                        item_type = "/file_folder"
+                    else:
+                        print(
+                            f"ErrorWhileParsingFilePath: {transfer_file} is not "
+                            "a valid file or folder path, skipped"
+                        )
+                        continue
+                else:
+                    item_type = command_type
+                if item_type == "/file":
                     file_transfer_command_message = "/file {} {}".format(
                         shlex.quote(transfer_file), shlex.quote(str(client_addr))
                     )
+                    if destination_path:
+                        file_transfer_command_message += " {}".format(
+                            shlex.quote(destination_path)
+                        )
                     self.file_transfer_server_recv_client_start_thread(
                         file_transfer_command_message
                     )
                     print(f"start to send file command: {file_transfer_command_message}")
-                elif command_type == "/file_folder":
+                elif item_type == "/file_folder":
                     folder_transfer_command_message = "/file_folder {} {}".format(
                         shlex.quote(transfer_file), shlex.quote(str(client_addr))
                     )
+                    if destination_path:
+                        folder_transfer_command_message += " {}".format(
+                            shlex.quote(destination_path)
+                        )
                     self.folder_file_transfer_server_recv_client_start(
                         folder_transfer_command_message
                     )
@@ -1438,7 +1522,12 @@ class TCP_Server_Base:  # TCP server class
     def folder_file_transfer_server_recv_client_start(self, message):
         command_part = shlex.split(message)
         folder_path = command_part[1]
-        client_addr = ast.literal_eval(command_part[len(command_part) - 1])
+        if command_part[-1].startswith("(") and command_part[-1].endswith(")"):
+            destination_path = None
+            client_addr = ast.literal_eval(command_part[-1])
+        else:
+            destination_path = command_part[-1]
+            client_addr = ast.literal_eval(command_part[-2])
         client_socket = self.clients[client_addr]["socket"]
         if os.path.isdir(folder_path) == False:
             print(f"{folder_path} is not a valid folder path")
@@ -1463,11 +1552,19 @@ class TCP_Server_Base:  # TCP server class
                 each_file_transfer_command_message = "/file_folder {} {} {}".format(
                     shlex.quote(folder_path), shlex.quote(file_name), shlex.quote(str(client_addr))
                 )
+                if destination_path:
+                    each_file_transfer_command_message += " {}".format(
+                        shlex.quote(destination_path)
+                    )
                 self.file_transfer_server_recv_client_start_thread(
                     each_file_transfer_command_message, abspath
                 )
                 print(f"start to send folder command: {each_file_transfer_command_message}")
             else:
+                if destination_path:
+                    folder_transfer_command_message += " {}".format(
+                        shlex.quote(destination_path)
+                    )
                 self.send_message(client_socket, folder_transfer_command_message.strip())
                 print(f"start to send folder command: {folder_transfer_command_message}")
 
@@ -1475,6 +1572,8 @@ class TCP_Server_Base:  # TCP server class
             cmd = "/file_folder {} {} {}".format(
                 shlex.quote(rel_dir), shlex.quote(file), shlex.quote(str(client_addr))
             )
+            if destination_path:
+                cmd += " {}".format(shlex.quote(destination_path))
 
             def limited_transfer():
                 self.file_semaphore.acquire()
@@ -1511,7 +1610,11 @@ class TCP_Server_Base:  # TCP server class
     def file_transfer_server_recv_client_start(self, message, file_folder_abspath):
         client_id = None
         command_part = shlex.split(message)
-        client_ip = ast.literal_eval(command_part[len(command_part) - 1])
+        # optional destination directory comes after the client address tuple
+        if command_part[-1].startswith("(") and command_part[-1].endswith(")"):
+            client_ip = ast.literal_eval(command_part[-1])
+        else:
+            client_ip = ast.literal_eval(command_part[-2])
         client_address = client_ip[0]
         try:
             client_socket = self.clients[client_ip]["socket"]
@@ -1776,14 +1879,19 @@ class TCP_Server_Base:  # TCP server class
                 elif shlex.split(deal_cmd)[0] == "/send_msg":
                     self.send_msg_to_specific_client(deal_cmd)
                 elif shlex.split(deal_cmd)[0] == "/file":
-                    self.file_transfer_server_recv_client_start_thread(deal_cmd)
+                    # dispatch on the lowercased name, but hand the original
+                    # command to the handler: file paths are case-sensitive
+                    # on POSIX and must not be lowercased
+                    self.file_transfer_server_recv_client_start_thread(cmd.strip())
                 elif shlex.split(deal_cmd)[0] == "/file_folder":
-                    self.folder_file_transfer_server_recv_client_start(deal_cmd)
+                    self.folder_file_transfer_server_recv_client_start(cmd.strip())
                 elif shlex.split(deal_cmd)[0] == "/multiple_file_multiple_client":
-                    self.multiple_file_multiple_client_transfer_server_recv_client_start(deal_cmd)
+                    self.multiple_file_multiple_client_transfer_server_recv_client_start(
+                        cmd.strip()
+                    )
                 elif shlex.split(deal_cmd)[0] == "/diff_multiple_file_diff_multiple_client":
                     self.diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(
-                        deal_cmd
+                        cmd.strip()
                     )
                 elif shlex.split(deal_cmd)[0] == "/help":
                     help_text = [
@@ -1795,9 +1903,9 @@ class TCP_Server_Base:  # TCP server class
                         "<client_id1> <client_id2> ... <messageN>",
                         " ... <client_idN> ... - send message or ",
                         "messages to specific client or clients\n",
-                        "\t/file <file_path> <client_id> - ",
+                        "\t/file <file_path> <client_id> [destination_file_path] - ",
                         "send file to specific client\n",
-                        "\t/file_folder <folder_path> <client_id> - ",
+                        "\t/file_folder <folder_path> <client_id> [destination_file_path] - ",
                         "send folder to specific client\n",
                         "\t/multiple_file_multiple_client <file1> <file2>",
                         " ... <client_id1> <client_id2> ... <fileN> ...",
@@ -2943,8 +3051,15 @@ class TCP_Client_Base:  # TCP client class
 
     def multiple_folder_file_transfer_client_recv_client_start(self, message):
         transfer_folder_file_list = shlex.split(message)[1:]
+        destination_path = None
+        if len(transfer_folder_file_list) >= 2 and not os.path.isdir(
+            transfer_folder_file_list[-1]
+        ):
+            destination_path = transfer_folder_file_list.pop()
         for transfer_folder_file in transfer_folder_file_list:
             command = "/file_folder {}".format(shlex.quote(transfer_folder_file))
+            if destination_path:
+                command += " {}".format(shlex.quote(destination_path))
             folder_file_transfer_client_recv_client_start_thread = threading.Thread(
                 target=self.folder_file_transfer_client_recv_client_start,
                 args=(command,),
@@ -2953,7 +3068,9 @@ class TCP_Client_Base:  # TCP client class
             folder_file_transfer_client_recv_client_start_thread.start()
 
     def folder_file_transfer_client_recv_client_start(self, message):
-        folder_path = shlex.split(message)[1]
+        command_part = shlex.split(message)
+        folder_path = command_part[1]
+        destination_path = command_part[2] if len(command_part) >= 3 else None
         if os.path.isdir(folder_path) == False:
             print(f"{folder_path} is not a valid folder path")
             return False
@@ -2977,16 +3094,26 @@ class TCP_Client_Base:  # TCP client class
                 each_file_transfer_command_message = "/file_folder {} {}".format(
                     shlex.quote(folder_path), shlex.quote(file_name)
                 )
+                if destination_path:
+                    each_file_transfer_command_message += " {}".format(
+                        shlex.quote(destination_path)
+                    )
                 self.file_transfer_client_recv_client_start_thread(
                     each_file_transfer_command_message, abspath
                 )
                 print(f"start to send folder command: {each_file_transfer_command_message}")
             else:
+                if destination_path:
+                    folder_transfer_command_message += " {}".format(
+                        shlex.quote(destination_path)
+                    )
                 self.send_message(self.client_socket, folder_transfer_command_message.strip())
                 print(f"start to send folder command: {folder_transfer_command_message}")
 
         def start_file_transfer_with_limit(rel_dir, file, root):
             cmd = f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(file)}"
+            if destination_path:
+                cmd += " {}".format(shlex.quote(destination_path))
 
             def limited_transfer():
                 self.file_semaphore.acquire()
@@ -3014,10 +3141,17 @@ class TCP_Client_Base:  # TCP client class
 
     def multiple_file_transfer_client_recv_client_start(self, message):
         file_list = shlex.split(message)[1:]
+        destination_path = None
+        if len(file_list) >= 2 and not os.path.isfile(file_list[-1]):
+            destination_path = file_list.pop()
         for file in file_list:
             self.file_semaphore.acquire()
             try:
                 each_file_transfer_command_message = "/file {}".format(shlex.quote(file))
+                if destination_path:
+                    each_file_transfer_command_message += " {}".format(
+                        shlex.quote(destination_path)
+                    )
                 self.file_transfer_client_recv_client_start_thread(
                     each_file_transfer_command_message
                 )
@@ -3235,22 +3369,17 @@ class TCP_Client_Base:  # TCP client class
     def file_folder_transfer_client_recv_server_start_thread(
         self, command, client_id, client_socket
     ):
-        relative_folder_path = shlex.split(command)[1]
-        try:
-            file_name = shlex.split(command)[2]
-            folder_transfer_client_recv_server_start_thread = threading.Thread(
-                target=self.file_transfer_client_recv_server_start,
-                args=(client_id, client_socket, command, relative_folder_path, file_name),
-                daemon=True,
-            )
-            folder_transfer_client_recv_server_start_thread.start()
-        except:
-            folder_transfer_client_recv_server_start_thread = threading.Thread(
-                target=self.file_transfer_client_recv_server_start,
-                args=(client_id, client_socket, command, relative_folder_path),
-                daemon=True,
-            )
-            folder_transfer_client_recv_server_start_thread.start()
+        command_part = shlex.split(command)
+        relative_folder_path = command_part[1]
+        # >= 4 tokens means a file transfer (/file_folder <rel> <file> [<dest>] <id>);
+        # 2-3 tokens is folder creation (optional destination, no client id)
+        file_name = command_part[2] if len(command_part) >= 4 else None
+        folder_transfer_client_recv_server_start_thread = threading.Thread(
+            target=self.file_transfer_client_recv_server_start,
+            args=(client_id, client_socket, command, relative_folder_path, file_name),
+            daemon=True,
+        )
+        folder_transfer_client_recv_server_start_thread.start()
 
     def file_transfer_client_recv_server_start_thread(self, client_id, client_socket, command):
         file_transfer_client_recv_server_start_thread = threading.Thread(
@@ -3301,12 +3430,19 @@ class TCP_Client_Base:  # TCP client class
         def setting_file_save_path():
             nonlocal save_path
             save_path = self.file_transfer_dir
-            if new_save_path:
-                path_list = new_save_path.split("/")
-                del path_list[0]
-                for node in path_list:
-                    save_path = os.path.join(save_path, node)
-                    os.makedirs(save_path, exist_ok=True)
+            if new_save_path or destination_path:
+                if destination_path:
+                    if os.path.isabs(destination_path):
+                        save_path = destination_path
+                    else:
+                        save_path = os.path.join(save_path, destination_path)
+                if new_save_path:
+                    path_list = new_save_path.split("/")
+                    if path_list and path_list[0] == "":
+                        del path_list[0]
+                    for node in path_list:
+                        save_path = os.path.join(save_path, node)
+                os.makedirs(save_path, exist_ok=True)
             if file_name or new_save_path == None:
                 return save_path
             close_socket()
@@ -3446,6 +3582,7 @@ class TCP_Client_Base:  # TCP client class
         file_transfer_server_port = server_file_socket.getsockname()[1]
         command_part = shlex.split(command)
         file_client_id = command_part[len(command_part) - 1]
+        destination_path = _parse_destination_path(command_part)
         transfer_server_port_msg = "/server_file_transfer_port {} {}\n".format(
             file_transfer_server_port, file_client_id
         )

@@ -336,6 +336,60 @@ transfer and released in a
 ``max_thread_num`` on the
 client and ``max_file_transfer_thread_num`` on the server.
 
+.. _custom-destination-directory:
+
+Custom Destination Directory
+----------------------------
+
+Every transfer family accepts an optional trailing
+``destination_file_path``
+argument that replaces the receiver's default save
+directory (``received_files/``
+or the configured ``file_transfer_dir``). When it is
+omitted, the transfer goes
+to the default location exactly as before.
+
+The destination is **always the last argument** of the
+command and names a
+*directory* on the receiving machine: the received file
+keeps its own name
+(``<destination>/<filename>``), and a transferred folder
+keeps its structure
+under the destination (``<destination>/<folder_name>/...``
+). An absolute
+path is used as-is; a relative path is resolved under the
+default save
+directory. Missing directories are created.
+
+Command syntax:
+
+- Client console (the receiver is the server):
+
+  ``/file <file_path> [destination_file_path]``
+
+  ``/multiple_file <file1> <file2> ... [destination_file_path]``
+
+  ``/file_folder <folder_path> [destination_file_path]``
+
+  ``/multiple_file_folder <folder1> <folder2> ... [destination_file_path]``
+
+- Server console (the receiver is the target client, given
+  as a quoted address tuple):
+
+  ``/file <file_path> <client_id> [destination_file_path]``
+
+  ``/file_folder <folder_path> <client_id> [destination_file_path]``
+
+  ``/multiple_file_multiple_client <file1> <file2> ... <client_id1> <client_id2> ... [destination_file_path]``
+
+  ``/diff_multiple_file_diff_multiple_client <file1> ... <client_id1> ... [destination_file_path]``
+
+For the multiple-item commands the destination is the last
+argument; when the
+last argument is an existing local file/folder it is
+treated as another item to
+transfer instead.
+
 .. _concurrency-and-threading:
 
 Concurrency and Threading
