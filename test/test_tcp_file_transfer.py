@@ -3,6 +3,7 @@
 import os
 import threading
 import time
+import shlex
 
 import pytest
 
@@ -165,11 +166,11 @@ def test_server_receives_file_at_destination(pair, tmp_path):
     dest = tmp_path / "dest"
     dest.mkdir()
 
-    # the client console passes "/file <src> <dest>"; the id is appended
-    # before the command reaches the server
+    # paths must be quoted: shlex treats an unquoted backslash as an escape,
+    # which mangles Windows paths like C:\Users\...
     server_sock = server.clients[client.client_socket.getsockname()]["socket"]
     server.file_transfer_server_recv_server_start_thread(
-        "cid", server_sock, f"/file {src} {dest} 0"
+        "cid", server_sock, f'/file "{src}" "{dest}" 0'
     )
     server_port = _wait_port(client)
     assert server_port is not None
@@ -219,7 +220,9 @@ def test_client_uploads_folder_to_destination(pair, tmp_path):
     (folder / "a.txt").write_text("hello")
     (folder / "sub" / "b.txt").write_text("world")
 
-    client.folder_file_transfer_client_recv_client_start(f"/file_folder {folder} {dest}")
+    client.folder_file_transfer_client_recv_client_start(
+        f'/file_folder "{folder}" "{dest}"'
+    )
 
     # the folder keeps its own name under the destination (same structure as
     # the default receive directory, with the destination as its root)
@@ -276,7 +279,7 @@ def test_client_uploads_multiple_files_to_destination(pair, tmp_path):
     f2.write_bytes(b"two")
 
     client.multiple_file_transfer_client_recv_client_start(
-        f"/multiple_file {f1} {f2} {dest}"
+        f'/multiple_file "{f1}" "{f2}" "{dest}"'
     )
 
     assert wait_until(lambda: (dest / "one.bin").exists(), timeout=10), (
@@ -307,7 +310,7 @@ def test_client_uploads_multiple_folders_to_destination(pair, tmp_path):
     (folder_b / "b.txt").write_text("world")
 
     client.multiple_folder_file_transfer_client_recv_client_start(
-        f"/multiple_file_folder {folder_a} {folder_b} {dest}"
+        f'/multiple_file_folder "{folder_a}" "{folder_b}" "{dest}"'
     )
 
     assert wait_until(lambda: (dest / "data_a" / "a.txt").exists(), timeout=10), (
@@ -318,6 +321,24 @@ def test_client_uploads_multiple_folders_to_destination(pair, tmp_path):
     )
     assert (dest / "data_a" / "a.txt").read_text() == "hello"
     assert (dest / "data_b" / "b.txt").read_text() == "world"
+
+def test_windows_paths_need_quoting_through_shlex():
+    """Unquoted ``C:\\dir`` is mangled by shlex (backslash = escape), so
+    transfer commands must quote Windows paths; the destination parser then
+    sees the path intact. Runs on every OS: shlex semantics are POSIX."""
+    from PyFlow.network_api.connect_tcp import _parse_destination_path
+
+    # quoted paths survive shlex, and the trailing client id is skipped
+    tokens = shlex.split('/file "C:\\src.bin" "C:\\dest" 0')
+    assert tokens == ["/file", "C:\\src.bin", "C:\\dest", "0"]
+    assert _parse_destination_path(tokens) == "C:\\dest"
+    # unquoted backslashes are eaten -> a mangled, non-absolute path
+    tokens = shlex.split("/file C:\\src.bin C:\\dest 0")
+    assert tokens == ["/file", "C:src.bin", "C:dest", "0"]
+    assert _parse_destination_path(tokens) == "C:dest"
+    # folder creation with a quoted Windows destination
+    tokens = shlex.split('/file_folder "/data" "C:\\dest"')
+    assert _parse_destination_path(tokens) == "C:\\dest"
 
 def test_server_console_file_command_preserves_path_case(pair, tmp_path, monkeypatch):
     """The server console lowercases the command for dispatch, but a file
