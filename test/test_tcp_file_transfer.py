@@ -375,6 +375,150 @@ def test_server_console_file_command_preserves_path_case(pair, tmp_path, monkeyp
     assert files[0].name == "MiXeD_Case.bin"
     assert files[0].read_bytes() == payload
 
+
+def _forward_client(server, recv_dir):
+    client = TCP_Client_Base(
+        host="127.0.0.1",
+        port=server.port,
+        client_host="127.0.0.1",
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
+    client.file_transfer_dir = str(recv_dir)
+    assert client.connect()
+    return client
+
+
+def test_forward_file_to_multiple_clients(pair, tmp_path):
+    """/forward_file relays one file from a client to several clients, with
+    the server acting as an in-memory relay (no server-side disk write)."""
+    server, target1, recv1 = pair
+    recv2 = tmp_path / "recv2"
+    recv2.mkdir()
+    target2 = _forward_client(server, recv2)
+    src = tmp_path / "payload.bin"
+    payload = os.urandom(64 * 1024 + 123)
+    src.write_bytes(payload)
+    forwarder = _forward_client(server, tmp_path / "fwd")
+
+    a1 = target1.client_socket.getsockname()
+    a2 = target2.client_socket.getsockname()
+    cmd = '/forward_file "{}" "({}, {})" "({}, {})"'.format(
+        src, repr(a1[0]), a1[1], repr(a2[0]), a2[1]
+    )
+    forwarder._forward_file_console(cmd)
+
+    # size-aware wait: exists() can be true while the receiver is still
+    # writing; reading mid-write would see a truncated file
+    def got(path):
+        return path.exists() and path.stat().st_size == len(payload)
+
+    assert wait_until(lambda: got(recv1 / "payload.bin"), timeout=15), (
+        "target 1 did not receive the forwarded file"
+    )
+    assert wait_until(lambda: got(recv2 / "payload.bin"), timeout=15), (
+        "target 2 did not receive the forwarded file"
+    )
+    assert (recv1 / "payload.bin").read_bytes() == payload
+    assert (recv2 / "payload.bin").read_bytes() == payload
+    target2.close()
+    forwarder.close()
+
+
+def test_forward_folder_to_client(pair, tmp_path):
+    """/forward_folder relays a folder (structure preserved) from a client to
+    another client through the in-memory relay."""
+    server, target, recv_dir = pair
+    folder = tmp_path / "data"
+    (folder / "sub").mkdir(parents=True)
+    (folder / "a.txt").write_text("hello")
+    (folder / "sub" / "b.txt").write_text("world")
+    forwarder = _forward_client(server, tmp_path / "fwd")
+
+    a = target.client_socket.getsockname()
+    cmd = '/forward_folder "{}" "({}, {})"'.format(folder, repr(a[0]), a[1])
+    forwarder._forward_folder_console(cmd)
+
+    assert wait_until(lambda: (recv_dir / "data" / "a.txt").exists(), timeout=15), (
+        "a.txt not forwarded"
+    )
+    assert wait_until(lambda: (recv_dir / "data" / "sub" / "b.txt").exists(), timeout=15), (
+        "sub/b.txt not forwarded"
+    )
+    assert (recv_dir / "data" / "a.txt").read_text() == "hello"
+    assert (recv_dir / "data" / "sub" / "b.txt").read_text() == "world"
+    forwarder.close()
+
+
+def test_forward_skips_unreachable_and_server_targets(pair, tmp_path):
+    """Unreachable addresses and the server itself are skipped; the reachable
+    target still receives the file."""
+    server, target, recv_dir = pair
+    src = tmp_path / "payload.bin"
+    payload = os.urandom(2048)
+    src.write_bytes(payload)
+    forwarder = _forward_client(server, tmp_path / "fwd")
+
+    a = target.client_socket.getsockname()
+    bad = ("127.0.0.1", 39999)  # not connected
+    server_addr = (server.host, server.port)  # the server itself
+    cmd = '/forward_file "{}" "({}, {})" "({}, {})" "({}, {})"'.format(
+        src,
+        repr(a[0]), a[1],
+        repr(bad[0]), bad[1],
+        repr(server_addr[0]), server_addr[1],
+    )
+    forwarder._forward_file_console(cmd)
+
+    def got(path):
+        return path.exists() and path.stat().st_size == len(payload)
+
+    assert wait_until(lambda: got(recv_dir / "payload.bin"), timeout=15), (
+        "reachable target did not receive the forwarded file"
+    )
+    assert (recv_dir / "payload.bin").read_bytes() == payload
+    forwarder.close()
+
+
+def test_forward_flow_control_pauses_uploader(pair, tmp_path, monkeypatch):
+    """When the server's in-memory buffer exceeds max_mem_buff it pauses the
+    uploader with /pause_trans and resumes it with /start_trans; the file is
+    still delivered intact."""
+    server, target, recv_dir = pair
+    # strictly below one 64 KiB relay chunk, so every chunk overflows the
+    # buffer and a /pause_trans -> /start_trans cycle is guaranteed (a limit
+    # of exactly one chunk sits at the > comparison boundary and makes the
+    # pause depend on thread scheduling)
+    server.max_mem_buff = 32 * 1024
+    src = tmp_path / "big.bin"
+    payload = os.urandom(300 * 1024)
+    src.write_bytes(payload)
+    forwarder = _forward_client(server, tmp_path / "fwd")
+
+    sent = []
+    real_send = server.send_message
+
+    def spy(sock, message):
+        sent.append(message if isinstance(message, str) else "")
+        return real_send(sock, message)
+
+    monkeypatch.setattr(server, "send_message", spy)
+    a = target.client_socket.getsockname()
+    cmd = '/forward_file "{}" "({}, {})"'.format(src, repr(a[0]), a[1])
+    forwarder._forward_file_console(cmd)
+
+    def got(path):
+        return path.exists() and path.stat().st_size == len(payload)
+
+    assert wait_until(lambda: got(recv_dir / "big.bin"), timeout=25), (
+        "forwarded file was not received"
+    )
+    assert (recv_dir / "big.bin").read_bytes() == payload
+    assert any(str(m).startswith("/pause_trans") for m in sent), "expected a /pause_trans"
+    assert any(str(m).startswith("/start_trans") for m in sent), "expected a /start_trans"
+    forwarder.close()
+
 def test_multiple_file_multiple_client_console_command(pair, tmp_path):
     """/multiple_file_multiple_client from the server console sends one file to
     every listed client (the console form used to be a silent no-op because

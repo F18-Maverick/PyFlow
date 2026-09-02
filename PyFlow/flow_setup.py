@@ -50,6 +50,7 @@ SERVER_DEFAULTS = {
     "is_extend_command": False,
     "is_enable_encrypto": True,
     "is_custom_keys": None,
+    "max_mem_buff": 2048,
 }
 
 CLIENT_DEFAULTS = {
@@ -66,6 +67,7 @@ CLIENT_DEFAULTS = {
     "is_extend_command": False,
     "is_enable_encrypto": True,
     "is_custom_keys": None,
+    "max_mem_buff": 2048,
 }
 
 
@@ -206,11 +208,11 @@ Config fields (empty input keeps the current value):
   server: host, port, max_clients, port_add_step, port_range_num,
           max_file_transfer_thread_num, is_hand_alloc_port,
           is_input_command_in_console, max_custom_workers, is_extend_command,
-          is_enable_encrypto, is_custom_keys
+          is_enable_encrypto, is_custom_keys, max_mem_buff
   client: host, client_host, port, client_port, timeout, port_add_step,
           max_thread_num, is_input_command_in_console, is_wait_server,
           max_custom_workers, is_extend_command, is_enable_encrypto,
-          is_custom_keys
+          is_custom_keys, max_mem_buff
 Booleans accept true/false/1/0/y/n; integers are parsed with int(). Type
 "none" to reset a nullable field (host/client_port/timeout/is_custom_keys).
 Help, Fix_Config, Setup and Quit work at every prompt, including field

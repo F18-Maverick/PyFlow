@@ -10,6 +10,7 @@ import traceback
 import threading
 import uuid
 import errno
+import queue
 from . import rsa_crypto
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -86,7 +87,13 @@ class TCP_Server_Base:  # TCP server class
         is_extend_command=False,
         is_enable_encrypto=True,
         is_custom_keys=None,
+        max_mem_buff=2048,
     ):
+        self.max_mem_buff = max_mem_buff * 1024 * 1024
+        self._forward_fid = 0
+        self._forward_fid_lock = threading.Lock()
+        self._forward_relays = {}
+        self._forward_relays_lock = threading.Lock()
         self.project_dir = os.path.dirname(os.path.abspath(__file__))
         self.project_info_dir = os.path.join(self.project_dir, ".Flow")
         if os.path.exists(self.project_info_dir) == False:
@@ -997,6 +1004,19 @@ class TCP_Server_Base:  # TCP server class
                 except:
                     traceback.print_exc()
                     pass
+        elif shlex.split(command.lower())[0] == "/forward_item":
+            threading.Thread(
+                target=self._forward_item_handler,
+                args=(client_socket, client_address, command),
+                daemon=True,
+            ).start()
+            return None
+        elif shlex.split(command.lower())[0] == "/pause_trans":
+            self._forward_pause_target(client_address, command)
+            return None
+        elif shlex.split(command.lower())[0] == "/start_trans":
+            self._forward_resume_target(client_address, command)
+            return None
         elif (
             self.is_enable_encrypto
             and self.crypto is not None
@@ -1665,7 +1685,7 @@ class TCP_Server_Base:  # TCP server class
             traceback.print_exc()
 
     def file_transfer_mode(  # noqa: PLR0911 - peer-close and timeout exits are distinct outcomes
-        self, filename, server_address, server_port, client_port
+        self, filename, server_address, server_port, client_port, pause_fid=None
     ):
         print(f"start to send file: {filename}")
         client_file_socket = None
@@ -1767,6 +1787,10 @@ class TCP_Server_Base:  # TCP server class
             self.send_message(client_file_socket, file_size.to_bytes(8, "big"))
             with open(filename, "rb") as f:
                 while True:
+                    if pause_fid is not None:
+                        with self._forward_pause_cond:
+                            while self._forward_pause.get(pause_fid, False):
+                                self._forward_pause_cond.wait()
                     file_data = f.read(65536)
                     if not file_data:
                         break
@@ -1821,6 +1845,321 @@ class TCP_Server_Base:  # TCP server class
             close_socket()
             print(f"send error: {e}")
             return False
+
+    # ---- native in-memory forward relay (server side) ----------------------
+
+    def _forward_alloc_fid(self):
+        with self._forward_fid_lock:
+            self._forward_fid += 1
+            return self._forward_fid
+
+    def _forward_notify_error(self, sock, msg):
+        try:
+            self.send_message(sock, f"/forward_error {msg}")
+        except Exception:
+            pass
+
+    def _forward_parse_items_addrs(self, tokens):
+        items = []
+        addrs = []
+        for token in tokens:
+            if token.startswith("(") and token.endswith(")"):
+                try:
+                    addr = ast.literal_eval(token)
+                except (ValueError, SyntaxError):
+                    items.append(token)
+                    continue
+                if isinstance(addr, tuple) and len(addr) == 2 and isinstance(addr[0], str):
+                    addrs.append(addr)
+                else:
+                    items.append(token)
+            else:
+                items.append(token)
+        return items, addrs
+
+    def _forward_item_handler(self, sock, addr, cmd):
+        """Server-side entry for /forward_item <kind> <...> <addr...>.
+
+        The server never touches disk: it only relays the uploaded byte
+        stream to every reachable target client from memory.
+        """
+        try:
+            parts = shlex.split(cmd)
+        except Exception:
+            self._forward_notify_error(sock, "invalid forward command")
+            return
+        if len(parts) < 3:
+            self._forward_notify_error(sock, "invalid forward command")
+            return
+        kind = parts[1].lower()
+        items, addrs = self._forward_parse_items_addrs(parts[2:])
+        valid_targets = []
+        for target in addrs:
+            if target == (self.host, self.port):
+                print(f"forward: target {target} is the server itself, skipped")
+                continue
+            if target not in self.clients:
+                print(f"forward: target {target} is unreachable, skipped")
+                continue
+            valid_targets.append(target)
+        if not valid_targets:
+            self._forward_notify_error(sock, "no reachable targets to forward to")
+            return
+        if kind == "file":
+            if not items:
+                self._forward_notify_error(sock, "missing file name")
+                return
+            rel_dir = ""
+            fname = items[0]
+        elif kind == "folder":
+            if len(items) < 2:
+                self._forward_notify_error(sock, "missing folder file")
+                return
+            rel_dir = items[0]
+            fname = items[1]
+        else:
+            self._forward_notify_error(sock, f"unknown forward kind: {kind}")
+            return
+        threading.Thread(
+            target=self._forward_relay,
+            args=(sock, kind, rel_dir, fname, valid_targets),
+            daemon=True,
+        ).start()
+
+    def _forward_read_sign(self, sock, sign, timeout=15):
+        """Read from a target transfer socket until ``sign`` is seen."""
+        buf = b""
+        target = sign.encode("utf-8")
+        err = self.error_sign.encode("utf-8")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                data = sock.recv(4096)
+            except Exception:
+                return False
+            if not data:
+                return False
+            buf += data
+            if target in buf:
+                return True
+            if err in buf:
+                return False
+        return False
+
+    def _forward_recv_exact(self, sock, n):
+        buf = b""
+        while len(buf) < n:
+            data = sock.recv(n - len(buf))
+            if not data:
+                raise ConnectionError("forward: uploader closed the stream")
+            buf += data
+        return buf
+
+    def _forward_pause_target(self, client_address, command):
+        try:
+            fid = int(shlex.split(command)[1])
+        except Exception:
+            return
+        with self._forward_relays_lock:
+            relay = self._forward_relays.get(fid)
+        if relay is None:
+            return
+        with relay["cond"]:
+            if client_address in relay["writer_pause"]:
+                relay["writer_pause"][client_address] = True
+
+    def _forward_resume_target(self, client_address, command):
+        try:
+            fid = int(shlex.split(command)[1])
+        except Exception:
+            return
+        with self._forward_relays_lock:
+            relay = self._forward_relays.get(fid)
+        if relay is None:
+            return
+        with relay["cond"]:
+            if client_address in relay["writer_pause"]:
+                relay["writer_pause"][client_address] = False
+                relay["cond"].notify_all()
+
+    def _forward_relay(self, forwarder_sock, kind, rel_dir, fname, targets):
+        """Relay one file/folder item to every target, streaming from the
+        uploader's transfer connection with bounded in-memory buffering."""
+        fid = self._forward_alloc_fid()
+        tfids = [self._forward_alloc_fid() for _ in targets]
+        relay = {
+            "cond": threading.Condition(),
+            "writer_pause": {target: False for target in targets},
+        }
+        with self._forward_relays_lock:
+            for key in [fid] + tfids:
+                self._forward_relays[key] = relay
+        try:
+            # ask every target to open a receive transfer socket
+            for target, tfid in zip(targets, tfids):
+                try:
+                    t_sock = self.clients[target]["socket"]
+                except Exception as e:
+                    print(f"forward: target {target} missing, skipped: {e}")
+                    continue
+                if kind == "file":
+                    self.send_message(t_sock, f"/file {shlex.quote(fname)} {tfid}")
+                else:
+                    self.send_message(
+                        t_sock,
+                        f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(fname)} {tfid}",
+                    )
+            # collect every target's advertised transfer port
+            ports = {}
+            deadline = time.time() + 20
+            while len(ports) < len(tfids) and time.time() < deadline:
+                with self.file_transfer_server_port_lock:
+                    for info in list(self.file_server_port_list):
+                        if info[1] in tfids and info[1] not in ports:
+                            ports[info[1]] = info[0]
+                            self.file_server_port_list.remove(info)
+                if len(ports) < len(tfids):
+                    time.sleep(0.05)
+            if len(ports) < len(tfids):
+                self._forward_notify_error(forwarder_sock, "target port setup timed out")
+                return
+            # connect to each target and wait for its start sign
+            target_conns = []
+            for target, tfid in zip(targets, tfids):
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                try:
+                    sock.connect((target[0], ports[tfid]))
+                except Exception as e:
+                    print(f"forward: cannot connect to target {target}: {e}")
+                    sock.close()
+                    continue
+                if not self._forward_read_sign(sock, self.server_start_file_transfer_sign):
+                    print(f"forward: target {target} did not start, skipped")
+                    sock.close()
+                    continue
+                target_conns.append((tfid, target, sock))
+            if not target_conns:
+                self._forward_notify_error(forwarder_sock, "no target accepted the transfer")
+                return
+            # open the upload listener and hand it to the forwarder
+            up_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            up_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            up_sock.bind((self.host, self.palloc()))
+            sport = up_sock.getsockname()[1]
+            up_sock.listen(1)
+            self.send_message(forwarder_sock, f"/forward_upload {fid} {sport}")
+            up_client, _ = up_sock.accept()
+            self.send_message(up_client, self.server_start_file_transfer_sign)
+            self._forward_pump(up_client, target_conns, forwarder_sock, fid, fname, relay)
+            up_client.close()
+            up_sock.close()
+            self.pfree(sport)
+        finally:
+            with self._forward_relays_lock:
+                for key in [fid] + tfids:
+                    self._forward_relays.pop(key, None)
+
+    def _forward_pump(self, up_sock, target_conns, forwarder_sock, fid, fname, relay):
+        """Pump the uploader's byte stream to every target from memory.
+
+        The total bytes held in the per-target queues never exceeds
+        ``max_mem_buff``: once it does, the uploader is told to pause
+        (``/pause_trans``) and the reader stops pulling; as the writers
+        drain below the low-water mark the uploader is resumed
+        (``/start_trans``).
+        """
+        max_bytes = max(1, self.max_mem_buff)
+        low_water = max(1, max_bytes // 2)
+        cond = relay["cond"]
+        writer_pause = relay["writer_pause"]
+        state = {"buffered": 0, "paused": False}
+        queues = {tfid: queue.Queue() for tfid, _, _ in target_conns}
+        END = object()
+        result = {"ok": 0}
+
+        def enqueue(chunk):
+            with cond:
+                state["buffered"] += len(chunk) * len(target_conns)
+                for q in queues.values():
+                    q.put(chunk)
+                if not state["paused"] and state["buffered"] > max_bytes:
+                    state["paused"] = True
+                    try:
+                        self.send_message(forwarder_sock, f"/pause_trans {fid}")
+                    except Exception:
+                        pass
+
+        def writer(tfid, target, sock):
+            q = queues[tfid]
+            while True:
+                with cond:
+                    while writer_pause.get(target, False):
+                        cond.wait()
+                item = q.get()
+                if item is END:
+                    break
+                try:
+                    sock.sendall(item)
+                except Exception:
+                    with cond:
+                        while not q.empty():
+                            state["buffered"] -= len(q.get())
+                    break
+                with cond:
+                    state["buffered"] -= len(item)
+                    if state["paused"] and state["buffered"] <= low_water:
+                        state["paused"] = False
+                        try:
+                            self.send_message(forwarder_sock, f"/start_trans {fid}")
+                        except Exception:
+                            pass
+                        cond.notify_all()
+            if self._forward_read_sign(sock, self.server_received_file_data_sign):
+                result["ok"] += 1
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+        def reader():
+            try:
+                name_len_b = self._forward_recv_exact(up_sock, 4)
+                name_len = int.from_bytes(name_len_b, "big")
+                name_b = self._forward_recv_exact(up_sock, name_len)
+                size_b = self._forward_recv_exact(up_sock, 8)
+                file_size = int.from_bytes(size_b, "big")
+            except Exception as e:
+                print(f"forward: uploader header read failed: {e}")
+                for q in queues.values():
+                    q.put(END)
+                return
+            for chunk in (name_len_b, name_b, size_b):
+                enqueue(chunk)
+            remaining = file_size
+            while remaining > 0:
+                with cond:
+                    while state["paused"]:
+                        cond.wait()
+                chunk = self._forward_recv_exact(up_sock, min(65536, remaining))
+                remaining -= len(chunk)
+                enqueue(chunk)
+            for q in queues.values():
+                q.put(END)
+
+        threads = [
+            threading.Thread(target=writer, args=(tfid, target, sock), daemon=True)
+            for tfid, target, sock in target_conns
+        ]
+        for t in threads:
+            t.start()
+        reader()
+        for t in threads:
+            t.join(timeout=120)
+        try:
+            self.send_message(up_sock, self.server_received_file_data_sign)
+        except Exception:
+            pass
+        print(f"forward: relayed {fname} to {result['ok']}/{len(target_conns)} targets")
 
     def start_TCP_Server(self):  # set up server socket
         try:
@@ -1889,6 +2228,11 @@ class TCP_Server_Base:  # TCP server class
                 elif shlex.split(deal_cmd)[0].lower() == "/diff_multiple_file_diff_multiple_client":
                     self.diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(
                         deal_cmd
+                    )
+                elif shlex.split(deal_cmd)[0].lower() in ("/forward_file", "/forward_folder"):
+                    print(
+                        "forward commands are client-only; "
+                        "run them on a client console, not on the server"
                     )
                 elif shlex.split(deal_cmd)[0].lower() == "/help":
                     help_text = [
@@ -1978,7 +2322,13 @@ class TCP_Client_Base:  # TCP client class
         is_extend_command=False,
         is_enable_encrypto=True,
         is_custom_keys=None,
+        max_mem_buff=2048,
     ):
+        self.max_mem_buff = max_mem_buff * 1024 * 1024
+        self._forward_upload_queue = queue.Queue()
+        self._forward_pause = {}
+        self._forward_pause_cond = threading.Condition()
+        self._forward_error = None
         self.project_dir = os.path.dirname(os.path.abspath(__file__))
         self.file_transfer_dir = os.path.join(self.project_dir, "received_files")
         self.decode_command_table_file_path = os.path.join(
@@ -2939,6 +3289,32 @@ class TCP_Client_Base:  # TCP client class
             self.file_folder_transfer_client_recv_server_start_thread(
                 command, client_id, self.client_socket
             )
+        elif shlex.split(command.lower())[0] == "/forward_upload":
+            try:
+                parts = shlex.split(command)
+                fid = int(parts[1])
+                sport = int(parts[2])
+            except (IndexError, ValueError):
+                return
+            self._forward_upload_queue.put((fid, sport))
+        elif shlex.split(command.lower())[0] == "/pause_trans":
+            try:
+                fid = int(shlex.split(command)[1])
+            except (IndexError, ValueError):
+                return
+            with self._forward_pause_cond:
+                self._forward_pause[fid] = True
+                self._forward_pause_cond.notify_all()
+        elif shlex.split(command.lower())[0] == "/start_trans":
+            try:
+                fid = int(shlex.split(command)[1])
+            except (IndexError, ValueError):
+                return
+            with self._forward_pause_cond:
+                self._forward_pause[fid] = False
+                self._forward_pause_cond.notify_all()
+        elif shlex.split(command.lower())[0] == "/forward_error":
+            self._forward_error = command
         else:
             cmd_parts = shlex.split(command.strip())
             if not cmd_parts:
@@ -3004,6 +3380,10 @@ class TCP_Client_Base:  # TCP client class
                             self.folder_file_transfer_client_recv_client_start(message)
                         elif shlex.split(message.lower())[0] == "/multiple_file_folder":
                             self.multiple_folder_file_transfer_client_recv_client_start(message)
+                        elif shlex.split(message.lower())[0] == "/forward_file":
+                            self._forward_file_console(message)
+                        elif shlex.split(message.lower())[0] == "/forward_folder":
+                            self._forward_folder_console(message)
                         else:
                             cmd_name = message[0].lower()
                             if cmd_name in self._custom_handlers[1]:
@@ -3206,7 +3586,7 @@ class TCP_Client_Base:  # TCP client class
             print("invalid command, please use '/file <filename>'")
 
     def file_transfer_mode(  # noqa: PLR0911 - peer-close and timeout exits are distinct outcomes
-        self, filename, server_address, server_port, client_port
+        self, filename, server_address, server_port, client_port, pause_fid=None
     ):
         print(f"start to send file: {filename}")
         client_file_socket = None
@@ -3308,6 +3688,10 @@ class TCP_Client_Base:  # TCP client class
             self.send_message(client_file_socket, file_size.to_bytes(8, "big"))
             with open(filename, "rb") as f:
                 while True:
+                    if pause_fid is not None:
+                        with self._forward_pause_cond:
+                            while self._forward_pause.get(pause_fid, False):
+                                self._forward_pause_cond.wait()
                     file_data = f.read(65536)
                     if not file_data:
                         break
@@ -3362,6 +3746,122 @@ class TCP_Client_Base:  # TCP client class
             close_socket()
             print(f"send error: {e}")
             return False
+
+    # ---- native in-memory forward (client side) ----------------------------
+
+    def _forward_parse(self, tokens):
+        items = []
+        addrs = []
+        for token in tokens:
+            if token.startswith("(") and token.endswith(")"):
+                try:
+                    addr = ast.literal_eval(token)
+                except (ValueError, SyntaxError):
+                    items.append(token)
+                    continue
+                if isinstance(addr, tuple) and len(addr) == 2 and isinstance(addr[0], str):
+                    addrs.append(addr)
+                else:
+                    items.append(token)
+            else:
+                items.append(token)
+        return items, addrs
+
+    def _forward_file_console(self, message):
+        """/forward_file <file1> <file2> ... <addr1> <addr2> ... (client only)."""
+        parts = shlex.split(message)
+        items, addrs = self._forward_parse(parts[1:])
+        files = [p for p in items if os.path.isfile(p)]
+        for p in items:
+            if not os.path.isfile(p):
+                print(f"forward: {p} is not a valid file, skipped")
+        if not files:
+            return
+        if not addrs:
+            print("forward: no target clients given")
+            return
+        threading.Thread(
+            target=self._forward_driver, args=(files, addrs, False), daemon=True
+        ).start()
+
+    def _forward_folder_console(self, message):
+        """/forward_folder <folder1> <folder2> ... <addr1> <addr2> ... (client only)."""
+        parts = shlex.split(message)
+        items, addrs = self._forward_parse(parts[1:])
+        folders = [p for p in items if os.path.isdir(p)]
+        for p in items:
+            if not os.path.isdir(p):
+                print(f"forward: {p} is not a valid folder, skipped")
+        if not folders:
+            return
+        if not addrs:
+            print("forward: no target clients given")
+            return
+        threading.Thread(
+            target=self._forward_driver, args=(folders, addrs, True), daemon=True
+        ).start()
+
+    def _forward_driver(self, items, addrs, folder_mode):
+        try:
+            if not folder_mode:
+                for path in items:
+                    self._forward_one("file", "", os.path.basename(path), path, addrs)
+            else:
+                for folder in items:
+                    base_path = os.path.dirname(folder)
+                    for root, _dirs, files in os.walk(folder):
+                        rel_dir = self._forward_rel_path(base_path, root)
+                        for file in files:
+                            self._forward_one(
+                                "folder", rel_dir, file, os.path.join(root, file), addrs
+                            )
+        except Exception:
+            traceback.print_exc()
+
+    def _forward_rel_path(self, base_path, abs_path):
+        base = os.path.normpath(base_path)
+        abs_ = os.path.normpath(abs_path)
+        common = os.path.commonpath([base, abs_])
+        if common != base:
+            return ""
+        rel = os.path.relpath(abs_, base)
+        if rel == ".":
+            return ""
+        return "/" + rel.replace(os.sep, "/")
+
+    def _forward_one(self, kind, rel_dir, fname, abspath, addrs):
+        if not os.path.isfile(abspath):
+            print(f"forward: {abspath} is not a valid file, skipped")
+            return
+        msg = f"/forward_item {kind}"
+        if kind == "folder":
+            msg += f" {shlex.quote(rel_dir)}"
+        msg += f" {shlex.quote(fname)} " + " ".join(shlex.quote(str(a)) for a in addrs)
+        self._forward_error = None
+        self.send_message(self.client_socket, msg)
+        upload = None
+        deadline = time.time() + 30
+        while time.time() < deadline:
+            if self._forward_error is not None:
+                print(f"forward: server error: {self._forward_error}")
+                self._forward_error = None
+                return
+            try:
+                upload = self._forward_upload_queue.get(timeout=0.2)
+                break
+            except queue.Empty:
+                continue
+        if upload is None:
+            print(f"forward: timed out waiting for an upload slot for {fname}")
+            return
+        fid, sport = upload
+        client_port = self.palloc()
+        try:
+            self.file_transfer_mode(abspath, self.host, sport, client_port, pause_fid=fid)
+        finally:
+            self.pfree(client_port)
+            with self._forward_pause_cond:
+                self._forward_pause.pop(fid, None)
 
     def file_folder_transfer_client_recv_server_start_thread(
         self, command, client_id, client_socket
