@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-01 16:26+0800\n"
+"POT-Creation-Date: 2026-09-02 13:19+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: zh_TW <LL@li.org>\n"
@@ -622,25 +622,113 @@ msgid ""
 "item to transfer instead."
 msgstr "對於多項目命令，目標是最後一個參數；當最後一個參數是現有的本機檔案/資料夾時，它將被視為另一個要傳輸的項目。"
 
-#: ../../File_Transfer/File_Transfer.rst:396 0aa14deaf6474437b421a65e21fce7d8
+#: ../../File_Transfer/File_Transfer.rst:396 373c2a5a23334df7a25d23f8d94abd66
+msgid "Native In-Memory Forwarding"
+msgstr "本機記憶體轉發"
+
+#: ../../File_Transfer/File_Transfer.rst:398 dd57639b3e0e4068bd9533fc039597cd
+msgid ""
+"The main protocol also provides a native, client-side forwarding feature "
+"that relays data from one client to several other clients through the server"
+" **without any disk I/O on the server**. Unlike the forward extension (which"
+" uploads to disk and then downloads from disk), the server only holds the "
+"data in memory and streams it straight to the target clients. This avoids "
+"the double transfer time and the disk read/write overhead."
+msgstr ""
+"主協定還提供了本機用戶端轉送功能，可透過伺服器將資料從一個用戶端中繼到多個其他用戶端**，而無需在伺服器上進行任何磁碟 "
+"I/O**。與前向擴展（上傳到磁碟然後從磁碟下載）不同，伺服器僅將資料保存在記憶體中並將其直接串流傳輸到目標用戶端。這避免了雙倍傳輸時間和磁碟讀/寫開銷。"
+
+#: ../../File_Transfer/File_Transfer.rst:410 982c4c9538914821a07887fb8ab9b95d
+#, fuzzy
+msgid "Commands (client console only; rejected on the server console):"
+msgstr "客戶端控制台（接收者是伺服器）："
+
+#: ../../File_Transfer/File_Transfer.rst:413 14406316555743359a854540ab6937c8
+msgid "``/forward_file <file1> <file2> ... <addr1> <addr2> ...``"
+msgstr "``/forward_file <檔案1> <檔案2> ... <位址1> <位址2> ...``"
+
+#: ../../File_Transfer/File_Transfer.rst:414 4dc576898177404da124649f7ce9ac28
+msgid "``/forward_folder <folder1> <folder2> ... <addr1> <addr2> ...``"
+msgstr "``/forward_folder <資料夾1> <資料夾2> ... <地址1> <地址2> ...``"
+
+#: ../../File_Transfer/File_Transfer.rst:416 220dfbf0a0d84559a8befb4eee500ba0
+msgid ""
+"The number of files/folders and the number of target clients (written as "
+"quoted address tuples) is unlimited. Target addresses that are unreachable "
+"(not connected to the server) or equal to the server itself are skipped and "
+"the remaining targets are still served."
+msgstr ""
+"文件/資料夾的數量和目標客戶端的數量（寫為引號的地址元組）是無限的。無法到達（未連接到伺服器）或等於伺服器本身的目標位址將被跳過，而其餘目標仍將得到服務。"
+
+#: ../../File_Transfer/File_Transfer.rst:424 f6697695e9ef4e3694fa9046e41578e0
+msgid "The data path reuses the protocol's own transfer machinery:"
+msgstr "資料路徑重用協定自己的傳輸機制："
+
+#: ../../File_Transfer/File_Transfer.rst:427 6ee037f0e4024d2988fcb2ccf3deef70
+msgid ""
+"The forwarding client streams the file with the standard file-transfer byte "
+"stream (metadata header + 64 KiB chunks) to a transfer socket on the server."
+msgstr "轉送客戶端將具有標準檔案傳輸位元組流（元資料標頭 + 64 KiB 區塊）的檔案串流傳輸到伺服器上的傳輸套接字。"
+
+#: ../../File_Transfer/File_Transfer.rst:432 43c94e746a5c46748846d0dc18a4e0ff
+msgid ""
+"The server acts as a pure relay: it reads the stream into per-target memory "
+"queues and writes each chunk to every target's transfer socket. The server "
+"never parses the file contents beyond the size header and never writes to "
+"disk."
+msgstr ""
+"伺服器充當純粹的中繼：它將流讀取到每個目標的記憶體佇列中，並將每個區塊寫入每個目標的傳輸套接字。伺服器從不解析超出大小標頭的檔案內容，也從不寫入磁碟。"
+
+#: ../../File_Transfer/File_Transfer.rst:439 9dec57916af34e109bee7ce1e0bae2d4
+msgid ""
+"Every target client receives the stream with the ordinary receive path "
+"(``file_transfer_mode_recv``) and writes it to its own local disk, exactly "
+"as if the server had pushed the file directly."
+msgstr ""
+"每個目標客戶端都使用普通接收路徑（“file_transfer_mode_recv”）接收流並將其寫入自己的本機磁碟，就像伺服器直接推送檔案一樣。"
+
+#: ../../File_Transfer/File_Transfer.rst:445 a095abaf821e41a6a66adbb776bc35ef
+msgid "### Memory Bounding and Flow Control"
+msgstr "### 記憶體限制與流量控制"
+
+#: ../../File_Transfer/File_Transfer.rst:447 244214dd675345f8a72b1088ad99fea0
+msgid ""
+"Because uploader, server and targets may have different bandwidths, data can"
+" pile up in the server's memory. Both ``TCP_Server_Base`` and "
+"``TCP_Client_Base`` take a ``max_mem_buff`` parameter (in MB, default 2048, "
+"i.e. 2 GB) that bounds the memory the forwarding machinery may hold in that "
+"process. When the server's buffered bytes exceed ``max_mem_buff`` it sends "
+"``/pause_trans`` to the forwarding client, which stops reading the source "
+"file; once the writers drain the buffers below the low-water mark (half the "
+"limit) the server sends ``/start_trans`` and the upload resumes. Receiving "
+"clients drain each chunk to disk synchronously, so their buffered memory "
+"stays bounded by a single chunk; the ``/pause_trans``/``/start_trans`` "
+"handlers exist on both sides so any side can throttle a transfer when it "
+"buffers data."
+msgstr ""
+"由於上傳者、伺服器和目標可能具有不同的頻寬，因此資料可能會堆積在伺服器的記憶體中。 TCP_Server_Base 和 TCP_Client_Base "
+"都採用 max_mem_buff 參數（以 MB 為單位，預設 2048，即 2 "
+"GB），此參數限制了轉送機制在該行程中可以保留的記憶體。當伺服器的緩衝位元組超過“max_mem_buff”時，它會向轉發客戶端發送“/pause_trans”，從而停止讀取來源檔案；一旦作者將緩衝區排空到低水位線（限制的一半）以下，伺服器就會發送“/start_trans”並恢復上傳。接收客戶端將每個區塊同步排出到磁碟，因此它們的緩衝記憶體保持受單一區塊的限制；兩側都存在“/pause_trans”/“/start_trans”處理程序，因此任何一側都可以在緩衝資料時限制傳輸。"
+
+#: ../../File_Transfer/File_Transfer.rst:472 0aa14deaf6474437b421a65e21fce7d8
 msgid "Concurrency and Threading"
 msgstr "並發和線程"
 
-#: ../../File_Transfer/File_Transfer.rst:398 825c5e1a8b9b405c967ca49a1861e258
+#: ../../File_Transfer/File_Transfer.rst:474 825c5e1a8b9b405c967ca49a1861e258
 msgid ""
 "Both the server and the client use multiple levels of concurrency control to"
 " ensure stability during file transfers."
 msgstr "伺服器和用戶端均採用多層並發控制來確保文件傳輸過程中的穩定性。"
 
-#: ../../File_Transfer/File_Transfer.rst:402 0d48b1245cd54597928cfc28d5b3c248
+#: ../../File_Transfer/File_Transfer.rst:478 0d48b1245cd54597928cfc28d5b3c248
 msgid "### File Transfer Semaphore"
 msgstr "### 檔案傳輸信號量"
 
-#: ../../File_Transfer/File_Transfer.rst:404 e2674ee9e0584513bc53aa815603fd24
+#: ../../File_Transfer/File_Transfer.rst:480 e2674ee9e0584513bc53aa815603fd24
 msgid "Client: ``self.file_semaphore = threading.Semaphore(max_thread_num)``"
 msgstr "客戶端：``self.file_semaphore = threading.Semaphore(max_thread_num)``"
 
-#: ../../File_Transfer/File_Transfer.rst:406 1c0d27d13ad844159d29c6e662d51d09
+#: ../../File_Transfer/File_Transfer.rst:482 1c0d27d13ad844159d29c6e662d51d09
 msgid ""
 "Server: ``self.file_semaphore = "
 "threading.Semaphore(max_file_transfer_thread_num)``"
@@ -648,18 +736,18 @@ msgstr ""
 "伺服器：``self.file_semaphore = "
 "threading.Semaphore(max_file_transfer_thread_num)``"
 
-#: ../../File_Transfer/File_Transfer.rst:409 5b0c8289b2c9460cb7305101226b66a7
+#: ../../File_Transfer/File_Transfer.rst:485 5b0c8289b2c9460cb7305101226b66a7
 msgid ""
 "This semaphore limits the number of simultaneous file transfers (used "
 "primarily when sending folders or multiple files). Each transfer runs in its"
 " own thread, and the semaphore is acquired before the thread is started."
 msgstr "此信號量限制同時文件傳輸的數量（主要在發送資料夾或多個文件時使用）。每個傳輸都在自己的線程中運行，並且在線程啟動之前獲取信號量。"
 
-#: ../../File_Transfer/File_Transfer.rst:416 6d93783b298e4ce98b999ff890d4a5f4
+#: ../../File_Transfer/File_Transfer.rst:492 6d93783b298e4ce98b999ff890d4a5f4
 msgid "### Threading Model"
 msgstr "### 線程模型"
 
-#: ../../File_Transfer/File_Transfer.rst:418 036a972600e645119d8a523fa08a52db
+#: ../../File_Transfer/File_Transfer.rst:494 036a972600e645119d8a523fa08a52db
 msgid ""
 "Each file transfer runs in a dedicated daemon thread, created by the "
 "``_thread`` wrapper functions (e.g., "
@@ -668,14 +756,14 @@ msgid ""
 msgstr ""
 "每個檔案傳輸都在專用的守護執行緒中執行，該執行緒由「_thread」包裝函數建立（例如「file_transfer_client_recv_client_start_thread」）。這可以防止緩慢的傳輸阻塞主控制循環。"
 
-#: ../../File_Transfer/File_Transfer.rst:424 a84aaf5f9fb64d92b97c32185a1e7cb5
+#: ../../File_Transfer/File_Transfer.rst:500 a84aaf5f9fb64d92b97c32185a1e7cb5
 msgid ""
 "The thread that receives the transfer command (e.g., the server's "
 "``handle_command`` thread) does not wait for the transfer to complete; it "
 "returns immediately after spawning the worker thread."
 msgstr "接收傳輸命令的線程（例如伺服器的“handle_command”線程）不會等待傳輸完成；它在產生工作線程後立即返回。"
 
-#: ../../File_Transfer/File_Transfer.rst:429 669fb6da8e7444dd829a6e14295648b1
+#: ../../File_Transfer/File_Transfer.rst:505 669fb6da8e7444dd829a6e14295648b1
 msgid ""
 "The low-level receive function (``file_transfer_mode_recv``) blocks while "
 "reading from the transfer socket, but because it runs in a dedicated thread,"
@@ -683,11 +771,11 @@ msgid ""
 msgstr ""
 "低階接收函數（“file_transfer_mode_recv”）在從傳輸套接字讀取時會阻塞，但由於它在專用執行緒中運行，因此主連接仍保持回應。"
 
-#: ../../File_Transfer/File_Transfer.rst:435 e39f8ae06ae84a6b84de8a3008ca17cb
+#: ../../File_Transfer/File_Transfer.rst:511 e39f8ae06ae84a6b84de8a3008ca17cb
 msgid "### Thread Pool for Custom Commands"
 msgstr "### 自訂指令的執行緒池"
 
-#: ../../File_Transfer/File_Transfer.rst:437 3ad49853529d4563bacdfb4ca6eee115
+#: ../../File_Transfer/File_Transfer.rst:513 3ad49853529d4563bacdfb4ca6eee115
 msgid ""
 "Both classes also provide a ``ThreadPoolExecutor`` "
 "(``self._custom_executor``) for custom command handlers. When a handler is "
@@ -698,11 +786,11 @@ msgid ""
 msgstr ""
 "這兩個類別也為自訂命令處理程序提供了“ThreadPoolExecutor”（“self._custom_executor”）。當使用「run_in_thread=True」註冊處理程序時，它會透過「submit_task」提交到該池，該池也使用信號量將並發限制為「max_custom_workers」。此機制獨立於檔案傳輸信號量，旨在用於通用命令處理。"
 
-#: ../../File_Transfer/File_Transfer.rst:452 1862d74da28a40219f82cfd7af89c126
+#: ../../File_Transfer/File_Transfer.rst:528 1862d74da28a40219f82cfd7af89c126
 msgid "Port Allocation and Management"
 msgstr "連接埠分配與管理"
 
-#: ../../File_Transfer/File_Transfer.rst:454 bd53ec8aa4ef498aa0815db16ed03140
+#: ../../File_Transfer/File_Transfer.rst:530 bd53ec8aa4ef498aa0815db16ed03140
 msgid ""
 "File transfers require ephemeral ports for the secondary data connections. "
 "The ``palloc()`` and ``pfree()`` methods are used to obtain and release "
@@ -710,7 +798,7 @@ msgid ""
 msgstr ""
 "檔案傳輸需要臨時連接埠來進行輔助資料連線。 ``palloc()`` 和 ``pfree()`` 方法用於取得和釋放這些連接埠。有兩種模式可供選擇："
 
-#: ../../File_Transfer/File_Transfer.rst:460 eeaa9379d7d941159ac34f30ff6bb5f9
+#: ../../File_Transfer/File_Transfer.rst:536 eeaa9379d7d941159ac34f30ff6bb5f9
 msgid ""
 "**Automatic mode** (``is_hand_alloc_port=False``): ``palloc()`` returns "
 "``0``, and the operating system assigns a free port when the socket is "
@@ -719,7 +807,7 @@ msgstr ""
 "**自動模式**（``is_hand_alloc_port=False``）：``palloc()`` "
 "傳回``0``，作業系統在套接字綁定時指派一個空閒連接埠。這是大多數用例的推薦模式。"
 
-#: ../../File_Transfer/File_Transfer.rst:465 80e08ac6614b4dcd88cd0e4d31a3da64
+#: ../../File_Transfer/File_Transfer.rst:541 80e08ac6614b4dcd88cd0e4d31a3da64
 msgid ""
 "**Manual mode** (``is_hand_alloc_port=True``): Ports are drawn from a "
 "configurable range ``[self.min_port, self.max_port]`` with a step size "
@@ -731,7 +819,7 @@ msgstr ""
 "self.max_port]`` "
 "中提取端口，步长为``port_add_step``。伺服器透過“/client_alloc_port_range”向客戶端廣播允許的範圍，然後客戶端使用相同的手動分配邏輯。"
 
-#: ../../File_Transfer/File_Transfer.rst:475 29cfdab183eb4f9f83de41ef62a60785
+#: ../../File_Transfer/File_Transfer.rst:551 29cfdab183eb4f9f83de41ef62a60785
 msgid ""
 "*Note: For more details about port allocation, please visit the Port "
 "Allocation API sections in :doc:`TCP_Server_APIs` and "
@@ -739,61 +827,61 @@ msgid ""
 msgstr ""
 "*注意：有關連接埠分配的更多詳細信息，請訪問 TCP_Server_APIs 和 TCP_Client_APIs 中的連接埠分配 API 部分。 *"
 
-#: ../../File_Transfer/File_Transfer.rst:483 189736d8d1f8464b8d301f219700fda4
+#: ../../File_Transfer/File_Transfer.rst:559 189736d8d1f8464b8d301f219700fda4
 msgid "Error Handling and Timeouts"
 msgstr "錯誤處理和超時"
 
-#: ../../File_Transfer/File_Transfer.rst:485 bcc373777989436f9df3657446d1a7f2
+#: ../../File_Transfer/File_Transfer.rst:561 bcc373777989436f9df3657446d1a7f2
 msgid "### Timeout Values"
 msgstr "### 逾時值"
 
-#: ../../File_Transfer/File_Transfer.rst:487 27d75d097a804ec28ebec5c67469c9c6
+#: ../../File_Transfer/File_Transfer.rst:563 27d75d097a804ec28ebec5c67469c9c6
 msgid ""
 "**Start signal timeout**: 10 seconds. If the receiver does not send "
 "``server_start_file_transfer_sign`` within this time, the sender aborts."
 msgstr ""
 "**啟動訊號逾時**：10 秒。如果接收者在此時間內未傳送“server_start_file_transfer_sign”，則傳送者將中止。"
 
-#: ../../File_Transfer/File_Transfer.rst:491 93e877c411eb4c96bd7861ff61f35e7a
+#: ../../File_Transfer/File_Transfer.rst:567 93e877c411eb4c96bd7861ff61f35e7a
 msgid ""
 "**Port negotiation timeout**: 20 seconds. The initiator waits for the peer's"
 " ``/server_file_transfer_port`` response."
 msgstr "**連接埠協商逾時**：20 秒。發起者等待對等方的「/server_file_transfer_port」回應。"
 
-#: ../../File_Transfer/File_Transfer.rst:494 9e1d395bb59540a49393bebe6630e5eb
+#: ../../File_Transfer/File_Transfer.rst:570 9e1d395bb59540a49393bebe6630e5eb
 msgid ""
 "**Completion acknowledgement timeout**: ``30 + (file_size // (100 * 1024 * "
 "1024)) * 10`` seconds. Larger files get proportionally more time."
 msgstr ""
 "**完成確認逾時**：``30 + (file_size // (100 * 1024 * 1024)) * 10`` 秒。文件越大，相應的時間就越長。"
 
-#: ../../File_Transfer/File_Transfer.rst:498 6b4e6135669b41178fdbb47ea5975381
+#: ../../File_Transfer/File_Transfer.rst:574 6b4e6135669b41178fdbb47ea5975381
 msgid "### Error Signalling"
 msgstr "### 錯誤訊號"
 
-#: ../../File_Transfer/File_Transfer.rst:500 448fdc6ba3dd4d9eae925e7e241f8cb8
+#: ../../File_Transfer/File_Transfer.rst:576 448fdc6ba3dd4d9eae925e7e241f8cb8
 msgid ""
 "Any error during the handshake or data transfer causes the failing side to "
 "send ``error_sign`` over the transfer socket."
 msgstr "握手或資料傳輸期間的任何錯誤都會導致失敗方透過傳輸套接字發送“error_sign”。"
 
-#: ../../File_Transfer/File_Transfer.rst:503 5b4c23a93e984ce0af2e43cf4752225b
+#: ../../File_Transfer/File_Transfer.rst:579 5b4c23a93e984ce0af2e43cf4752225b
 msgid ""
 "The other side, upon receiving the error sign, closes the transfer socket "
 "and aborts the transfer."
 msgstr "另一端收到錯誤標誌後，關閉傳輸套接字並中止傳輸。"
 
-#: ../../File_Transfer/File_Transfer.rst:506 b337a2726ded4d619c5e8026bef3f6ea
+#: ../../File_Transfer/File_Transfer.rst:582 b337a2726ded4d619c5e8026bef3f6ea
 msgid ""
 "The main control connection remains unaffected; only the transfer socket is "
 "closed."
 msgstr "主控連線不受影響；僅關閉傳輸套接字。"
 
-#: ../../File_Transfer/File_Transfer.rst:510 68be52c8e5ce447a9c5ec51a661229cf
+#: ../../File_Transfer/File_Transfer.rst:586 68be52c8e5ce447a9c5ec51a661229cf
 msgid "### Exception Handling"
 msgstr "### 例外處理"
 
-#: ../../File_Transfer/File_Transfer.rst:512 036db9bc1858417ca589816028b83f80
+#: ../../File_Transfer/File_Transfer.rst:588 036db9bc1858417ca589816028b83f80
 msgid ""
 "All socket operations are wrapped in try-except blocks. When an exception "
 "occurs (e.g., connection reset, file not found), the error is logged with "
@@ -804,11 +892,11 @@ msgstr ""
 "區塊中。當發生異常時（例如，連線重設、未找到檔案），錯誤將會以``traceback.print_exc()`` "
 "記錄，且傳輸會正常中止。如果可能，將發送“error_sign”，並關閉傳輸套接字。"
 
-#: ../../File_Transfer/File_Transfer.rst:524 fe9377db9cf04b9da0dbe4d07c730adf
+#: ../../File_Transfer/File_Transfer.rst:600 fe9377db9cf04b9da0dbe4d07c730adf
 msgid "Related API Definitions"
 msgstr "相關API定義"
 
-#: ../../File_Transfer/File_Transfer.rst:526 cc71cb9b1d6642a2acc89d45a49022cc
+#: ../../File_Transfer/File_Transfer.rst:602 cc71cb9b1d6642a2acc89d45a49022cc
 msgid ""
 "This section lists all public file-transfer related methods in "
 "``TCP_Server_Base`` and ``TCP_Client_Base``. For a complete list of all "
@@ -817,11 +905,11 @@ msgstr ""
 "本節列出了「TCP_Server_Base」和「TCP_Client_Base」中所有與公共檔案傳輸相關的方法。有關所有公共 API "
 "的完整列表，請參閱本文檔末尾的表格。"
 
-#: ../../File_Transfer/File_Transfer.rst:532 d6683e415f794c5bb693f8c24370e7f9
+#: ../../File_Transfer/File_Transfer.rst:608 d6683e415f794c5bb693f8c24370e7f9
 msgid "### Server-Side File Transfer APIs"
 msgstr "### 伺服器端檔案傳輸 API"
 
-#: ../../File_Transfer/File_Transfer.rst:542 9123c69197c34d93bb68d088897ebeca
+#: ../../File_Transfer/File_Transfer.rst:618 9123c69197c34d93bb68d088897ebeca
 msgid ""
 "Initiates a server-to-client file transfer. ``message`` is the command "
 "string (e.g., ``/file /path/to/file.txt (127.0.0.1,54321)``). If "
@@ -831,11 +919,11 @@ msgstr ""
 "啟動伺服器到客戶端的檔案傳輸。 ``message`` 是指令字串（例如，``/file /path/to/file.txt "
 "(127.0.0.1,54321)``）。如果提供了「file_folder_abspath」（用於資料夾傳輸），則它指定父資料夾的絕對路徑。"
 
-#: ../../File_Transfer/File_Transfer.rst:557 367dfd82c95c413d963a15152469fc44
+#: ../../File_Transfer/File_Transfer.rst:633 367dfd82c95c413d963a15152469fc44
 msgid "Thread-safe version that starts a new thread for the transfer."
 msgstr "線程安全版本，啟動新線程進行傳輸。"
 
-#: ../../File_Transfer/File_Transfer.rst:566 d4aa76b7eb2c46c29adee0120a939b66
+#: ../../File_Transfer/File_Transfer.rst:642 d4aa76b7eb2c46c29adee0120a939b66
 msgid ""
 "Sends an entire folder from server to client. ``message`` should be of the "
 "form ``/file_folder <folder_path> <client_address>``."
@@ -843,7 +931,7 @@ msgstr ""
 "將整個資料夾從伺服器傳送到客戶端。 “message” 的格式應為“/file_folder <folder_path> "
 "<client_address>”。"
 
-#: ../../File_Transfer/File_Transfer.rst:576 fcb785ff144746fab81e95ec2ab056e1
+#: ../../File_Transfer/File_Transfer.rst:652 fcb785ff144746fab81e95ec2ab056e1
 msgid ""
 "Sends multiple files to multiple clients. The message format is "
 "``/multiple_file_multiple_client <file1> <file2> ... <client_addr1> "
@@ -852,7 +940,7 @@ msgstr ""
 "將多個文件傳送給多個客戶端。訊息格式為``/multiple_file_multiple_client <file1> <file2> ... "
 "<client_addr1> <client_addr2> ...``。文件必須出現在客戶面前。"
 
-#: ../../File_Transfer/File_Transfer.rst:588 9c6f024528f344e399b62023c7f8c858
+#: ../../File_Transfer/File_Transfer.rst:664 9c6f024528f344e399b62023c7f8c858
 msgid ""
 "Sends different file lists to different clients. The message alternates "
 "between groups: a list of files, then a list of client addresses, then the "
@@ -862,108 +950,107 @@ msgstr ""
 "向不同的客戶端發送不同的文件清單。訊息在群組之間交替：文件列表，然後是客戶端位址列表，然後是下一個文件列表，等等。範例：``/diff_multiple_file_diff_multiple_client"
 " a.txt b.txt (ip1,port1) (ip2,port2) c.txt (ip3,port3)``"
 
-#: ../../File_Transfer/File_Transfer.rst:606 f8a880287b7b49d4bdc2239ecf4a0577
+#: ../../File_Transfer/File_Transfer.rst:682 f8a880287b7b49d4bdc2239ecf4a0577
 msgid ""
 "Receives a file from a client. Called internally when the server receives a "
 "``/file`` command from a client."
 msgstr "從客戶端接收文件。當伺服器從客戶端接收到“/file”命令時在內部呼叫。"
 
-#: ../../File_Transfer/File_Transfer.rst:622 97bfaa9c24ae47c39328707b8f17a91a
+#: ../../File_Transfer/File_Transfer.rst:698 97bfaa9c24ae47c39328707b8f17a91a
 msgid ""
 "Low-level receive function that performs the handshake and writes the "
 "incoming file to disk."
 msgstr "執行握手並將傳入檔案寫入磁碟的低階接收函數。"
 
-#: ../../File_Transfer/File_Transfer.rst:635 db6a97ca42ba43e59d5c20695039d4ee
+#: ../../File_Transfer/File_Transfer.rst:711 db6a97ca42ba43e59d5c20695039d4ee
 msgid ""
 "Low-level send function that connects to the receiver and transmits the "
 "file."
 msgstr "連接到接收器並傳輸檔案的低階發送函數。"
 
-#: ../../File_Transfer/File_Transfer.rst:637 3e7b689215e840bebd368b4d29104ebc
+#: ../../File_Transfer/File_Transfer.rst:713 3e7b689215e840bebd368b4d29104ebc
 msgid "### Client-Side File Transfer APIs"
 msgstr "### 客戶端檔案傳輸 API"
 
-#: ../../File_Transfer/File_Transfer.rst:647 1e97e492d6504579a9a265eb1242395e
+#: ../../File_Transfer/File_Transfer.rst:723 1e97e492d6504579a9a265eb1242395e
 msgid ""
 "Initiates a client-to-server file transfer. ``message`` is the user command "
 "(e.g., ``/file mydoc.txt``). Used internally by the interactive console."
 msgstr "啟動客戶端到伺服器的檔案傳輸。 “message” 是使用者命令（例如“/file mydoc.txt”）。由互動式控制台內部使用。"
 
-#: ../../File_Transfer/File_Transfer.rst:659
-#: ../../File_Transfer/File_Transfer.rst:710 0cd2695763114a0b831df0bfa80a3d56
-#: f6b7f2f1b2f64f1a9755058bb175b542
+#: ../../File_Transfer/File_Transfer.rst:735
+#: ../../File_Transfer/File_Transfer.rst:786 0cd2695763114a0b831df0bfa80a3d56
 msgid "Thread-safe version."
 msgstr "線程安全版本。"
 
-#: ../../File_Transfer/File_Transfer.rst:668 261399ca508d463eafa7f03a00bfc658
+#: ../../File_Transfer/File_Transfer.rst:744 261399ca508d463eafa7f03a00bfc658
 msgid "Sends a folder from client to server."
 msgstr "將資料夾從客戶端傳送到伺服器。"
 
-#: ../../File_Transfer/File_Transfer.rst:677 ef5e3b92b11c4530960c1c344a51c73b
+#: ../../File_Transfer/File_Transfer.rst:753 ef5e3b92b11c4530960c1c344a51c73b
 msgid "Sends multiple files from client to server."
 msgstr "將多個文件從客戶端傳送到伺服器。"
 
-#: ../../File_Transfer/File_Transfer.rst:686 f2c90ee949d7484480cbb2cd5310bf26
+#: ../../File_Transfer/File_Transfer.rst:762 f2c90ee949d7484480cbb2cd5310bf26
 msgid "Sends multiple folders from client to server."
 msgstr "將多個資料夾從客戶端傳送到伺服器。"
 
-#: ../../File_Transfer/File_Transfer.rst:699 0b13d26a40174243a15698b4bfcbb69f
+#: ../../File_Transfer/File_Transfer.rst:775 0b13d26a40174243a15698b4bfcbb69f
 msgid ""
 "Receives a file from the server (called when the server initiates a "
 "transfer)."
 msgstr "從伺服器接收檔案（在伺服器啟動傳輸時呼叫）。"
 
-#: ../../File_Transfer/File_Transfer.rst:721 3b78a4355d7f4ee2bbbe6bf934a962c0
+#: ../../File_Transfer/File_Transfer.rst:797 3b78a4355d7f4ee2bbbe6bf934a962c0
 msgid "Receives a folder from the server."
 msgstr "從伺服器接收資料夾。"
 
-#: ../../File_Transfer/File_Transfer.rst:736 3d044e0754b94d1289b491502ce83610
+#: ../../File_Transfer/File_Transfer.rst:812 3d044e0754b94d1289b491502ce83610
 msgid "Low-level receive function on the client side."
 msgstr "客戶端的低階接收函數。"
 
-#: ../../File_Transfer/File_Transfer.rst:748 7311023a7fa644ed9b57a2873cd3bca8
+#: ../../File_Transfer/File_Transfer.rst:824 7311023a7fa644ed9b57a2873cd3bca8
 msgid ""
 "Low‑level send function on the client side (identical to server's version)."
 msgstr "客戶端的低階發送功能（與伺服器版本相同）。"
 
-#: ../../File_Transfer/File_Transfer.rst:753 7e74e9a09a8a4cf2a8a372a50b1ee51b
+#: ../../File_Transfer/File_Transfer.rst:829 7e74e9a09a8a4cf2a8a372a50b1ee51b
 msgid "Public API Summary"
 msgstr "公共API摘要"
 
-#: ../../File_Transfer/File_Transfer.rst:755 87aaf0a5d3b44f41a419d97b6567f6d0
+#: ../../File_Transfer/File_Transfer.rst:831 87aaf0a5d3b44f41a419d97b6567f6d0
 msgid ""
 "All public APIs (including non-file-transfer methods) are listed below for "
 "reference."
 msgstr "下面列出了所有公共 API（包括非文件傳輸方法）以供參考。"
 
-#: ../../File_Transfer/File_Transfer.rst:759 a195ee393f2a442c810e59811a6ae126
+#: ../../File_Transfer/File_Transfer.rst:835 a195ee393f2a442c810e59811a6ae126
 msgid "### TCP_Server_Base Public APIs"
 msgstr "### TCP_Server_Base 公用 API"
 
-#: ../../File_Transfer/File_Transfer.rst:761 0408d74a9140472e9a774143a60e5749
+#: ../../File_Transfer/File_Transfer.rst:837 0408d74a9140472e9a774143a60e5749
 msgid "``file_transfer_server_recv_client_start``"
 msgstr "``file_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:762 24a33cb212844e04a8a271ada32412f0
+#: ../../File_Transfer/File_Transfer.rst:838 24a33cb212844e04a8a271ada32412f0
 msgid "``file_transfer_server_recv_client_start_thread``"
 msgstr "``file_transfer_server_recv_client_start_thread``"
 
-#: ../../File_Transfer/File_Transfer.rst:763 7e286d1ece6940868bea6b937486e617
+#: ../../File_Transfer/File_Transfer.rst:839 7e286d1ece6940868bea6b937486e617
 msgid "``folder_file_transfer_server_recv_client_start``"
 msgstr "``folder_file_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:764 37fc5bd346c84415bb15138a42508fbe
+#: ../../File_Transfer/File_Transfer.rst:840 37fc5bd346c84415bb15138a42508fbe
 msgid "``multiple_file_multiple_client_transfer_server_recv_client_start``"
 msgstr "``multiple_file_multiple_client_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:765 38a2b16e3ab648688cf7e8d1cae8be72
+#: ../../File_Transfer/File_Transfer.rst:841 38a2b16e3ab648688cf7e8d1cae8be72
 msgid ""
 "``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``"
 msgstr ""
 "``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:767 11476e0eaa3b4a4286612812e4e2c004
+#: ../../File_Transfer/File_Transfer.rst:843 11476e0eaa3b4a4286612812e4e2c004
 msgid ""
 "(The low-level helpers ``file_transfer_server_recv_server_start``, "
 "``file_transfer_mode_recv``, and ``file_transfer_mode`` are not considered "
@@ -971,65 +1058,65 @@ msgid ""
 msgstr ""
 "（低階助手「file_transfer_server_recv_server_start」、「file_transfer_mode_recv」和「file_transfer_mode」不被認為是公共的，但為了完整性而被記錄下來。）"
 
-#: ../../File_Transfer/File_Transfer.rst:773 907e861cebe648fbacb799bae8bb15e0
+#: ../../File_Transfer/File_Transfer.rst:849 907e861cebe648fbacb799bae8bb15e0
 msgid "### TCP_Client_Base Public APIs"
 msgstr "### TCP_Client_Base 公用 API"
 
-#: ../../File_Transfer/File_Transfer.rst:775 88bd80083f754caeb026f9ce1b8c6b55
+#: ../../File_Transfer/File_Transfer.rst:851 88bd80083f754caeb026f9ce1b8c6b55
 msgid "``file_transfer_client_recv_client_start``"
 msgstr "``file_transfer_client_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:776 3b21ff73da694465906482412b4fb4e3
+#: ../../File_Transfer/File_Transfer.rst:852 3b21ff73da694465906482412b4fb4e3
 msgid "``file_transfer_client_recv_client_start_thread``"
 msgstr "``file_transfer_client_recv_client_start_thread``"
 
-#: ../../File_Transfer/File_Transfer.rst:777 c8af43896a2443a5b14bd29863731c2c
+#: ../../File_Transfer/File_Transfer.rst:853 c8af43896a2443a5b14bd29863731c2c
 msgid "``folder_file_transfer_client_recv_client_start``"
 msgstr "``folder_file_transfer_client_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:778 7a3d3e4a52334b169a62d3b30d7a3190
+#: ../../File_Transfer/File_Transfer.rst:854 7a3d3e4a52334b169a62d3b30d7a3190
 msgid "``multiple_file_transfer_client_recv_client_start``"
 msgstr "``multiple_file_transfer_client_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:779 19e18754c4674842ad5116f709588e03
+#: ../../File_Transfer/File_Transfer.rst:855 19e18754c4674842ad5116f709588e03
 msgid "``multiple_folder_file_transfer_client_recv_client_start``"
 msgstr "``multiple_folder_file_transfer_client_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:780 4cf80f9f34e045c59a680d0450c9103a
+#: ../../File_Transfer/File_Transfer.rst:856 4cf80f9f34e045c59a680d0450c9103a
 msgid "``file_transfer_client_recv_server_start``"
 msgstr "``file_transfer_client_recv_server_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:781 c09f5fcba03f461f89238dd31abf6e88
+#: ../../File_Transfer/File_Transfer.rst:857 c09f5fcba03f461f89238dd31abf6e88
 msgid "``file_transfer_client_recv_server_start_thread``"
 msgstr "``file_transfer_client_recv_server_start_thread``"
 
-#: ../../File_Transfer/File_Transfer.rst:782 ad39bc6b71f048b09bca3b895e9d32f8
+#: ../../File_Transfer/File_Transfer.rst:858 ad39bc6b71f048b09bca3b895e9d32f8
 msgid "``file_folder_transfer_client_recv_server_start_thread``"
 msgstr "``file_folder_transfer_client_recv_server_start_thread``"
 
-#: ../../File_Transfer/File_Transfer.rst:784 99140d0be72649199911a57a26e2f2cf
+#: ../../File_Transfer/File_Transfer.rst:860 99140d0be72649199911a57a26e2f2cf
 msgid "(The low-level helpers are documented but not part of the public API.)"
 msgstr "（低階幫助程序已記錄，但不屬於公共 API 的一部分。）"
 
-#: ../../File_Transfer/File_Transfer.rst:788 60355543ac904504af8529431ce2c1fa
+#: ../../File_Transfer/File_Transfer.rst:864 60355543ac904504af8529431ce2c1fa
 msgid "See Also"
 msgstr "參見"
 
-#: ../../File_Transfer/File_Transfer.rst:790 7a5902ad3de64bf79d54d7f2f83ecbfb
+#: ../../File_Transfer/File_Transfer.rst:866 7a5902ad3de64bf79d54d7f2f83ecbfb
 msgid ""
 "For more information about the TCP server and client base classes, please "
 "refer to:"
 msgstr "關於TCP伺服器和客戶端基類的更多信息，請參考："
 
-#: ../../File_Transfer/File_Transfer.rst:794 f10c29f467b849e8b4254998b44f99ba
+#: ../../File_Transfer/File_Transfer.rst:870 f10c29f467b849e8b4254998b44f99ba
 msgid ":doc:`../Network_APIs/TCP_Server_APIs`"
 msgstr ":doc:`../Network_APIs/TCP_Server_APIs`"
 
-#: ../../File_Transfer/File_Transfer.rst:795 335ba244d28342449db065c252d7e14c
+#: ../../File_Transfer/File_Transfer.rst:871 335ba244d28342449db065c252d7e14c
 msgid ":doc:`../Network_APIs/TCP_Client_APIs`"
 msgstr ":doc:`../Network_APIs/TCP_Client_APIs`"
 
-#: ../../File_Transfer/File_Transfer.rst:797 92d0227c356447a098cba072d5b43c98
+#: ../../File_Transfer/File_Transfer.rst:873 92d0227c356447a098cba072d5b43c98
 msgid ""
 "For details on port allocation, see the Port Allocation API sections in "
 "those documents."

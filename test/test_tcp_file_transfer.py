@@ -519,6 +519,57 @@ def test_forward_flow_control_pauses_uploader(pair, tmp_path, monkeypatch):
     assert any(str(m).startswith("/start_trans") for m in sent), "expected a /start_trans"
     forwarder.close()
 
+def test_forward_file_with_destination(pair, tmp_path):
+    """/forward_file with a trailing destination dir: targets write the
+    forwarded file under the destination instead of their default dir."""
+    server, target, recv_dir = pair
+    src = tmp_path / "payload.bin"
+    payload = os.urandom(8192)
+    src.write_bytes(payload)
+    dest = tmp_path / "dest"
+    forwarder = _forward_client(server, tmp_path / "fwd")
+
+    a = target.client_socket.getsockname()
+    cmd = '/forward_file "{}" "({}, {})" "{}"'.format(src, repr(a[0]), a[1], dest)
+    forwarder._forward_file_console(cmd)
+
+    def got(path):
+        return path.exists() and path.stat().st_size == len(payload)
+
+    assert wait_until(lambda: got(dest / "payload.bin"), timeout=15), (
+        "file not written to the destination"
+    )
+    assert (dest / "payload.bin").read_bytes() == payload
+    assert not any(recv_dir.iterdir()), "default directory must stay empty"
+    forwarder.close()
+
+
+def test_forward_folder_with_destination(pair, tmp_path):
+    """/forward_folder with a trailing destination dir: the folder structure
+    is recreated under the destination on the target."""
+    server, target, recv_dir = pair
+    folder = tmp_path / "data"
+    (folder / "sub").mkdir(parents=True)
+    (folder / "a.txt").write_text("hello")
+    (folder / "sub" / "b.txt").write_text("world")
+    dest = tmp_path / "dest"
+    forwarder = _forward_client(server, tmp_path / "fwd")
+
+    a = target.client_socket.getsockname()
+    cmd = '/forward_folder "{}" "({}, {})" "{}"'.format(folder, repr(a[0]), a[1], dest)
+    forwarder._forward_folder_console(cmd)
+
+    assert wait_until(lambda: (dest / "data" / "a.txt").exists(), timeout=15), (
+        "a.txt not at the destination"
+    )
+    assert wait_until(lambda: (dest / "data" / "sub" / "b.txt").exists(), timeout=15), (
+        "sub/b.txt not at the destination"
+    )
+    assert (dest / "data" / "a.txt").read_text() == "hello"
+    assert (dest / "data" / "sub" / "b.txt").read_text() == "world"
+    assert not any(recv_dir.iterdir()), "default directory must stay empty"
+    forwarder.close()
+
 def test_multiple_file_multiple_client_console_command(pair, tmp_path):
     """/multiple_file_multiple_client from the server console sends one file to
     every listed client (the console form used to be a silent no-op because

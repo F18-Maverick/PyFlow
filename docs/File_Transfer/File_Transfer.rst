@@ -410,8 +410,8 @@ double transfer time and the disk read/write overhead.
 Commands (client console only; rejected on the server
 console):
 
-- ``/forward_file <file1> <file2> ... <addr1> <addr2> ...``
-- ``/forward_folder <folder1> <folder2> ... <addr1> <addr2> ...``
+- ``/forward_file <file1> <file2> ... <addr1> <addr2> ... [destination_file_path]``
+- ``/forward_folder <folder1> <folder2> ... <addr1> <addr2> ... [destination_file_path]``
 
 The number of files/folders and the number of target
 clients (written as
@@ -420,6 +420,17 @@ are unreachable
 (not connected to the server) or equal to the server
 itself are skipped and
 the remaining targets are still served.
+
+Like every transfer family, both commands accept an
+optional trailing
+``destination_file_path`` that replaces the default save
+directory on every
+receiving client: a forwarded file lands at
+``<destination>/<filename>`` and a forwarded folder keeps
+its structure under
+``<destination>/<folder_name>/...``. When the argument is
+omitted the targets
+write to their default ``file_transfer_dir``.
 
 The data path reuses the protocol's own transfer
 machinery:

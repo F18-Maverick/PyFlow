@@ -1892,7 +1892,14 @@ class TCP_Server_Base:  # TCP server class
             self._forward_notify_error(sock, "invalid forward command")
             return
         kind = parts[1].lower()
-        items, addrs = self._forward_parse_items_addrs(parts[2:])
+        rest = parts[2:]
+        # optional destination directory is the very last argument, after the
+        # client address tuples
+        destination_path = None
+        if rest and not (rest[-1].startswith("(") and rest[-1].endswith(")")):
+            destination_path = rest[-1]
+            rest = rest[:-1]
+        items, addrs = self._forward_parse_items_addrs(rest)
         valid_targets = []
         for target in addrs:
             if target == (self.host, self.port):
@@ -1922,7 +1929,7 @@ class TCP_Server_Base:  # TCP server class
             return
         threading.Thread(
             target=self._forward_relay,
-            args=(sock, kind, rel_dir, fname, valid_targets),
+            args=(sock, kind, rel_dir, fname, valid_targets, destination_path),
             daemon=True,
         ).start()
 
@@ -1982,7 +1989,7 @@ class TCP_Server_Base:  # TCP server class
                 relay["writer_pause"][client_address] = False
                 relay["cond"].notify_all()
 
-    def _forward_relay(self, forwarder_sock, kind, rel_dir, fname, targets):
+    def _forward_relay(self, forwarder_sock, kind, rel_dir, fname, targets, destination_path=None):
         """Relay one file/folder item to every target, streaming from the
         uploader's transfer connection with bounded in-memory buffering."""
         fid = self._forward_alloc_fid()
@@ -1995,7 +2002,9 @@ class TCP_Server_Base:  # TCP server class
             for key in [fid] + tfids:
                 self._forward_relays[key] = relay
         try:
-            # ask every target to open a receive transfer socket
+            # ask every target to open a receive transfer socket; the
+            # destination directory (if any) goes before the target id so
+            # the receiver's own destination parsing sees it
             for target, tfid in zip(targets, tfids):
                 try:
                     t_sock = self.clients[target]["socket"]
@@ -2003,12 +2012,24 @@ class TCP_Server_Base:  # TCP server class
                     print(f"forward: target {target} missing, skipped: {e}")
                     continue
                 if kind == "file":
-                    self.send_message(t_sock, f"/file {shlex.quote(fname)} {tfid}")
+                    if destination_path:
+                        self.send_message(
+                            t_sock, f"/file {shlex.quote(fname)} {shlex.quote(destination_path)} {tfid}"
+                        )
+                    else:
+                        self.send_message(t_sock, f"/file {shlex.quote(fname)} {tfid}")
                 else:
-                    self.send_message(
-                        t_sock,
-                        f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(fname)} {tfid}",
-                    )
+                    if destination_path:
+                        self.send_message(
+                            t_sock,
+                            f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(fname)} "
+                            f"{shlex.quote(destination_path)} {tfid}",
+                        )
+                    else:
+                        self.send_message(
+                            t_sock,
+                            f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(fname)} {tfid}",
+                        )
             # collect every target's advertised transfer port
             ports = {}
             deadline = time.time() + 20
@@ -3767,10 +3788,23 @@ class TCP_Client_Base:  # TCP client class
                 items.append(token)
         return items, addrs
 
+    def _forward_parse_command(self, tokens):
+        """Split forward console tokens into (items, addrs, destination_path).
+
+        Files/folders come first and address tuples last; an optional
+        destination directory, when present, is the very last argument.
+        """
+        destination_path = None
+        if tokens and not (tokens[-1].startswith("(") and tokens[-1].endswith(")")):
+            destination_path = tokens[-1]
+            tokens = tokens[:-1]
+        items, addrs = self._forward_parse(tokens)
+        return items, addrs, destination_path
+
     def _forward_file_console(self, message):
-        """/forward_file <file1> <file2> ... <addr1> <addr2> ... (client only)."""
+        """/forward_file <file1> <file2> ... <addr1> <addr2> ... [dest] (client only)."""
         parts = shlex.split(message)
-        items, addrs = self._forward_parse(parts[1:])
+        items, addrs, destination_path = self._forward_parse_command(parts[1:])
         files = [p for p in items if os.path.isfile(p)]
         for p in items:
             if not os.path.isfile(p):
@@ -3781,13 +3815,15 @@ class TCP_Client_Base:  # TCP client class
             print("forward: no target clients given")
             return
         threading.Thread(
-            target=self._forward_driver, args=(files, addrs, False), daemon=True
+            target=self._forward_driver,
+            args=(files, addrs, False, destination_path),
+            daemon=True,
         ).start()
 
     def _forward_folder_console(self, message):
-        """/forward_folder <folder1> <folder2> ... <addr1> <addr2> ... (client only)."""
+        """/forward_folder <folder1> <folder2> ... <addr1> <addr2> ... [dest] (client only)."""
         parts = shlex.split(message)
-        items, addrs = self._forward_parse(parts[1:])
+        items, addrs, destination_path = self._forward_parse_command(parts[1:])
         folders = [p for p in items if os.path.isdir(p)]
         for p in items:
             if not os.path.isdir(p):
@@ -3798,14 +3834,18 @@ class TCP_Client_Base:  # TCP client class
             print("forward: no target clients given")
             return
         threading.Thread(
-            target=self._forward_driver, args=(folders, addrs, True), daemon=True
+            target=self._forward_driver,
+            args=(folders, addrs, True, destination_path),
+            daemon=True,
         ).start()
 
-    def _forward_driver(self, items, addrs, folder_mode):
+    def _forward_driver(self, items, addrs, folder_mode, destination_path=None):
         try:
             if not folder_mode:
                 for path in items:
-                    self._forward_one("file", "", os.path.basename(path), path, addrs)
+                    self._forward_one(
+                        "file", "", os.path.basename(path), path, addrs, destination_path
+                    )
             else:
                 for folder in items:
                     base_path = os.path.dirname(folder)
@@ -3813,7 +3853,12 @@ class TCP_Client_Base:  # TCP client class
                         rel_dir = self._forward_rel_path(base_path, root)
                         for file in files:
                             self._forward_one(
-                                "folder", rel_dir, file, os.path.join(root, file), addrs
+                                "folder",
+                                rel_dir,
+                                file,
+                                os.path.join(root, file),
+                                addrs,
+                                destination_path,
                             )
         except Exception:
             traceback.print_exc()
@@ -3829,7 +3874,7 @@ class TCP_Client_Base:  # TCP client class
             return ""
         return "/" + rel.replace(os.sep, "/")
 
-    def _forward_one(self, kind, rel_dir, fname, abspath, addrs):
+    def _forward_one(self, kind, rel_dir, fname, abspath, addrs, destination_path=None):
         if not os.path.isfile(abspath):
             print(f"forward: {abspath} is not a valid file, skipped")
             return
@@ -3837,6 +3882,8 @@ class TCP_Client_Base:  # TCP client class
         if kind == "folder":
             msg += f" {shlex.quote(rel_dir)}"
         msg += f" {shlex.quote(fname)} " + " ".join(shlex.quote(str(a)) for a in addrs)
+        if destination_path:
+            msg += f" {shlex.quote(destination_path)}"
         self._forward_error = None
         self.send_message(self.client_socket, msg)
         upload = None
