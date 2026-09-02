@@ -407,7 +407,7 @@ def test_forward_file_to_multiple_clients(pair, tmp_path):
     cmd = '/forward_file "{}" "({}, {})" "({}, {})"'.format(
         src, repr(a1[0]), a1[1], repr(a2[0]), a2[1]
     )
-    forwarder._forward_file_console(cmd)
+    forwarder.forward_file_console(cmd)
 
     # size-aware wait: exists() can be true while the receiver is still
     # writing; reading mid-write would see a truncated file
@@ -438,7 +438,7 @@ def test_forward_folder_to_client(pair, tmp_path):
 
     a = target.client_socket.getsockname()
     cmd = '/forward_folder "{}" "({}, {})"'.format(folder, repr(a[0]), a[1])
-    forwarder._forward_folder_console(cmd)
+    forwarder.forward_folder_console(cmd)
 
     assert wait_until(lambda: (recv_dir / "data" / "a.txt").exists(), timeout=15), (
         "a.txt not forwarded"
@@ -469,7 +469,7 @@ def test_forward_skips_unreachable_and_server_targets(pair, tmp_path):
         repr(bad[0]), bad[1],
         repr(server_addr[0]), server_addr[1],
     )
-    forwarder._forward_file_console(cmd)
+    forwarder.forward_file_console(cmd)
 
     def got(path):
         return path.exists() and path.stat().st_size == len(payload)
@@ -506,7 +506,7 @@ def test_forward_flow_control_pauses_uploader(pair, tmp_path, monkeypatch):
     monkeypatch.setattr(server, "send_message", spy)
     a = target.client_socket.getsockname()
     cmd = '/forward_file "{}" "({}, {})"'.format(src, repr(a[0]), a[1])
-    forwarder._forward_file_console(cmd)
+    forwarder.forward_file_console(cmd)
 
     def got(path):
         return path.exists() and path.stat().st_size == len(payload)
@@ -531,7 +531,7 @@ def test_forward_file_with_destination(pair, tmp_path):
 
     a = target.client_socket.getsockname()
     cmd = '/forward_file "{}" "({}, {})" "{}"'.format(src, repr(a[0]), a[1], dest)
-    forwarder._forward_file_console(cmd)
+    forwarder.forward_file_console(cmd)
 
     def got(path):
         return path.exists() and path.stat().st_size == len(payload)
@@ -557,7 +557,7 @@ def test_forward_folder_with_destination(pair, tmp_path):
 
     a = target.client_socket.getsockname()
     cmd = '/forward_folder "{}" "({}, {})" "{}"'.format(folder, repr(a[0]), a[1], dest)
-    forwarder._forward_folder_console(cmd)
+    forwarder.forward_folder_console(cmd)
 
     assert wait_until(lambda: (dest / "data" / "a.txt").exists(), timeout=15), (
         "a.txt not at the destination"

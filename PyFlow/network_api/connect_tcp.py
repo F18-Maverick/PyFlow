@@ -3402,9 +3402,9 @@ class TCP_Client_Base:  # TCP client class
                         elif shlex.split(message.lower())[0] == "/multiple_file_folder":
                             self.multiple_folder_file_transfer_client_recv_client_start(message)
                         elif shlex.split(message.lower())[0] == "/forward_file":
-                            self._forward_file_console(message)
+                            self.forward_file_console(message)
                         elif shlex.split(message.lower())[0] == "/forward_folder":
-                            self._forward_folder_console(message)
+                            self.forward_folder_console(message)
                         else:
                             cmd_name = message[0].lower()
                             if cmd_name in self._custom_handlers[1]:
@@ -3801,7 +3801,7 @@ class TCP_Client_Base:  # TCP client class
         items, addrs = self._forward_parse(tokens)
         return items, addrs, destination_path
 
-    def _forward_file_console(self, message):
+    def forward_file_console(self, message):
         """/forward_file <file1> <file2> ... <addr1> <addr2> ... [dest] (client only)."""
         parts = shlex.split(message)
         items, addrs, destination_path = self._forward_parse_command(parts[1:])
@@ -3820,7 +3820,7 @@ class TCP_Client_Base:  # TCP client class
             daemon=True,
         ).start()
 
-    def _forward_folder_console(self, message):
+    def forward_folder_console(self, message):
         """/forward_folder <folder1> <folder2> ... <addr1> <addr2> ... [dest] (client only)."""
         parts = shlex.split(message)
         items, addrs, destination_path = self._forward_parse_command(parts[1:])
