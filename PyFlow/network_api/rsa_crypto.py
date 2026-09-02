@@ -85,7 +85,16 @@ def _exclusive_file_lock(path):
     try:
         if _msvcrt is not None:  # Windows
             if os.fstat(fd).st_size < 1:
-                os.write(fd, b"\0")
+                # the initial byte must exist before locking; two threads can
+                # both open a just-created lock file and race to write it,
+                # and the other's byte-range lock makes this write fail with
+                # PermissionError(13). Retry until the first locker releases.
+                while True:
+                    try:
+                        os.write(fd, b"\0")
+                        break
+                    except PermissionError:
+                        time.sleep(0.05)
             os.lseek(fd, 0, os.SEEK_SET)
             while True:
                 try:
@@ -362,11 +371,18 @@ class RsaCrypto:
         self.ensure_keys(force_reload=True)
 
     def _read_priv_handle(self, lib, path):
-        handle = ctypes.c_void_p()
-        err = lib.pf_rsa_read_priv(path.encode("utf-8"), None, ctypes.byref(handle))
-        if err != PF_OK or not handle.value:
-            raise ValueError("cannot parse private key {} (err {})".format(path, err))
-        return RsaKey(handle.value, lib)
+        # a just-replaced key file can be briefly held by AV/indexing on
+        # Windows; retry the parse so a transient sharing conflict does not
+        # abort a valid concurrent key load
+        deadline = time.time() + 15.0
+        while True:
+            handle = ctypes.c_void_p()
+            err = lib.pf_rsa_read_priv(path.encode("utf-8"), None, ctypes.byref(handle))
+            if err == PF_OK and handle.value:
+                return RsaKey(handle.value, lib)
+            if err != PF_ERR_IO or time.time() >= deadline:
+                raise ValueError("cannot parse private key {} (err {})".format(path, err))
+            time.sleep(0.05)
 
     def _validate_custom_keys(self, lib, custom_keys):
         """Check a user-supplied ``[pub_path, pvt_path]`` pair.
