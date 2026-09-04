@@ -336,6 +336,147 @@ transfer and released in a
 ``max_thread_num`` on the
 client and ``max_file_transfer_thread_num`` on the server.
 
+.. _custom-destination-directory:
+
+Custom Destination Directory
+----------------------------
+
+Every transfer family accepts an optional trailing
+``destination_file_path``
+argument that replaces the receiver's default save
+directory (``received_files/``
+or the configured ``file_transfer_dir``). When it is
+omitted, the transfer goes
+to the default location exactly as before.
+
+The destination is **always the last argument** of the
+command and names a
+*directory* on the receiving machine: the received file
+keeps its own name
+(``<destination>/<filename>``), and a transferred folder
+keeps its structure
+under the destination (``<destination>/<folder_name>/...``
+). An absolute
+path is used as-is; a relative path is resolved under the
+default save
+directory. Missing directories are created.
+
+Command syntax:
+
+- Client console (the receiver is the server):
+
+  ``/file <file_path> [destination_file_path]``
+
+  ``/multiple_file <file1> <file2> ... [destination_file_path]``
+
+  ``/file_folder <folder_path> [destination_file_path]``
+
+  ``/multiple_file_folder <folder1> <folder2> ... [destination_file_path]``
+
+- Server console (the receiver is the target client, given
+  as a quoted address tuple):
+
+  ``/file <file_path> <client_id> [destination_file_path]``
+
+  ``/file_folder <folder_path> <client_id> [destination_file_path]``
+
+  ``/multiple_file_multiple_client <file1> <file2> ... <client_id1> <client_id2> ... [destination_file_path]``
+
+  ``/diff_multiple_file_diff_multiple_client <file1> ... <client_id1> ... [destination_file_path]``
+
+For the multiple-item commands the destination is the last
+argument; when the
+last argument is an existing local file/folder it is
+treated as another item to
+transfer instead.
+
+.. _native-in-memory-forward:
+
+Native In-Memory Forwarding
+---------------------------
+
+The main protocol also provides a native, client-side
+forwarding feature that
+relays data from one client to several other clients
+through the server
+**without any disk I/O on the server**. Unlike the
+forward extension (which
+uploads to disk and then downloads from disk), the server
+only holds the data
+in memory and streams it straight to the target clients.
+This avoids the
+double transfer time and the disk read/write overhead.
+
+Commands (client console only; rejected on the server
+console):
+
+- ``/forward_file <file1> <file2> ... <addr1> <addr2> ... [destination_file_path]``
+- ``/forward_folder <folder1> <folder2> ... <addr1> <addr2> ... [destination_file_path]``
+
+The number of files/folders and the number of target
+clients (written as
+quoted address tuples) is unlimited. Target addresses that
+are unreachable
+(not connected to the server) or equal to the server
+itself are skipped and
+the remaining targets are still served.
+
+Like every transfer family, both commands accept an
+optional trailing
+``destination_file_path`` that replaces the default save
+directory on every
+receiving client: a forwarded file lands at
+``<destination>/<filename>`` and a forwarded folder keeps
+its structure under
+``<destination>/<folder_name>/...``. When the argument is
+omitted the targets
+write to their default ``file_transfer_dir``.
+
+The data path reuses the protocol's own transfer
+machinery:
+
+1. The forwarding client streams the file with the
+   standard file-transfer
+   byte stream (metadata header + 64 KiB chunks) to a
+   transfer socket on the
+   server.
+2. The server acts as a pure relay: it reads the stream
+   into per-target
+   memory queues and writes each chunk to every target's
+   transfer socket.
+   The server never parses the file contents beyond the
+   size header and never
+   writes to disk.
+3. Every target client receives the stream with the
+   ordinary receive path
+   (``file_transfer_mode_recv``) and writes it to its own
+   local disk, exactly
+   as if the server had pushed the file directly.
+
+### Memory Bounding and Flow Control
+
+Because uploader, server and targets may have different
+bandwidths, data can
+pile up in the server's memory. Both ``TCP_Server_Base``
+and ``TCP_Client_Base``
+take a ``max_mem_buff`` parameter (in MB, default 2048,
+i.e. 2 GB) that bounds
+the memory the forwarding machinery may hold in that
+process. When the server's
+buffered bytes exceed ``max_mem_buff`` it sends
+``/pause_trans`` to the
+forwarding client, which stops reading the source file;
+once the writers drain
+the buffers below the low-water mark (half the limit) the
+server sends
+``/start_trans`` and the upload resumes. Receiving clients
+drain each chunk to
+disk synchronously, so their buffered memory stays bounded
+by a single chunk;
+the ``/pause_trans``/``/start_trans`` handlers exist on
+both sides so any side
+can throttle a transfer when it buffers data.
+
 .. _concurrency-and-threading:
 
 Concurrency and Threading

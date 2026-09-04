@@ -44,6 +44,25 @@ except ImportError:  # pragma: no cover - POSIX
 
 VALID_SIGN = "_VALID"  # plaintext suffix; a decrypt missing it signals a stale/wrong key
 
+def _os_replace_retry(src, dst, max_wait=30.0):
+    """os.replace that survives transient Windows sharing conflicts.
+
+    Windows (with the file indexed/AV-scanned or briefly held open by a
+    concurrent reader) can fail os.replace with EACCES "Permission
+    denied" even while no lock is held. Retry like _exclusive_file_lock
+    does, so a slow CI runner does not fail a valid atomic rename.
+    """
+    deadline = time.time() + max_wait
+    while True:
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if time.time() >= deadline:
+                raise
+            time.sleep(0.05)
+
+
 
 @contextlib.contextmanager
 def _exclusive_file_lock(path):
@@ -66,7 +85,16 @@ def _exclusive_file_lock(path):
     try:
         if _msvcrt is not None:  # Windows
             if os.fstat(fd).st_size < 1:
-                os.write(fd, b"\0")
+                # the initial byte must exist before locking; two threads can
+                # both open a just-created lock file and race to write it,
+                # and the other's byte-range lock makes this write fail with
+                # PermissionError(13). Retry until the first locker releases.
+                while True:
+                    try:
+                        os.write(fd, b"\0")
+                        break
+                    except PermissionError:
+                        time.sleep(0.05)
             os.lseek(fd, 0, os.SEEK_SET)
             while True:
                 try:
@@ -328,7 +356,7 @@ class RsaCrypto:
                 err = lib.pf_rsa_write_pub(priv_handle, tmp_pub.encode("utf-8"))
                 if err != PF_OK:
                     raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
-                os.replace(tmp_pub, pub_path)
+                _os_replace_retry(tmp_pub, pub_path)
             except Exception:
                 try:
                     os.unlink(tmp_pub)
@@ -343,11 +371,18 @@ class RsaCrypto:
         self.ensure_keys(force_reload=True)
 
     def _read_priv_handle(self, lib, path):
-        handle = ctypes.c_void_p()
-        err = lib.pf_rsa_read_priv(path.encode("utf-8"), None, ctypes.byref(handle))
-        if err != PF_OK or not handle.value:
-            raise ValueError("cannot parse private key {} (err {})".format(path, err))
-        return RsaKey(handle.value, lib)
+        # a just-replaced key file can be briefly held by AV/indexing on
+        # Windows; retry the parse so a transient sharing conflict does not
+        # abort a valid concurrent key load
+        deadline = time.time() + 15.0
+        while True:
+            handle = ctypes.c_void_p()
+            err = lib.pf_rsa_read_priv(path.encode("utf-8"), None, ctypes.byref(handle))
+            if err == PF_OK and handle.value:
+                return RsaKey(handle.value, lib)
+            if err != PF_ERR_IO or time.time() >= deadline:
+                raise ValueError("cannot parse private key {} (err {})".format(path, err))
+            time.sleep(0.05)
 
     def _validate_custom_keys(self, lib, custom_keys):
         """Check a user-supplied ``[pub_path, pvt_path]`` pair.
@@ -412,7 +447,7 @@ class RsaCrypto:
         err = lib.pf_rsa_write_priv(key.handle, tmp_priv.encode("utf-8"), None)
         if err != PF_OK:
             raise RuntimeError("pf_rsa_write_priv failed: {}".format(err))
-        os.replace(tmp_priv, priv_path)  # atomic: a concurrent reader never sees a half-written key
+        _os_replace_retry(tmp_priv, priv_path)  # atomic: a concurrent reader never sees a half-written key
         try:
             os.chmod(priv_path, 0o600)  # private key: owner-only
         except OSError:
@@ -421,7 +456,7 @@ class RsaCrypto:
         err = lib.pf_rsa_write_pub(key.handle, tmp_pub.encode("utf-8"))
         if err != PF_OK:
             raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
-        os.replace(tmp_pub, pub_path)
+        _os_replace_retry(tmp_pub, pub_path)
 
 
     def peer_pem_path(self, peer_role, peer_ip, peer_port):
@@ -450,7 +485,7 @@ class RsaCrypto:
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(registry, f, indent=2, ensure_ascii=False)
-            os.replace(tmp, self.registry_path)
+            _os_replace_retry(tmp, self.registry_path)
         except Exception:
             try:
                 os.unlink(tmp)

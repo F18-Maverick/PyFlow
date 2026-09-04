@@ -29,6 +29,7 @@ try:
     import tty as _tty
 except ImportError:  # POSIX only
     _tty = None
+from . import add_extension
 from . import command_control_extension_tcp, forward_extension_tcp
 from .network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
 
@@ -50,6 +51,7 @@ SERVER_DEFAULTS = {
     "is_extend_command": False,
     "is_enable_encrypto": True,
     "is_custom_keys": None,
+    "max_mem_buff": 2048,
 }
 
 CLIENT_DEFAULTS = {
@@ -66,6 +68,7 @@ CLIENT_DEFAULTS = {
     "is_extend_command": False,
     "is_enable_encrypto": True,
     "is_custom_keys": None,
+    "max_mem_buff": 2048,
 }
 
 
@@ -206,11 +209,11 @@ Config fields (empty input keeps the current value):
   server: host, port, max_clients, port_add_step, port_range_num,
           max_file_transfer_thread_num, is_hand_alloc_port,
           is_input_command_in_console, max_custom_workers, is_extend_command,
-          is_enable_encrypto, is_custom_keys
+          is_enable_encrypto, is_custom_keys, max_mem_buff
   client: host, client_host, port, client_port, timeout, port_add_step,
           max_thread_num, is_input_command_in_console, is_wait_server,
           max_custom_workers, is_extend_command, is_enable_encrypto,
-          is_custom_keys
+          is_custom_keys, max_mem_buff
 Booleans accept true/false/1/0/y/n; integers are parsed with int(). Type
 "none" to reset a nullable field (host/client_port/timeout/is_custom_keys).
 Help, Fix_Config, Setup and Quit work at every prompt, including field
@@ -228,10 +231,14 @@ Setup flow usage:
                 be changed (works at every prompt)
   Setup ....... launch every instance from setup.json and exit (works at
                 every prompt)
+  Add_Extension ... add extension protocol files to the project (works at
+                every prompt)
+  Delete_Extension ... remove registered extension files from the project
+                (works at every prompt)
   Quit ........ exit the setup program immediately
-Help, Fix_Config, Setup and Quit work at every prompt. In the instance editor
-(reached with Y on the reduce question) 'Help' prints all config fields and
-the vim-style commands.
+Help, Fix_Config, Add_Extension, Delete_Extension, Setup and Quit work at
+every prompt. In the instance editor (reached with Y on the reduce question)
+'Help' prints all config fields and the vim-style commands.
 """
 
 
@@ -279,7 +286,8 @@ def _launch_all_from_setup():
 def _input(prompt, help_text=COLLECT_USAGE):
     """Ask one question; 'Help' reprints usage, 'Fix_Config' enters the
     instance editor, 'Setup' launches every instance from setup.json,
-    'Quit' exits the program.
+    'Add_Extension' adds extension files, 'Delete_Extension' removes
+    registered extension files, 'Quit' exits the program.
 
     The returned line has surrounding whitespace stripped; the caller
     decides case handling for its own answers.
@@ -298,6 +306,31 @@ def _input(prompt, help_text=COLLECT_USAGE):
             continue  # nothing usable in setup.json: ask again
         if low == "quit":
             raise _QuitFlow()
+        if low == "add_extension":
+            paths_input = input(
+                "Enter extension path(s) to add (separated by space): "
+            ).strip()
+            if paths_input:
+                try:
+                    add_extension.add_extension(paths_input.split())
+                    print("Extension(s) added successfully.")
+                except Exception as e:
+                    print(f"Failed to add extension(s): {e}")
+            continue
+        if low == "delete_extension":
+            if not os.path.exists(add_extension.added_extensions_log_file):
+                print("No extension registration file found - nothing to delete.")
+                continue
+            paths_input = input(
+                "Enter extension path(s) to delete (separated by space): "
+            ).strip()
+            if paths_input:
+                try:
+                    add_extension.remove_extension(paths_input.split())
+                    print("Extension(s) deleted successfully.")
+                except Exception as e:
+                    print(f"Failed to delete extension(s): {e}")
+            continue
         return answer
 
 
@@ -968,6 +1001,10 @@ def run_launched_instance(instance_type, config_file_path):
             server = TCP_Server_Base(**config)
             if config.get("is_extend_command", False):
                 _load_extensions(server, "server")
+            try:
+                add_extension.load_registered_extensions(server, "server")
+            except ImportError as e:
+                print(f"Failed to load registered extensions: {e}")
             if config.get("is_input_command_in_console", True):
                 server.start_TCP_Server()
             else:
@@ -977,6 +1014,10 @@ def run_launched_instance(instance_type, config_file_path):
             client = TCP_Client_Base(**config)
             if config.get("is_extend_command", False):
                 _load_extensions(client, "client")
+            try:
+                add_extension.load_registered_extensions(client, "client")
+            except ImportError as e:
+                print(f"Failed to load registered extensions: {e}")
             if config.get("is_input_command_in_console", True):
                 client.start_TCP_client()
             else:
@@ -1024,10 +1065,29 @@ def main():  # noqa: PLR0911, PLR0912, PLR0915
     parser.add_argument(
         "--connect_addr_port", type=str, help="Server address and port to connect (client required)"
     )
+    parser.add_argument("--delete", type=str, nargs="+", help="Remove registered extension protocol file(s) by path")
+    parser.add_argument("--add", type=str, nargs="+", help="Add extension protocol file(s) by path")
     parser.add_argument(
         "--setup_num", type=int, default=1, help="Number of instances to launch (only 1 is allowed)"
     )
     args = parser.parse_args()
+    if args.add is not None:
+        try:
+            add_extension.add_extension(args.add)
+            print("Extension(s) added successfully.")
+        except Exception as e:
+            print(f"Failed to add extension(s): {e}")
+        return
+    if args.delete is not None:
+        if not os.path.exists(add_extension.added_extensions_log_file):
+            print("Warning: extension registration file not found - nothing to delete.")
+            return
+        try:
+            add_extension.remove_extension(args.delete)
+            print("Extension(s) deleted successfully.")
+        except Exception as e:
+            print(f"Failed to delete extension(s): {e}")
+        return
     if args.type is not None:
         if args.type == 0 and args.connect_addr_port is not None:
             print("Error: --connect_addr_port cannot be used in Server mode")
