@@ -233,10 +233,12 @@ Setup flow usage:
                 every prompt)
   Add_Extension ... add extension protocol files to the project (works at
                 every prompt)
+  Delete_Extension ... remove registered extension files from the project
+                (works at every prompt)
   Quit ........ exit the setup program immediately
-Help, Fix_Config, Add_Extension, Setup and Quit work at every prompt. In the
-instance editor (reached with Y on the reduce question) 'Help' prints all
-config fields and the vim-style commands.
+Help, Fix_Config, Add_Extension, Delete_Extension, Setup and Quit work at
+every prompt. In the instance editor (reached with Y on the reduce question)
+'Help' prints all config fields and the vim-style commands.
 """
 
 
@@ -284,7 +286,8 @@ def _launch_all_from_setup():
 def _input(prompt, help_text=COLLECT_USAGE):
     """Ask one question; 'Help' reprints usage, 'Fix_Config' enters the
     instance editor, 'Setup' launches every instance from setup.json,
-    'Quit' exits the program.
+    'Add_Extension' adds extension files, 'Delete_Extension' removes
+    registered extension files, 'Quit' exits the program.
 
     The returned line has surrounding whitespace stripped; the caller
     decides case handling for its own answers.
@@ -313,6 +316,20 @@ def _input(prompt, help_text=COLLECT_USAGE):
                     print("Extension(s) added successfully.")
                 except Exception as e:
                     print(f"Failed to add extension(s): {e}")
+            continue
+        if low == "delete_extension":
+            if not os.path.exists(add_extension.added_extensions_log_file):
+                print("No extension registration file found - nothing to delete.")
+                continue
+            paths_input = input(
+                "Enter extension path(s) to delete (separated by space): "
+            ).strip()
+            if paths_input:
+                try:
+                    add_extension.remove_extension(paths_input.split())
+                    print("Extension(s) deleted successfully.")
+                except Exception as e:
+                    print(f"Failed to delete extension(s): {e}")
             continue
         return answer
 
@@ -1048,6 +1065,7 @@ def main():  # noqa: PLR0911, PLR0912, PLR0915
     parser.add_argument(
         "--connect_addr_port", type=str, help="Server address and port to connect (client required)"
     )
+    parser.add_argument("--delete", type=str, nargs="+", help="Remove registered extension protocol file(s) by path")
     parser.add_argument("--add", type=str, nargs="+", help="Add extension protocol file(s) by path")
     parser.add_argument(
         "--setup_num", type=int, default=1, help="Number of instances to launch (only 1 is allowed)"
@@ -1059,6 +1077,16 @@ def main():  # noqa: PLR0911, PLR0912, PLR0915
             print("Extension(s) added successfully.")
         except Exception as e:
             print(f"Failed to add extension(s): {e}")
+        return
+    if args.delete is not None:
+        if not os.path.exists(add_extension.added_extensions_log_file):
+            print("Warning: extension registration file not found - nothing to delete.")
+            return
+        try:
+            add_extension.remove_extension(args.delete)
+            print("Extension(s) deleted successfully.")
+        except Exception as e:
+            print(f"Failed to delete extension(s): {e}")
         return
     if args.type is not None:
         if args.type == 0 and args.connect_addr_port is not None:

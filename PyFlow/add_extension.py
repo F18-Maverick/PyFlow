@@ -1,6 +1,5 @@
 import os
 import json
-import shutil
 import importlib.util
 
 dest_dir = os.path.dirname(__file__)
@@ -8,13 +7,13 @@ added_extensions_log_file = os.path.join(dest_dir, "added_extensions.json")
 
 
 def copy_extension_files(src_paths):
-    """Copy extension file(s) to the project directory.
+    """Validate extension path(s) and return them as a list.
 
     Args:
         src_paths: a single path string or a list of path strings.
 
     Returns:
-        List of destination paths (under the project directory).
+        The original paths as a list (extensions are not copied).
     """
     if isinstance(src_paths, str):
         src_paths = [src_paths]
@@ -25,13 +24,7 @@ def copy_extension_files(src_paths):
         if not os.path.exists(path):
             raise FileNotFoundError(f"Source file '{path}' does not exist.")
 
-    dest_paths = []
-    for path in src_paths:
-        dest = os.path.join(dest_dir, os.path.basename(path))
-        shutil.copy2(path, dest)
-        dest_paths.append(dest)
-
-    return dest_paths
+    return src_paths
 
 
 def add_added_extension_logs(paths):
@@ -47,13 +40,37 @@ def add_added_extension_logs(paths):
 
 
 def add_extension(src_paths):
-    """Copy extension file(s) to the project directory and register them.
+    """Register extension file(s) in added_extensions.json.
 
     Args:
         src_paths: a single path string or a list of path strings.
     """
-    copied = copy_extension_files(src_paths)
-    add_added_extension_logs(copied)
+    paths = copy_extension_files(src_paths)
+    add_added_extension_logs(paths)
+
+
+def remove_extension(src_paths):
+    """Remove registered extension path(s) from added_extensions.json.
+
+    Args:
+        src_paths: a single path string or a list of path strings.
+
+    If the registration file does not exist, this is a no-op.
+    """
+    if not os.path.exists(added_extensions_log_file):
+        return
+
+    if isinstance(src_paths, str):
+        src_paths = [src_paths]
+    elif not isinstance(src_paths, list):
+        raise TypeError("src_paths must be a string or a list of strings.")
+
+    with open(added_extensions_log_file, "r", encoding="utf-8") as f:
+        existing_logs = json.load(f)
+
+    remaining = [p for p in existing_logs if p not in src_paths]
+    with open(added_extensions_log_file, "w", encoding="utf-8") as f:
+        json.dump(remaining, f, indent=4)
 
 
 def load_registered_extensions(instance, instance_type):
