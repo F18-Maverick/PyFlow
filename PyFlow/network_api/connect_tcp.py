@@ -11,6 +11,7 @@ import threading
 import uuid
 import errno
 import queue
+import json
 from . import rsa_crypto
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -70,6 +71,90 @@ def _parse_destination_path(command_part):
             return command_part[-2]
     return None
 
+
+def parse_forwarded_message(command):
+    """Split a ``/send_msg_from <addr> <payload>`` relay envelope.
+
+    The forward extension's server relay wraps every forwarded message
+    with the sender's address so the receiving client can attribute it
+    to the sending instance (the web tool shows it in the sender's
+    conversation). Returns ``(sender_id, payload)`` where ``sender_id``
+    is the sender's ``"ip:port"``, or ``None`` when the command is not a
+    well-formed envelope.
+    """
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    if len(parts) < 3 or parts[0].lower() != "/send_msg_from":
+        return None
+    try:
+        sender = ast.literal_eval(parts[1])
+    except (ValueError, SyntaxError):
+        return None
+    if not (isinstance(sender, tuple) and len(sender) == 2 and isinstance(sender[0], str)):
+        return None
+    return f"{sender[0]}:{sender[1]}", " ".join(parts[2:])
+
+
+def parse_forward_items_and_addrs(tokens):
+    """Split forward-command tokens into (items, destination addresses).
+
+    A token of the form ``('ip', port)`` is a destination; anything else is
+    a forwarded item (message text or a path). Shared by the native
+    message forwarding (``/forward_send_msg``) and the file/folder forward
+    extension.
+    """
+    items = []
+    addrs = []
+    for token in tokens:
+        if token.startswith("(") and token.endswith(")"):
+            try:
+                addr = ast.literal_eval(token)
+            except (ValueError, SyntaxError):
+                items.append(token)
+                continue
+            if isinstance(addr, tuple) and len(addr) == 2 and isinstance(addr[0], str):
+                addrs.append(addr)
+            else:
+                items.append(token)
+        else:
+            items.append(token)
+    return items, addrs
+
+
+def forward_skip_message(target):
+    """Console notice for a forward destination that cannot be served."""
+    return f"forward: destination {target} is unreachable or is the server, skipped"
+
+
+def parse_forward_originator(command, own_address=None):
+    """Extract the originator's ``"ip:port"`` from a received transfer command.
+    The server's forward relay tags every pushed ``/file`` and ``/file_folder``
+    command with the forwarding client's address tuple (the tuple token before
+    the trailing transfer id). Direct sends carry the receiver's own address
+    instead, which is filtered out when ``own_address`` is given. Returns the
+    originator's ``"ip:port"``, or ``None`` when the command carries no
+    originator (a direct send or a non-transfer command).
+    """
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return None
+    if len(parts) < 4:
+        return None
+    for token in parts[1:-1]:  # skip the command name and the trailing id
+        if token.startswith("(") and token.endswith(")"):
+            try:
+                addr = ast.literal_eval(token)
+            except (ValueError, SyntaxError):
+                continue
+            if isinstance(addr, tuple) and len(addr) == 2 and isinstance(addr[0], str):
+                originator = f"{addr[0]}:{addr[1]}"
+                if own_address and originator == own_address:
+                    return None  # direct send: the tuple is the receiver itself
+                return originator
+    return None
 
 
 class TCP_Server_Base:  # TCP server class
@@ -146,6 +231,28 @@ class TCP_Server_Base:  # TCP server class
         self._custom_handler_threaded = [{}, {}]
         self._custom_executor = ThreadPoolExecutor(max_workers=max_custom_workers)
         self._task_semaphore = threading.Semaphore(max_custom_workers)
+        # Inbound-event listeners (see add_message_listener/add_file_listener).
+        # They run on the receive thread, so a listener must not block and must
+        # never raise (exceptions are swallowed by the notify helpers).
+        self._message_listeners = []
+        self._file_listeners = []
+        self._event_listeners_lock = threading.Lock()
+        # Inbound message/event stores: external code reads these instead of
+        # registering listeners. Keyed by the sender's socket; each value is
+        # a list of [content, timestamp] pairs. When a store's total size
+        # reaches max_dict_size (64 KiB) it is flushed to its JSON log and
+        # cleared (see _record_message/_record_event/_flush_*_dict).
+        self.messages_dict = {}
+        self.events_dict = {}
+        self._messages_dict_lock = threading.Lock()
+        self._events_dict_lock = threading.Lock()
+        self._socket_keys = {}  # record key -> "ip:port", captured while it was alive
+        self._socket_keys_lock = threading.Lock()
+        self._messages_dict_size = 0
+        self._events_dict_size = 0
+        self.max_dict_size = 64 * 1024
+        self.messages_log_file = os.path.join(self.project_info_dir, "messages_log.json")
+        self.events_log_file = os.path.join(self.project_info_dir, "events_log.json")
         self.is_extend_command = is_extend_command
         self.is_enable_encrypto = is_enable_encrypto
         self.is_custom_keys = is_custom_keys
@@ -360,6 +467,231 @@ class TCP_Server_Base:  # TCP server class
             return False
         self._custom_handlers[registe_index][command_name] = handler
         self._custom_handler_threaded[registe_index][command_name] = run_in_thread
+
+    def add_message_listener(self, listener):
+        """Register ``listener(client_id, message)`` for every inbound plain-text message.
+
+        Plain messages are the chat/data lines received from a client that do
+        not start with ``/``.  ``client_id`` is the sender's ``"ip:port"``.
+        Commands are not reported here; they go through the registered
+        command handlers.
+        """
+        with self._event_listeners_lock:
+            if listener not in self._message_listeners:
+                self._message_listeners.append(listener)
+
+    def remove_message_listener(self, listener):
+        """Unregister a listener previously added by ``add_message_listener``."""
+        with self._event_listeners_lock:
+            try:
+                self._message_listeners.remove(listener)
+            except ValueError:
+                pass
+
+    def add_file_listener(self, listener):
+        """Register ``listener(client_id, full_path, name, size, command)`` for each saved inbound file.
+
+        Fired after a file uploaded by a client (a direct send or a forwarded
+        file/folder item staged on the server) has been fully written to
+        ``file_transfer_dir``.  ``client_id`` is the uploader's ``"ip:port"``
+        and ``command`` is the wire command that triggered the transfer, so a
+        listener can recognise protocol pushes such as ``/crypto_pub_key``.
+        """
+        with self._event_listeners_lock:
+            if listener not in self._file_listeners:
+                self._file_listeners.append(listener)
+
+    def remove_file_listener(self, listener):
+        """Unregister a listener previously added by ``add_file_listener``."""
+        with self._event_listeners_lock:
+            try:
+                self._file_listeners.remove(listener)
+            except ValueError:
+                pass
+
+    def _notify_message_received(self, client_id, message):
+        with self._event_listeners_lock:
+            listeners = list(self._message_listeners)
+        for listener in listeners:
+            try:
+                listener(client_id, message)
+            except Exception:
+                traceback.print_exc()
+
+    def _notify_file_received(self, client_id, full_path, name, size, command):
+        with self._event_listeners_lock:
+            listeners = list(self._file_listeners)
+        for listener in listeners:
+            try:
+                listener(client_id, full_path, name, size, command)
+            except Exception:
+                traceback.print_exc()
+
+    def _socket_key(self, sock):
+        """Serializable key for a sender socket (its peer address).
+
+        Forwarded records already carry the originator's address as a
+        string and are used as-is; a socket that cannot answer
+        ``getpeername`` (already closed) falls back to its repr.
+        """
+        if isinstance(sock, str):
+            return sock
+        try:
+            ip, port = sock.getpeername()[:2]
+            return f"{ip}:{port}"
+        except Exception:
+            return str(sock)
+
+    def _remember_socket_key(self, sock):
+        """Capture the log key of ``sock`` while it is known to be alive.
+
+        A record stays buffered after its connection goes away, and the
+        flush that persists it must still file it under the sender's
+        address: by then the closed socket no longer answers
+        ``getpeername`` and would be logged as ``str(sock)``. The key is
+        forgotten once nothing is buffered under it any more (see
+        ``_flush_dict_locked``).
+        """
+        with self._socket_keys_lock:
+            if sock not in self._socket_keys:
+                self._socket_keys[sock] = self._socket_key(sock)
+
+    def _record_key(self, sock):
+        """The JSON-log key for ``sock``: the address captured when it was
+        recorded, or the live peer address for a socket inserted without a
+        record."""
+        key = self._socket_keys.get(sock)
+        if key is not None:
+            return key
+        return self._socket_key(sock)
+
+    def _record_message(self, sock, content):
+        """Store one inbound plain-text message under the sender's socket.
+
+        External code reads ``messages_dict`` (or the JSON log) instead of
+        registering a message listener. The entry is ``[content, timestamp]``
+        with the timestamp of arrival.
+        """
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._messages_dict_lock:
+            self._remember_socket_key(sock)
+            self.messages_dict.setdefault(sock, []).append([content, timestamp])
+            self._messages_dict_size += len(content.encode("utf-8", "replace")) + len(timestamp)
+            if self._messages_dict_size >= self.max_dict_size:
+                self._flush_dict_locked(
+                    self.messages_dict, "_messages_dict_size", self.messages_log_file
+                )
+
+    def _record_event(self, sock, command):
+        """Store one inbound command as an event under the sender's socket.
+
+        The event content is the original wire command from the peer (file
+        transfers, folder transfers, extension commands, ...). External code
+        reads ``events_dict`` (or the JSON log) instead of registering a
+        listener. File-transfer events get their completion timestamp via
+        ``_update_event_timestamp``.
+        """
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._events_dict_lock:
+            self._remember_socket_key(sock)
+            self.events_dict.setdefault(sock, []).append([command, timestamp])
+            self._events_dict_size += len(command.encode("utf-8", "replace")) + len(timestamp)
+            if self._events_dict_size >= self.max_dict_size:
+                self._flush_dict_locked(
+                    self.events_dict, "_events_dict_size", self.events_log_file
+                )
+
+    def _update_event_timestamp(self, sock, command, timestamp):
+        """Stamp the completion time onto the recorded event for ``command``.
+
+        File transfers finish on a worker thread after the receive thread
+        recorded the command, so the event's timestamp is refreshed here with
+        the moment the transfer actually completed.
+        """
+        with self._events_dict_lock:
+            entries = self.events_dict.get(sock)
+            if entries:
+                for entry in reversed(entries):
+                    if entry[0] == command:
+                        entry[1] = timestamp
+                        return
+
+    def _splice_event_command(self, command, **parts):
+        """Return the command to record as an event.
+
+        The wire command is recorded verbatim whenever it is available. When
+        this end cannot see the original command (a transfer relayed by the
+        server, or a protocol-internal control line), splice a readable
+        command from the available parts so the event still identifies the
+        transfer.
+        """
+        if command:
+            return command
+        kind = parts.get("kind")
+        fname = parts.get("fname")
+        rel_dir = parts.get("rel_dir")
+        if kind == "folder" and fname:
+            if rel_dir:
+                return "/file_folder {} {}".format(shlex.quote(rel_dir), shlex.quote(fname))
+            return "/file_folder {}".format(shlex.quote(fname))
+        if fname:
+            return "/file {}".format(shlex.quote(fname))
+        return parts.get("fallback") or "/unknown"
+
+    def _flush_dict_locked(self, d, size_attr, path):
+        """Flush ``d`` (socket -> [[content, ts], ...]) into its JSON log and
+        clear it. The caller must hold the dict's lock."""
+        if not d:
+            return
+        snapshot = dict(d)
+        d.clear()
+        setattr(self, size_attr, 0)
+        self._merge_json_log(path, snapshot)
+        other = self.events_dict if d is self.messages_dict else self.messages_dict
+        with self._socket_keys_lock:  # a key is only kept while it is buffered
+            for sock in snapshot:
+                if sock not in d and sock not in other:
+                    self._socket_keys.pop(sock, None)
+
+    def _flush_messages_dict(self):
+        with self._messages_dict_lock:
+            self._flush_dict_locked(
+                self.messages_dict, "_messages_dict_size", self.messages_log_file
+            )
+
+    def _flush_events_dict(self):
+        with self._events_dict_lock:
+            self._flush_dict_locked(
+                self.events_dict, "_events_dict_size", self.events_log_file
+            )
+
+    def _merge_json_log(self, path, snapshot):
+        """Merge ``snapshot`` into the JSON log at ``path`` (append per socket).
+
+        The file is replaced atomically (temp file + os.replace) so a
+        concurrent reader never sees a truncated/partial log.
+        """
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            else:
+                existing = {}
+            for sock, entries in snapshot.items():
+                key = self._record_key(sock)
+                existing.setdefault(key, []).extend(entries)
+            tmp_path = path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, ensure_ascii=False, indent=2)
+            for _ in range(5):  # Windows: the log may be briefly open for reading
+                try:
+                    os.replace(tmp_path, path)
+                    return
+                except PermissionError:
+                    time.sleep(0.05)
+            os.replace(tmp_path, path)
+        except Exception:
+            traceback.print_exc()
 
     def submit_task(self, func, *args, **kwargs):
         self._task_semaphore.acquire()
@@ -880,7 +1212,14 @@ class TCP_Server_Base:  # TCP server class
                 print(f"error while welcoming client {client_id} : {e}")
             return
         # announce our encryption mode; a mismatched peer is disconnected in handle_command
-        self._send_raw(client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
+        try:
+            self._send_raw(client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
+        except Exception as e:
+            # the peer vanished right after the welcome: the finally block
+            # below cleans up; never let this escape the thread
+            if not _is_closed_socket_error(e):
+                print(f"error while announcing crypto mode to {client_id} : {e}")
+            return
         if self.is_hand_alloc_port == True:
             broadcast_clients_port_alloc_range_msg = "/client_alloc_port_range {}".format(
                 self.each_client_port_range
@@ -908,8 +1247,11 @@ class TCP_Server_Base:  # TCP server class
                         message = plain.strip()
                     print(message)
                     if message.startswith("/"):  # deal with special command
+                        self._record_event(client_socket, message)
                         response = self.handle_command(client_socket, client_address, message)
                     else:
+                        self._notify_message_received(client_id, message)
+                        self._record_message(client_socket, message)
                         timestamp = datetime.now().strftime("%H:%M:%S")  # deal with normal message
                         log_msg = f"[{timestamp}] {client_id}: {message}"
                         print(log_msg)
@@ -1011,6 +1353,16 @@ class TCP_Server_Base:  # TCP server class
                 daemon=True,
             ).start()
             return None
+        elif shlex.split(command.lower())[0] == "/forward_send_msg":
+            # Internal relay request typed on a client console (client-only
+            # command, same name on the wire): push the messages to the
+            # listed destinations.
+            threading.Thread(
+                target=self._handle_forward_send_msg,
+                args=(client_socket, client_address, command),
+                daemon=True,
+            ).start()
+            return "Command received, processing in background.\n"
         elif shlex.split(command.lower())[0] == "/pause_trans":
             self._forward_pause_target(client_address, command)
             return None
@@ -1120,6 +1472,97 @@ class TCP_Server_Base:  # TCP server class
                     return response
             else:
                 print(f"Unknown command: {command}")
+
+    def _handle_forward_send_msg(self, sock, addr, cmd):
+        """Relay plain messages to every reachable destination client.
+
+        Server side of the client-only ``/forward_send_msg`` command (typed on
+        a client console and relayed here over the wire). Every message is
+        wrapped in a ``/send_msg_from <addr> <payload>`` envelope carrying the
+        originator's address so receivers can attribute it. The messages are
+        recorded under the originator's socket (``sock``), exactly as if the
+        originator had sent them to the server. Destinations that are
+        unreachable -- or the server itself, which is never in the client
+        table -- are skipped and the rest are still served.
+        """
+        parts = shlex.split(cmd)
+        items, addrs = parse_forward_items_and_addrs(parts[1:])
+        reached = False
+        for target in addrs:
+            for msg in items:
+                if self.forward_message_to(target, msg, addr):
+                    reached = True
+        if reached:
+            for msg in items:
+                self._record_message(sock, msg)
+        return None
+
+    def forward_message_to(self, target, message, originator_addr):
+        """Send one plain message to ``target``, tagged with the originator's
+        address (public API for forward extensions).
+
+        The message is wrapped in a ``/send_msg_from <addr> <payload>``
+        envelope so the receiver can attribute it to the originator (see
+        ``parse_forwarded_message`` on the receiving side). Returns False when
+        the target is not connected.
+        """
+        client_info = self.clients.get(target)
+        if client_info is None:
+            print(forward_skip_message(target))
+            return False
+        self.send_message(
+            client_info["socket"],
+            f"/send_msg_from {shlex.quote(repr(originator_addr))} {shlex.quote(message)}",
+        )
+        return True
+
+    def forward_target_command(
+        self, kind, rel_dir, fname, originator_addr, tfid, destination_path=None
+    ):
+        """Build the wire command that pushes one forwarded file/folder item to
+        a target, tagged with the originator's address (public API for forward
+        extensions).
+
+        The originator tuple sits before the trailing transfer id: the
+        receiver's existing parsers treat it as the address slot and ignore
+        it, while ``parse_forward_originator`` recovers it for attribution.
+        """
+        originator = shlex.quote(repr(originator_addr))
+        if kind == "file":
+            if destination_path:
+                return (
+                    f"/file {shlex.quote(fname)} {originator} "
+                    f"{shlex.quote(destination_path)} {tfid}"
+                )
+            return f"/file {shlex.quote(fname)} {originator} {tfid}"
+        if destination_path:
+            return (
+                f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(fname)} "
+                f"{originator} {shlex.quote(destination_path)} {tfid}"
+            )
+        return f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(fname)} {originator} {tfid}"
+
+    def forward_item_to(
+        self, target, kind, rel_dir, fname, originator_addr, tfid, destination_path=None
+    ):
+        """Push one forwarded file/folder item to ``target``, tagged with the
+        originator's address (public API for forward extensions).
+
+        Sends the command built by ``forward_target_command``; the receiver
+        recovers the originator with ``parse_forward_originator``. Returns
+        False when the target is not connected.
+        """
+        client_info = self.clients.get(target)
+        if client_info is None:
+            print(forward_skip_message(target))
+            return False
+        self.send_message(
+            client_info["socket"],
+            self.forward_target_command(
+                kind, rel_dir, fname, originator_addr, tfid, destination_path
+            ),
+        )
+        return True
 
     def _execute_custom_handler(self, handler, command, client_socket=None, client_address=None):
         try:
@@ -1242,9 +1685,8 @@ class TCP_Server_Base:  # TCP server class
                     if not chunk:
                         try:
                             self.send_message(client_file_socket, self.error_sign)
-                        except:
-                            traceback.print_exc()
-                            pass
+                        except Exception:
+                            pass  # send_message already logged real errors; a dead peer is expected
                         close_socket()
                         raise ConnectionError(
                             "ErrorWhileReceivingFileNameLength: client disconnected"
@@ -1264,9 +1706,8 @@ class TCP_Server_Base:  # TCP server class
                     if not chunk:
                         try:
                             self.send_message(client_file_socket, self.error_sign)
-                        except:
-                            traceback.print_exc()
-                            pass
+                        except Exception:
+                            pass  # send_message already logged real errors; a dead peer is expected
                         close_socket()
                         raise ConnectionError("ErrorWhileReceivingFileName: client disconnected")
                     file_name_encoded += chunk
@@ -1284,9 +1725,8 @@ class TCP_Server_Base:  # TCP server class
                     if not chunk:
                         try:
                             self.send_message(client_file_socket, self.error_sign)
-                        except:
-                            traceback.print_exc()
-                            pass
+                        except Exception:
+                            pass  # send_message already logged real errors; a dead peer is expected
                         close_socket()
                         raise ConnectionError("ErrorWhileReceivingFileSize: client disconnected")
                     size_bytes += chunk
@@ -1327,6 +1767,12 @@ class TCP_Server_Base:  # TCP server class
                 # TOFU first: the ack is only a notification, and a failed
                 # ack send must not skip the key registration (the server
                 # would never announce readiness and the handshake hangs)
+                self._notify_file_received(client_id, full_path, final_filename, file_size, command)
+                self._update_event_timestamp(
+                    client_socket,
+                    self._splice_event_command(command, fname=final_filename),
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
                 print(f"file {filename} received from {client_id}, size {file_size} bytes")
                 if command_part[0] == "/crypto_pub_key":
                     with self._crypto_lock:
@@ -1354,9 +1800,8 @@ class TCP_Server_Base:  # TCP server class
                         pass
                 try:
                     self.send_message(client_file_socket, self.error_sign)
-                except:
-                    traceback.print_exc()
-                    pass
+                except Exception:
+                    pass  # send_message already logged real errors; a dead peer is expected
                 close_socket()
                 print(f"ErrorWhileReceiveFile: {e}")
                 return False
@@ -1728,9 +2173,8 @@ class TCP_Server_Base:  # TCP server class
                         print("\nbreak the file transfer connection from server")
                         try:
                             self.send_message(client_file_socket, self.error_sign)
-                        except:
-                            traceback.print_exc()
-                            pass
+                        except Exception:
+                            pass  # send_message already logged real errors; a dead peer is expected
                         close_socket()
                         break
                     file_receive_data_from_server = data.decode("utf-8").strip()
@@ -1740,12 +2184,12 @@ class TCP_Server_Base:  # TCP server class
                         break
                 except Exception as e:
                     print(f"\nget file transfer msg error: {e}")
-                    traceback.print_exc()
+                    if not _is_closed_socket_error(e):
+                        traceback.print_exc()
                     try:
                         self.send_message(client_file_socket, self.error_sign)
-                    except:
-                        traceback.print_exc()
-                        pass
+                    except Exception:
+                        pass  # send_message already logged real errors; a dead peer is expected
                     close_socket()
                     break
 
@@ -1768,9 +2212,8 @@ class TCP_Server_Base:  # TCP server class
                 if waiting_time >= 10:
                     try:
                         self.send_message(client_file_socket, self.error_sign)
-                    except:
-                        traceback.print_exc()
-                        pass
+                    except Exception:
+                        pass  # send_message already logged real errors; a dead peer is expected
                     print(
                         f"ErrorWhileSendFile: \
                           Wait file transfer function start sign timeout, \
@@ -1812,9 +2255,8 @@ class TCP_Server_Base:  # TCP server class
                 if waiting_time >= timeout:
                     try:
                         self.send_message(client_file_socket, self.error_sign)
-                    except:
-                        traceback.print_exc()
-                        pass
+                    except Exception:
+                        pass  # send_message already logged real errors; a dead peer is expected
                     close_socket()
                     print(
                         f"ErrorWhileSendFileData: \
@@ -1829,19 +2271,18 @@ class TCP_Server_Base:  # TCP server class
             traceback.print_exc()
             try:
                 self.send_message(client_file_socket, self.error_sign)
-            except:
-                traceback.print_exc()
-                pass
+            except Exception:
+                pass  # send_message already logged real errors; a dead peer is expected
             close_socket()
             print(f"file {filename} not exist")
             return False
         except Exception as e:
-            traceback.print_exc()
+            if not _is_closed_socket_error(e):
+                traceback.print_exc()
             try:
                 self.send_message(client_file_socket, self.error_sign)
-            except:
-                traceback.print_exc()
-                pass
+            except Exception:
+                pass  # send_message already logged real errors; a dead peer is expected
             close_socket()
             print(f"send error: {e}")
             return False
@@ -1929,7 +2370,7 @@ class TCP_Server_Base:  # TCP server class
             return
         threading.Thread(
             target=self._forward_relay,
-            args=(sock, kind, rel_dir, fname, valid_targets, destination_path),
+            args=(sock, addr, kind, rel_dir, fname, valid_targets, destination_path),
             daemon=True,
         ).start()
 
@@ -1989,9 +2430,15 @@ class TCP_Server_Base:  # TCP server class
                 relay["writer_pause"][client_address] = False
                 relay["cond"].notify_all()
 
-    def _forward_relay(self, forwarder_sock, kind, rel_dir, fname, targets, destination_path=None):
+    def _forward_relay(
+        self, forwarder_sock, originator_addr, kind, rel_dir, fname, targets, destination_path=None
+    ):
         """Relay one file/folder item to every target, streaming from the
-        uploader's transfer connection with bounded in-memory buffering."""
+        uploader's transfer connection with bounded in-memory buffering.
+
+        Every pushed command is tagged with the originator's address (see
+        ``forward_item_to``) so the receivers can attribute the transfer.
+        """
         fid = self._forward_alloc_fid()
         tfids = [self._forward_alloc_fid() for _ in targets]
         relay = {
@@ -2006,30 +2453,9 @@ class TCP_Server_Base:  # TCP server class
             # destination directory (if any) goes before the target id so
             # the receiver's own destination parsing sees it
             for target, tfid in zip(targets, tfids):
-                try:
-                    t_sock = self.clients[target]["socket"]
-                except Exception as e:
-                    print(f"forward: target {target} missing, skipped: {e}")
-                    continue
-                if kind == "file":
-                    if destination_path:
-                        self.send_message(
-                            t_sock, f"/file {shlex.quote(fname)} {shlex.quote(destination_path)} {tfid}"
-                        )
-                    else:
-                        self.send_message(t_sock, f"/file {shlex.quote(fname)} {tfid}")
-                else:
-                    if destination_path:
-                        self.send_message(
-                            t_sock,
-                            f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(fname)} "
-                            f"{shlex.quote(destination_path)} {tfid}",
-                        )
-                    else:
-                        self.send_message(
-                            t_sock,
-                            f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(fname)} {tfid}",
-                        )
+                self.forward_item_to(
+                    target, kind, rel_dir, fname, originator_addr, tfid, destination_path
+                )
             # collect every target's advertised transfer port
             ports = {}
             deadline = time.time() + 20
@@ -2250,7 +2676,11 @@ class TCP_Server_Base:  # TCP server class
                     self.diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(
                         deal_cmd
                     )
-                elif shlex.split(deal_cmd)[0].lower() in ("/forward_file", "/forward_folder"):
+                elif shlex.split(deal_cmd)[0].lower() in (
+                    "/forward_send_msg",
+                    "/forward_file",
+                    "/forward_folder",
+                ):
                     print(
                         "forward commands are client-only; "
                         "run them on a client console, not on the server"
@@ -2314,6 +2744,8 @@ class TCP_Server_Base:  # TCP server class
     def stop(self):  # shutting down the server
         self.running = False
         self.free_port()
+        self._flush_messages_dict()
+        self._flush_events_dict()
         with self.client_lock:  # close all clients connections
             for client_info in self.clients.values():
                 try:
@@ -2413,6 +2845,28 @@ class TCP_Client_Base:  # TCP client class
         self._custom_handler_threaded = [{}, {}]
         self._custom_executor = ThreadPoolExecutor(max_workers=max_custom_workers)
         self._task_semaphore = threading.Semaphore(max_custom_workers)
+        # Inbound-event listeners (see add_message_listener/add_file_listener).
+        # They run on the receive thread, so a listener must not block and must
+        # never raise (exceptions are swallowed by the notify helpers).
+        self._message_listeners = []
+        self._file_listeners = []
+        self._event_listeners_lock = threading.Lock()
+        # Inbound message/event stores: external code reads these instead of
+        # registering listeners. Keyed by the sender's socket; each value is
+        # a list of [content, timestamp] pairs. When a store's total size
+        # reaches max_dict_size (64 KiB) it is flushed to its JSON log and
+        # cleared (see _record_message/_record_event/_flush_*_dict).
+        self.messages_dict = {}
+        self.events_dict = {}
+        self._messages_dict_lock = threading.Lock()
+        self._events_dict_lock = threading.Lock()
+        self._socket_keys = {}  # record key -> "ip:port", captured while it was alive
+        self._socket_keys_lock = threading.Lock()
+        self._messages_dict_size = 0
+        self._events_dict_size = 0
+        self.max_dict_size = 64 * 1024
+        self.messages_log_file = os.path.join(self.project_info_dir, "messages_log.json")
+        self.events_log_file = os.path.join(self.project_info_dir, "events_log.json")
         self.is_extend_command = is_extend_command
         self.is_enable_encrypto = is_enable_encrypto
         self.is_custom_keys = is_custom_keys
@@ -2463,6 +2917,232 @@ class TCP_Client_Base:  # TCP client class
             return False
         self._custom_handlers[registe_index][command_name] = handler
         self._custom_handler_threaded[registe_index][command_name] = run_in_thread
+
+    def add_message_listener(self, listener):
+        """Register ``listener(sender_id, message)`` for every inbound message.
+
+        ``sender_id`` is the author's ``"ip:port"``: the forwarding client for
+        messages another client forwarded to this one (``/send_msg_from``
+        envelopes), or ``None`` for direct pushes from the server, which do
+        not identify a client author. Commands are not reported here; they go
+        through the registered command handlers. Mirrors the server-side
+        contract (``listener(client_id, message)``).
+        """
+        with self._event_listeners_lock:
+            if listener not in self._message_listeners:
+                self._message_listeners.append(listener)
+
+    def remove_message_listener(self, listener):
+        """Unregister a listener previously added by ``add_message_listener``."""
+        with self._event_listeners_lock:
+            try:
+                self._message_listeners.remove(listener)
+            except ValueError:
+                pass
+
+    def add_file_listener(self, listener):
+        """Register ``listener(full_path, name, size, command)`` for each saved inbound file.
+
+        Fired after a file pushed by the server (a direct send, a forwarded
+        file or folder item) has been fully written to ``file_transfer_dir``.
+        ``command`` is the wire command that triggered the transfer, so a
+        listener can recognise protocol pushes such as ``/crypto_pub_key``.
+        """
+        with self._event_listeners_lock:
+            if listener not in self._file_listeners:
+                self._file_listeners.append(listener)
+
+    def remove_file_listener(self, listener):
+        """Unregister a listener previously added by ``add_file_listener``."""
+        with self._event_listeners_lock:
+            try:
+                self._file_listeners.remove(listener)
+            except ValueError:
+                pass
+
+    def _notify_message_received(self, sender, message):
+        with self._event_listeners_lock:
+            listeners = list(self._message_listeners)
+        for listener in listeners:
+            try:
+                listener(sender, message)
+            except Exception:
+                traceback.print_exc()
+
+    def _notify_file_received(self, full_path, name, size, command):
+        with self._event_listeners_lock:
+            listeners = list(self._file_listeners)
+        for listener in listeners:
+            try:
+                listener(full_path, name, size, command)
+            except Exception:
+                traceback.print_exc()
+
+    def _socket_key(self, sock):
+        """Serializable key for a sender socket (its peer address).
+
+        Forwarded records already carry the originator's address as a
+        string and are used as-is; a socket that cannot answer
+        ``getpeername`` (already closed) falls back to its repr.
+        """
+        if isinstance(sock, str):
+            return sock
+        try:
+            ip, port = sock.getpeername()[:2]
+            return f"{ip}:{port}"
+        except Exception:
+            return str(sock)
+
+    def _remember_socket_key(self, sock):
+        """Capture the log key of ``sock`` while it is known to be alive.
+
+        A record stays buffered after its connection goes away, and the
+        flush that persists it must still file it under the sender's
+        address: by then the closed socket no longer answers
+        ``getpeername`` and would be logged as ``str(sock)``. The key is
+        forgotten once nothing is buffered under it any more (see
+        ``_flush_dict_locked``).
+        """
+        with self._socket_keys_lock:
+            if sock not in self._socket_keys:
+                self._socket_keys[sock] = self._socket_key(sock)
+
+    def _record_key(self, sock):
+        """The JSON-log key for ``sock``: the address captured when it was
+        recorded, or the live peer address for a socket inserted without a
+        record."""
+        key = self._socket_keys.get(sock)
+        if key is not None:
+            return key
+        return self._socket_key(sock)
+
+    def _record_message(self, sock, content):
+        """Store one inbound plain-text message under the sender's socket.
+
+        External code reads ``messages_dict`` (or the JSON log) instead of
+        registering a message listener. The entry is ``[content, timestamp]``
+        with the timestamp of arrival.
+        """
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._messages_dict_lock:
+            self._remember_socket_key(sock)
+            self.messages_dict.setdefault(sock, []).append([content, timestamp])
+            self._messages_dict_size += len(content.encode("utf-8", "replace")) + len(timestamp)
+            if self._messages_dict_size >= self.max_dict_size:
+                self._flush_dict_locked(
+                    self.messages_dict, "_messages_dict_size", self.messages_log_file
+                )
+
+    def _record_event(self, sock, command):
+        """Store one inbound command as an event under the sender's socket.
+
+        The event content is the original wire command from the peer (file
+        transfers, folder transfers, extension commands, ...). External code
+        reads ``events_dict`` (or the JSON log) instead of registering a
+        listener. File-transfer events get their completion timestamp via
+        ``_update_event_timestamp``.
+        """
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        with self._events_dict_lock:
+            self._remember_socket_key(sock)
+            self.events_dict.setdefault(sock, []).append([command, timestamp])
+            self._events_dict_size += len(command.encode("utf-8", "replace")) + len(timestamp)
+            if self._events_dict_size >= self.max_dict_size:
+                self._flush_dict_locked(
+                    self.events_dict, "_events_dict_size", self.events_log_file
+                )
+
+    def _update_event_timestamp(self, sock, command, timestamp):
+        """Stamp the completion time onto the recorded event for ``command``.
+
+        File transfers finish on a worker thread after the receive thread
+        recorded the command, so the event's timestamp is refreshed here with
+        the moment the transfer actually completed.
+        """
+        with self._events_dict_lock:
+            entries = self.events_dict.get(sock)
+            if entries:
+                for entry in reversed(entries):
+                    if entry[0] == command:
+                        entry[1] = timestamp
+                        return
+
+    def _splice_event_command(self, command, **parts):
+        """Return the command to record as an event.
+
+        The wire command is recorded verbatim whenever it is available. When
+        this end cannot see the original command (a transfer relayed by the
+        server, or a protocol-internal control line), splice a readable
+        command from the available parts so the event still identifies the
+        transfer.
+        """
+        if command:
+            return command
+        kind = parts.get("kind")
+        fname = parts.get("fname")
+        rel_dir = parts.get("rel_dir")
+        if kind == "folder" and fname:
+            if rel_dir:
+                return "/file_folder {} {}".format(shlex.quote(rel_dir), shlex.quote(fname))
+            return "/file_folder {}".format(shlex.quote(fname))
+        if fname:
+            return "/file {}".format(shlex.quote(fname))
+        return parts.get("fallback") or "/unknown"
+
+    def _flush_dict_locked(self, d, size_attr, path):
+        """Flush ``d`` (socket -> [[content, ts], ...]) into its JSON log and
+        clear it. The caller must hold the dict's lock."""
+        if not d:
+            return
+        snapshot = dict(d)
+        d.clear()
+        setattr(self, size_attr, 0)
+        self._merge_json_log(path, snapshot)
+        other = self.events_dict if d is self.messages_dict else self.messages_dict
+        with self._socket_keys_lock:  # a key is only kept while it is buffered
+            for sock in snapshot:
+                if sock not in d and sock not in other:
+                    self._socket_keys.pop(sock, None)
+
+    def _flush_messages_dict(self):
+        with self._messages_dict_lock:
+            self._flush_dict_locked(
+                self.messages_dict, "_messages_dict_size", self.messages_log_file
+            )
+
+    def _flush_events_dict(self):
+        with self._events_dict_lock:
+            self._flush_dict_locked(
+                self.events_dict, "_events_dict_size", self.events_log_file
+            )
+
+    def _merge_json_log(self, path, snapshot):
+        """Merge ``snapshot`` into the JSON log at ``path`` (append per socket).
+
+        The file is replaced atomically (temp file + os.replace) so a
+        concurrent reader never sees a truncated/partial log.
+        """
+        try:
+            if os.path.exists(path):
+                with open(path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+            else:
+                existing = {}
+            for sock, entries in snapshot.items():
+                key = self._record_key(sock)
+                existing.setdefault(key, []).extend(entries)
+            tmp_path = path + ".tmp"
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, ensure_ascii=False, indent=2)
+            for _ in range(5):  # Windows: the log may be briefly open for reading
+                try:
+                    os.replace(tmp_path, path)
+                    return
+                except PermissionError:
+                    time.sleep(0.05)
+            os.replace(tmp_path, path)
+        except Exception:
+            traceback.print_exc()
 
     def submit_task(self, func, *args, **kwargs):
         self._task_semaphore.acquire()
@@ -2801,9 +3481,26 @@ class TCP_Client_Base:  # TCP client class
                     ok, plain = self._crypto_process_line(self.client_socket, message)
                     if ok:
                         message = plain.strip()
+                    sender = None  # the author's "ip:port"; None for direct server pushes
                     if message.startswith("/"):
-                        self.handle_server_command(message)
+                        # A /send_msg_from envelope is a message that another
+                        # client forwarded to us: its records belong to the
+                        # originator, whose socket exists only on the server, so
+                        # the originator's address is the store key here. The
+                        # payload then flows through the single plain-message
+                        # path below (notify + store + print).
+                        unwrapped = parse_forwarded_message(message)
+                        if unwrapped is not None:
+                            raw = message
+                            sender, message = unwrapped
+                            self._record_event(sender, raw)
+                        else:
+                            self._record_event(self.client_socket, message)
+                            self.handle_server_command(message)
                     if message:
+                        if not message.startswith("/"):
+                            self._notify_message_received(sender, message)
+                            self._record_message(sender or self.client_socket, message)
                         print(f"\n[server] {message}")
             except socket.timeout:
                 continue
@@ -3357,6 +4054,36 @@ class TCP_Client_Base:  # TCP client class
             else:
                 print(f"Unknown server command: {command}")
 
+    def _console_forward_send_msg(self, command):
+        """Client console entry point for ``/forward_send_msg`` (client-only).
+
+        The forwarding command is only meaningful on a client: it parses the
+        typed request and asks the server (which runs the same-named relay)
+        to push each message to every listed destination.
+        """
+        parts = shlex.split(command)
+        items, addrs = parse_forward_items_and_addrs(parts[1:])
+        if not items or not addrs:
+            print(
+                "forward_send_msg: need at least one message and one destination, "
+                'e.g. /forward_send_msg "msg" "(\'127.0.0.1\', 3000)"'
+            )
+            return None
+        return self.forward_messages(items, addrs)
+
+    def forward_messages(self, messages, addrs):
+        """Forward plain messages to other connected clients through the server.
+
+        Internal protocol feature (the client console command
+        ``/forward_send_msg``): this client must be connected. Each message is
+        sent to every destination over the server, wrapped there in a
+        ``/send_msg_from`` envelope so the receiver can attribute it back to
+        this client. ``addrs`` is a list of ``(ip, port)`` tuples.
+        """
+        request = "/forward_send_msg " + " ".join(shlex.quote(m) for m in messages)
+        request += " " + " ".join(shlex.quote(str(a)) for a in addrs)
+        return self.send_message(self.client_socket, request)
+
     def _execute_custom_handler(self, handler, command, client_socket=None, client_address=None):
         try:
             result = handler(client_socket, client_address, command)
@@ -3405,6 +4132,9 @@ class TCP_Client_Base:  # TCP client class
                             self.forward_file_console(message)
                         elif shlex.split(message.lower())[0] == "/forward_folder":
                             self.forward_folder_console(message)
+                        elif shlex.split(message.lower())[0] == "/forward_send_msg":
+                            # client-only message forwarding: relayed by the server
+                            self._console_forward_send_msg(message)
                         else:
                             cmd_name = message[0].lower()
                             if cmd_name in self._custom_handlers[1]:
@@ -3650,9 +4380,8 @@ class TCP_Client_Base:  # TCP client class
                         print("\nbreak the file transfer connection from server")
                         try:
                             self.send_message(client_file_socket, self.error_sign)
-                        except:
-                            traceback.print_exc()
-                            pass
+                        except Exception:
+                            pass  # send_message already logged real errors; a dead peer is expected
                         close_socket()
                         break
                     file_receive_data_from_server = data.decode("utf-8").strip()
@@ -3662,12 +4391,12 @@ class TCP_Client_Base:  # TCP client class
                         break
                 except Exception as e:
                     print(f"\nget file transfer msg error: {e}")
-                    traceback.print_exc()
+                    if not _is_closed_socket_error(e):
+                        traceback.print_exc()
                     try:
                         self.send_message(client_file_socket, self.error_sign)
-                    except:
-                        traceback.print_exc()
-                        pass
+                    except Exception:
+                        pass  # send_message already logged real errors; a dead peer is expected
                     close_socket()
                     break
 
@@ -3690,9 +4419,8 @@ class TCP_Client_Base:  # TCP client class
                 if waiting_time >= 10:
                     try:
                         self.send_message(client_file_socket, self.error_sign)
-                    except:
-                        traceback.print_exc()
-                        pass
+                    except Exception:
+                        pass  # send_message already logged real errors; a dead peer is expected
                     print(
                         f"ErrorWhileSendFile: \
                           Wait file transfer function start sign timeout, \
@@ -3734,9 +4462,8 @@ class TCP_Client_Base:  # TCP client class
                 if waiting_time >= timeout:
                     try:
                         self.send_message(client_file_socket, self.error_sign)
-                    except:
-                        traceback.print_exc()
-                        pass
+                    except Exception:
+                        pass  # send_message already logged real errors; a dead peer is expected
                     close_socket()
                     print(
                         f"ErrorWhileSendFileData: \
@@ -3751,19 +4478,18 @@ class TCP_Client_Base:  # TCP client class
             traceback.print_exc()
             try:
                 self.send_message(client_file_socket, self.error_sign)
-            except:
-                traceback.print_exc()
-                pass
+            except Exception:
+                pass  # send_message already logged real errors; a dead peer is expected
             close_socket()
             print(f"file {filename} not exist")
             return False
         except Exception as e:
-            traceback.print_exc()
+            if not _is_closed_socket_error(e):
+                traceback.print_exc()
             try:
                 self.send_message(client_file_socket, self.error_sign)
-            except:
-                traceback.print_exc()
-                pass
+            except Exception:
+                pass  # send_message already logged real errors; a dead peer is expected
             close_socket()
             print(f"send error: {e}")
             return False
@@ -4008,9 +4734,8 @@ class TCP_Client_Base:  # TCP client class
                     if not chunk:
                         try:
                             self.send_message(client_file_socket, self.error_sign)
-                        except:
-                            traceback.print_exc()
-                            pass
+                        except Exception:
+                            pass  # send_message already logged real errors; a dead peer is expected
                         close_socket()
                         raise ConnectionError(
                             "ErrorWhileReceivingFileNameLength: client disconnected"
@@ -4030,9 +4755,8 @@ class TCP_Client_Base:  # TCP client class
                     if not chunk:
                         try:
                             self.send_message(client_file_socket, self.error_sign)
-                        except:
-                            traceback.print_exc()
-                            pass
+                        except Exception:
+                            pass  # send_message already logged real errors; a dead peer is expected
                         close_socket()
                         raise ConnectionError("ErrorWhileReceivingFileName: client disconnected")
                     file_name_encoded += chunk
@@ -4050,9 +4774,8 @@ class TCP_Client_Base:  # TCP client class
                     if not chunk:
                         try:
                             self.send_message(client_file_socket, self.error_sign)
-                        except:
-                            traceback.print_exc()
-                            pass
+                        except Exception:
+                            pass  # send_message already logged real errors; a dead peer is expected
                         close_socket()
                         raise ConnectionError("ErrorWhileReceivingFileSize: client disconnected")
                     size_bytes += chunk
@@ -4093,6 +4816,12 @@ class TCP_Client_Base:  # TCP client class
                 # TOFU first: the ack is only a notification, and a failed
                 # ack send must not skip the key registration (readiness
                 # would never be announced and the handshake hangs)
+                self._notify_file_received(full_path, final_filename, file_size, command)
+                self._update_event_timestamp(
+                    client_socket,
+                    self._splice_event_command(command, fname=final_filename),
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
                 print(f"file {filename} received from {client_id}, size {file_size} bytes")
                 if command_part[0] == "/crypto_pub_key":
                     self._crypto_store_received_pub(full_path, "server", (self.host, self.port))
@@ -4110,9 +4839,8 @@ class TCP_Client_Base:  # TCP client class
                         pass
                 try:
                     self.send_message(client_file_socket, self.error_sign)
-                except:
-                    traceback.print_exc()
-                    pass
+                except Exception:
+                    pass  # send_message already logged real errors; a dead peer is expected
                 close_socket()
                 print(f"ErrorWhileReceiveFile: {e}")
                 return False
@@ -4151,6 +4879,8 @@ class TCP_Client_Base:  # TCP client class
     def close(self):  # close connection
         self.running = False
         self.free_port()
+        self._flush_messages_dict()
+        self._flush_events_dict()
         if self.client_socket:
             self.client_socket.close()
         print("connection closed")
