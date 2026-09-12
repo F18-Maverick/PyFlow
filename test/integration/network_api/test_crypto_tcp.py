@@ -1,4 +1,4 @@
-"""End-to-end tests for RSA-encrypted TCP channels (connect_tcp.py).
+"""Integration tests for RSA-encrypted TCP channels (connect_tcp.py).
 
 A real server and client are connected over loopback with the crypto key
 directories redirected to a temporary location. These tests need the
@@ -15,7 +15,7 @@ import time
 import pytest
 
 
-from test_util import server_ready, wait_until
+from helpers import server_ready, wait_until
 
 from PyFlow.network_api import rsa_crypto
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
@@ -554,12 +554,8 @@ def test_concurrent_clients_share_key_exchange(tmp_path):
         is_enable_encrypto=True,
     )
     _redirect_crypto(server.crypto, tmp_path, ssh_dir, "pub_key")
-    recv_dir = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "PyFlow",
-        "network_api",
-        "received_files",
-    )
+    recv_dir = server.file_transfer_dir
+    os.makedirs(recv_dir, exist_ok=True)
     # a failed earlier run may have left stale key files behind; the
     # assertion below checks this run leaves nothing behind, so start clean
     for leftover_name in os.listdir(recv_dir):

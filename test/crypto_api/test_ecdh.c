@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "test_util.h"
+#include "helpers.h"
 
 #define PRIV_A_FILE "test_ecdh_a_priv.pem"
 #define PASSPHRASE "ecdh passphrase"

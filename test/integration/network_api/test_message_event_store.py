@@ -13,7 +13,7 @@ import threading
 
 import pytest
 
-from test_util import server_ready, wait_until
+from helpers import server_ready, wait_until
 
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
 

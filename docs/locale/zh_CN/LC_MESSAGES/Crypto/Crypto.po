@@ -91,11 +91,11 @@ msgstr ""
 msgid "Build it from the repository root:"
 msgstr "从存储库根目录构建它："
 
-#: ../../Crypto/Crypto.rst:41 04d983635b00498a8ec2d1844472d78e
+#: ../../Crypto/Crypto.rst:41 7ff0eaa67fde42f8a90908d100eda4fa
 msgid ""
-"The C test suite lives in ``test/`` (``test_hkdf``, ``test_rsa``, "
+"The C test suite lives in ``test/crypto_api/`` (``test_hkdf``, ``test_rsa``, "
 "``test_ecdh``) and is built and run together with the library."
-msgstr "C 测试套件位于“test/”（“test_hkdf”、“test_rsa”、“test_ecdh”）中，并与库一起构建和运行。"
+msgstr "C 测试套件位于“test/crypto_api/”（“test_hkdf”、“test_rsa”、“test_ecdh”）中，并与库一起构建和运行。"
 
 #: ../../Crypto/Crypto.rst:44 2d8ebac8b06147e4983c07a6c69296ab
 #, fuzzy

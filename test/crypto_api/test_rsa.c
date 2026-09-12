@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "test_util.h"
+#include "helpers.h"
 
 #define PUB_FILE "test_rsa_pub.pem"
 #define PRIV_FILE "test_rsa_priv.pem"

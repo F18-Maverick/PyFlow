@@ -246,7 +246,7 @@ def test_server_setup_creates_instance(monkeypatch, tmp_path, capsys):
 def test_server_dispatches_forward_send_msg_internally(server, capsys):
     """/forward_send_msg arriving over the wire is routed by handle_command's
     built-in chain (no extension registration involved)."""
-    from test_util import wait_until
+    from helpers import wait_until
 
     server.running = True
     dest = DummySocket()

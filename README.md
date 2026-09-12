@@ -33,7 +33,7 @@ PyFlow/
 ├── __init__.py / __main__.py         package launcher entry (`python -m PyFlow`)
 ├── flow_setup.py                     launcher implementation
 └── setup.json                        default launcher configuration (generated)
-test/                        C tests (test_hkdf/test_rsa/test_ecdh) + Python tests
+test/                        Python tests (unit/ + integration/), C tests under test/crypto_api/
 docs/                        Sphinx documentation (multi-language)
 CMakeLists.txt               top-level build for the C library and C tests
 ```
@@ -166,7 +166,7 @@ uv run pytest                       # full Python suite
 ctest --test-dir build       # C library tests
 ```
 
-The encrypted-channel tests (`test/test_crypto_rsa.py`, `test/test_crypto_tcp.py`) are skipped automatically when `libcrypto_api` has not been built; everything else runs regardless. The suite passes on Python 3.10–3.14, including the free-threaded (no-GIL) 3.14 build.
+The encrypted-channel tests (`test/unit/network_api/test_crypto_rsa.py`, `test/integration/network_api/test_crypto_tcp.py`) are skipped automatically when `libcrypto_api` has not been built; everything else runs regardless. The suite passes on Python 3.10–3.14, including the free-threaded (no-GIL) 3.14 build.
 
 ## Documentation
 
