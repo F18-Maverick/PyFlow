@@ -1,12 +1,4 @@
-import importlib.util
-import os
-import sys
-
 import pytest
-
-# Only add project root to sys.path if the PyFlow package is not importable
-if importlib.util.find_spec("PyFlow") is None:
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import PyFlow.command_control_extension_tcp as ctl
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base

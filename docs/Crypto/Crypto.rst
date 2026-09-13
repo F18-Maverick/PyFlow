@@ -38,7 +38,7 @@ Build it from the repository root:
     cmake --build build --parallel
     ctest --test-dir build --output-on-failure
 
-The C test suite lives in ``test/`` (``test_hkdf``, ``test_rsa``,
+The C test suite lives in ``test/crypto_api/`` (``test_hkdf``, ``test_rsa``,
 ``test_ecdh``) and is built and run together with the library.
 
 The library is built as a shared object (``libcrypto_api.so``) so it can

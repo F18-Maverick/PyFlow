@@ -91,12 +91,12 @@ msgstr ""
 msgid "Build it from the repository root:"
 msgstr "저장소 루트에서 빌드합니다."
 
-#: ../../Crypto/Crypto.rst:41 04d983635b00498a8ec2d1844472d78e
+#: ../../Crypto/Crypto.rst:41 7ff0eaa67fde42f8a90908d100eda4fa
 msgid ""
-"The C test suite lives in ``test/`` (``test_hkdf``, ``test_rsa``, "
+"The C test suite lives in ``test/crypto_api/`` (``test_hkdf``, ``test_rsa``, "
 "``test_ecdh``) and is built and run together with the library."
 msgstr ""
-"C 테스트 스위트는 ``test/``(``test_hkdf``, ``test_rsa``, ``test_ecdh``)에 있으며 라이브러리와"
+"C 테스트 스위트는 ``test/crypto_api/``(``test_hkdf``, ``test_rsa``, ``test_ecdh``)에 있으며 라이브러리와"
 " 함께 빌드되고 실행됩니다."
 
 #: ../../Crypto/Crypto.rst:44 2d8ebac8b06147e4983c07a6c69296ab

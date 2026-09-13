@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "test_util.h"
+#include "helpers.h"
 
 /* Hex string -> bytes; returns byte count or -1 on error. */
 static int hex2bin(const char *hex, uint8_t *out, size_t out_cap) {

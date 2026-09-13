@@ -1,8 +1,8 @@
 # Top-level build for PyFlow.
 #
 # All CMake content lives here at the repository root: the crypto_api C
-# library (sources under PyFlow/crypto_api, C tests under test/) plus its
-# install/export rules. The Python package is managed by uv/pytest instead.
+# library (sources under PyFlow/crypto_api, C tests under test/crypto_api)
+# plus its install/export rules. The Python package is managed by uv/pytest instead.
 cmake_minimum_required(VERSION 3.16)
 project(pyflow VERSION 0.1.0 LANGUAGES C)
 
@@ -90,10 +90,10 @@ configure_file(${CMAKE_CURRENT_SOURCE_DIR}/crypto_api.pc.in
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/crypto_api.pc
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
-# ---- C tests (sources in test/) -------------------------------------------
+# ---- C tests (sources in test/crypto_api) ---------------------------------
 if(CRYPTO_API_BUILD_TESTS AND BUILD_TESTING)
   foreach(test_name IN ITEMS test_hkdf test_rsa test_ecdh)
-    add_executable(${test_name} test/${test_name}.c)
+    add_executable(${test_name} test/crypto_api/${test_name}.c)
     target_link_libraries(${test_name} PRIVATE crypto_api)
     target_compile_options(${test_name} PRIVATE -Wall -Wextra)
     add_test(NAME ${test_name} COMMAND ${test_name})

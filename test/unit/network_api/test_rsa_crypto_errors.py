@@ -4,12 +4,13 @@ registry persistence failures, and decrypt/load error branches."""
 import os
 import sys
 import ctypes
+from pathlib import Path
 
 import pytest
 
 import PyFlow.network_api.rsa_crypto as rc
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = str(Path(__file__).resolve().parents[3])
 
 try:
     rc.load_library()

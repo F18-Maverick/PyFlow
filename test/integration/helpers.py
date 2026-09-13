@@ -1,4 +1,4 @@
-"""Shared helpers for tests."""
+"""Shared helpers for the integration tests."""
 
 import time
 
@@ -15,9 +15,4 @@ def wait_until(predicate, timeout=5.0, interval=0.05):
 
 def server_ready(server, timeout=5.0):
     """Wait until a TCP server is running."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if server.running:
-            return True
-        time.sleep(0.05)
-    return False
+    return wait_until(lambda: server.running, timeout=timeout)

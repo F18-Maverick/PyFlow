@@ -1,6 +1,6 @@
 /* Shared test harness: check macros with failure accounting. */
-#ifndef PF_CRYPTO_TEST_UTIL_H
-#define PF_CRYPTO_TEST_UTIL_H
+#ifndef PF_CRYPTO_HELPERS_H
+#define PF_CRYPTO_HELPERS_H
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,4 +42,4 @@ static int g_failures = 0;
         return 1;                                                               \
     }
 
-#endif /* PF_CRYPTO_TEST_UTIL_H */
+#endif /* PF_CRYPTO_HELPERS_H */
