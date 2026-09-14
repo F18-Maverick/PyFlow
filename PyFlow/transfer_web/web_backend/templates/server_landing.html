@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PyFlow Server</title>
+  <style>
+    /* Anonymous visitors get a plain white page: the server is up, connect to
+       it from a client, or log in to administer it. */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: #fff;
+      color: #1c1c1c;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .landing { width: 100%; max-width: 720px; text-align: center; }
+    .landing h1 { font-size: 22px; font-weight: 600; margin-bottom: 18px; }
+    .addresses { color: #444; font-size: 14px; margin-bottom: 30px; }
+    .addresses code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      background: #f4f4f4;
+      border: 1px solid #e2e2e2;
+      border-radius: 4px;
+      padding: 2px 6px;
+    }
+    .addresses .pending { color: #8a6d3b; }
+    #login-btn {
+      background: #1a73e8;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 10px 30px;
+      font-size: 15px;
+      cursor: pointer;
+    }
+    #login-btn:hover { background: #1765cc; }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(20, 20, 20, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .overlay[hidden] { display: none; }
+    .dialog {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+      padding: 24px 26px;
+      width: 100%;
+      max-width: 380px;
+      text-align: left;
+    }
+    .dialog h2 { font-size: 18px; margin-bottom: 6px; }
+    .dialog label { display: block; color: #555; font-size: 13px; margin: 12px 0 4px; }
+    .dialog input {
+      background: #fff;
+      border: 1px solid #cdcdcd;
+      border-radius: 6px;
+      color: inherit;
+      font-size: 14px;
+      padding: 8px 10px;
+      width: 100%;
+    }
+    .dialog input:focus { border-color: #1a73e8; outline: none; }
+    .dialog .error { color: #c0392b; font-size: 13px; min-height: 20px; margin-top: 10px; }
+    .dialog-actions { display: flex; gap: 10px; margin-top: 14px; }
+    .dialog-actions button {
+      border: 1px solid transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 9px 18px;
+    }
+    #login-submit { background: #1a73e8; color: #fff; }
+    #login-submit:hover { background: #1765cc; }
+    #login-submit:disabled { cursor: not-allowed; opacity: 0.6; }
+    #login-cancel { background: #fff; border-color: #cdcdcd; color: #333; }
+    #login-cancel:hover { background: #f2f2f2; }
+  </style>
+</head>
+<body>
+  <div class="landing">
+    <h1>The PyFlow Server is running! Connect it in clients by the server host.</h1>
+    <p class="addresses">
+      {% if hint %}
+      Web address: <code>{{ hint.web }}</code><br>
+      TCP address: <code>{{ hint.tcp }}</code>
+      {% else %}
+      <span class="pending">The TCP server is not running yet. Log in as the administrator to configure it.</span>
+      {% endif %}
+    </p>
+    <button id="login-btn">Login</button>
+  </div>
+
+  <div class="overlay" id="login-overlay" hidden>
+    <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <h2 id="login-title">Login</h2>
+      <form id="login-form">
+        <label for="login-username">Username</label>
+        <input type="text" id="login-username" autocomplete="username">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" autocomplete="current-password">
+        <div class="error" id="login-error"></div>
+        <div class="dialog-actions">
+          <button type="submit" id="login-submit">Login</button>
+          <button type="button" id="login-cancel">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+      const overlay = document.getElementById("login-overlay");
+      const form = document.getElementById("login-form");
+      const username = document.getElementById("login-username");
+      const password = document.getElementById("login-password");
+      const error = document.getElementById("login-error");
+      const submit = document.getElementById("login-submit");
+
+      function openLogin() {
+        error.textContent = "";
+        overlay.hidden = false;
+        username.focus();
+      }
+
+      function closeLogin() {
+        overlay.hidden = true;
+        password.value = "";
+        submit.disabled = false;
+      }
+
+      document.getElementById("login-btn").addEventListener("click", openLogin);
+      document.getElementById("login-cancel").addEventListener("click", closeLogin);
+      overlay.addEventListener("click", (e) => {
+        if (e.target === overlay) closeLogin();
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !overlay.hidden) closeLogin();
+      });
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (!username.value.trim() || !password.value) {
+          error.textContent = "Enter the username and password.";
+          return;
+        }
+        submit.disabled = true;
+        error.textContent = "Signing in...";
+        try {
+          const resp = await fetch("/api/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              username: username.value.trim(),
+              password: password.value,
+            }),
+          });
+          const data = await resp.json();
+          if (!resp.ok || !data.ok) {
+            error.textContent = data.error || "Login failed (HTTP " + resp.status + ")";
+            submit.disabled = false;
+            return;
+          }
+          location.href = data.redirect || "/";
+        } catch (err) {
+          error.textContent = "Login failed: " + err.message;
+          submit.disabled = false;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

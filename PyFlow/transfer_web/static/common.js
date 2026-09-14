@@ -5,7 +5,17 @@
   "use strict";
 
   const MODE = window.WEB_MODE || "client";
+  // Server pages are role-gated: configuration, extensions and user management
+  // are administrator-only (the backend enforces this as well).  The client web
+  // UI belongs to the user running the client backend.
+  const IS_ADMIN = MODE === "client" || window.WEB_ROLE === "admin";
   const $ = (id) => document.getElementById(id);
+  // Bind a handler only when the element exists: administrator-only controls
+  // are absent from the server page markup for regular users.
+  const on = (id, event, handler) => {
+    const el = $(id);
+    if (el) el.addEventListener(event, handler);
+  };
 
   const state = {
     serverInfo: null,
@@ -35,6 +45,12 @@
       data = await resp.json();
     } catch (e) {
       data = {};
+    }
+
+    if (resp.status === 401) {
+      // the session is gone: back to the login page
+      location.href = "/";
+      throw new Error("login required");
     }
     if (!resp.ok || data.ok === false) {
       throw new Error(data.error || ("HTTP " + resp.status));
@@ -446,7 +462,9 @@
       btn.title = entry.name + " (" + entry.command + ")";
       btn.textContent = entry.icon;
       btn.addEventListener("click", () => openRunExtensionModal(entry));
-      bar.insertBefore(btn, $("plus-btn"));
+      const anchor = $("plus-btn");
+      if (anchor) bar.insertBefore(btn, anchor);
+      else bar.appendChild(btn);
     });
   }
 
@@ -514,6 +532,7 @@
   /* ---------------- init ---------------- */
 
   async function loadExtensions() {
+    if (!IS_ADMIN) return; // extension protocols are administrator-only
     try {
       state.extensions = (await api("/api/extensions_ui")).extensions || [];
       renderExtensionIcons();
@@ -523,21 +542,22 @@
   }
 
   function init() {
-    $("send-btn").addEventListener("click", sendMessage);
-    $("input").addEventListener("keydown", (e) => {
+    const input = $("input");
+    on("send-btn", "click", sendMessage);
+    input.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         sendMessage();
       }
     });
-    $("input").addEventListener("input", () => {
-      $("input").style.height = "auto";
-      $("input").style.height = Math.min($("input").scrollHeight, 160) + "px";
+    input.addEventListener("input", () => {
+      input.style.height = "auto";
+      input.style.height = Math.min(input.scrollHeight, 160) + "px";
     });
-    $("file-btn").addEventListener("click", () => openFileModal(false));
-    $("folder-btn").addEventListener("click", () => openFileModal(true));
-    $("plus-btn").addEventListener("click", openAddProtocolModal);
-    $("reload-btn").addEventListener("click", async () => {
+    on("file-btn", "click", () => openFileModal(false));
+    on("folder-btn", "click", () => openFileModal(true));
+    on("plus-btn", "click", openAddProtocolModal);
+    on("reload-btn", "click", async () => {
       try {
         if (MODE === "client") {
           await api("/api/sync_clients", { method: "POST" });
@@ -548,7 +568,7 @@
         toast("Reload failed: " + e.message, "err");
       }
     });
-    $("add-ext-btn").addEventListener("click", openExtensionManager);
+    on("add-ext-btn", "click", openExtensionManager);
     selectTarget("server");
     loadExtensions();
     refreshStatus();

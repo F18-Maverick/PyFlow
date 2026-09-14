@@ -9,6 +9,10 @@
 <body>
   <div class="center-wrap">
     <div class="card">
+      <div class="card-topbar">
+        <span>{{ username }} &middot; {{ role }}</span>
+        <button class="btn btn-ghost" id="logout-btn" type="button">Log out</button>
+      </div>
       <h1>PyFlow TCP Server Setup</h1>
       <p class="subtitle">Configure the TCP server. Every parameter has a default value; change only what you need.</p>
       <form id="config-form" class="form-grid">
@@ -125,6 +129,14 @@
         status.textContent = "Failed: " + err.message;
         saveBtn.disabled = false;
       }
+    });
+  </script>
+  <script src="/static/server_account.js"></script>
+  <script>
+    PyFlowAccount.mount({
+      role: {{ role|tojson }},
+      username: {{ username|tojson }},
+      mustChange: {{ must_change_credentials|tojson }},
     });
   </script>
 </body>
