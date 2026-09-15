@@ -1,3 +1,25 @@
+"""TCP transport for PyFlow: the server and client base classes and the wire parsers.
+
+``TCP_Server_Base`` accepts connections and dispatches inbound lines;
+``TCP_Client_Base`` connects, sends and reads on the same conventions:
+
+- one message per line, terminated by a newline; a line that starts with ``/``
+  is a command and goes to the command handlers, anything else is a plain
+  message reported to the registered message listeners;
+- an RSA-encrypted channel is negotiated right after connect unless
+  ``is_enable_encrypto`` is False;
+- file/folder transfer, message forwarding and port allocation are layered on
+  the same socket and share its command namespace.
+
+The forwarding extensions use the module-level parsers
+`parse_forwarded_message`, `parse_forward_items_and_addrs`,
+`parse_forward_originator` and `forward_skip_message`.
+
+Concepts live in ``docs/Network_APIs/TCP_Server_APIs.rst`` and
+``TCP_Client_APIs.rst``; argument, return and exception contracts live in the
+docstrings below.
+"""
+
 import os
 import ast
 import sys
@@ -75,12 +97,14 @@ def _parse_destination_path(command_part):
 def parse_forwarded_message(command):
     """Split a ``/send_msg_from <addr> <payload>`` relay envelope.
 
-    The forward extension's server relay wraps every forwarded message
-    with the sender's address so the receiving client can attribute it
-    to the sending instance (the web tool shows it in the sender's
-    conversation). Returns ``(sender_id, payload)`` where ``sender_id``
-    is the sender's ``"ip:port"``, or ``None`` when the command is not a
-    well-formed envelope.
+    Args:
+        command (str): Received line, e.g.
+            ``/send_msg_from ('127.0.0.1', 3000) hello``.
+
+    Returns:
+        tuple | None: ``(sender_id, payload)`` where ``sender_id`` is the
+            sender's ``"ip:port"``, or None when the line is not a well-formed
+            envelope.
     """
     try:
         parts = shlex.split(command)
@@ -98,12 +122,18 @@ def parse_forwarded_message(command):
 
 
 def parse_forward_items_and_addrs(tokens):
-    """Split forward-command tokens into (items, destination addresses).
+    """Split forward-command tokens into items and destination addresses.
 
-    A token of the form ``('ip', port)`` is a destination; anything else is
-    a forwarded item (message text or a path). Shared by the native
-    message forwarding (``/forward_send_msg``) and the file/folder forward
-    extension.
+    A token of the form ``('ip', port)`` is a destination, everything else is a
+    forwarded item (message text or a path). Used by the native message
+    forwarding (``/forward_send_msg``) and by the file/folder forward extension.
+
+    Args:
+        tokens (list[str]): Tokens after the command name.
+
+    Returns:
+        tuple: ``(items, addrs)`` in the order given; ``items`` holds texts and
+            paths, ``addrs`` holds ``(ip, port)`` tuples.
     """
     items = []
     addrs = []
@@ -124,18 +154,33 @@ def parse_forward_items_and_addrs(tokens):
 
 
 def forward_skip_message(target):
-    """Console notice for a forward destination that cannot be served."""
+    """Build the console notice for a forward destination that cannot be served.
+
+    Args:
+        target (tuple): Destination ``(ip, port)`` that is unreachable or is the
+            server itself.
+
+    Returns:
+        str: One-line notice for the console.
+    """
     return f"forward: destination {target} is unreachable or is the server, skipped"
 
 
 def parse_forward_originator(command, own_address=None):
     """Extract the originator's ``"ip:port"`` from a received transfer command.
+
     The server's forward relay tags every pushed ``/file`` and ``/file_folder``
-    command with the forwarding client's address tuple (the tuple token before
-    the trailing transfer id). Direct sends carry the receiver's own address
-    instead, which is filtered out when ``own_address`` is given. Returns the
-    originator's ``"ip:port"``, or ``None`` when the command carries no
-    originator (a direct send or a non-transfer command).
+    command with the forwarding client's address tuple; a direct send carries the
+    receiver's own address instead.
+
+    Args:
+        command (str): Received transfer command.
+        own_address (str | None): This instance's own ``"ip:port"``; a command
+            carrying it is a direct send and yields None.
+
+    Returns:
+        str | None: Originator ``"ip:port"``, or None when the command carries no
+            originator (direct send or non-transfer command).
     """
     try:
         parts = shlex.split(command)
@@ -158,6 +203,23 @@ def parse_forward_originator(command, own_address=None):
 
 
 class TCP_Server_Base:  # TCP server class
+    """TCP server: accept clients, dispatch commands, relay messages and files.
+
+    Each accepted connection is served by `handle_client` in its own thread: a
+    line starting with ``/`` goes to `handle_command` (built-in commands plus the
+    handlers registered with `register_command`), any other line is a plain
+    message delivered to the listeners registered with `add_message_listener` and
+    stored in ``messages_dict``.
+
+    Attributes:
+        host (str): Address the server socket binds to.
+        port (int): First port considered for binding and for allocation.
+        clients (dict): Accepted connections keyed by ``(ip, port)``; each value
+            holds ``socket``, ``address``, ``id`` and ``connected_time``.
+        running (bool): True while the accept loop runs.
+        is_enable_encrypto (bool): Whether the RSA channel is negotiated.
+    """
+
     def __init__(
         self,
         host="127.0.0.1",
@@ -174,6 +236,36 @@ class TCP_Server_Base:  # TCP server class
         is_custom_keys=None,
         max_mem_buff=2048,
     ):
+        """Create the server and, unless extended, start accepting clients.
+
+        Args:
+            host (str): Address the server socket binds to. Defaults to
+                "127.0.0.1".
+            port (int): First port to bind; also the base of the allocation range.
+            max_clients (int): Maximum concurrent clients. Defaults to 10.
+            port_add_step (int): Step between candidate ports. Defaults to 1.
+            port_range_num (int): Number of ports per step. Defaults to 100.
+            max_file_transfer_thread_num (int): Concurrent file transfers allowed.
+                Defaults to 10.
+            is_hand_alloc_port (bool): Reserve a port range across processes, so
+                several instances on one host do not collide. Defaults to False.
+            is_input_command_in_console (bool): Start the console command thread.
+                Defaults to True.
+            max_custom_workers (int): Worker slots for `submit_task` and threaded
+                command handlers. Defaults to 10.
+            is_extend_command (bool): When True, do not call `start_TCP_Server`;
+                the caller starts the server when ready. Defaults to False.
+            is_enable_encrypto (bool): Negotiate the RSA-encrypted channel for
+                every connection. Defaults to True.
+            is_custom_keys (list | None): ``[pub_key_path, pvt_key_path]`` pair used
+                instead of the default key lookup; an invalid pair is ignored.
+            max_mem_buff (int): Buffering ceiling in MiB for the in-memory forward
+                pump; past it the uploader is told to pause. Defaults to 2048.
+
+        Raises:
+            OSError: If the ``.Flow`` directories or ``decode_command_table.json``
+                cannot be created or read.
+        """
         self.max_mem_buff = max_mem_buff * 1024 * 1024
         self._forward_fid = 0
         self._forward_fid_lock = threading.Lock()
@@ -275,6 +367,14 @@ class TCP_Server_Base:  # TCP server class
             self.start_TCP_Server()
 
     def alloc_port(self, port_add_step, port_range_num):
+        """Reserve this server's port range under the cross-process lock.
+
+        No-op unless ``is_hand_alloc_port`` is True.
+
+        Args:
+            port_add_step (int): Step between candidate ports.
+            port_range_num (int): Number of ports per step.
+        """
         if self.is_hand_alloc_port == True:
             while self.is_server_port_temp_info_file_locked():
                 time.sleep(0.1)
@@ -283,6 +383,10 @@ class TCP_Server_Base:  # TCP server class
             self.server_port_temp_info_file_unlock()
 
     def free_port(self):
+        """Release this server's reserved port range.
+
+        No-op unless ``is_hand_alloc_port`` is True.
+        """
         if self.is_hand_alloc_port == True:
             while self.is_server_port_temp_info_file_locked():
                 time.sleep(0.1)
@@ -291,20 +395,39 @@ class TCP_Server_Base:  # TCP server class
             self.server_port_temp_info_file_unlock()
 
     def server_port_temp_info_file_lock(self):
+        """Create the lock file that reserves the server port range for this process."""
         with open(self.server_port_lock_file, "w", encoding="utf-8") as f:
             f.write("locked")
 
     def is_server_port_temp_info_file_locked(self):
+        """Report whether the server port range is reserved by some process.
+
+        Returns:
+            bool: True while the lock file exists.
+        """
         if os.path.exists(self.server_port_lock_file):
             return True
         else:
             return False
 
     def server_port_temp_info_file_unlock(self):
+        """Remove the lock file that reserves the server port range."""
         if os.path.exists(self.server_port_lock_file):
             os.remove(self.server_port_lock_file)
 
     def hand_alloc_port(self, port_add_step, port_range_num):
+        """Allocate the next free server port range and record it on disk.
+
+        ``port`` is moved past the ranges already recorded by other servers, so the
+        instance ends up with a range of its own.
+
+        Args:
+            port_add_step (int): Step between candidate ports.
+            port_range_num (int): Number of ports per step.
+
+        Raises:
+            OSError: If the server port info file cannot be read or written.
+        """
         self.port_temp_info_path = os.path.join(self.project_temp_info_dir, "server_port_info.log")
         client_port_temp_info_file_path = os.path.join(
             self.project_temp_info_dir, "clients_port_info.log"
@@ -370,6 +493,7 @@ class TCP_Server_Base:  # TCP server class
                 f.write(str(self.server_port_info))
 
     def hand_free_port(self):
+        """Drop this server's entry from the on-disk port range record."""
         self.port_temp_info_path = os.path.join(self.project_temp_info_dir, "server_port_info.log")
         if os.path.exists(self.port_temp_info_path):
             with open(self.port_temp_info_path, "r", encoding="utf-8") as f:
@@ -384,6 +508,12 @@ class TCP_Server_Base:  # TCP server class
                     f.write(str(self.server_port_info))
 
     def palloc(self):
+        """Allocate a transfer port, waiting until one is free.
+
+        Returns:
+            int: Allocated port, or 0 when allocation is disabled
+                (``is_hand_alloc_port`` False).
+        """
         alloc_port = 0
         while True:
             alloc_port = self.file_palloc()
@@ -398,10 +528,21 @@ class TCP_Server_Base:  # TCP server class
                     pass
 
     def pfree(self, port):
+        """Release a port obtained from `palloc`.
+
+        Args:
+            port (int): Port to release.
+        """
         self.file_pfree(port)
         self.spy_pfree(port)
 
     def file_palloc(self):
+        """Allocate the next port above the base, or the first free one in range.
+
+        Returns:
+            int: Allocated port; None when the upward range is exhausted; 0 when
+                allocation is disabled (``is_hand_alloc_port`` False).
+        """
         if self.is_hand_alloc_port:
             with self.alloc_add_port_lock:
                 if self.add_latest_port + self.port_add_step > self.max_port:
@@ -420,6 +561,11 @@ class TCP_Server_Base:  # TCP server class
             return 0
 
     def file_pfree(self, port):
+        """Release a port obtained from `file_palloc` and step the cursor back.
+
+        Args:
+            port (int): Port to release. Ignored when allocation is disabled.
+        """
         if self.is_hand_alloc_port:
             with self.alloc_add_port_lock:
                 if port in self.all_allocated_ports_list:
@@ -430,6 +576,12 @@ class TCP_Server_Base:  # TCP server class
             pass
 
     def spy_palloc(self):
+        """Allocate the next port below the base, or the first free one in range.
+
+        Returns:
+            int: Allocated port; None when the downward range is exhausted; 0 when
+                allocation is disabled (``is_hand_alloc_port`` False).
+        """
         if self.is_hand_alloc_port:
             with self.alloc_minus_port_lock:
                 if self.minus_latest_port - self.port_add_step < self.min_port:
@@ -448,6 +600,11 @@ class TCP_Server_Base:  # TCP server class
             return 0
 
     def spy_pfree(self, port):
+        """Release a port obtained from `spy_palloc` and step the cursor back.
+
+        Args:
+            port (int): Port to release. Ignored when allocation is disabled.
+        """
         if self.is_hand_alloc_port:
             with self.alloc_minus_port_lock:
                 if port in self.all_allocated_ports_list:
@@ -457,6 +614,23 @@ class TCP_Server_Base:  # TCP server class
             pass
 
     def register_command(self, command_name, handler, where_to_run, run_in_thread=False):
+        """Register a custom command handler.
+
+        Args:
+            command_name (str): Command to intercept, e.g. "/my_command"; matched
+                case-insensitively against the first token.
+            handler (callable): ``handler(client_socket, client_address, command)``
+                called with the raw line; a non-None return value is sent back to
+                the sender as the response.
+            where_to_run (str): "server" for commands arriving from clients,
+                "client" for commands typed on this instance's console.
+            run_in_thread (bool): Run the handler on the worker pool instead of the
+                reader thread. Defaults to False.
+
+        Returns:
+            bool | None: False when ``where_to_run`` is neither "server" nor
+                "client"; the handler is then not registered.
+        """
         registe_index = None
         if where_to_run == "server":
             registe_index = 0
@@ -469,19 +643,27 @@ class TCP_Server_Base:  # TCP server class
         self._custom_handler_threaded[registe_index][command_name] = run_in_thread
 
     def add_message_listener(self, listener):
-        """Register ``listener(client_id, message)`` for every inbound plain-text message.
+        """Register ``listener(client_id, message)`` for every inbound plain message.
 
-        Plain messages are the chat/data lines received from a client that do
-        not start with ``/``.  ``client_id`` is the sender's ``"ip:port"``.
-        Commands are not reported here; they go through the registered
-        command handlers.
+        Plain messages are the lines received from clients that do not start with
+        ``/``; commands go through the registered command handlers instead.
+
+        Args:
+            listener (callable): ``listener(client_id, message)`` where
+                ``client_id`` is the sender's ``"ip:port"``. It runs on the receive
+                thread, so it must not block, and exceptions raised inside it are
+                swallowed.
         """
         with self._event_listeners_lock:
             if listener not in self._message_listeners:
                 self._message_listeners.append(listener)
 
     def remove_message_listener(self, listener):
-        """Unregister a listener previously added by ``add_message_listener``."""
+        """Unregister a listener previously added by `add_message_listener`.
+
+        Args:
+            listener (callable): Listener to remove; an unknown one is ignored.
+        """
         with self._event_listeners_lock:
             try:
                 self._message_listeners.remove(listener)
@@ -489,20 +671,29 @@ class TCP_Server_Base:  # TCP server class
                 pass
 
     def add_file_listener(self, listener):
-        """Register ``listener(client_id, full_path, name, size, command)`` for each saved inbound file.
+        """Register ``listener(client_id, full_path, name, size, command)`` per saved file.
 
-        Fired after a file uploaded by a client (a direct send or a forwarded
+        Fired after a file uploaded by a client (a direct send, or a forwarded
         file/folder item staged on the server) has been fully written to
-        ``file_transfer_dir``.  ``client_id`` is the uploader's ``"ip:port"``
-        and ``command`` is the wire command that triggered the transfer, so a
-        listener can recognise protocol pushes such as ``/crypto_pub_key``.
+        ``file_transfer_dir``.
+
+        Args:
+            listener (callable): ``listener(client_id, full_path, name, size,
+                command)``; ``client_id`` is the uploader's ``"ip:port"`` and
+                ``command`` the wire command that triggered the transfer, so a
+                listener can recognise protocol pushes such as ``/crypto_pub_key``.
+                It runs on the transfer thread, so it must not block.
         """
         with self._event_listeners_lock:
             if listener not in self._file_listeners:
                 self._file_listeners.append(listener)
 
     def remove_file_listener(self, listener):
-        """Unregister a listener previously added by ``add_file_listener``."""
+        """Unregister a listener previously added by `add_file_listener`.
+
+        Args:
+            listener (callable): Listener to remove; an unknown one is ignored.
+        """
         with self._event_listeners_lock:
             try:
                 self._file_listeners.remove(listener)
@@ -694,12 +885,38 @@ class TCP_Server_Base:  # TCP server class
             traceback.print_exc()
 
     def submit_task(self, func, *args, **kwargs):
+        """Run a callable on the instance's worker pool.
+
+        Args:
+            func (callable): Callable to run.
+            *args (Any): Positional arguments forwarded to ``func``.
+            **kwargs (Any): Keyword arguments forwarded to ``func``.
+
+        Returns:
+            concurrent.futures.Future: Handle for the submitted call; its worker
+                slot is released when the call finishes.
+        """
         self._task_semaphore.acquire()
         future = self._custom_executor.submit(func, *args, **kwargs)
         future.add_done_callback(lambda f: self._task_semaphore.release())
         return future
 
     def create_temporary_server(self, handler, port=None, max_connections=1):
+        """Start a temporary listener for a side channel (not the main protocol).
+
+        Args:
+            handler (callable): ``handler(client_socket, address)`` started in its
+                own thread for every accepted connection.
+            port (int | None): Port to bind; None allocates one with `palloc`.
+            max_connections (int): Listen backlog. Defaults to 1.
+
+        Returns:
+            tuple: ``(port, thread, stop_event)``; setting ``stop_event`` ends the
+                loop, which closes the socket and frees the port.
+
+        Raises:
+            RuntimeError: If ``port`` is None and no port can be allocated.
+        """
         if port is None:
             port = self.palloc()
             if port is None:
@@ -730,6 +947,19 @@ class TCP_Server_Base:  # TCP server class
         return port, server_thread, stop_event
 
     def create_temporary_client(self, server_host, server_port, bind_port=None, on_data=None):
+        """Open a temporary outbound connection for a side channel.
+
+        Args:
+            server_host (str): Host to connect to.
+            server_port (int): Port to connect to.
+            bind_port (int | None): Local port to bind; None lets the OS choose.
+            on_data (callable | None): ``on_data(data, client_socket)`` called for
+                every received chunk.
+
+        Returns:
+            tuple: ``(client_socket, thread, stop_event)``; setting ``stop_event``
+                ends the receiver thread.
+        """
         client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if bind_port is not None:
             client_sock.bind((self.host, bind_port))
@@ -758,6 +988,15 @@ class TCP_Server_Base:  # TCP server class
     def broadcast(
         self, message, exclude_client=None
     ):  # broadcast message to all clients except exclude_client
+        """Send one message to every connected client.
+
+        Clients whose send fails are disconnected and removed from ``clients``.
+
+        Args:
+            message (str | bytes): Payload passed to `send_message`.
+            exclude_client (tuple | None): ``(ip, port)`` to leave out, typically
+                the client the message came from.
+        """
         with self.client_lock:
             disconnected_clients = []
             for addr, client_info in self.clients.items():
@@ -777,6 +1016,14 @@ class TCP_Server_Base:  # TCP server class
     def send_msg_to_specific_client(
         self, message
     ):  # send message to specific client by client address
+        """Send the messages of a console line to the clients named in it.
+
+        Args:
+            message (str): ``/send_msg`` line as typed: message text followed by one
+                or more ``(ip, port)`` identifiers; each message is delivered to the
+                identifiers that follow it. Addresses that are not connected are
+                skipped with a console notice.
+        """
         command_part = shlex.split(message)
         del command_part[0]
         client_message_pair_list = []
@@ -832,6 +1079,21 @@ class TCP_Server_Base:  # TCP server class
             return lock
 
     def send_message(self, client_socket, message):  # send message to specific client
+        """Write one line to a client socket, encrypting when the channel is up.
+
+        Args:
+            client_socket (socket.socket): Target connection.
+            message (str | bytes): Payload; a str is stripped and newline
+                terminated, bytes are sent as they are.
+
+        Returns:
+            bool: True when the payload was written, False for an unsupported
+                payload type.
+
+        Raises:
+            RuntimeError: If the server is not running or no socket was passed.
+            OSError: If the socket write fails (the original error is re-raised).
+        """
         if not self.running or not client_socket:
             print("disable the connect to server")
             raise RuntimeError("connection error")
@@ -912,6 +1174,15 @@ class TCP_Server_Base:  # TCP server class
         return f"{nonce}|{seq}|{body}"
 
     def receive_message(self, client_socket, msg_length):  # receive message
+        """Read up to ``msg_length`` bytes from a client socket.
+
+        Args:
+            client_socket (socket.socket): Connection to read from.
+            msg_length (int): Maximum number of bytes to read.
+
+        Returns:
+            bytes: Received bytes, empty when the peer closed the connection.
+        """
         data = client_socket.recv(msg_length)
         return data
 
@@ -1189,6 +1460,19 @@ class TCP_Server_Base:  # TCP server class
                 traceback.print_exc()
 
     def handle_client(self, client_socket, client_address):  # deal with each client
+        """Serve one accepted client until it disconnects.
+
+        Registers the client, greets it, announces the encryption mode and reads
+        lines until the peer closes: commands go to `handle_command`, plain
+        messages go to the message listeners and to ``messages_dict``. Runs in its
+        own thread; the client is removed from ``clients`` and the socket closed
+        when the read loop ends for any reason.
+
+        Args:
+            client_socket (socket.socket): Accepted connection.
+            client_address (tuple): Peer ``(ip, port)``; used as the client id and
+                as the key in ``clients``.
+        """
         client_id = f"{client_address[0]}:{client_address[1]}"
         with self.client_lock:  # add new client
             self.clients[client_address] = {
@@ -1283,6 +1567,25 @@ class TCP_Server_Base:  # TCP server class
     def handle_command(
         self, client_socket, client_address, command
     ):  # deal with special commands from client
+        """Dispatch one command line received from a client.
+
+        Built-in commands (``/help``, ``/time``, ``/clients``, ``/quit``,
+        ``/crypto_mode``, ``/file``, ``/file_folder``,
+        ``/server_file_transfer_port`` and the crypto exchange lines) are handled
+        here; any other name goes to the handlers registered for the "server" side
+        via `register_command`. An encryption-mode mismatch closes the connection;
+        an unknown command is only reported on the console.
+
+        Args:
+            client_socket (socket.socket): Connection the line came from.
+            client_address (tuple): Peer ``(ip, port)``.
+            command (str): Line including its leading ``/``.
+
+        Returns:
+            str | None: Response for that client, or None when no response is due
+                (crypto lines, file transfers, and custom handlers that run in the
+                background).
+        """
         print(client_socket, client_address, command)
         client_id = f"{client_address[0]}:{client_address[1]}"
         send_str = None
@@ -1498,13 +1801,20 @@ class TCP_Server_Base:  # TCP server class
         return None
 
     def forward_message_to(self, target, message, originator_addr):
-        """Send one plain message to ``target``, tagged with the originator's
-        address (public API for forward extensions).
+        """Send one plain message to a connected target, tagged with its origin.
 
-        The message is wrapped in a ``/send_msg_from <addr> <payload>``
-        envelope so the receiver can attribute it to the originator (see
-        ``parse_forwarded_message`` on the receiving side). Returns False when
-        the target is not connected.
+        Public API for forward extensions: the message is wrapped in a
+        ``/send_msg_from <addr> <payload>`` envelope so the receiver can attribute
+        it to the originator (see `parse_forwarded_message`).
+
+        Args:
+            target (tuple): Destination ``(ip, port)``.
+            message (str): Payload to deliver.
+            originator_addr (tuple): Originating client ``(ip, port)``.
+
+        Returns:
+            bool: False when ``target`` is not connected (a console notice is
+                printed); True when the envelope was sent.
         """
         client_info = self.clients.get(target)
         if client_info is None:
@@ -1519,13 +1829,22 @@ class TCP_Server_Base:  # TCP server class
     def forward_target_command(
         self, kind, rel_dir, fname, originator_addr, tfid, destination_path=None
     ):
-        """Build the wire command that pushes one forwarded file/folder item to
-        a target, tagged with the originator's address (public API for forward
-        extensions).
+        """Build the tagged wire command that pushes one forwarded item.
 
-        The originator tuple sits before the trailing transfer id: the
-        receiver's existing parsers treat it as the address slot and ignore
-        it, while ``parse_forward_originator`` recovers it for attribution.
+        Public API for forward extensions. The originator tuple sits before the
+        trailing transfer id, where the receiver's existing parsers ignore it and
+        `parse_forward_originator` recovers it for attribution.
+
+        Args:
+            kind (str): "file" or "file_folder".
+            rel_dir (str): Relative folder path (folders only).
+            fname (str): File or folder name.
+            originator_addr (tuple): Originating client ``(ip, port)``.
+            tfid (int): Transfer id shared by the pushed item.
+            destination_path (str | None): Receiver-side destination directory.
+
+        Returns:
+            str: Command line to hand to `send_message`.
         """
         originator = shlex.quote(repr(originator_addr))
         if kind == "file":
@@ -1545,12 +1864,24 @@ class TCP_Server_Base:  # TCP server class
     def forward_item_to(
         self, target, kind, rel_dir, fname, originator_addr, tfid, destination_path=None
     ):
-        """Push one forwarded file/folder item to ``target``, tagged with the
-        originator's address (public API for forward extensions).
+        """Push one forwarded file or folder item to a connected target.
 
-        Sends the command built by ``forward_target_command``; the receiver
-        recovers the originator with ``parse_forward_originator``. Returns
-        False when the target is not connected.
+        Public API for forward extensions: sends the line built by
+        `forward_target_command`, which the receiver attributes with
+        `parse_forward_originator`.
+
+        Args:
+            target (tuple): Destination ``(ip, port)``.
+            kind (str): "file" or "file_folder".
+            rel_dir (str): Relative folder path (folders only).
+            fname (str): File or folder name.
+            originator_addr (tuple): Originating client ``(ip, port)``.
+            tfid (int): Transfer id shared by the pushed item.
+            destination_path (str | None): Receiver-side destination directory.
+
+        Returns:
+            bool: False when ``target`` is not connected (a console notice is
+                printed); True when the command was sent.
         """
         client_info = self.clients.get(target)
         if client_info is None:
@@ -2609,6 +2940,14 @@ class TCP_Server_Base:  # TCP server class
         print(f"forward: relayed {fname} to {result['ok']}/{len(target_conns)} targets")
 
     def start_TCP_Server(self):  # set up server socket
+        """Bind the server socket, then accept clients until `stop` runs.
+
+        Blocks the calling thread. A console command thread is started when
+        ``is_input_command_in_console`` is True, every accepted connection gets its
+        own `handle_client` thread, and a client beyond ``max_clients`` is refused
+        with a message. Socket errors and the end of the accept loop both end in
+        `stop`.
+        """
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -2647,6 +2986,15 @@ class TCP_Server_Base:  # TCP server class
             self.stop()
 
     def console_input(self):  # deal consule input
+        """Read console commands until the server stops.
+
+        Handles ``/stop``, ``/status``, ``/clients``, ``/send_msg``, ``/file``,
+        ``/file_folder``, ``/multiple_file_multiple_client``,
+        ``/diff_multiple_file_diff_multiple_client`` and ``/help``; the forward
+        commands are client-only and are refused here. Any other name goes to the
+        handlers registered with ``where_to_run="client"``. Ctrl-C and EOF stop the
+        server.
+        """
         while self.running:
             try:
                 cmd = input()
@@ -2742,6 +3090,12 @@ class TCP_Server_Base:  # TCP server class
                 pass
 
     def stop(self):  # shutting down the server
+        """Stop the server and release everything it owns.
+
+        Closes the server socket and every client connection, flushes the message
+        and event stores, releases the allocated port range and clears ``running``.
+        Safe to call more than once.
+        """
         self.running = False
         self.free_port()
         self._flush_messages_dict()
@@ -2760,6 +3114,24 @@ class TCP_Server_Base:  # TCP server class
 
 
 class TCP_Client_Base:  # TCP client class
+    """TCP client: connect to a server, dispatch commands, send and receive messages.
+
+    Lines received from the server go through `receive_messages`: a line starting
+    with ``/`` is handled by `handle_server_command` (protocol commands plus the
+    handlers registered for the "server" side), any other line is a plain message
+    delivered to the listeners registered with `add_message_listener` and stored in
+    ``messages_dict``. With ``is_input_command_in_console`` the console thread
+    `interactive_mode` sends typed lines to the server.
+
+    Attributes:
+        host (str): Server address this client connects to.
+        port (int): Server port this client connects to.
+        client_host (str): Local address the socket binds to.
+        client_port (int | None): Local port, None when the OS chose one.
+        running (bool): True while the connection is up.
+        is_enable_encrypto (bool): Whether the RSA channel is negotiated.
+    """
+
     def __init__(
         self,
         host=None,
@@ -2777,6 +3149,42 @@ class TCP_Client_Base:  # TCP client class
         is_custom_keys=None,
         max_mem_buff=2048,
     ):
+        """Create the client and, unless extended, connect and start reading.
+
+        Args:
+            host (str | None): Server address to connect to; required before
+                `connect` is called.
+            client_host (str): Local address the socket binds to. Defaults to
+                "127.0.0.1".
+            port (int): Server port. Defaults to 65432.
+            client_port (int | None): Local port to bind; None lets the OS choose
+                an ephemeral port.
+            timeout (float | None): Socket timeout in seconds for connect and
+                receive. Must be None when ``is_wait_server`` is True.
+            port_add_step (int): Step between candidate ports in the allocation
+                range. Defaults to 1.
+            max_thread_num (int): Concurrent file transfers allowed. Defaults to 10.
+            is_input_command_in_console (bool): Enter interactive mode after
+                connecting. Defaults to True.
+            is_wait_server (bool): Keep retrying while the server is not reachable.
+                Defaults to True.
+            max_custom_workers (int): Worker slots for `submit_task` and threaded
+                command handlers. Defaults to 10.
+            is_extend_command (bool): When True, do not call `start_TCP_client`; the
+                caller connects when ready. Defaults to False.
+            is_enable_encrypto (bool): Negotiate the RSA-encrypted channel with the
+                server. Defaults to True.
+            is_custom_keys (list | None): ``[pub_key_path, pvt_key_path]`` pair used
+                instead of the default key lookup; an invalid pair is ignored.
+            max_mem_buff (int): Buffer ceiling in MiB, kept for parity with the
+                server class; the client's forward path does not read it today.
+                Defaults to 2048.
+
+        Raises:
+            ValueError: If ``is_wait_server`` is True and ``timeout`` is not None.
+            OSError: If the ``.Flow`` directories or ``decode_command_table.json``
+                cannot be created or read.
+        """
         self.max_mem_buff = max_mem_buff * 1024 * 1024
         self._forward_upload_queue = queue.Queue()
         self._forward_pause = {}
@@ -2907,6 +3315,23 @@ class TCP_Client_Base:  # TCP client class
             self.start_TCP_client()
 
     def register_command(self, command_name, handler, where_to_run, run_in_thread=False):
+        """Register a custom command handler.
+
+        Args:
+            command_name (str): Command to intercept, e.g. "/my_command"; matched
+                case-insensitively against the first token.
+            handler (callable): ``handler(client_socket, client_address, command)``
+                called with the raw line; a non-None return value is sent back as
+                the response.
+            where_to_run (str): "server" for commands pushed by the server, "client"
+                for commands typed on this instance's console.
+            run_in_thread (bool): Run the handler on the worker pool instead of the
+                reader thread. Defaults to False.
+
+        Returns:
+            bool | None: False when ``where_to_run`` is neither "server" nor
+                "client"; the handler is then not registered.
+        """
         registe_index = None
         if where_to_run == "server":
             registe_index = 0
@@ -2919,21 +3344,28 @@ class TCP_Client_Base:  # TCP client class
         self._custom_handler_threaded[registe_index][command_name] = run_in_thread
 
     def add_message_listener(self, listener):
-        """Register ``listener(sender_id, message)`` for every inbound message.
+        """Register ``listener(sender_id, message)`` for every inbound plain message.
 
-        ``sender_id`` is the author's ``"ip:port"``: the forwarding client for
-        messages another client forwarded to this one (``/send_msg_from``
-        envelopes), or ``None`` for direct pushes from the server, which do
-        not identify a client author. Commands are not reported here; they go
-        through the registered command handlers. Mirrors the server-side
-        contract (``listener(client_id, message)``).
+        Mirrors the server-side contract; commands are not reported here.
+
+        Args:
+            listener (callable): ``listener(sender_id, message)``; ``sender_id`` is
+                the author's ``"ip:port"`` — the forwarding client for a message
+                another client forwarded here (``/send_msg_from`` envelope), or None
+                for a direct push from the server, which names no client author. It
+                runs on the receive thread, so it must not block, and exceptions
+                raised inside it are swallowed.
         """
         with self._event_listeners_lock:
             if listener not in self._message_listeners:
                 self._message_listeners.append(listener)
 
     def remove_message_listener(self, listener):
-        """Unregister a listener previously added by ``add_message_listener``."""
+        """Unregister a listener previously added by `add_message_listener`.
+
+        Args:
+            listener (callable): Listener to remove; an unknown one is ignored.
+        """
         with self._event_listeners_lock:
             try:
                 self._message_listeners.remove(listener)
@@ -2941,19 +3373,27 @@ class TCP_Client_Base:  # TCP client class
                 pass
 
     def add_file_listener(self, listener):
-        """Register ``listener(full_path, name, size, command)`` for each saved inbound file.
+        """Register ``listener(full_path, name, size, command)`` per saved inbound file.
 
-        Fired after a file pushed by the server (a direct send, a forwarded
-        file or folder item) has been fully written to ``file_transfer_dir``.
-        ``command`` is the wire command that triggered the transfer, so a
-        listener can recognise protocol pushes such as ``/crypto_pub_key``.
+        Fired after a file pushed by the server (a direct send, or a forwarded
+        file/folder item) has been fully written to ``file_transfer_dir``.
+
+        Args:
+            listener (callable): ``listener(full_path, name, size, command)``;
+                ``command`` is the wire command that triggered the transfer, so a
+                listener can recognise protocol pushes such as ``/crypto_pub_key``.
+                It runs on the transfer thread, so it must not block.
         """
         with self._event_listeners_lock:
             if listener not in self._file_listeners:
                 self._file_listeners.append(listener)
 
     def remove_file_listener(self, listener):
-        """Unregister a listener previously added by ``add_file_listener``."""
+        """Unregister a listener previously added by `add_file_listener`.
+
+        Args:
+            listener (callable): Listener to remove; an unknown one is ignored.
+        """
         with self._event_listeners_lock:
             try:
                 self._file_listeners.remove(listener)
@@ -3145,12 +3585,31 @@ class TCP_Client_Base:  # TCP client class
             traceback.print_exc()
 
     def submit_task(self, func, *args, **kwargs):
+        """Run a callable on the instance's worker pool.
+
+        Args:
+            func (callable): Callable to run.
+            *args (Any): Positional arguments forwarded to ``func``.
+            **kwargs (Any): Keyword arguments forwarded to ``func``.
+
+        Returns:
+            concurrent.futures.Future: Handle for the submitted call; its worker
+                slot is released when the call finishes.
+        """
         self._task_semaphore.acquire()
         future = self._custom_executor.submit(func, *args, **kwargs)
         future.add_done_callback(lambda f: self._task_semaphore.release())
         return future
 
     def alloc_port(self, port_add_step, port_range_num):
+        """Reserve this client's port range under the cross-process lock.
+
+        No-op until the server assigns a range (see ``/client_alloc_port_range``).
+
+        Args:
+            port_add_step (int): Step between candidate ports.
+            port_range_num (int): Number of ports per step.
+        """
         if self.is_hand_alloc_port == True:
             while self.is_client_port_temp_info_file_locked():
                 time.sleep(0.1)
@@ -3159,6 +3618,10 @@ class TCP_Client_Base:  # TCP client class
             self.client_port_temp_info_file_unlock()
 
     def free_port(self):
+        """Release this client's reserved port range.
+
+        No-op unless a range was assigned (``is_hand_alloc_port`` True).
+        """
         if self.is_hand_alloc_port == True:
             while self.is_client_port_temp_info_file_locked():
                 time.sleep(0.1)
@@ -3167,20 +3630,39 @@ class TCP_Client_Base:  # TCP client class
             self.client_port_temp_info_file_unlock()
 
     def client_port_temp_info_file_lock(self):
+        """Create the lock file that reserves the client port range for this process."""
         with open(self.client_port_lock_file, "w", encoding="utf-8") as f:
             f.write("locked")
 
     def is_client_port_temp_info_file_locked(self):
+        """Report whether the client port range is reserved by some process.
+
+        Returns:
+            bool: True while the lock file exists.
+        """
         if os.path.exists(self.client_port_lock_file):
             return True
         else:
             return False
 
     def client_port_temp_info_file_unlock(self):
+        """Remove the lock file that reserves the client port range."""
         if os.path.exists(self.client_port_lock_file):
             os.remove(self.client_port_lock_file)
 
     def hand_alloc_port(self, port_add_step, port_range_num):
+        """Allocate the next free client port range and record it on disk.
+
+        ``port`` is moved past the ranges already recorded by other clients on this
+        host, so each instance ends up with a range of its own.
+
+        Args:
+            port_add_step (int): Step between candidate ports.
+            port_range_num (int): Number of ports per step.
+
+        Raises:
+            OSError: If the client port info file cannot be read or written.
+        """
         self.port_temp_info_path = os.path.join(self.project_temp_info_dir, "clients_port_info.log")
         server_port_temp_info_file_path = os.path.join(
             self.project_temp_info_dir, "server_port_info.log"
@@ -3245,6 +3727,7 @@ class TCP_Client_Base:  # TCP client class
                 f.write(str(self.client_port_info))
 
     def hand_free_port(self):
+        """Drop this client's entry from the on-disk port range record."""
         self.port_temp_info_path = os.path.join(self.project_temp_info_dir, "clients_port_info.log")
         if os.path.exists(self.port_temp_info_path):
             with open(self.port_temp_info_path, "r", encoding="utf-8") as f:
@@ -3259,6 +3742,11 @@ class TCP_Client_Base:  # TCP client class
                     f.write(str(self.client_port_info))
 
     def palloc(self):
+        """Allocate a port, waiting until one is free.
+
+        Returns:
+            int: Allocated port, or 0 when no allocation range was assigned.
+        """
         alloc_port = 0
         while True:
             alloc_port = self.file_palloc()
@@ -3273,10 +3761,21 @@ class TCP_Client_Base:  # TCP client class
                     pass
 
     def pfree(self, port):
+        """Release a port obtained from `palloc`.
+
+        Args:
+            port (int): Port to release.
+        """
         self.file_pfree(port)
         self.spy_pfree(port)
 
     def file_palloc(self):
+        """Allocate the next port above the base, or the first free one in range.
+
+        Returns:
+            int: Allocated port; None when the upward range is exhausted; 0 when no
+                allocation range was assigned.
+        """
         if self.is_hand_alloc_port:
             with self.alloc_add_port_lock:
                 if self.add_latest_port + self.port_add_step > self.max_port:
@@ -3295,6 +3794,11 @@ class TCP_Client_Base:  # TCP client class
             return 0
 
     def file_pfree(self, port):
+        """Release a port obtained from `file_palloc` and step the cursor back.
+
+        Args:
+            port (int): Port to release. Ignored when allocation is disabled.
+        """
         if self.is_hand_alloc_port:
             with self.alloc_add_port_lock:
                 if port in self.all_allocated_ports_list:
@@ -3305,6 +3809,12 @@ class TCP_Client_Base:  # TCP client class
             pass
 
     def spy_palloc(self):
+        """Allocate the next port below the base, or the first free one in range.
+
+        Returns:
+            int: Allocated port; None when the downward range is exhausted; 0 when
+                no allocation range was assigned.
+        """
         if self.is_hand_alloc_port:
             with self.alloc_minus_port_lock:
                 if self.minus_latest_port - self.port_add_step < self.min_port:
@@ -3323,6 +3833,11 @@ class TCP_Client_Base:  # TCP client class
             return 0
 
     def spy_pfree(self, port):
+        """Release a port obtained from `spy_palloc` and step the cursor back.
+
+        Args:
+            port (int): Port to release. Ignored when allocation is disabled.
+        """
         if self.is_hand_alloc_port:
             with self.alloc_minus_port_lock:
                 if port in self.all_allocated_ports_list:
@@ -3333,6 +3848,21 @@ class TCP_Client_Base:  # TCP client class
             pass
 
     def create_temporary_server(self, handler, port=None, max_connections=1):
+        """Start a temporary listener for a side channel (not the main protocol).
+
+        Args:
+            handler (callable): ``handler(client_socket, address)`` started in its
+                own thread for every accepted connection.
+            port (int | None): Port to bind; None allocates one with `palloc`.
+            max_connections (int): Listen backlog. Defaults to 1.
+
+        Returns:
+            tuple: ``(port, thread, stop_event)``; setting ``stop_event`` ends the
+                loop, which closes the socket and frees the port.
+
+        Raises:
+            RuntimeError: If ``port`` is None and no port can be allocated.
+        """
         if port is None:
             port = self.palloc()
             if port is None:
@@ -3363,6 +3893,20 @@ class TCP_Client_Base:  # TCP client class
         return port, server_thread, stop_event
 
     def create_temporary_client(self, server_host, server_port, bind_port=None, on_data=None):
+        """Open a temporary outbound connection for a side channel.
+
+        Args:
+            server_host (str): Host to connect to.
+            server_port (int): Port to connect to.
+            bind_port (int | None): Local port to bind; None allocates one with
+                `palloc`.
+            on_data (callable | None): ``on_data(data, client_socket)`` called for
+                every received chunk.
+
+        Returns:
+            tuple: ``(client_socket, thread, stop_event)``; setting ``stop_event``
+                ends the receiver thread.
+        """
         client_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         if bind_port is not None:
             client_sock.bind((self.client_host, bind_port))
@@ -3409,6 +3953,18 @@ class TCP_Client_Base:  # TCP client class
         return True
 
     def connect(self):  # connect to server
+        """Connect to the server and start reading from it.
+
+        Binds ``client_port`` when one was configured, then retries while
+        ``is_wait_server`` is True and the server is not reachable yet. Once the
+        socket is up the receive thread is started and the encryption mode is
+        negotiated, which closes the connection when the two sides disagree.
+
+        Returns:
+            bool: True when the connection is established (and, if encryption is
+                enabled, the key exchange has been started); False when the attempt
+                failed or the mode negotiation closed the connection.
+        """
         while True:
             try:
                 self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -3463,6 +4019,14 @@ class TCP_Client_Base:  # TCP client class
                 return False
 
     def receive_messages(self):  # get server msg
+        """Read from the server until the connection ends.
+
+        Runs on the receive thread: plain lines are reported to the message
+        listeners and stored in ``messages_dict`` (``/send_msg_from`` envelopes are
+        attributed to their sender first), other ``/`` lines go to
+        `handle_server_command`. Any end of the connection clears ``running`` and
+        releases the port range.
+        """
         buffer = ""
         while self.running:
             try:
@@ -3519,6 +4083,18 @@ class TCP_Client_Base:  # TCP client class
                 break
 
     def send_message(self, client_socket, message):  # send msg to server
+        """Write one line to a socket, encrypting when the channel is up.
+
+        Args:
+            client_socket (socket.socket): Target connection; the client passes
+                ``self.client_socket``.
+            message (str | bytes): Payload; a str is stripped and newline
+                terminated, bytes are sent as they are.
+
+        Returns:
+            bool: True when the payload was written; False when the client is not
+                running, no socket was passed, or the payload type is unsupported.
+        """
         if not self.running or not self.client_socket:
             print("disable the connect to server")
             return False
@@ -3553,9 +4129,27 @@ class TCP_Client_Base:  # TCP client class
                 return False
         
     def send_message_to_server(self, message):
+        """Send the payload of a console line to the server.
+
+        Args:
+            message (str): Console line such as ``/send_msg hello``; the first token
+                (the command name) is dropped and the second one is sent.
+
+        Raises:
+            IndexError: If the line has fewer than two tokens.
+        """
         self.send_message(self.client_socket, shlex.split(message)[1])
 
     def receive_message(self, client_socket, msg_length):  # receive msg
+        """Read up to ``msg_length`` bytes from a socket.
+
+        Args:
+            client_socket (socket.socket): Connection to read from.
+            msg_length (int): Maximum number of bytes to read.
+
+        Returns:
+            bytes: Received bytes, empty when the peer closed the connection.
+        """
         data = client_socket.recv(msg_length)
         return data
 
@@ -3911,6 +4505,18 @@ class TCP_Client_Base:  # TCP client class
             self._crypto_server_pub_event.set()
 
     def handle_server_command(self, command):  # deal with special command from server
+        """Dispatch one command line pushed by the server.
+
+        Handles the protocol's own lines: ``/crypto_mode`` (a mismatch closes the
+        connection), ``/client_alloc_port_range``, the ``/crypto_*`` exchange lines,
+        and the transfer lines ``/file``, ``/file_folder``, ``/forward_upload``,
+        ``/pause_trans``, ``/start_trans``, ``/forward_error``. Any other name goes
+        to the handlers registered for the "server" side via `register_command`; an
+        unknown command is only reported on the console.
+
+        Args:
+            command (str): Line including its leading ``/``.
+        """
         client_id = f"{self.client_host}:{self.client_port}"
         if command.lower().split(" ")[0] == "/crypto_mode":
             try:
@@ -4074,11 +4680,17 @@ class TCP_Client_Base:  # TCP client class
     def forward_messages(self, messages, addrs):
         """Forward plain messages to other connected clients through the server.
 
-        Internal protocol feature (the client console command
-        ``/forward_send_msg``): this client must be connected. Each message is
-        sent to every destination over the server, wrapped there in a
-        ``/send_msg_from`` envelope so the receiver can attribute it back to
-        this client. ``addrs`` is a list of ``(ip, port)`` tuples.
+        The console command ``/forward_send_msg`` uses this; the client must be
+        connected. The server wraps each message in a ``/send_msg_from`` envelope so
+        the receiving client can attribute it back to this one.
+
+        Args:
+            messages (list[str]): Message texts to forward.
+            addrs (list[tuple]): Destination ``(ip, port)`` tuples.
+
+        Returns:
+            bool: True when the request was written to the server; False when the
+                client is not connected.
         """
         request = "/forward_send_msg " + " ".join(shlex.quote(m) for m in messages)
         request += " " + " ".join(shlex.quote(str(a)) for a in addrs)
@@ -4106,6 +4718,15 @@ class TCP_Client_Base:  # TCP client class
             return error_msg
 
     def interactive_mode(self):  # Interactive mode
+        """Read console lines and act on them until the client stops.
+
+        ``/quit`` closes the connection; ``/send_msg``, ``/file``,
+        ``/multiple_file``, ``/file_folder``, ``/multiple_file_folder``,
+        ``/forward_file``, ``/forward_folder`` and ``/forward_send_msg`` are handled
+        locally; any other name goes to the handlers registered with
+        ``where_to_run="client"``, and anything left is sent to the server as it
+        stands. Ctrl-C and EOF close the connection.
+        """
         client_id = f"{self.client_host}:{self.client_port}"
         try:
             while self.running:
@@ -4877,6 +5498,11 @@ class TCP_Client_Base:  # TCP client class
             server_file_socket.close()
 
     def close(self):  # close connection
+        """Close the connection and release everything the client owns.
+
+        Stops the receive loop, releases the port range, flushes the message and
+        event stores and closes the socket. Safe to call more than once.
+        """
         self.running = False
         self.free_port()
         self._flush_messages_dict()
@@ -4886,6 +5512,13 @@ class TCP_Client_Base:  # TCP client class
         print("connection closed")
 
     def start_TCP_client(self):  # start client
+        """Connect to the server and start the client loop.
+
+        Enters `interactive_mode` when ``is_input_command_in_console`` is True,
+        otherwise keeps the process alive while the connection is up. Exits the
+        process with status 1 when the connection cannot be established; Ctrl-C and
+        the end of the connection both run `close`.
+        """
         if not self.connect():
             sys.exit(1)
         try:

@@ -51,6 +51,22 @@ jobs:
         run: uvx ty check
         continue-on-error: true
 
+  Docstrings:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+      - name: Docstring coverage ratchet (fails below the recorded baseline)
+        run: uvx interrogate
+      - name: Docstring style report (`docs/DOCSTRING_GUIDE.md` rules)
+        # `ruff check --select D` would override the ignore list in pyproject.toml, so filter
+        # the statistics table instead: pyproject.toml stays the single source of truth.
+        run: uvx ruff check --statistics 2>/dev/null | grep -E '^[[:space:]]*[0-9]+[[:space:]]+D[0-9]+' || true
+        continue-on-error: true
+
   Test:
     strategy:
       fail-fast: false

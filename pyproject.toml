@@ -52,7 +52,25 @@ line-length = 100
 exclude = ["build/", "dist/", ".git/", "__pycache__/"]
 
 [tool.ruff.lint]
-select = ["E", "F", "PL", "I"]
+select = ["E", "F", "PL", "I", "D"]
+# Docstring rules follow docs/DOCSTRING_GUIDE.md (Google style): the NumPy section rules and
+# the two mutually exclusive pairs are dropped, everything else stays on.
+ignore = [
+    "D203", # blank line before a class docstring; conflicts with D211 (Google has none)
+    "D213", # summary on the second line; conflicts with D212 (Google puts it on the first)
+    "D406", # NumPy section formatting rules
+    "D407",
+    "D408",
+    "D409",
+    "D410",
+    "D411",
+    "D413",
+    "D414",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests are not public API: the guide lets internal callables go undocumented.
+"test/**" = ["D1"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -66,3 +84,12 @@ exclude = ["test/"]
 
 [tool.pytest.ini_options]
 testpaths = ["test"]
+
+[tool.interrogate]
+# Coverage ratchet for the public API. Raise fail-under as docstrings get written; never lower it.
+fail-under = 57.6
+style = "google"
+ignore-private = true # guide section 5: underscore-prefixed helpers may stay undocumented
+ignore-semiprivate = true
+exclude = ["test", "docs", "build", "dist", ".venv"]
+verbose = 0
