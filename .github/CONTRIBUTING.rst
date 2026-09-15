@@ -51,3 +51,26 @@ does not have, please pull the latest changes to avoid merge conflicts:
    git push origin <your-branch-name>
 
 7. Finally, open a pull request to the original repository.
+
+Documentation and style
+-----------------------
+
+Public Python interfaces need a docstring that follows ``docs/DOCSTRING_GUIDE.md``
+(Google style: summary line, ``Args``, ``Returns``, ``Raises``); C comments follow
+the Doxygen rules in that same file. The guide is the single source of truth for
+structure and wording, and ``docs/MAP.md`` maps where each kind of document
+belongs.
+
+Run the checks that CI runs before you push:
+
+.. code-block:: bash
+
+   uvx ruff check     # style, including the docstring rules configured in pyproject.toml
+   uvx interrogate    # public-API docstring coverage ratchet
+
+Docstrings carry the API detail (arguments, return values, exceptions); files
+under ``docs/`` carry module purpose, tutorials and architecture only. Design
+decisions belong in ``docs/design/`` (``docs/templates/adr.md``), per-PR change
+notes in ``docs/changes/`` (``docs/templates/change-note.md``), and
+``.github/PULL_REQUEST_TEMPLATE.md`` asks about both when you open the pull
+request.

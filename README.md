@@ -123,7 +123,21 @@ uv run python PyFlow/transfer_web/setup_server.py
 uv run python PyFlow/transfer_web/setup_client.py
 ```
 
-On first run the server launcher opens a startup-configuration page
+Visitors of the server's web address get a white landing page (the
+addresses clients should connect to) with a **Login** button; the
+startup-configuration page, the status page and the web APIs behind them
+need a session. Accounts live in
+`PyFlow/transfer_web/.Flow_Web/users.json` (PBKDF2-SHA256 password
+records). The first run seeds the administrator `admin` / `admin`; while
+that exact pair is still in use, a login pops up a prominent warning to
+change the username and password **before** the server is exposed to a
+public network, or anyone who can reach it can administer it. Administrators
+manage users (`Users` in the sidebar) and are the only ones who can change
+the startup configuration or load/extend extension protocols; regular users
+get the status page with message/file/folder sending. `/api/server_info`
+stays public, as web clients query it before they connect.
+
+On first run the server launcher opens the startup-configuration page
 showing every `TCP_Server_Base` parameter with its default; the saved
 config lives in `PyFlow/transfer_web/.Flow_Web/setup_server.json` (same
 shape as `setup.json`). Once the TCP server is up, the server's web
@@ -131,8 +145,9 @@ backend serves a status page and a client-facing API
 (`/api/server_info` returns the TCP address/port). The client launcher
 asks for the server address (an `http`/`https` domain or a bare IP) and
 connects through the server's web backend. Both pages show a sidebar of
-connected instances, message/file/folder sending (client-to-client
-sends are forwarded through the server), and extension loading.
+connected instances and message/file/folder sending (client-to-client
+sends are forwarded through the server); extension protocols are loaded by
+the client page and by administrators on the server page.
 
 ### `setup.json`
 

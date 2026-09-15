@@ -21,10 +21,21 @@ Inbound events (plain-text messages and file uploads arriving from
 clients) are captured on the TCP server's receive threads through
 ``TCP_Server_Base``'s ``add_message_listener``/``add_file_listener``
 APIs, queued here, and polled by the frontend via ``/api/events``.
+
+Authentication: anonymous visitors get a white landing page (the server
+addresses plus a login button); the configuration and status pages need a
+session.  Accounts live in ``.Flow_Web/users.json``; the first run seeds the
+``admin``/``admin`` administrator, and the frontend warns on every login until
+those default credentials are changed.
 """
 
+import functools
+import hashlib
+import hmac
 import json
 import os
+import re
+import secrets
 import shlex
 import socket
 import subprocess
@@ -33,7 +44,7 @@ import threading
 import time
 import traceback
 
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, redirect, render_template, request, session
 
 from PyFlow import add_extension
 from PyFlow import forward_extension_tcp
@@ -48,6 +59,17 @@ TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templat
 STATIC_DIR = os.path.join(WEB_ROOT, "static")
 
 DEFAULT_WEB_PORT = 5000
+
+# Login/account store: the first run seeds DEFAULT_ADMIN_USERNAME with
+# DEFAULT_ADMIN_PASSWORD, and administrators are warned while that seeded pair
+# (and only that pair) is still in use.
+USERS_FILE = os.path.join(FLOW_WEB_DIR, "users.json")
+SECRET_KEY_FILE = os.path.join(FLOW_WEB_DIR, "web_secret_key")
+DEFAULT_ADMIN_USERNAME = "admin"
+DEFAULT_ADMIN_PASSWORD = "admin"
+MIN_PASSWORD_LENGTH = 8
+PBKDF2_ITERATIONS = 200000
+_USERNAME_RE = re.compile(r"\S{1,64}")
 
 # Ordered (key, label, type, default, help) for every TCP_Server_Base
 # parameter shown in the startup-configuration UI.
@@ -89,6 +111,195 @@ SERVER_PARAM_FIELDS = [
 WEB_FIELDS = [
     ("web_port", "Web port", "number", DEFAULT_WEB_PORT, "Port of this web backend (clients query it)."),
 ]
+
+
+def _hash_password(password, salt, iterations=PBKDF2_ITERATIONS):
+    """PBKDF2-SHA256 record: ``pbkdf2_sha256$<iterations>$<salt>$<hex digest>``."""
+    digest = hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt.encode("ascii"), iterations
+    )
+    return f"pbkdf2_sha256${iterations}${salt}${digest.hex()}"
+
+
+def _new_password_record(password):
+    return _hash_password(password, secrets.token_hex(16))
+
+
+@functools.lru_cache(maxsize=1)
+def _dummy_password_record():
+    """Throwaway record: an unknown user must cost what a wrong password costs."""
+    return _new_password_record(secrets.token_hex(32))
+
+
+def _verify_password(password, record):
+    try:
+        algo, iterations, salt, digest = record.split("$", 3)
+        if algo != "pbkdf2_sha256":
+            return False
+        expected = hashlib.pbkdf2_hmac(
+            "sha256", password.encode("utf-8"), salt.encode("ascii"), int(iterations)
+        )
+    except (AttributeError, TypeError, ValueError):
+        return False
+    return hmac.compare_digest(expected.hex(), digest)
+
+
+def _validate_username(username):
+    if not _USERNAME_RE.fullmatch(username):
+        raise ValueError("the username must be 1-64 characters without spaces")
+
+
+def _validate_password(password):
+    if len(password) < MIN_PASSWORD_LENGTH:
+        raise ValueError(f"the password must be at least {MIN_PASSWORD_LENGTH} characters")
+
+
+def _load_or_create_secret_key(path=None):
+    """Persist the Flask session key so logins survive a restart."""
+    path = path or SECRET_KEY_FILE
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            key = f.read().strip()
+        if key:
+            return key
+    except FileNotFoundError:
+        pass
+    except OSError:
+        traceback.print_exc()
+    key = secrets.token_hex(32)
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(key)
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
+    except OSError:
+        traceback.print_exc()
+    return key
+
+
+class UserStore:
+    """Account store backing the server web login (``.Flow_Web/users.json``).
+
+    Passwords are PBKDF2-SHA256 records with a per-user salt.  A missing store
+    file seeds the default ``admin``/``admin`` administrator; a store file that
+    exists but cannot be read is *not* re-seeded, so a damaged file can never
+    silently restore the default account.
+    """
+
+    def __init__(self, path=None):
+        self.path = path or USERS_FILE
+        self._lock = threading.Lock()
+        self._users = {}
+        self._load()
+
+    def _load(self):
+        try:
+            with open(self.path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            self._seed_default_admin()
+            return
+        except Exception:
+            traceback.print_exc()
+            return
+        entries = data.get("users") if isinstance(data, dict) else None
+        for entry in entries or []:
+            if isinstance(entry, dict) and entry.get("username") and entry.get("password"):
+                role = entry.get("role")
+                self._users[entry["username"]] = {
+                    "username": entry["username"],
+                    "role": role if role in ("admin", "user") else "user",
+                    "password": entry["password"],
+                }
+
+    def _seed_default_admin(self):
+        self._users = {
+            DEFAULT_ADMIN_USERNAME: {
+                "username": DEFAULT_ADMIN_USERNAME,
+                "role": "admin",
+                "password": _new_password_record(DEFAULT_ADMIN_PASSWORD),
+            }
+        }
+        self._save()
+
+    def _save(self):
+        """Write the store atomically; it holds password records, not passwords."""
+        directory = os.path.dirname(self.path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        tmp = self.path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"users": list(self._users.values())}, f, indent=4, ensure_ascii=False)
+        os.replace(tmp, self.path)
+        try:
+            os.chmod(self.path, 0o600)
+        except OSError:
+            pass
+
+    def authenticate(self, username, password):
+        """Return ``{"username", "role"}`` for valid credentials, else ``None``."""
+        with self._lock:
+            entry = self._users.get(username)
+        if entry is None:
+            _verify_password(password, _dummy_password_record())
+            return None
+        if not _verify_password(password, entry["password"]):
+            return None
+        return {"username": entry["username"], "role": entry["role"]}
+
+    def get(self, username):
+        with self._lock:
+            entry = self._users.get(username)
+        if entry is None:
+            return None
+        return {"username": entry["username"], "role": entry["role"]}
+
+    def list(self):
+        with self._lock:
+            entries = sorted(self._users.values(), key=lambda e: e["username"])
+        return [{"username": e["username"], "role": e["role"]} for e in entries]
+
+    def add(self, username, password, role="user"):
+        _validate_username(username)
+        _validate_password(password)
+        with self._lock:
+            if username in self._users:
+                raise ValueError(f"user {username} already exists")
+            self._users[username] = {
+                "username": username,
+                "role": role if role in ("admin", "user") else "user",
+                "password": _new_password_record(password),
+            }
+            self._save()
+
+    def remove(self, username):
+        with self._lock:
+            entry = self._users.get(username)
+            if entry is None:
+                raise ValueError(f"unknown user {username}")
+            admins = [e for e in self._users.values() if e["role"] == "admin"]
+            if entry["role"] == "admin" and len(admins) == 1:
+                raise ValueError("the last administrator cannot be removed")
+            del self._users[username]
+            self._save()
+
+    def change_credentials(self, username, new_username, new_password):
+        """Rename ``username`` and set its password (self-service)."""
+        _validate_username(new_username)
+        _validate_password(new_password)
+        with self._lock:
+            entry = self._users.get(username)
+            if entry is None:
+                raise ValueError(f"unknown user {username}")
+            if new_username != username and new_username in self._users:
+                raise ValueError(f"user {new_username} already exists")
+            del self._users[username]
+            entry["username"] = new_username
+            entry["password"] = _new_password_record(new_password)
+            self._users[new_username] = entry
+            self._save()
 
 
 def _public_host(host):
@@ -153,12 +364,20 @@ class ServerWebApp:
         self._events = []  # inbound events surfaced to the frontend (/api/events)
         self._events_lock = threading.Lock()
         self._event_seq = 0
+
+        self.users = UserStore()
         self.app = Flask(
             __name__,
             template_folder=TEMPLATE_DIR,
             static_folder=STATIC_DIR,
             static_url_path="/static",
         )
+        self.app.secret_key = _load_or_create_secret_key()
+        self.app.config.update(
+            SESSION_COOKIE_HTTPONLY=True,
+            SESSION_COOKIE_SAMESITE="Lax",
+        )
+
         self._register_routes()
 
     # ------------------------------------------------------------------ setup
@@ -319,6 +538,91 @@ class ServerWebApp:
             return jsonify({"ok": False, "error": "TCP server is not running"}), 503
         return None
 
+    # ------------------------------------------------------------------- auth
+
+    def _current_user(self):
+        """Session user re-resolved against the store, so removed users lose access."""
+        username = session.get("username")
+        if not username:
+            return None
+        user = self.users.get(username)
+        if user is None:
+            session.clear()
+            return None
+        return user
+
+    def _require_login(self):
+        if self._current_user() is None:
+            return jsonify({"ok": False, "error": "login required"}), 401
+        return None
+
+    def _require_admin(self):
+        user = self._current_user()
+        if user is None:
+            return jsonify({"ok": False, "error": "login required"}), 401
+        if user["role"] != "admin":
+            return jsonify({"ok": False, "error": "administrator privileges required"}), 403
+        return None
+
+    def _default_admin_credentials(self, user, password):
+        """True only while the seeded username and the seeded password are both in use."""
+        return (
+            user["role"] == "admin"
+            and user["username"] == DEFAULT_ADMIN_USERNAME
+            and password == DEFAULT_ADMIN_PASSWORD
+        )
+
+    def _page_context(self, user):
+        return {
+            "role": user["role"],
+            "username": user["username"],
+            "must_change_credentials": bool(session.get("must_change_credentials")),
+        }
+
+    def _landing_context(self):
+        """Addresses shown on the landing page (``None`` while the server is down)."""
+        if self.server is None or not self.server.running:
+            return None
+        host = _public_host(self.server.host)
+        return {
+            "web": f"http://{host}:{self._bound_port or self.web_port}/",
+            "tcp": f"{host}:{self.server.port}",
+        }
+
+    def _config_form_fields(self):
+        """``(server, web)`` form rows for the startup-configuration page."""
+        current = {}
+        web_port = self.web_port
+        if os.path.exists(SERVER_CONFIG_FILE):
+            try:
+                with open(SERVER_CONFIG_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                servers = data.get("servers", [])
+                if servers:
+                    current = servers[0]
+                web = data.get("web", {}) or {}
+                web_port = int(web.get("port", web_port))
+            except Exception:
+                pass
+        fields = [
+            (key, label, ftype, _config_display_value(key, current.get(key, default)), help)
+            for key, label, ftype, default, help in SERVER_PARAM_FIELDS
+        ]
+        web_fields = [
+            (key, label, ftype, web_port, help) for key, label, ftype, default, help in WEB_FIELDS
+        ]
+        return fields, web_fields
+
+    def _render_config(self, user):
+        """Render the startup-configuration page for an authenticated administrator."""
+        fields, web_fields = self._config_form_fields()
+        return render_template(
+            "server_config.html",
+            fields=fields,
+            web_fields=web_fields,
+            **self._page_context(user),
+        )
+
     def _target_info(self, target):
         addr = (target[0], int(target[1]))
         with self.server.client_lock:
@@ -385,41 +689,52 @@ class ServerWebApp:
     def _register_routes(self):
         app = self.app
 
+        def login_required(view):
+            """Reject requests without a valid session."""
+
+            @functools.wraps(view)
+            def wrapped(*args, **kwargs):
+                err = self._require_login()
+                if err is not None:
+                    return err
+                return view(*args, **kwargs)
+
+            return wrapped
+
+        def admin_required(view):
+            """Reject requests from users that are not administrators."""
+
+            @functools.wraps(view)
+            def wrapped(*args, **kwargs):
+                err = self._require_admin()
+                if err is not None:
+                    return err
+                return view(*args, **kwargs)
+
+            return wrapped
+
         @app.get("/")
         def index():
-            if self.mode == "status":
-                return render_template("server_status.html", mode="server")
-            return render_template(
-                "server_config.html", fields=SERVER_PARAM_FIELDS, web_fields=WEB_FIELDS
-            )
+            user = self._current_user()
+            if user is None:
+                return render_template("server_landing.html", hint=self._landing_context())
+            if self.mode == "status" or user["role"] != "admin":
+                # The startup-configuration page is administrator-only.
+                return render_template(
+                    "server_status.html", mode="server", **self._page_context(user)
+                )
+            return self._render_config(user)
 
         @app.get("/config")
         def config():
             """Startup-configuration page, reachable from the status page too."""
-            current = {}
-            web_port = self.web_port
-            if os.path.exists(SERVER_CONFIG_FILE):
-                try:
-                    with open(SERVER_CONFIG_FILE, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                    servers = data.get("servers", [])
-                    if servers:
-                        current = servers[0]
-                    web = data.get("web", {}) or {}
-                    web_port = int(web.get("port", web_port))
-                except Exception:
-                    pass
-            fields = [
-                (key, label, ftype, _config_display_value(key, current.get(key, default)), help)
-                for key, label, ftype, default, help in SERVER_PARAM_FIELDS
-            ]
-            web_fields = [
-                (key, label, ftype, web_port, help)
-                for key, label, ftype, default, help in WEB_FIELDS
-            ]
-            return render_template("server_config.html", fields=fields, web_fields=web_fields)
+            user = self._current_user()
+            if user is None or user["role"] != "admin":
+                return redirect("/")
+            return self._render_config(user)
 
         @app.get("/api/status")
+        @login_required
         def api_status():
             return jsonify(
                 {
@@ -432,6 +747,7 @@ class ServerWebApp:
             )
 
         @app.post("/api/save_config")
+        @admin_required
         def api_save_config():
             data = request.get_json(force=True)
             params = data.get("params", {})
@@ -475,10 +791,12 @@ class ServerWebApp:
             return jsonify(self._server_info_payload())
 
         @app.get("/api/clients")
+        @login_required
         def api_clients():
             return jsonify({"clients": self._client_list()})
 
         @app.get("/api/events")
+        @login_required
         def api_events():
             since = request.args.get("since", 0, type=int)
             with self._events_lock:
@@ -487,6 +805,7 @@ class ServerWebApp:
             return jsonify({"events": events, "latest": latest})
 
         @app.post("/api/send_msg")
+        @login_required
         def api_send_msg():
             err = self._require_server()
             if err:
@@ -506,6 +825,7 @@ class ServerWebApp:
             return jsonify({"ok": True})
 
         @app.post("/api/send_file")
+        @login_required
         def api_send_file():
             err = self._require_server()
             if err:
@@ -535,6 +855,7 @@ class ServerWebApp:
             return jsonify({"ok": True, "paths": saved})
 
         @app.post("/api/send_folder")
+        @login_required
         def api_send_folder():
             err = self._require_server()
             if err:
@@ -568,6 +889,7 @@ class ServerWebApp:
             return jsonify({"ok": True, "path": root})
 
         @app.post("/api/run_extension")
+        @admin_required
         def api_run_extension():
             err = self._require_server()
             if err:
@@ -584,6 +906,7 @@ class ServerWebApp:
             return jsonify({"ok": True})
 
         @app.get("/api/available_commands")
+        @admin_required
         def api_available_commands():
             err = self._require_server()
             if err:
@@ -591,19 +914,23 @@ class ServerWebApp:
             return jsonify({"commands": sorted(self.server._custom_handlers[1].keys())})
 
         @app.post("/api/sync_clients")
+        @login_required
         def api_sync_clients():
             self._broadcast_clients()
             return jsonify({"ok": True})
 
         @app.get("/api/extensions_ui")
+        @admin_required
         def api_get_extensions_ui():
             return jsonify({"extensions": _load_json_list(SERVER_EXTENSIONS_UI_FILE)})
 
         @app.get("/api/registered_extensions")
+        @admin_required
         def api_registered_extensions():
             return jsonify({"extensions": _load_json_list(add_extension.added_extensions_log_file)})
 
         @app.post("/api/extensions_ui")
+        @admin_required
         def api_save_extensions_ui():
             data = request.get_json(force=True)
             entries = data.get("extensions", [])
@@ -613,6 +940,7 @@ class ServerWebApp:
             return jsonify({"ok": True})
 
         @app.post("/api/add_extension")
+        @admin_required
         def api_add_extension():
             data = request.get_json(force=True)
             paths = data.get("paths", [])
@@ -624,6 +952,7 @@ class ServerWebApp:
             return jsonify({"ok": True, "restarting": True})
 
         @app.post("/api/remove_extension")
+        @admin_required
         def api_remove_extension():
             data = request.get_json(force=True)
             paths = data.get("paths", [])
@@ -633,6 +962,95 @@ class ServerWebApp:
                 return jsonify({"ok": False, "error": str(e)}), 400
             threading.Thread(target=self._restart, daemon=True).start()
             return jsonify({"ok": True, "restarting": True})
+
+        # ------------------------------------------------------------- accounts
+
+        @app.post("/api/login")
+        def api_login():
+            data = request.get_json(silent=True) or {}
+            username = str(data.get("username") or "").strip()
+            password = str(data.get("password") or "")
+            user = self.users.authenticate(username, password)
+            if user is None:
+                return jsonify({"ok": False, "error": "invalid username or password"}), 401
+            session.clear()
+            session["username"] = user["username"]
+            session["role"] = user["role"]
+            session["must_change_credentials"] = self._default_admin_credentials(user, password)
+            return jsonify(
+                {
+                    "ok": True,
+                    "username": user["username"],
+                    "role": user["role"],
+                    "must_change_credentials": session["must_change_credentials"],
+                    "redirect": "/",
+                }
+            )
+
+        @app.post("/api/logout")
+        def api_logout():
+            session.clear()
+            return jsonify({"ok": True})
+
+        @app.post("/api/account")
+        @login_required
+        def api_account():
+            """Change own username/password; the current password is required."""
+            user = self._current_user()
+            data = request.get_json(silent=True) or {}
+            current_password = str(data.get("current_password") or "")
+            new_username = str(data.get("username") or "").strip()
+            new_password = str(data.get("password") or "")
+            if self.users.authenticate(user["username"], current_password) is None:
+                return jsonify({"ok": False, "error": "current password is incorrect"}), 403
+            try:
+                self.users.change_credentials(user["username"], new_username, new_password)
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            session["username"] = new_username
+            session["must_change_credentials"] = self._default_admin_credentials(
+                {"username": new_username, "role": user["role"]}, new_password
+            )
+            return jsonify(
+                {
+                    "ok": True,
+                    "username": new_username,
+                    "must_change_credentials": session["must_change_credentials"],
+                }
+            )
+
+        @app.get("/api/users")
+        @admin_required
+        def api_users():
+            return jsonify({"users": self.users.list()})
+
+        @app.post("/api/users")
+        @admin_required
+        def api_add_user():
+            data = request.get_json(silent=True) or {}
+            try:
+                self.users.add(
+                    str(data.get("username") or "").strip(),
+                    str(data.get("password") or ""),
+                    data.get("role"),
+                )
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            return jsonify({"ok": True, "users": self.users.list()})
+
+        @app.post("/api/users/delete")
+        @admin_required
+        def api_delete_user():
+            user = self._current_user()
+            data = request.get_json(silent=True) or {}
+            username = str(data.get("username") or "").strip()
+            if username == user["username"]:
+                return jsonify({"ok": False, "error": "you cannot remove your own account"}), 400
+            try:
+                self.users.remove(username)
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            return jsonify({"ok": True, "users": self.users.list()})
 
     # ------------------------------------------------------------------- run
 

@@ -14,7 +14,15 @@ release = "0.0.1-alpha"
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = []
+extensions = [
+    "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
+]
+
+# Docstrings follow the Google style (docs/DOCSTRING_GUIDE.md); the NumPy style is rejected
+# there, so leave its parser off instead of silently accepting both.
+napoleon_google_docstring = True
+napoleon_numpy_docstring = False
 
 locale_dirs = ["locale/"]
 templates_path = ["_templates"]
