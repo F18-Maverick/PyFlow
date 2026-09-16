@@ -8,20 +8,20 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-08-30 23:45+0800\n"
+"POT-Creation-Date: 2026-09-16 10:49+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Generated-By: Babel 2.10.3\n"
+"Generated-By: Babel 2.18.0\n"
 
-#: ../../Instance_Setup/Instance_Setup.rst:3 707444a8cdb246fd81a189c038518c82
+#: ../../Instance_Setup/Instance_Setup.rst:3 552b0fbec3774a638b0029ce5fd72949
 msgid "Flow Setup Launcher"
 msgstr "流程設定啟動器"
 
-#: ../../Instance_Setup/Instance_Setup.rst:5 a611d1bbc1bc4b12a9db0997909626bc
+#: ../../Instance_Setup/Instance_Setup.rst:5 31952c3324264ea28368c7725796ff63
 msgid ""
 "The ``flow_setup.py`` script is a launcher for the TCP server/client "
 "framework defined in ``connect_tcp.py``. It allows you to quickly spawn a "
@@ -32,7 +32,7 @@ msgstr ""
 "“flow_setup.py” 腳本是“connect_tcp.py” 中定義的 TCP "
 "伺服器/客戶端框架的啟動器。它允許您以互動方式或透過命令列參數快速產生單一伺服器或客戶端實例。每個啟動的實例都在單獨的終端視窗（或無頭系統上的後台進程）中運作。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:12 bc0bbe4590e04437827678fe85f482fb
+#: ../../Instance_Setup/Instance_Setup.rst:12 4f99dd7362fa4dcb8f83de37f327dbef
 msgid ""
 "**Note:** This launcher supports only **one server** and **one client** "
 "instance at a time. Adding a new server or client configuration will "
@@ -40,20 +40,20 @@ msgid ""
 msgstr ""
 "**注意：** 此啟動器一次僅支援 **一個伺服器** 和 **一個客戶端** 實例。新增的伺服器或用戶端配置將完全覆蓋任何先前的相同類型的配置。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:18 146d87f809054469be52a0d4174907fc
+#: ../../Instance_Setup/Instance_Setup.rst:18 c8f9652279de42bb983523a15048596e
 msgid "Features"
 msgstr "特徵"
 
-#: ../../Instance_Setup/Instance_Setup.rst:20 ea5ca94177b349b3852287e9327f792e
+#: ../../Instance_Setup/Instance_Setup.rst:20 fba5b9ea870c44fabf69022a45cdaebc
 msgid ""
 "**Interactive mode** – step‑by‑step creation of a server or client instance."
 msgstr "**互動模式** – 逐步建立伺服器或客戶端實例。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:22 bb06f53ddbea4dd09b99e288569f858d
+#: ../../Instance_Setup/Instance_Setup.rst:22 df9cbf9e1d024f9386a4b6278c82249e
 msgid "**Command‑line mode** – launch with all parameters in one command."
 msgstr "**命令列模式** – 在一個命令中使用所有參數啟動。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:24 11bd4b3ce97743e0857c109ae9bc2286
+#: ../../Instance_Setup/Instance_Setup.rst:24 5f7cba6df26144e9840d140f94065b33
 msgid ""
 "**Persistent configuration** – stores the latest instance definitions in "
 "``setup.json`` (same directory as the script). Each type (server/client) "
@@ -62,14 +62,14 @@ msgstr ""
 "**持久性配置** – "
 "將最新的實例定義儲存在「setup.json」（與腳本相同的目錄）中。每種類型（伺服器/客戶端）僅保留一個配置，該配置在每次更新時都會被覆寫。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:29 7b3f201c93c349719f4128f05cc194bf
+#: ../../Instance_Setup/Instance_Setup.rst:29 be9bc008af594306be21e731d6aefee3
 msgid ""
 "**Cross‑platform** – supports Windows (cmd), Linux (gnome‑terminal, xterm, "
 "or background), and macOS (Terminal.app)."
 msgstr ""
 "**跨平台** – 支援 Windows (cmd)、Linux（gnome 終端機、xterm 或後台）和 macOS (Terminal.app)。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:32 89b17f1fa60241a288381f74072aa273
+#: ../../Instance_Setup/Instance_Setup.rst:32 57005cb0d04f47b2a8f10ad0bc9c7b43
 msgid ""
 "**Complete parameter support** – all parameters accepted by "
 "``TCP_Server_Base`` and ``TCP_Client_Base`` can be stored in ``setup.json`` "
@@ -78,107 +78,153 @@ msgstr ""
 "**完整的參數支援** – ``TCP_Server_Base`` 和 ``TCP_Client_Base`` "
 "接受的所有參數都可以儲存在``setup.json`` 中以進行微調。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:37 ca859ffa1d4140cab68092170525c59f
+#: ../../Instance_Setup/Instance_Setup.rst:37 2ff27919a6f64e8fb610158de5ffdf69
 msgid "Usage"
 msgstr "用法"
 
-#: ../../Instance_Setup/Instance_Setup.rst:40 1935db82ef7f4dbeb08d386a49aba876
+#: ../../Instance_Setup/Instance_Setup.rst:40 dddde4f2d7084bc48efa1296cfd3f22c
 msgid "Interactive Mode"
 msgstr "互動模式"
 
-#: ../../Instance_Setup/Instance_Setup.rst:42 86f8dafb1c9d4adaa4666b1dea52af23
+#: ../../Instance_Setup/Instance_Setup.rst:42 f060e64959674f52b223bbc4b01d568c
 msgid "Run the script without any arguments:"
 msgstr "不帶任何參數運行腳本："
 
-#: ../../Instance_Setup/Instance_Setup.rst:48 d516fe21071e448da15df91f07353fc8
+#: ../../Instance_Setup/Instance_Setup.rst:48 dd76918a5ffd44838c1b0c44595ae55b
 msgid "The script will ask you to:"
 msgstr "該腳本將要求您："
 
-#: ../../Instance_Setup/Instance_Setup.rst:50 41684f03f6d7460f87fed8f4bef8f1e5
+#: ../../Instance_Setup/Instance_Setup.rst:50 80847dcc3e404a779b2e693cf8de50d5
 msgid "Choose the type (0 for Server, 1 for Client)."
 msgstr "選擇類型（0 表示伺服器，1 表示客戶端）。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:51 750440862d7545e9bc4f137f36983fd6
+#: ../../Instance_Setup/Instance_Setup.rst:51 cebc8ba62d1a48a69d8019c3862dc18b
 msgid "Enter the bind address and port (``host:port``)."
 msgstr "輸入綁定位址和連接埠（``host:port``）。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:52 a938572ed1dd43f7988e382ec9fea306
+#: ../../Instance_Setup/Instance_Setup.rst:52 4311b66e1b974b4596f2693908ba3109
 msgid "If Client, also enter the server address and port to connect to."
 msgstr "如果是客戶端，還需輸入要連接的伺服器位址和連接埠。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:53 3f30b7f3c46e42c19eae6344b424e1f7
+#: ../../Instance_Setup/Instance_Setup.rst:53 65c194c1b655417c921c1e03daf7a17c
 msgid ""
 "Decide whether to add another instance (if you add the same type again, the "
 "previous configuration of that type is overwritten)."
 msgstr "決定是否要新增其他實例（如果再次新增相同類型，則覆寫該類型先前的配置）。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:55 e8b6550fe5eb426f8478c1b3fef81160
+#: ../../Instance_Setup/Instance_Setup.rst:55 6bb60d44328244d4ab20f3ae5ba2b827
 msgid ""
 "If ``setup.json`` already exists, you will be prompted to either reuse the "
 "existing configuration (launch the stored instances) or overwrite it with "
 "new definitions."
 msgstr "如果「setup.json」已存在，系統將提示您重複使用現有配置（啟動儲存的實例）或使用新定義覆寫它。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:60 b222bf87298747c6b526d72e1459ad83
+#: ../../Instance_Setup/Instance_Setup.rst:60 9aeb2efa913341a89212e86cb7419e5a
 msgid ""
 "**Important:** When you choose to overwrite, the old server/client "
 "configuration is **completely replaced** by the new one. There is no "
 "merging."
 msgstr "**重要：** 當您選擇覆蓋時，舊的伺服器/客戶端設定將被新的設定**完全取代**。沒有合併。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:65 ad560cd1d404495583c74b5929235453
+#: ../../Instance_Setup/Instance_Setup.rst:65 b5cd8be69a40420a89cf7ad69631cd45
 msgid "Command‑line Mode"
 msgstr "命令列模式"
 
-#: ../../Instance_Setup/Instance_Setup.rst:67 50a9125f52a54c9b82c66cf616e06d71
+#: ../../Instance_Setup/Instance_Setup.rst:67 d798ec606de2454da5f10e9d0a7e677c
 msgid "Use the following options:"
 msgstr "使用以下選項："
 
-#: ../../Instance_Setup/Instance_Setup.rst:82 f7f3b3263fdf457c908ea18b74dccea9
+#: ../../Instance_Setup/Instance_Setup.rst:70 4d5c1aebbede473c8598cbc45f8deb20
+msgid "Option"
+msgstr "選項"
+
+#: ../../Instance_Setup/Instance_Setup.rst:70 a50ba126b168482997fae00497252fd4
+msgid "Description"
+msgstr "描述"
+
+#: ../../Instance_Setup/Instance_Setup.rst:72 7755904907ee46f6a34144360ed876f7
+#, python-brace-format
+msgid "``--type {0,1}``"
+msgstr "`` --type {0,1} ``"
+
+#: ../../Instance_Setup/Instance_Setup.rst:72 e0533cce8d9f4586aa838073b1ed3e2a
+msgid "**Required.** 0 = Server, 1 = Client."
+msgstr "* *必需。* * 0 =伺服器， 1 =用戶端。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:74 7cc185b424ee489282d9d85571d54fae
+msgid "``--setup_addr_port``"
+msgstr "`` --setup_addr_port ``"
+
+#: ../../Instance_Setup/Instance_Setup.rst:74 37df8730dce9408a87ba48b775eb2b0a
+#, fuzzy
+msgid "**Required.** Bind address and port (e.g. ``127.0.0.1:8000``)."
+msgstr "輸入綁定位址和連接埠（``host:port``）。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:77 388a3dd952ac47a78598792ef7d587bc
+msgid "``--connect_addr_port``"
+msgstr "`` --connect_addr_port ``"
+
+#: ../../Instance_Setup/Instance_Setup.rst:77 b4f319ec304e4a26a09ac62b90db0a07
+#, fuzzy
+msgid "Required for Client only. Server address and port to connect to."
+msgstr "如果是客戶端，還需輸入要連接的伺服器位址和連接埠。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:80 7bb925846a36488d945c3442889d83c0
+msgid "``--setup_num``"
+msgstr "`` --setup_num ``"
+
+#: ../../Instance_Setup/Instance_Setup.rst:80 7f3e0b1925924583acf7acb25ec6e183
+msgid ""
+"*Ignored.* The script always launches a single instance. This flag is "
+"accepted for compatibility but has no effect."
+msgstr "*忽略。*腳本總是啟動單個實例。為了相容性，此旗標已被接受，但無效。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:86 99952fa68b694654b82a309a26419152
 msgid "Examples"
 msgstr "範例"
 
-#: ../../Instance_Setup/Instance_Setup.rst:84 13847166f8d54c9db943e1e55cf66c55
+#: ../../Instance_Setup/Instance_Setup.rst:88 9c77e76f40a940e99e754d27e3bc1b05
 msgid "**Launch a single server** on ``127.0.0.1:8000``:"
 msgstr "**在「127.0.0.1:8000」上啟動單一伺服器**："
 
-#: ../../Instance_Setup/Instance_Setup.rst:90 aa92290b83324661a23d2343f7ca56fb
+#: ../../Instance_Setup/Instance_Setup.rst:94 37df8730dce9408a87ba48b775eb2b0a
 msgid ""
 "**Launch a client** bound to port ``9000``, connecting to a server at "
 "``127.0.0.1:8000``:"
 msgstr "**啟動綁定到連接埠「9000」的客戶端**，連接到「127.0.0.1:8000」的伺服器："
 
-#: ../../Instance_Setup/Instance_Setup.rst:97 9d2ca3944f984434b4ecb579b075ccc4
+#: ../../Instance_Setup/Instance_Setup.rst:101
+#: 0bdae3cd584e464ab526840aa032e3a4
 msgid ""
 "**Launch from an existing configuration** (if ``setup.json`` is present):"
 msgstr "**從現有配置啟動**（如果存在“setup.json”）："
 
-#: ../../Instance_Setup/Instance_Setup.rst:105
-#: d88aa64a570f4f36baf5c7c92d4bd861
+#: ../../Instance_Setup/Instance_Setup.rst:109
+#: ff45af42eb7d4d3faa8640a18bfd61f6
 msgid "Configuration File"
 msgstr "設定檔"
 
-#: ../../Instance_Setup/Instance_Setup.rst:107
-#: cfb0db3d5e23418d9c93ddb2d34548d4
+#: ../../Instance_Setup/Instance_Setup.rst:111
+#: 39e34a4760354d78b87a8e050029e197
 msgid ""
 "The script writes a file named ``setup.json`` in the same directory. Its "
 "structure is:"
 msgstr "該腳本在同一目錄中寫入一個名為「setup.json」的檔案。其結構為："
 
-#: ../../Instance_Setup/Instance_Setup.rst:131
-#: 0a2b6c0e312a49de8ed7838e045b3b66
+#: ../../Instance_Setup/Instance_Setup.rst:135
+#: 9e72e7ecd43c498299e24f5598b6f2b8
 msgid ""
 "**Each list contains at most one object.** When a new server or client "
 "configuration is added, the entire list for that type is replaced."
 msgstr "**每個清單最多包含一個物件。 ** 新增新的伺服器或用戶端配置時，該類型的整個清單都會被取代。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:136
-#: 1a256391599446d99c3cc375639f251c
+#: ../../Instance_Setup/Instance_Setup.rst:140
+#: 8731a083a201487bb579beb4a238a0db
 msgid "Custom Parameters"
 msgstr "自訂參數"
 
-#: ../../Instance_Setup/Instance_Setup.rst:138
-#: 36cefa4820cd42ee93fdb560be1b1032
+#: ../../Instance_Setup/Instance_Setup.rst:142
+#: 1568543fd757484da86f12a72ccb58b5
 msgid ""
 "You can manually edit ``setup.json`` to include any parameter accepted by "
 "``TCP_Server_Base`` or ``TCP_Client_Base`` (see the source code for the full"
@@ -192,68 +238,84 @@ msgstr ""
 "您可以手動編輯“setup.json”以包含“TCP_Server_Base”或“TCP_Client_Base”接受的任何參數（完整清單請參閱原始程式碼）。當啟動器覆蓋配置時，這些自訂值將被保留（因為腳本讀取現有配置並使用使用者提供的值更新它，但如果您選擇覆蓋，舊配置將被丟棄，僅保存新欄位"
 " - 因此，如果您需要自訂參數，您應該在首次啟動後新增它們或手動編輯檔案）。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:150
-#: 6b90a320b39147c7ac5287c51b028da3
+#: ../../Instance_Setup/Instance_Setup.rst:154
+#: c62b1bfe8ceb40f8865a34ac87b4ba18
 msgid "Extension Protocols and Startup Mode"
 msgstr "擴展協定和啟動模式"
 
-#: ../../Instance_Setup/Instance_Setup.rst:152
-#: 81cf1090db0240e19aecfb16cdafb622
+#: ../../Instance_Setup/Instance_Setup.rst:156
+#: e6a7dcb4ea184e828e6667ae6505d872
 msgid ""
 "Two extension protocols ship with the launcher and are loaded automatically "
 "for every instance whose ``setup.json`` entry sets "
 "``is_extend_command=True``:"
 msgstr "啟動器隨附兩個擴充協議，並為每個「setup.json」條目設定「is_extend_command=True」的實例自動載入："
 
-#: ../../Instance_Setup/Instance_Setup.rst:156
-#: e89028b886064e8ab1e94e5e6a6cdaa0
-msgid "``command_control_extension_tcp.py`` – remote command"
+#: ../../Instance_Setup/Instance_Setup.rst:160
+#: 7159f768fc9a4ac199bfe0a4d8478fba
+#, fuzzy
+msgid ""
+"``command_control_extension_tcp.py`` – remote command execution with per-"
+"client log collection (``/command``)."
 msgstr "``command_control_extension_tcp.py`` – 遠端命令"
 
-#: ../../Instance_Setup/Instance_Setup.rst:157
-#: 86a457e4e5bf4791bcbef5bb12612391
+#: ../../Instance_Setup/Instance_Setup.rst:162
+#: d2d277053c74470abc949b891493a5f0
+#, fuzzy
 msgid ""
-"execution with per-client log collection (``/command``). - "
-"``forward_extension_tcp.py`` – forwarding messages, files, multiple files, "
-"folders and multiple folders to any number of destination clients "
-"(``/send_msg_forward``, ``/file_forward``, ``/multiple_file_forward``, "
-"``/folder_forward``, ``/multiple_folder_forward``)."
+"``forward_extension_tcp.py`` – forwarding files, multiple files, folders and"
+" multiple folders to any number of destination clients (``/file_forward``, "
+"``/multiple_file_forward``, ``/folder_forward``, "
+"``/multiple_folder_forward``)."
 msgstr ""
 "使用每個客戶端日誌收集執行（``/command``）。 -``forward_extension_tcp.py`` - "
 "将消息、文件、多个文件、文件夹和多个文件夹转发到任意数量的目标客户端（``/send_msg_forward``、``/file_forward``、``/multiple_file_forward``、``/folder_forward``、``/multiple_folder_forward``）。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:164
-#: baee7200e5634507a28b2f69309c3c49
+#: ../../Instance_Setup/Instance_Setup.rst:168
+#: a8194174e5fd4dcf87ede716eaada9a4
+msgid ""
+"Plain-message forwarding is native to the TCP protocol (no extension "
+"needed): the client-only command ``/forward_send_msg`` relays messages to "
+"the listed destination clients through the server."
+msgstr ""
+"純訊息轉發原生於TCP通訊協定（無需擴充） ：僅用戶端指令``/forward_send_msg ``透過伺服器將訊息轉送至列出的目標用戶端。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:173
+#: 98297b76f3404736b92b6c507726a50a
 msgid ""
 "With ``is_extend_command=False`` (the default) only the raw TCP protocol is "
 "started."
 msgstr "使用“is_extend_command=False”（預設）僅啟動原始 TCP 協定。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:167
-#: f140a881acba4933bd83af5bb35737d1
+#: ../../Instance_Setup/Instance_Setup.rst:176
+#: 9b5ab0319a9843f1b39721d3a96d1777
 msgid ""
 "The ``is_input_command_in_console`` flag selects how the instance is "
 "started:"
 msgstr "``is_input_command_in_console`` 標誌選擇實例的啟動方式："
 
-#: ../../Instance_Setup/Instance_Setup.rst:170
-#: a40aa238baac4503a0dc0c9cea0745ee
-msgid "``True`` (default) – ``start_TCP_Server()`` /"
-msgstr "``True``（預設）-``start_TCP_Server()`` /"
-
-#: ../../Instance_Setup/Instance_Setup.rst:171
-#: fca5c2c0fe914740a931957b30a9927b
+#: ../../Instance_Setup/Instance_Setup.rst:179
+#: 1ec730c995b1454da1b208331d9ca8fe
 msgid ""
-"``start_TCP_client()`` is called directly and the console input loop runs in"
-" its own thread. - ``False`` – the instance runs in a background thread and "
-"the launcher keeps the process alive until the instance stops (useful for "
-"headless deployments)."
+"``True`` (default) – ``start_TCP_Server()`` / ``start_TCP_client()`` is "
+"called directly and the console input loop runs in its own thread."
+msgstr ""
+"`` True `` （預設） – `` START_TCP_SERVER () ``/`` START_TCP_CLIENT () "
+"``被直接呼叫，主控臺輸入迴圈在其自己的執行緒中執行。"
+
+#: ../../Instance_Setup/Instance_Setup.rst:182
+#: 3cfb2eba312943cea85388f4e9faf40d
+#, fuzzy
+msgid ""
+"``False`` – the instance runs in a background thread and the launcher keeps "
+"the process alive until the instance stops (useful for headless "
+"deployments)."
 msgstr ""
 "直接呼叫“start_TCP_client()”，控制台輸入循環在其自己的執行緒中運行。 -``False`` - "
 "實例在後台執行緒中執行，啟動器可讓進程保持活動狀態，直到實例停止（對於無頭部署很有用）。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:177
-#: c2925f0f85154040bcdd1252a228fd7f
+#: ../../Instance_Setup/Instance_Setup.rst:186
+#: 3b3482fa903f4afd81234e588a229c1f
 msgid ""
 "Both extensions also expose injectable registration "
 "(``setup_server_commands(instance)`` / ``setup_client_commands(instance)``) "
@@ -267,62 +329,67 @@ msgstr ""
 "is_input_command_in_console=True)`` /``server_`` /``server_ "
 "is_input_command_in_console=True)`` 接受現有實例，因此可以載入多個擴充功能從程式碼到同一個實例。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:186
-#: e58290a2c5f3492bafa47f15b7c2958f
+#: ../../Instance_Setup/Instance_Setup.rst:195
+#: 1dc7b46c0e3047d2885573cc4f55e7c6
 msgid "Internal Operation"
 msgstr "內部運作"
 
-#: ../../Instance_Setup/Instance_Setup.rst:188
-#: 6655764b01644b92910338c01d38b0cb
-msgid "Each instance is launched in a new terminal window"
+#: ../../Instance_Setup/Instance_Setup.rst:197
+#: 8870bc6b731d40a095a40faed0c8f16d
+#, fuzzy
+msgid ""
+"Each instance is launched in a new terminal window (or background process)."
 msgstr "每個實例都在新的終端機視窗中啟動"
 
-#: ../../Instance_Setup/Instance_Setup.rst:189
-#: 6824028a99254c77a55fb56d51b5e9a5
-msgid "(or background process)."
-msgstr "（或後台進程）。"
-
-#: ../../Instance_Setup/Instance_Setup.rst:190
-#: 0a09353648d44ba2a840fc1cf8a850bc
-msgid "The configuration is passed via a temporary JSON"
+#: ../../Instance_Setup/Instance_Setup.rst:199
+#: 13c720a93ba54e8ca330fce3a078bb5b
+#, fuzzy
+msgid ""
+"The configuration is passed via a temporary JSON file to avoid shell "
+"escaping issues."
 msgstr "配置透過臨時 JSON 傳遞"
 
-#: ../../Instance_Setup/Instance_Setup.rst:191
-#: f6327281e35a4304b404563d00301a1a
-msgid "file to avoid shell escaping issues."
-msgstr "文件以避免 shell 轉義問題。"
-
-#: ../../Instance_Setup/Instance_Setup.rst:192
-#: 997e364f35714b18b1e47af641ce58db
-msgid "If an instance fails to start, the error is"
-msgstr "如果實例無法啟動，則錯誤為"
-
-#: ../../Instance_Setup/Instance_Setup.rst:193
-#: 4404c088296e4c35b49ed59eca3b6678
-msgid "displayed and the window pauses for inspection."
+#: ../../Instance_Setup/Instance_Setup.rst:201
+#: 9566eb3cb70e4b77bcbdb584f7e0b6fc
+#, fuzzy
+msgid ""
+"If an instance fails to start, the error is displayed and the window pauses "
+"for inspection."
 msgstr "顯示並且視窗暫停以進行檢查。"
 
-#: ../../Instance_Setup/Instance_Setup.rst:196
-#: 2b8f982006184d36b06d4ac5579a36f4
+#: ../../Instance_Setup/Instance_Setup.rst:205
+#: 5f0f0f6a41384356986a1182f14a0a4c
 msgid "Requirements"
 msgstr "要求"
 
-#: ../../Instance_Setup/Instance_Setup.rst:198
-#: f10fabd9883942b780cd0822da245837
+#: ../../Instance_Setup/Instance_Setup.rst:207
+#: 49ceb74e41104b00971cd9edecef08ae
 msgid "Python 3.6+"
 msgstr "Python 3.6+"
 
-#: ../../Instance_Setup/Instance_Setup.rst:199
-#: f464e1a571fa46388937f3236b36d3bf
+#: ../../Instance_Setup/Instance_Setup.rst:208
+#: 541cd1be44c044f3880eb220a87c06b7
 msgid "The ``network_api.connect_tcp`` module must be"
 msgstr "``network_api.connect_tcp`` 模組必須是"
 
-#: ../../Instance_Setup/Instance_Setup.rst:200
-#: fc6ca227cd904333916e81b4a7093acc
+#: ../../Instance_Setup/Instance_Setup.rst:209
+#: 427fef8d7c5047fc934681026969639a
 msgid "importable (the script imports ``TCP_Server_Base``"
 msgstr "可匯入（腳本匯入``TCP_Server_Base``"
 
-#: ../../Instance_Setup/Instance_Setup.rst:201
-#: dcc9c410853247b0a3302c2c41f6fe13
+#: ../../Instance_Setup/Instance_Setup.rst:210
+#: fb35af261d664664bdb3c1b3aaac3e83
 msgid "and ``TCP_Client_Base`` from there)."
 msgstr "和來自那裡的“TCP_Client_Base”）。"
+
+#~ msgid "``True`` (default) – ``start_TCP_Server()`` /"
+#~ msgstr "``True``（預設）-``start_TCP_Server()`` /"
+
+#~ msgid "(or background process)."
+#~ msgstr "（或後台進程）。"
+
+#~ msgid "file to avoid shell escaping issues."
+#~ msgstr "文件以避免 shell 轉義問題。"
+
+#~ msgid "If an instance fails to start, the error is"
+#~ msgstr "如果實例無法啟動，則錯誤為"

@@ -1,0 +1,145 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, RayXu
+# This file is distributed under the same license as the PyFlow package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PyFlow \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-16 11:10+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: zh_CN\n"
+"Language-Team: zh_CN <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: ../../api/PyFlow.forward_extension_tcp.rst:2
+#: 39b0ca283c7c48b08f66a67eb80766b0
+msgid "PyFlow.forward\\_extension\\_tcp module"
+msgstr ""
+
+#: PyFlow.forward_extension_tcp:1 ad6b75f791c543dea48894cd8bac6941 of
+msgid "Forward extension for the TCP protocol."
+msgstr ""
+
+#: PyFlow.forward_extension_tcp:3 ff4264b5fba24d7d93e9bb3e398edfd5 of
+msgid ""
+"Disk-based, upload-then-push forwarding of files and folders to a list of"
+" destination clients. This is deliberately a second implementation of "
+"file forwarding: the native TCP protocol already streams files and "
+"folders in memory (``/forward_file`` / ``/forward_folder`` on a client "
+"console, relayed by the server as ``/forward_item`` with no disk I/O on "
+"the server), while this extension uploads the data to the server's "
+"transfer directory first and then asks the server to push the stored "
+"copies. Plain-message forwarding is native as well (the client-only "
+"command ``/forward_send_msg``, relayed by the server), so no string "
+"forwarding lives here."
+msgstr ""
+
+#: 2f49002886224f5bb68eb09f2c4a8a30 PyFlow.forward_extension_tcp:14 of
+msgid "Transfer families added by this extension:"
+msgstr ""
+
+#: PyFlow.forward_extension_tcp:16 ab1c45d0c28345c2898a54c66c98416b of
+msgid "/file_forward <file_path> <(ip, port)> ..."
+msgstr ""
+
+#: 93ef2915b1fa4bd9b4b42e8e6ec747f8 PyFlow.forward_extension_tcp:17 of
+msgid "forward one file to every listed destination"
+msgstr ""
+
+#: 9773fb5cd9414f0aabb496ae3a32005a PyFlow.forward_extension_tcp:18 of
+msgid "/multiple_file_forward <file1> <file2> ... <(ip, port)> ..."
+msgstr ""
+
+#: PyFlow.forward_extension_tcp:19 ee54881259274d6b9085bf71b44d659a of
+msgid "forward several files to every listed destination"
+msgstr ""
+
+#: 19144093ca8d45e988dfcfe09221bf6a PyFlow.forward_extension_tcp:20 of
+msgid "/folder_forward <folder_path> <(ip, port)> ..."
+msgstr ""
+
+#: PyFlow.forward_extension_tcp:21 b73d9263c9874b1e9ea5a714138d72d8 of
+msgid "forward one folder (structure preserved) to every destination"
+msgstr ""
+
+#: 4f7e8bb4b31c4eddbb78d815e85f8795 PyFlow.forward_extension_tcp:22 of
+msgid "/multiple_folder_forward <folder1> <folder2> ... <(ip, port)> ..."
+msgstr ""
+
+#: 9e95e860d39744f8ba3d52ddaf357943 PyFlow.forward_extension_tcp:23 of
+msgid "forward several folders to every listed destination"
+msgstr ""
+
+#: 612162f14a574132bf396a1b6ea853f1 PyFlow.forward_extension_tcp:25 of
+msgid ""
+"Items come first, destinations last; every destination is written as a "
+"Python address tuple, e.g. ``\"('127.0.0.1', 3000)\"``. There is no limit"
+" on the number or size of items or destinations."
+msgstr ""
+
+#: 1b0ec7328493432fb876117b1f76bb3b PyFlow.forward_extension_tcp:29 of
+msgid ""
+"The commands are only available on the client console: they are "
+"registered in the \"client\" handler group, so typing them on the server "
+"console is rejected as an unrecognized command. Forwarding goes through "
+"the server - the client uploads the data over the normal transfer channel"
+" (the server stores it in its transfer directory) and then asks the "
+"server to push it to the destinations, which receive it through the main "
+"protocol's own receive paths. Destinations that are unreachable (not "
+"connected to the server, or the server itself, which is never in the "
+"client table) are skipped and the remaining destinations are still "
+"served."
+msgstr ""
+
+#: 443d9fe7a21148d984a0e3f2f3cb2c28
+#: PyFlow.forward_extension_tcp.setup_client_commands:1 of
+msgid "Register the file/folder forward commands on a client instance."
+msgstr ""
+
+#: 5dbc099afeb54fbb859bf5760331adfd
+#: PyFlow.forward_extension_tcp.setup_client_commands:3 of
+msgid ""
+"Message forwarding (``/forward_send_msg``) is native and needs no setup. "
+"Each command binds its transfer kind and single/multiple policy into the "
+"shared handler via functools.partial; where_to_run=\"client\" makes them "
+"fire from console input only."
+msgstr ""
+
+#: 392556d0850f44b1b64dae0fe65a748c
+#: PyFlow.forward_extension_tcp.setup_server_commands:1 of
+msgid "Register the file/folder forward relays on a server instance."
+msgstr ""
+
+#: 399725c6728441568702225abc50b2c4
+#: PyFlow.forward_extension_tcp.setup_server_commands:3 of
+msgid ""
+"The message relay (``/forward_send_msg``) is native and needs no setup. "
+"These handlers are triggered by relay requests sent by clients, i.e. they"
+" live in the \"server\" group: messages coming in from other instances "
+"are dispatched there. The /xxx_forward commands themselves stay in the "
+"client group, so typing them on the server console is rejected as "
+"unrecognized."
+msgstr ""
+
+#: 337c29db84fe4d3099a2e3d5e135d0d1 PyFlow.forward_extension_tcp.client_setup:1
+#: of
+msgid ""
+"Create and start a forwarding-capable client (mirrors the control "
+"extension)."
+msgstr ""
+
+#: 99ee11955438459d84f5c1ae6f3fedbb PyFlow.forward_extension_tcp.server_setup:1
+#: of
+msgid ""
+"Create and start a forwarding-capable server (mirrors the control "
+"extension)."
+msgstr ""
+

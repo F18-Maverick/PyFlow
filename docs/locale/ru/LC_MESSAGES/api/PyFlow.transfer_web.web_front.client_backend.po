@@ -1,0 +1,91 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, RayXu
+# This file is distributed under the same license as the PyFlow package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PyFlow \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-16 11:10+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: ru\n"
+"Language-Team: ru <LL@li.org>\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && "
+"n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: ../../api/PyFlow.transfer_web.web_front.client_backend.rst:2
+#: a7e084a5059341aa9b7419059c4fa4b0
+msgid "PyFlow.transfer\\_web.web\\_front.client\\_backend module"
+msgstr ""
+
+#: 22485674cb53445a86703fb118698523
+#: PyFlow.transfer_web.web_front.client_backend:1 of
+msgid "Flask backend wrapping the PyFlow TCP client for the web tool."
+msgstr ""
+
+#: 31862d77d7184e55a1e729d7e72baed0
+#: PyFlow.transfer_web.web_front.client_backend:3 of
+msgid ""
+"The launcher (``setup_client.py``) starts this backend and opens the "
+"connect UI in the browser.  The user enters the server address (an "
+"``http``/``https`` domain or a bare IP); the backend queries the server's"
+" web backend ``/api/server_info`` for the TCP server address and port, "
+"then starts the ``TCP_Client_Base`` instance.  The backend stays up to "
+"relay the user's frontend actions:"
+msgstr ""
+
+#: 1a028258cda844ee945b9522d51afb9d
+#: PyFlow.transfer_web.web_front.client_backend:10 of
+msgid "messages/files/folders to the server use the native transfer methods;"
+msgstr ""
+
+#: PyFlow.transfer_web.web_front.client_backend:11
+#: e160c2a0daf9498cbe2041a8e964ff47 of
+msgid ""
+"messages to other clients use the native ``/forward_send_msg`` forwarding"
+" (a client-only command relayed by the server);"
+msgstr ""
+
+#: 16da18234f0a499893b711e7b555b42a
+#: PyFlow.transfer_web.web_front.client_backend:13 of
+msgid ""
+"files/folders to other clients are forwarded through the built-in "
+"``forward_extension_tcp`` extension."
+msgstr ""
+
+#: 79dee862a03f4d0c9bc9403f8d461465
+#: PyFlow.transfer_web.web_front.client_backend:16 of
+msgid ""
+"The sidebar instance list is kept fresh by the server's "
+"``/web_clients_update`` broadcasts; a reload button re-requests the list "
+"via ``/web_sync_clients``."
+msgstr ""
+
+#: PyFlow.transfer_web.web_front.client_backend:20
+#: b952223fdafe4d52b8c34498aef1aeef of
+msgid ""
+"Inbound events (plain-text messages and files pushed by the server, "
+"whether direct sends or client forwards) are captured on the TCP client's"
+" receive threads through ``TCP_Client_Base``'s "
+"``add_message_listener``/``add_file_listener`` APIs, queued here, and "
+"polled by the frontend via ``/api/events``."
+msgstr ""
+
+#: 0913e15917534119b775fb5c545c439d
+#: PyFlow.transfer_web.web_front.client_backend.ClientWebApp:1 of
+msgid "Flask app + TCP_Client_Base wrapper for the web tool."
+msgstr ""
+
+#: 3e9a2f40d40b45869c4750ae3e542502
+#: PyFlow.transfer_web.web_front.client_backend.ClientWebApp.start_from_config:1
+#: of
+msgid "Read ``.Flow_Web/setup_client.json`` and start the TCP client."
+msgstr ""
+

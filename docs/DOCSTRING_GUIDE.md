@@ -248,7 +248,7 @@ PF_CRYPTO_API pf_err_t pf_rsa_keygen(int bits, pf_rsa_key_t **out_key);
 - **The docstring is the single source of API detail**: every parameter, return value, exception and type constraint lives in the docstring.
 - **`.rst` documents carry only**: module purpose, usage scenarios, architecture overview, tutorials, best practices, example code.
 - **Never repeat in `.rst`** what the docstring already states about parameters / return values / exceptions.
-- Pull API pages in with `.. autoclass::` / `.. autofunction::` so the single source stays authoritative.
+- API pages are generated (not written by hand): run `sphinx-apidoc -o api -e --separate --module-first --force ../PyFlow` from `docs/` — it emits `.. automodule::`/`.. autoclass::` stubs, so the single source stays authoritative and the pages cannot drift from the docstrings.
 - **Migration**: existing `.rst` files under `docs/` are left untouched for now; new or rewritten API descriptions go into the docstring per this guide, and pre-existing parameter detail is moved out of `.rst` over time.
 
 ---

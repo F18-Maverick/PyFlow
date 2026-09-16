@@ -1,0 +1,90 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, RayXu
+# This file is distributed under the same license as the PyFlow package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PyFlow \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-16 11:10+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: ja\n"
+"Language-Team: ja <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: ../../api/PyFlow.add_extension.rst:2 239fa5edd0d944bd884b21d803e0f4a1
+msgid "PyFlow.add\\_extension module"
+msgstr ""
+
+#: PyFlow.add_extension.copy_extension_files:1 c4a96a18a6754f1fb4c5c3a9ff9dd518
+#: of
+msgid "Validate extension path(s) and return them as a list."
+msgstr ""
+
+#: ../../api/PyFlow.add_extension.rst 4b8e1285572947c4a34dbcd9e22fb52c
+#: 78eb00a995d84b028e95127f753b4fb5 PyFlow.add_extension.remove_extension
+#: dff4aabd6aad43e188c9fc9b73d9142b of
+msgid "Parameters"
+msgstr ""
+
+#: 49c2e6f1496d433ab7a9d162802419f1 5de3fc7a955443cb9bef23851780925f
+#: PyFlow.add_extension.add_extension:3
+#: PyFlow.add_extension.copy_extension_files:3
+#: PyFlow.add_extension.remove_extension:3 b82537ecca1e4f418a5a6aacacdd900c of
+msgid "a single path string or a list of path strings."
+msgstr ""
+
+#: ../../api/PyFlow.add_extension.rst fa91fb96a98f4374b2da5085d1373ef4
+msgid "Returns"
+msgstr ""
+
+#: 450992bbbe91432fb44b0265e58d8f59 PyFlow.add_extension.copy_extension_files:5
+#: of
+msgid "The original paths as a list (extensions are not copied)."
+msgstr ""
+
+#: 487ed0fee55540c796c92b88d0a8b2ea
+#: PyFlow.add_extension.add_added_extension_logs:1 of
+msgid "Append paths to the extension registration log file."
+msgstr ""
+
+#: PyFlow.add_extension.add_extension:1 cd718206d465487ebd43c17e796c4da5 of
+msgid "Register extension file(s) in added_extensions.json."
+msgstr ""
+
+#: PyFlow.add_extension.remove_extension:1 bb4313796aff49a1b96a37d66912f18a of
+msgid "Remove registered extension path(s) from added_extensions.json."
+msgstr ""
+
+#: 6520ce551e5f40e6afe59c549d15e493 PyFlow.add_extension.remove_extension:5 of
+msgid "If the registration file does not exist, this is a no-op."
+msgstr ""
+
+#: 26339cf4e8a041f798d969a890592971
+#: PyFlow.add_extension.load_registered_extensions:1 of
+msgid "Load every registered extension from added_extensions.json."
+msgstr ""
+
+#: PyFlow.add_extension.load_registered_extensions:3
+#: e53cceb4fe384c1fa10ddf1905998823 of
+msgid ""
+"For each registered path, the module is imported dynamically and its "
+"``setup_server_commands(instance)`` or "
+"``setup_client_commands(instance)`` is called, depending on "
+"*instance_type*."
+msgstr ""
+
+#: 11efbd89b0254bb190c21005396f53dd
+#: PyFlow.add_extension.load_registered_extensions:7 of
+msgid ""
+"Raises ImportError if the JSON file is reachable but a module cannot be "
+"imported or loaded, or if the required setup function is missing."
+msgstr ""
+
