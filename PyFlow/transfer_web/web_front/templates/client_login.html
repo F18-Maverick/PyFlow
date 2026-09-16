@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PyFlow TCP Client</title>
+  <link rel="stylesheet" href="/static/common.css">
+</head>
+<body>
+  <div class="center-wrap">
+    <div class="card">
+      <h1>Sign in to your account</h1>
+      <p class="subtitle">Connected to <code>{{ server_address }}</code>. Enter a user name or email address and either the account password or a verification code mailed to the account email.</p>
+      <form id="login-form">
+        <div class="field">
+          <label for="identify">Username or email</label>
+          <input type="text" id="identify" placeholder="username  |  user@example.com" value="{{ identify }}" autocomplete="username" autofocus>
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input type="password" id="password" autocomplete="current-password">
+        </div>
+        <div class="field">
+          <label for="code">Verification code (only one of the two is required)</label>
+          <input type="text" id="code" placeholder="code mailed to the account email" autocomplete="one-time-code">
+          <div class="actions">
+            <button type="button" class="btn btn-ghost" id="send-code-btn">Send code</button>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="submit" class="btn" id="login-btn">Login</button>
+          <span class="status-line{% if login_error %} err{% endif %}" id="status">{{ login_error }}</span>
+        </div>
+      </form>
+    </div>
+  </div>
+  <script>
+    const RESEND_SECONDS = 60;
+    const form = document.getElementById("login-form");
+    const status = document.getElementById("status");
+    const loginBtn = document.getElementById("login-btn");
+    const sendBtn = document.getElementById("send-code-btn");
+    const identifyInput = document.getElementById("identify");
+    const passwordInput = document.getElementById("password");
+    const codeInput = document.getElementById("code");
+    let countdown = null;
+
+    function fail(message) {
+      status.className = "status-line err";
+      status.textContent = message;
+    }
+
+    function startCountdown(seconds) {
+      let left = seconds;
+      sendBtn.disabled = true;
+      sendBtn.textContent = "Send code (" + left + "s)";
+      countdown = setInterval(() => {
+        left -= 1;
+        if (left <= 0) {
+          clearInterval(countdown);
+          countdown = null;
+          sendBtn.disabled = false;
+          sendBtn.textContent = "Send code";
+          return;
+        }
+        sendBtn.textContent = "Send code (" + left + "s)";
+      }, 1000);
+    }
+
+    sendBtn.addEventListener("click", async () => {
+      const identify = identifyInput.value.trim();
+      if (!identify) {
+        fail("Enter your user name or email address first.");
+        return;
+      }
+      sendBtn.disabled = true;
+      try {
+        const resp = await fetch("/api/login/send_code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identify }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || resp.status);
+        status.className = "status-line ok";
+        status.textContent = "A code was mailed to " + (data.masked_email || "the account email") + ".";
+        startCountdown(Number(data.resend_after) || RESEND_SECONDS);
+      } catch (err) {
+        fail(err.message);
+        sendBtn.disabled = false;
+      }
+    });
+
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const identify = identifyInput.value.trim();
+      const password = passwordInput.value;
+      const code = codeInput.value.trim();
+      if (!identify) {
+        fail("Enter your user name or email address.");
+        return;
+      }
+      if (!password && !code) {
+        fail("Enter the account password or the code mailed to your email.");
+        return;
+      }
+      loginBtn.disabled = true;
+      status.className = "status-line";
+      status.textContent = "Signing in...";
+      try {
+        const resp = await fetch("/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ identify, password, code }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) throw new Error(data.error || resp.status);
+        status.className = "status-line ok";
+        status.textContent = "Signed in, loading...";
+        location.reload();
+      } catch (err) {
+        fail("Login failed: " + err.message);
+        loginBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

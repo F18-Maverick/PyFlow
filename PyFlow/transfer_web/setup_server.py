@@ -10,7 +10,10 @@ Checks ``transfer_web/.Flow_Web/setup_server.json``:
 
 After the TCP server is up, the lightweight Flask backend serves the
 status page and the client-facing API (``/api/server_info`` etc.) on
-the server's address.
+the server's address.  Anonymous visitors also get the landing page
+with the registration and password-reset flows; accounts live in the
+SQLite store ``.Flow_Web/flow_web.db``, and the verification mails are
+sent through the mailbox configured in ``.Flow_Web/email_config.json``.
 """
 
 import os
@@ -29,6 +32,7 @@ from transfer_web.web_backend.server_backend import (  # noqa: E402
 
 
 def main():
+    """Start the server web backend and serve its UI."""
     os.makedirs(FLOW_WEB_DIR, exist_ok=True)
     app = ServerWebApp()
     if os.path.exists(SERVER_CONFIG_FILE):

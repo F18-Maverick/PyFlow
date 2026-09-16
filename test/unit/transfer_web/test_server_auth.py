@@ -7,25 +7,28 @@ configuration need an administrator), and the seeded ``admin``/``admin``
 account is hashed and flagged until its credentials are changed.
 """
 
-import json
 import os
+import sqlite3
 import stat
 
 import pytest
 
 from PyFlow.transfer_web.web_backend import server_backend
+from PyFlow.transfer_web.web_backend.user_database import UserDatabase
 
 
 @pytest.fixture
 def web(tmp_path, monkeypatch):
-    """A ServerWebApp that keeps its account store under ``tmp_path``."""
+    """A ServerWebApp whose account store and mail settings live under ``tmp_path``."""
     monkeypatch.setattr(server_backend, "FLOW_WEB_DIR", str(tmp_path))
-    monkeypatch.setattr(server_backend, "USERS_FILE", str(tmp_path / "users.json"))
     monkeypatch.setattr(server_backend, "SECRET_KEY_FILE", str(tmp_path / "web_secret_key"))
     monkeypatch.setattr(
         server_backend, "SERVER_EXTENSIONS_UI_FILE", str(tmp_path / "server_extensions_ui.json")
     )
-    app = server_backend.ServerWebApp()
+    app = server_backend.ServerWebApp(
+        db_path=str(tmp_path / "flow_web.db"),
+        mail_config_path=str(tmp_path / "email_config.json"),
+    )
     app.app.config.update(TESTING=True)
     return app
 
@@ -35,13 +38,19 @@ def client(web):
     return web.app.test_client()
 
 
-def login(client, username="admin", password="admin"):
-    return client.post("/api/login", json={"username": username, "password": password})
+def login(client, identify="admin", password="admin"):
+    return client.post("/api/login", json={"identify": identify, "password": password})
 
 
-def add_user(client, username, password, role="user"):
+def add_user(client, username, password, email=None, role="user"):
     return client.post(
-        "/api/users", json={"username": username, "password": password, "role": role}
+        "/api/users",
+        json={
+            "username": username,
+            "email": email or f"{username}@example.com",
+            "password": password,
+            "role": role,
+        },
     )
 
 
@@ -54,6 +63,8 @@ def test_landing_page_for_anonymous_visitors(client):
     body = client.get("/").get_data(as_text=True)
     assert "The PyFlow Server is running! Connect it in clients by the server host." in body
     assert 'id="login-btn"' in body
+    assert 'id="register-btn"' in body  # self-service registration
+    assert 'id="reset-btn"' in body  # self-service password change
     assert "Change Config" not in body  # no administration UI before a login
 
 
@@ -64,10 +75,14 @@ def test_protected_endpoints_reject_anonymous_requests(client):
         ("get", "/api/events"),
         ("get", "/api/extensions_ui"),
         ("get", "/api/users"),
+        ("get", "/api/email_config"),
+        ("get", "/api/contact_requests"),
         ("post", "/api/send_msg"),
         ("post", "/api/save_config"),
         ("post", "/api/users"),
         ("post", "/api/run_extension"),
+        ("post", "/api/email_config"),
+        ("post", "/api/contacts/search"),
     ]:
         resp = getattr(client, method)(path, json={})
         assert resp.status_code == 401, (method, path)
@@ -81,14 +96,22 @@ def test_server_info_stays_public_for_clients(client):
     assert resp.status_code != 403
 
 
+def test_registration_stays_public_for_new_accounts(client):
+    # anyone who can reach the landing page may ask for a registration code
+    resp = client.post("/api/register/send_code", json={"email": "new@example.com"})
+    assert resp.status_code == 400  # no mailbox configured yet, not a login failure
+    assert "mail service is not configured" in resp.get_json()["error"]
+
+
 def test_default_admin_is_seeded_with_a_hashed_password(web, tmp_path):
-    stored = json.loads((tmp_path / "users.json").read_text(encoding="utf-8"))["users"]
-    admin = next(u for u in stored if u["username"] == "admin")
-    assert admin["role"] == "admin"
-    assert admin["password"].startswith("pbkdf2_sha256$")
-    assert "admin" not in admin["password"]  # the record is stored, never the password
+    with sqlite3.connect(tmp_path / "flow_web.db") as conn:
+        rows = conn.execute("SELECT username, role, password FROM users").fetchall()
+    admin = next(row for row in rows if row[0] == "admin")
+    assert admin[1] == "admin"
+    assert admin[2].startswith("pbkdf2_sha256$")
+    assert "admin" not in admin[2]  # the record is stored, never the password
     if os.name == "posix":
-        assert stat.S_IMODE(os.stat(tmp_path / "users.json").st_mode) == 0o600
+        assert stat.S_IMODE(os.stat(tmp_path / "flow_web.db").st_mode) == 0o600
     assert web.users.authenticate("admin", "admin")["role"] == "admin"
 
 
@@ -99,6 +122,14 @@ def test_login_with_default_credentials_warns_about_them(client):
     assert data["must_change_credentials"] is True
     # the page hands the warning flag to the modal (PyFlowAccount.mount)
     assert "mustChange: true" in page(client)
+
+
+def test_login_accepts_the_email_of_an_account(client):
+    login(client)
+    add_user(client, "alice", "alices-password")
+    client.post("/api/logout")
+
+    assert login(client, "alice@example.com", "alices-password").get_json()["username"] == "alice"
 
 
 def test_login_rejects_a_wrong_password(client):
@@ -117,6 +148,7 @@ def test_regular_user_gets_no_administration_access(client):
 
     assert client.get("/config").status_code == 302
     assert client.get("/api/users").status_code == 403
+    assert client.get("/api/email_config").status_code == 403
     assert add_user(client, "mallory", "mallory-password").status_code == 403
     assert client.post("/api/run_extension", json={"command": "/anything"}).status_code == 403
     assert client.get("/api/status").status_code == 200  # normal functionality remains
@@ -144,9 +176,15 @@ def test_change_credentials_clears_the_warning(client):
     login(client)
     resp = client.post(
         "/api/account",
-        json={"current_password": "admin", "username": "root", "password": "a-good-password"},
+        json={
+            "current_password": "admin",
+            "username": "root",
+            "password": "a-good-password",
+            "email": "root@example.com",
+        },
     )
     assert resp.get_json()["must_change_credentials"] is False
+    assert resp.get_json()["user"]["email"] == "root@example.com"
 
     client.post("/api/logout")
     assert login(client, "admin", "admin").status_code == 401  # the default account is gone
@@ -187,18 +225,19 @@ def test_admin_cannot_remove_its_own_account(client):
 
 
 def test_store_rejects_duplicates_short_passwords_and_orphaning_admins(web):
-    web.users.add("bob", "bobs-password")
+    web.users.add_user("bob", "bob@example.com", "bobs-password")
     with pytest.raises(ValueError):
-        web.users.add("bob", "another-password")
+        web.users.add_user("bob", "other@example.com", "another-password")
     with pytest.raises(ValueError):
-        web.users.add("shorty", "abc")
+        web.users.add_user("shorty", "shorty@example.com", "abc")
     with pytest.raises(ValueError):
-        web.users.remove("admin")  # the only administrator
+        web.users.remove_user("admin")  # the only administrator
     with pytest.raises(ValueError):
-        web.users.change_credentials("admin", "bob", "a-good-password")
+        web.users.update_credentials("admin", new_username="bob", new_password="a-good-password")
 
 
-def test_corrupt_store_does_not_restore_the_default_account(tmp_path, monkeypatch):
-    monkeypatch.setattr(server_backend, "USERS_FILE", str(tmp_path / "users.json"))
-    (tmp_path / "users.json").write_text("{ not json", encoding="utf-8")
-    assert server_backend.UserStore().authenticate("admin", "admin") is None
+def test_corrupt_store_does_not_restore_the_default_account(tmp_path):
+    (tmp_path / "flow_web.db").write_text("{ not a database", encoding="utf-8")
+    store = UserDatabase(str(tmp_path / "flow_web.db"))
+    with pytest.raises(ValueError):
+        store.authenticate("admin", "admin")  # a damaged store never re-seeds

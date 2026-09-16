@@ -417,6 +417,12 @@ a { color: var(--accent); }
 .user-row .role { font-size: 11px; color: var(--text-dim); }
 .user-row .btn { padding: 5px 10px; font-size: 12px; }
 
+.user-row .name .meta {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 .drop-zone {
   border: 2px dashed var(--border);
   border-radius: 8px;

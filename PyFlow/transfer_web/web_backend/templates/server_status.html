@@ -23,7 +23,7 @@
         </div>
       </div>
       <div class="instance-list" id="instance-list"></div>
-      <div class="sidebar-footer" id="sidebar-footer">{{ username }} &middot; {{ role }}</div>
+      <div class="sidebar-footer" id="sidebar-footer">{{ username }} &middot; {{ role }} &middot; ID {{ user_id }}</div>
     </aside>
     <main class="main">
       <div class="main-topbar">
@@ -60,6 +60,8 @@
     PyFlowAccount.mount({
       role: {{ role|tojson }},
       username: {{ username|tojson }},
+      user_id: {{ user_id|tojson }},
+      email: {{ email|tojson }},
       mustChange: {{ must_change_credentials|tojson }},
     });
   </script>

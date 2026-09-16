@@ -87,7 +87,7 @@ testpaths = ["test"]
 
 [tool.interrogate]
 # Coverage ratchet for the public API. Raise fail-under as docstrings get written; never lower it.
-fail-under = 57.6
+fail-under = 65.0
 style = "google"
 ignore-private = true # guide section 5: underscore-prefixed helpers may stay undocumented
 ignore-semiprivate = true

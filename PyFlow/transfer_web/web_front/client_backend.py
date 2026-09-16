@@ -22,6 +22,15 @@ whether direct sends or client forwards) are captured on the TCP
 client's receive threads through ``TCP_Client_Base``'s
 ``add_message_listener``/``add_file_listener`` APIs, queued here, and
 polled by the frontend via ``/api/events``.
+
+Accounts: a connected client logs in with a server account before the
+instance list is usable.  ``/api/login`` opens the session, the
+``/api/contacts/*`` and ``/api/contact_requests`` routes proxy the
+contact management to the server, and the session token is sent over TCP
+with ``/web_bind`` so the server can push the contact list of that
+account.  The credentials are remembered in
+``.Flow_Web/client_login.json`` (owner-readable only) and replayed on the
+next start; the login window is shown whenever no session is open.
 """
 
 import json
@@ -33,8 +42,9 @@ import sys
 import threading
 import time
 import traceback
+import urllib.error
 import urllib.request
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from flask import Flask, jsonify, render_template, request
 
@@ -47,12 +57,26 @@ FLOW_WEB_DIR = os.path.join(WEB_ROOT, ".Flow_Web")
 CLIENT_EXTENSIONS_UI_FILE = os.path.join(FLOW_WEB_DIR, "client_extensions_ui.json")
 CLIENT_LAST_SERVER_FILE = os.path.join(FLOW_WEB_DIR, "client_last_server.json")
 CLIENT_CONFIG_FILE = os.path.join(FLOW_WEB_DIR, "setup_client.json")
+CLIENT_LOGIN_FILE = os.path.join(FLOW_WEB_DIR, "client_login.json")
 UPLOAD_DIR = os.path.join(FLOW_WEB_DIR, "uploads")
 TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 STATIC_DIR = os.path.join(WEB_ROOT, "static")
 
 DEFAULT_CLIENT_WEB_PORT = 5001
 DEFAULT_SERVER_WEB_PORT = 5000
+
+# Account binding: the client tells the server which account its TCP
+# connection belongs to, and waits for the acknowledgement carrying the
+# address the server sees for it.
+BIND_COMMAND = "/web_bind"
+BIND_OK_COMMAND = "/web_bind_ok"
+BIND_RETRY_LIMIT = 10
+BIND_RETRY_INTERVAL = 1.0
+
+# Timeout of one request to the server web backend, and the status its routes
+# answer with when the session is gone.
+REQUEST_TIMEOUT = 10
+UNAUTHORIZED = 401
 
 # Ordered (key, label, type, default, help) for every TCP_Client_Base
 # parameter shown in the startup-configuration UI.
@@ -138,6 +162,56 @@ def _config_display_value(key, value):
     return value
 
 
+def _last_server_address():
+    """Return the address of the last server the client connected to."""
+    if not os.path.exists(CLIENT_LAST_SERVER_FILE):
+        return ""
+    try:
+        with open(CLIENT_LAST_SERVER_FILE, "r", encoding="utf-8") as f:
+            return str(json.load(f).get("address", ""))
+    except Exception:
+        return ""
+
+
+def _http_error_message(error):
+    """Extract the server's error text from a refused HTTP response."""
+    try:
+        body = json.loads(error.read().decode("utf-8"))
+        message = body.get("error") if isinstance(body, dict) else None
+    except Exception:
+        message = None
+    return str(message) if message else f"HTTP {error.code}"
+
+
+def _channel_ready(client):
+    """Report whether a command may be written on the client connection.
+
+    An encrypted connection must not carry a plaintext command before the key
+    exchange flipped it, and the socket is only usable once the client is
+    running.
+    """
+    if client is None or client.client_socket is None or not client.running:
+        return False
+    if not client.is_enable_encrypto:
+        return True
+    with client._crypto_lock:
+        return client.client_socket in client._encrypted_sockets
+
+
+class _ServerRequestError(ValueError):
+    """Refusal of the server web backend, carrying its HTTP status."""
+
+    def __init__(self, status, message):
+        """Record the status code of the refused request.
+
+        Args:
+            status (int): HTTP status the server answered with.
+            message (str): Error text reported by the server.
+        """
+        super().__init__(message)
+        self.status = status
+
+
 class ClientWebApp:
     """Flask app + TCP_Client_Base wrapper for the web tool."""
 
@@ -154,6 +228,17 @@ class ClientWebApp:
         self._event_seq = 0
         self._echo_expect = None  # plain text last sent to the server (echo suppression)
         self._echo_expect_at = 0.0
+
+        # Account session of the connected server: the token/account pair the
+        # TCP connection is bound to, plus the last login outcome.
+        self._server_base = ""
+        self.session = None
+        self._login_error = ""
+        self._saved_identify = ""
+        self._bind_ack = False
+        self._bind_pending = False
+        self._bind_lock = threading.Lock()
+        self._bound_address = None
         self.app = Flask(
             __name__,
             template_folder=TEMPLATE_DIR,
@@ -165,6 +250,9 @@ class ClientWebApp:
     # ---------------------------------------------------------------- helpers
 
     def _own_address(self):
+        """Return this client's address as the server reports it."""
+        if self._bound_address is not None:
+            return dict(self._bound_address)
         if self.client is None or self.client.client_socket is None:
             return None
         try:
@@ -250,6 +338,18 @@ class ClientWebApp:
         if isinstance(clients, list):
             with self._clients_lock:
                 self._clients = clients
+        return None
+
+    def _on_bind_ok(self, sock, addr, cmd):
+        """Server ack: record the address the server sees for this client."""
+        try:
+            info = json.loads(cmd[len(BIND_OK_COMMAND) :].strip())
+            address = {"ip": str(info["ip"]), "port": int(info["port"])}
+        except Exception:
+            return None
+        address["id"] = f"{address['ip']}:{address['port']}"
+        self._bound_address = address
+        self._bind_ack = True
         return None
 
     # ------------------------------------------------ inbound event handling
@@ -344,11 +444,19 @@ class ClientWebApp:
         return {}
 
     def start_from_config(self):
-        """Read ``.Flow_Web/setup_client.json`` and start the TCP client."""
+        """Start the TCP client from ``.Flow_Web/setup_client.json`` and log in."""
         params = self._load_client_params()
         if not params:
             return
+        last = _last_server_address()
+        if last:
+            try:
+                self._server_base = _normalize_address(last)
+                self._last_address = last
+            except ValueError:
+                self._server_base = ""
         self._start_client_from_params(params)
+        self._auto_login()
 
     def _normalize_client_params(self, params):
         """Normalize form values into TCP_Client_Base constructor arguments."""
@@ -380,13 +488,20 @@ class ClientWebApp:
             "/web_clients_update", self._on_clients_update, where_to_run="server", run_in_thread=True
         )
         self.client.add_message_listener(self._on_incoming_message)
+        self.client.register_command(
+            BIND_OK_COMMAND, self._on_bind_ok, where_to_run="server", run_in_thread=True
+        )
         self.client.add_file_listener(self._on_incoming_file)
         try:
             add_extension.load_registered_extensions(self.client, "client")
         except ImportError as e:
             print(f"Failed to load registered extensions: {e}")
+        # A fresh connection has to be bound to the account again.
+        self._bind_ack = False
+        self._bound_address = None
         threading.Thread(target=self.client.start_TCP_client, daemon=True).start()
         self.connected = True
+        self._bind_account()
         self.server_info = {
             "host": params["host"],
             "port": params["port"],
@@ -398,6 +513,239 @@ class ClientWebApp:
         with open(CLIENT_LAST_SERVER_FILE, "w", encoding="utf-8") as f:
             json.dump({"address": self._last_address}, f, indent=4, ensure_ascii=False)
 
+    # ------------------------------------------------------- account / login
+
+    def _server_request(self, path, payload=None):
+        """Send one request to the connected server web backend.
+
+        Args:
+            path (str): Server route to call, e.g. ``"/api/client_login"``.
+            payload (dict | None): JSON body of the request; ``None`` issues a
+                GET without a body instead.
+
+        Returns:
+            dict: Parsed JSON reply of the server.
+
+        Raises:
+            ValueError: If no server address is known, the server cannot be
+                reached, or its reply is not a JSON object. A refused request
+                carries the server's own error message, or ``HTTP <status>``
+                when the server sent none.
+        """
+        if not self._server_base:
+            raise ValueError("not connected to a server")
+        url = self._server_base + path
+        if payload is None:
+            req = urllib.request.Request(url)
+        else:
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json"},
+            )
+        try:
+            with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as resp:
+                body = resp.read().decode("utf-8")
+        except urllib.error.HTTPError as e:
+            raise _ServerRequestError(e.code, _http_error_message(e)) from e
+        except Exception as e:
+            raise ValueError(
+                f"cannot reach the server web backend at {self._server_base}: {e}"
+            ) from e
+        try:
+            result = json.loads(body)
+        except Exception as e:
+            raise ValueError(f"invalid server reply: {e}") from e
+        if not isinstance(result, dict):
+            raise ValueError("invalid server reply")
+        if result.get("ok") is False:
+            raise ValueError(result.get("error") or "the server refused the request")
+        return result
+
+    def _save_login_file(self, identify, password=None, token=None):
+        """Store the credentials used to log in to this server.
+
+        Args:
+            identify (str): Username or e-mail the user logged in with.
+            password (str | None): Password of the account, when one was used.
+            token (str | None): Session token, when a mailed code was used.
+        """
+        payload = {
+            "server": self._server_base,
+            "identify": identify,
+            "password": password or "",
+            "token": token or "",
+        }
+        os.makedirs(FLOW_WEB_DIR, exist_ok=True)
+        with open(CLIENT_LOGIN_FILE, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=4, ensure_ascii=False)
+        os.chmod(CLIENT_LOGIN_FILE, 0o600)
+
+    def _load_login_file(self):
+        """Return the saved login credentials, or ``None`` when absent."""
+        if not os.path.exists(CLIENT_LOGIN_FILE):
+            return None
+        try:
+            with open(CLIENT_LOGIN_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _clear_login_file(self):
+        """Delete the saved login credentials, if any."""
+        try:
+            os.remove(CLIENT_LOGIN_FILE)
+        except OSError:
+            pass
+
+    def _forget_session(self, message="", drop_credentials=False):
+        """Drop the local session, keeping the saved credentials by default.
+
+        Args:
+            message (str): Login error the login window explains, empty for none.
+            drop_credentials (bool): Delete the saved login file as well.
+        """
+        self.session = None
+        self._bind_ack = False
+        self._bound_address = None
+        self._login_error = message
+        if drop_credentials:
+            self._clear_login_file()
+
+    def _login(self, identify, password, code):
+        """Log in to an account of the connected server.
+
+        Args:
+            identify (str): Username or e-mail of the account.
+            password (str): Password of the account, empty when a code is used.
+            code (str): Mailed verification code, empty when a password is used.
+
+        Returns:
+            dict: The logged-in account without its password.
+
+        Raises:
+            ValueError: If the server refuses the credentials or answers
+                without a session token.
+        """
+        result = self._server_request(
+            "/api/client_login", {"identify": identify, "password": password, "code": code}
+        )
+        token = str(result.get("token") or "")
+        if not token:
+            raise ValueError("the server returned no session token")
+        user = result.get("user") or {}
+        self.session = {"token": token, "user": user}
+        self._saved_identify = identify
+        self._bind_ack = False
+        self._bound_address = None
+        self._login_error = ""
+        if password:
+            self._save_login_file(identify, password=password)
+        else:
+            self._save_login_file(identify, token=token)
+        self._bind_account()
+        return user
+
+    def _auto_login(self):
+        """Restore the saved session of this server when the server accepts it."""
+        if self.session is not None or not self._server_base:
+            return
+        saved = self._load_login_file()
+        if not saved or saved.get("server") != self._server_base:
+            return
+        self._saved_identify = str(saved.get("identify") or "")
+        password = str(saved.get("password") or "")
+        token = str(saved.get("token") or "")
+        if not password and not token:
+            self._login_error = "the saved login holds no password or session token"
+            return
+        try:
+            if password:
+                self._login(self._saved_identify, password, "")
+                return
+            result = self._server_request("/api/client_verify", {"token": token})
+        except ValueError as e:
+            self._login_error = f"saved credentials were rejected: {e}"
+            return
+        self.session = {"token": token, "user": result.get("user") or {}}
+        self._login_error = ""
+        self._bind_ack = False
+        self._bound_address = None
+        self._bind_account()
+
+    def _bind_account(self):
+        """Bind the TCP connection to the logged-in account of the session."""
+        if self.session is None or self._bind_ack:
+            return
+        with self._bind_lock:
+            if self._bind_pending:
+                return
+            self._bind_pending = True
+        threading.Thread(
+            target=self._bind_loop, args=(self.session["token"],), daemon=True
+        ).start()
+
+    def _bind_loop(self, token):
+        """Send ``/web_bind`` once a second until the server acknowledged it."""
+        for attempt in range(BIND_RETRY_LIMIT):
+            if self._bind_ack or self.session is None:
+                break
+            if attempt:
+                time.sleep(BIND_RETRY_INTERVAL)
+            client = self.client
+            if not _channel_ready(client):
+                continue
+            try:
+                client.send_message(client.client_socket, f"{BIND_COMMAND} {token}")
+            except Exception:
+                traceback.print_exc()
+        with self._bind_lock:
+            self._bind_pending = False
+
+    def _logout(self):
+        """Close the account session and forget the saved credentials."""
+        token = self.session["token"] if self.session else ""
+        if token:
+            try:
+                self._server_request("/api/client_logout", {"token": token})
+            except ValueError:
+                pass  # the local session goes away either way
+        self._forget_session(drop_credentials=True)
+
+    def _account_proxy(self, path, payload=None):
+        """Forward one account request to the server and shape its reply.
+
+        Args:
+            path (str): Server route to call, e.g. ``"/api/contacts/search"``.
+            payload (dict | None): Request body without the session token;
+                ``None`` issues a GET carrying the token as a query argument.
+
+        Returns:
+            tuple: Flask response of the request.
+        """
+        if self.session is None:
+            return jsonify({"ok": False, "error": "login required"}), 401
+        token = self.session["token"]
+        if payload is None:
+            body = None
+            path = f"{path}?token={quote(token)}"
+        else:
+            body = dict(payload)
+            body["token"] = token
+        try:
+            return jsonify(self._server_request(path, body))
+        except _ServerRequestError as e:
+            status = e.status
+            if status == UNAUTHORIZED:
+                # The server dropped the session: return to the login window.
+                self._forget_session("the session expired, please log in again")
+            else:
+                status = 400
+            return jsonify({"ok": False, "error": str(e)}), status
+        except ValueError as e:
+            return jsonify({"ok": False, "error": str(e)}), 400
+
     # ------------------------------------------------------------------ routes
 
     def _register_routes(self):
@@ -406,15 +754,21 @@ class ClientWebApp:
         @app.get("/")
         def index():
             if self.connected:
-                return render_template("client_main.html", mode="client")
-            last = ""
-            if os.path.exists(CLIENT_LAST_SERVER_FILE):
-                try:
-                    with open(CLIENT_LAST_SERVER_FILE, "r", encoding="utf-8") as f:
-                        last = json.load(f).get("address", "")
-                except Exception:
-                    last = ""
-            return render_template("client_connect.html", last_address=last)
+                if self.session is None:
+                    self._auto_login()
+                if self.session is not None:
+                    return render_template(
+                        "client_main.html", mode="client", user=self.session["user"]
+                    )
+                return render_template(
+                    "client_login.html",
+                    identify=self._saved_identify,
+                    login_error=self._login_error,
+                    server_address=self._server_base,
+                )
+            return render_template(
+                "client_connect.html", last_address=_last_server_address()
+            )
 
         @app.get("/config")
         def config():
@@ -470,11 +824,14 @@ class ClientWebApp:
             port = int(info.get("port"))
             is_enable_encrypto = bool(info.get("is_enable_encrypto", True))
             self._last_address = address
+            self._server_base = base
+            self._forget_session()
             try:
                 self._start_client(host, port, is_enable_encrypto)
             except Exception as e:
                 traceback.print_exc()
                 return jsonify({"ok": False, "error": f"failed to start TCP client: {e}"}), 500
+            self._auto_login()
             return jsonify({"ok": True, "server_info": self.server_info})
 
         @app.post("/api/save_config")
@@ -505,6 +862,8 @@ class ClientWebApp:
 
         @app.get("/api/status")
         def api_status():
+            if self.session is not None and not self._bind_ack:
+                self._bind_account()
             return jsonify(
                 {
                     "connected": self.connected
@@ -514,7 +873,76 @@ class ClientWebApp:
                     "clients": self._clients_snapshot(),
                     "own_address": self._own_address(),
                     "pid": os.getpid(),
+                    "logged_in": self.session is not None,
+                    "user": self.session["user"] if self.session else None,
+                    "server_address": self._server_base,
                 }
+            )
+
+        @app.post("/api/login")
+        def api_login():
+            """Log the web client in to an account of the connected server."""
+            data = request.get_json(force=True)
+            identify = str(data.get("identify") or "").strip()
+            password = str(data.get("password") or "")
+            code = str(data.get("code") or "").strip()
+            if not identify:
+                return jsonify({"ok": False, "error": "enter your user name or email"}), 400
+            if not password and not code:
+                return jsonify({"ok": False, "error": "enter a password or a code"}), 400
+            try:
+                user = self._login(identify, password, code)
+            except _ServerRequestError as e:
+                return jsonify({"ok": False, "error": str(e)}), e.status
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            return jsonify({"ok": True, "user": user})
+
+        @app.post("/api/login/send_code")
+        def api_login_send_code():
+            """Ask the server to mail a login code to one account."""
+            data = request.get_json(force=True)
+            identify = str(data.get("identify") or "").strip()
+            if not identify:
+                return jsonify({"ok": False, "error": "enter your user name or email"}), 400
+            try:
+                payload = self._server_request("/api/login/send_code", {"identify": identify})
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            return jsonify(payload)
+
+        @app.post("/api/logout")
+        def api_logout():
+            """Close the account session and forget the saved credentials."""
+            self._logout()
+            return jsonify({"ok": True})
+
+        @app.post("/api/contacts/search")
+        def api_contacts_search():
+            """Search server accounts by user id, username or email."""
+            data = request.get_json(force=True)
+            return self._account_proxy("/api/contacts/search", {"query": data.get("query", "")})
+
+        @app.post("/api/contacts/request")
+        def api_contacts_request():
+            """Ask another account of the server to become a contact."""
+            data = request.get_json(force=True)
+            return self._account_proxy(
+                "/api/contacts/request", {"user_id": data.get("user_id", "")}
+            )
+
+        @app.get("/api/contact_requests")
+        def api_contact_requests():
+            """List the pending contact requests of the logged-in account."""
+            return self._account_proxy("/api/contact_requests")
+
+        @app.post("/api/contacts/respond")
+        def api_contacts_respond():
+            """Accept or reject one incoming contact request."""
+            data = request.get_json(force=True)
+            return self._account_proxy(
+                "/api/contacts/respond",
+                {"request_id": data.get("request_id"), "accept": bool(data.get("accept"))},
             )
 
         @app.get("/api/events")

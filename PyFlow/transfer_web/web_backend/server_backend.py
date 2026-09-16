@@ -23,18 +23,25 @@ clients) are captured on the TCP server's receive threads through
 APIs, queued here, and polled by the frontend via ``/api/events``.
 
 Authentication: anonymous visitors get a white landing page (the server
-addresses plus a login button); the configuration and status pages need a
-session.  Accounts live in ``.Flow_Web/users.json``; the first run seeds the
-``admin``/``admin`` administrator, and the frontend warns on every login until
-those default credentials are changed.
+addresses, a login button, a registration button and a password-reset button);
+the configuration and status pages need a session.  Accounts live in the SQLite
+store ``.Flow_Web/flow_web.db`` (see `user_database`); the first run seeds the
+``admin``/``admin`` administrator and the frontend warns on every login until
+those default credentials are changed.  Registration, password reset and
+code-based client logins are delivered by the mailbox configured from the
+startup-configuration page (see `mail_service`).
+
+Client accounts: the client web frontend logs in through ``/api/client_login``
+with a username/email plus a password or a mailed code, and receives a session
+token.  The token binds the TCP connection the client opens (``/web_bind``) to
+that account, and the instance list pushed to a client is limited to its
+contacts, so accounts that never exchanged a contact request cannot see each
+other.
 """
 
 import functools
-import hashlib
-import hmac
 import json
 import os
-import re
 import secrets
 import shlex
 import socket
@@ -49,6 +56,13 @@ from flask import Flask, jsonify, redirect, render_template, request, session
 from PyFlow import add_extension
 from PyFlow import forward_extension_tcp
 from PyFlow.network_api.connect_tcp import TCP_Server_Base
+from PyFlow.transfer_web.web_backend.mail_service import MailService
+from PyFlow.transfer_web.web_backend.user_database import (
+    DEFAULT_ADMIN_PASSWORD,
+    DEFAULT_ADMIN_USERNAME,
+    UserDatabase,
+    mask_email,
+)
 
 WEB_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FLOW_WEB_DIR = os.path.join(WEB_ROOT, ".Flow_Web")
@@ -60,16 +74,14 @@ STATIC_DIR = os.path.join(WEB_ROOT, "static")
 
 DEFAULT_WEB_PORT = 5000
 
-# Login/account store: the first run seeds DEFAULT_ADMIN_USERNAME with
-# DEFAULT_ADMIN_PASSWORD, and administrators are warned while that seeded pair
-# (and only that pair) is still in use.
-USERS_FILE = os.path.join(FLOW_WEB_DIR, "users.json")
+# Account store and verification-mail service: both keep their state in
+# .Flow_Web (flow_web.db and email_config.json).
 SECRET_KEY_FILE = os.path.join(FLOW_WEB_DIR, "web_secret_key")
-DEFAULT_ADMIN_USERNAME = "admin"
-DEFAULT_ADMIN_PASSWORD = "admin"
-MIN_PASSWORD_LENGTH = 8
-PBKDF2_ITERATIONS = 200000
-_USERNAME_RE = re.compile(r"\S{1,64}")
+
+# TCP command a client sends to bind its connection to its account, and the
+# acknowledgement carrying the address the server sees for that connection.
+BIND_COMMAND = "/web_bind"
+BIND_OK_COMMAND = "/web_bind_ok"
 
 # Ordered (key, label, type, default, help) for every TCP_Server_Base
 # parameter shown in the startup-configuration UI.
@@ -112,48 +124,6 @@ WEB_FIELDS = [
     ("web_port", "Web port", "number", DEFAULT_WEB_PORT, "Port of this web backend (clients query it)."),
 ]
 
-
-def _hash_password(password, salt, iterations=PBKDF2_ITERATIONS):
-    """PBKDF2-SHA256 record: ``pbkdf2_sha256$<iterations>$<salt>$<hex digest>``."""
-    digest = hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), salt.encode("ascii"), iterations
-    )
-    return f"pbkdf2_sha256${iterations}${salt}${digest.hex()}"
-
-
-def _new_password_record(password):
-    return _hash_password(password, secrets.token_hex(16))
-
-
-@functools.lru_cache(maxsize=1)
-def _dummy_password_record():
-    """Throwaway record: an unknown user must cost what a wrong password costs."""
-    return _new_password_record(secrets.token_hex(32))
-
-
-def _verify_password(password, record):
-    try:
-        algo, iterations, salt, digest = record.split("$", 3)
-        if algo != "pbkdf2_sha256":
-            return False
-        expected = hashlib.pbkdf2_hmac(
-            "sha256", password.encode("utf-8"), salt.encode("ascii"), int(iterations)
-        )
-    except (AttributeError, TypeError, ValueError):
-        return False
-    return hmac.compare_digest(expected.hex(), digest)
-
-
-def _validate_username(username):
-    if not _USERNAME_RE.fullmatch(username):
-        raise ValueError("the username must be 1-64 characters without spaces")
-
-
-def _validate_password(password):
-    if len(password) < MIN_PASSWORD_LENGTH:
-        raise ValueError(f"the password must be at least {MIN_PASSWORD_LENGTH} characters")
-
-
 def _load_or_create_secret_key(path=None):
     """Persist the Flask session key so logins survive a restart."""
     path = path or SECRET_KEY_FILE
@@ -177,129 +147,6 @@ def _load_or_create_secret_key(path=None):
     except OSError:
         traceback.print_exc()
     return key
-
-
-class UserStore:
-    """Account store backing the server web login (``.Flow_Web/users.json``).
-
-    Passwords are PBKDF2-SHA256 records with a per-user salt.  A missing store
-    file seeds the default ``admin``/``admin`` administrator; a store file that
-    exists but cannot be read is *not* re-seeded, so a damaged file can never
-    silently restore the default account.
-    """
-
-    def __init__(self, path=None):
-        self.path = path or USERS_FILE
-        self._lock = threading.Lock()
-        self._users = {}
-        self._load()
-
-    def _load(self):
-        try:
-            with open(self.path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except FileNotFoundError:
-            self._seed_default_admin()
-            return
-        except Exception:
-            traceback.print_exc()
-            return
-        entries = data.get("users") if isinstance(data, dict) else None
-        for entry in entries or []:
-            if isinstance(entry, dict) and entry.get("username") and entry.get("password"):
-                role = entry.get("role")
-                self._users[entry["username"]] = {
-                    "username": entry["username"],
-                    "role": role if role in ("admin", "user") else "user",
-                    "password": entry["password"],
-                }
-
-    def _seed_default_admin(self):
-        self._users = {
-            DEFAULT_ADMIN_USERNAME: {
-                "username": DEFAULT_ADMIN_USERNAME,
-                "role": "admin",
-                "password": _new_password_record(DEFAULT_ADMIN_PASSWORD),
-            }
-        }
-        self._save()
-
-    def _save(self):
-        """Write the store atomically; it holds password records, not passwords."""
-        directory = os.path.dirname(self.path)
-        if directory:
-            os.makedirs(directory, exist_ok=True)
-        tmp = self.path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump({"users": list(self._users.values())}, f, indent=4, ensure_ascii=False)
-        os.replace(tmp, self.path)
-        try:
-            os.chmod(self.path, 0o600)
-        except OSError:
-            pass
-
-    def authenticate(self, username, password):
-        """Return ``{"username", "role"}`` for valid credentials, else ``None``."""
-        with self._lock:
-            entry = self._users.get(username)
-        if entry is None:
-            _verify_password(password, _dummy_password_record())
-            return None
-        if not _verify_password(password, entry["password"]):
-            return None
-        return {"username": entry["username"], "role": entry["role"]}
-
-    def get(self, username):
-        with self._lock:
-            entry = self._users.get(username)
-        if entry is None:
-            return None
-        return {"username": entry["username"], "role": entry["role"]}
-
-    def list(self):
-        with self._lock:
-            entries = sorted(self._users.values(), key=lambda e: e["username"])
-        return [{"username": e["username"], "role": e["role"]} for e in entries]
-
-    def add(self, username, password, role="user"):
-        _validate_username(username)
-        _validate_password(password)
-        with self._lock:
-            if username in self._users:
-                raise ValueError(f"user {username} already exists")
-            self._users[username] = {
-                "username": username,
-                "role": role if role in ("admin", "user") else "user",
-                "password": _new_password_record(password),
-            }
-            self._save()
-
-    def remove(self, username):
-        with self._lock:
-            entry = self._users.get(username)
-            if entry is None:
-                raise ValueError(f"unknown user {username}")
-            admins = [e for e in self._users.values() if e["role"] == "admin"]
-            if entry["role"] == "admin" and len(admins) == 1:
-                raise ValueError("the last administrator cannot be removed")
-            del self._users[username]
-            self._save()
-
-    def change_credentials(self, username, new_username, new_password):
-        """Rename ``username`` and set its password (self-service)."""
-        _validate_username(new_username)
-        _validate_password(new_password)
-        with self._lock:
-            entry = self._users.get(username)
-            if entry is None:
-                raise ValueError(f"unknown user {username}")
-            if new_username != username and new_username in self._users:
-                raise ValueError(f"user {new_username} already exists")
-            del self._users[username]
-            entry["username"] = new_username
-            entry["password"] = _new_password_record(new_password)
-            self._users[new_username] = entry
-            self._save()
 
 
 def _public_host(host):
@@ -353,7 +200,17 @@ def _config_display_value(key, value):
 class ServerWebApp:
     """Flask app + TCP_Server_Base wrapper for the web tool."""
 
-    def __init__(self, web_port=None):
+    def __init__(self, web_port=None, db_path=None, mail_config_path=None):
+        """Create the Flask app and its stores.
+
+        Args:
+            web_port (int | None): Port of this web backend; defaults to
+                ``DEFAULT_WEB_PORT``. A busy port falls back to the next free one.
+            db_path (str | None): SQLite account database; defaults to
+                ``.Flow_Web/flow_web.db``.
+            mail_config_path (str | None): JSON file with the SMTP settings;
+                defaults to ``.Flow_Web/email_config.json``.
+        """
         self.web_port = web_port or DEFAULT_WEB_PORT
         self.server = None
         self.mode = "config"  # "config" | "status"
@@ -364,8 +221,11 @@ class ServerWebApp:
         self._events = []  # inbound events surfaced to the frontend (/api/events)
         self._events_lock = threading.Lock()
         self._event_seq = 0
+        self._addr_tokens = {}  # connected client address -> account session token
+        self._bind_lock = threading.Lock()
 
-        self.users = UserStore()
+        self.users = UserDatabase(db_path)
+        self.mail = MailService(mail_config_path)
         self.app = Flask(
             __name__,
             template_folder=TEMPLATE_DIR,
@@ -417,6 +277,9 @@ class ServerWebApp:
         self.server.register_command(
             "/web_sync_clients", self._on_sync_clients, where_to_run="server", run_in_thread=True
         )
+        self.server.register_command(
+            BIND_COMMAND, self._on_web_bind, where_to_run="server", run_in_thread=True
+        )
         self.server.add_message_listener(self._on_incoming_message)
         self.server.add_file_listener(self._on_incoming_file)
         try:
@@ -442,6 +305,9 @@ class ServerWebApp:
                 continue
             with self.server.client_lock:
                 current = set(self.server.clients.keys())
+            with self._bind_lock:
+                for addr in [a for a in self._addr_tokens if a not in current]:
+                    del self._addr_tokens[addr]
             if current != self._last_clients:
                 self._last_clients = current
                 self._broadcast_clients()
@@ -449,7 +315,13 @@ class ServerWebApp:
                 last_check = time.time()
                 self._broadcast_clients()
 
-    def _client_list(self):
+    def _connected_entries(self):
+        """Return one entry per connected TCP client, as the sidebar shows them.
+
+        Returns:
+            list[dict]: ``{"ip", "port", "id"}`` per connection, in the order the
+                server holds them.
+        """
         if self.server is None:
             return []
         with self.server.client_lock:
@@ -459,27 +331,129 @@ class ServerWebApp:
             ]
 
     def _server_info_payload(self):
+        """Return the TCP address/port web clients connect to.
+
+        Returns:
+            dict: ``{"host", "port", "is_enable_encrypto"}`` of the running TCP
+                server; ``host`` is resolved when it binds a wildcard address.
+        """
         return {
             "host": _public_host(self.server.host),
             "port": self.server.port,
             "is_enable_encrypto": self.server.is_enable_encrypto,
         }
 
+    def _account_of(self, addr):
+        """Resolve the account bound to a connected client address.
+
+        Args:
+            addr (tuple): Peer ``(ip, port)`` of the TCP connection.
+
+        Returns:
+            dict | None: Account without its password, or ``None`` while the
+                connection has not bound a valid session token.
+        """
+        with self._bind_lock:
+            token = self._addr_tokens.get(tuple(addr))
+        return self.users.session_user(token) if token else None
+
+    def _bound_addresses(self):
+        """Map every bound account to the address its client connects from.
+
+        Returns:
+            dict: ``user_id`` -> ``{"ip", "port"}`` for the accounts with a live
+                bound connection.
+        """
+        with self._bind_lock:
+            bound = dict(self._addr_tokens)
+        mapping = {}
+        for addr, token in bound.items():
+            user = self.users.session_user(token)
+            if user is not None:
+                mapping.setdefault(user["user_id"], {"ip": addr[0], "port": addr[1]})
+        return mapping
+
+    def _client_list(self):
+        """List every connected instance with the account bound to it.
+
+        This is the operator view used by the server console.
+
+        Returns:
+            list[dict]: One entry per connected client; bound entries also carry
+                ``user_id``, ``username`` and ``email``.
+        """
+        entries = []
+        for entry in self._connected_entries():
+            account = self._account_of((entry["ip"], entry["port"]))
+            if account is not None:
+                entry.update(account)
+            entries.append(entry)
+        return entries
+
+    def _client_list_for(self, addr):
+        """List the connected instances one client is allowed to see.
+
+        A client sees itself nowhere and sees another account only once the two
+        are contacts; an unbound connection sees no other instance at all.
+
+        Args:
+            addr (tuple): Peer ``(ip, port)`` of the requesting connection.
+
+        Returns:
+            list[dict]: Contact entries, each with ``ip``, ``port``, ``id``,
+                ``user_id``, ``username`` and ``email``.
+        """
+        user = self._account_of(addr)
+        if user is None:
+            return []
+        contacts = {c["user_id"]: c for c in self.users.contacts(user["user_id"])}
+        entries = []
+        for entry in self._connected_entries():
+            account = self._account_of((entry["ip"], entry["port"]))
+            if account is None or account["user_id"] not in contacts:
+                continue
+            entry.update(account)
+            entries.append(entry)
+        return entries
+
     def _broadcast_clients(self):
-        """Push the current instance list to every connected client."""
+        """Push every connected client the instance list it may see."""
         if self.server is None or not self.server.running:
             return
-        payload = json.dumps(self._client_list(), separators=(",", ":"))
-        message = f"/web_clients_update {payload}"
         with self.server.client_lock:
-            for info in list(self.server.clients.values()):
-                try:
-                    self.server.send_message(info["socket"], message)
-                except Exception:
-                    pass
+            targets = list(self.server.clients.items())
+        for addr, info in targets:
+            payload = json.dumps(self._client_list_for(addr), separators=(",", ":"))
+            try:
+                self.server.send_message(info["socket"], f"/web_clients_update {payload}")
+            except Exception:
+                pass
 
     def _on_sync_clients(self, sock, addr, cmd):
         """A client asked for a fresh instance list: broadcast it."""
+        self._broadcast_clients()
+        return None
+
+    def _on_web_bind(self, sock, addr, cmd):
+        """Bind a client connection to the account owning the session token.
+
+        Server side of ``/web_bind <token>``: the client sends the token it got
+        from ``/api/client_login`` right after connecting, which is what lets the
+        server filter the instance list by contacts. The client is told which
+        address the server sees for it, so it can recognise its own entry.
+        """
+        token = cmd[len(BIND_COMMAND) :].strip()
+        user = self.users.session_user(token)
+        if user is None:
+            return None
+        with self._bind_lock:
+            self._addr_tokens[tuple(addr)] = token
+        try:
+            self.server.send_message(
+                sock, f"{BIND_OK_COMMAND} {json.dumps({'ip': addr[0], 'port': addr[1]})}"
+            )
+        except Exception:
+            traceback.print_exc()
         self._broadcast_clients()
         return None
 
@@ -545,11 +519,71 @@ class ServerWebApp:
         username = session.get("username")
         if not username:
             return None
-        user = self.users.get(username)
+        user = self.users.find(username)
         if user is None:
             session.clear()
             return None
         return user
+
+    def _session_user(self):
+        """Resolve the client session token carried by a request.
+
+        Returns:
+            dict | None: Account bound to the token, or ``None`` for a missing
+                or unknown token.
+        """
+        token = request.args.get("token", "")
+        data = request.get_json(silent=True)
+        if isinstance(data, dict) and data.get("token"):
+            token = str(data["token"])
+        return self.users.session_user(token)
+
+    def _send_code(self, purpose, target):
+        """Issue a verification code for an email address and deliver it.
+
+        Args:
+            purpose (str): "register", "login" or "reset_password".
+            target (str): Recipient email address.
+
+        Returns:
+            dict: ``{"expires_in", "resend_after", "masked_email"}`` describing
+                the delivered code.
+
+        Raises:
+            ValueError: If a code was requested for that purpose and address too
+                recently, or the mailbox is not configured or refuses the
+                message. A code that could not be delivered is dropped.
+        """
+        issued = self.users.issue_code(purpose, target)
+        try:
+            self.mail.send_code(target, issued["code"], purpose, issued["expires_in"])
+        except ValueError:
+            self.users.discard_codes(purpose, target)
+            raise
+        return {
+            "expires_in": issued["expires_in"],
+            "resend_after": issued["resend_after"],
+            "masked_email": mask_email(target),
+        }
+
+    def _account_with_email(self, identify):
+        """Return the account matching ``identify`` together with its email.
+
+        Args:
+            identify (str): User id, username or email address.
+
+        Returns:
+            tuple: ``(account, email)`` for the matching account.
+
+        Raises:
+            ValueError: If no account matches, or it has no email address.
+        """
+        account = self.users.find(identify)
+        if account is None:
+            raise ValueError("no account matches that user name or email")
+        if not account["email"]:
+            raise ValueError("this account has no email address; ask an administrator")
+        return account, account["email"]
 
     def _require_login(self):
         if self._current_user() is None:
@@ -564,18 +598,27 @@ class ServerWebApp:
             return jsonify({"ok": False, "error": "administrator privileges required"}), 403
         return None
 
-    def _default_admin_credentials(self, user, password):
-        """True only while the seeded username and the seeded password are both in use."""
-        return (
-            user["role"] == "admin"
-            and user["username"] == DEFAULT_ADMIN_USERNAME
-            and password == DEFAULT_ADMIN_PASSWORD
+    def _default_admin_credentials_in_use(self, username):
+        """Report whether the seeded administrator still accepts the seeded password.
+
+        Args:
+            username (str): Account whose session is being opened.
+
+        Returns:
+            bool: True only while the seeded username still logs in with
+                ``DEFAULT_ADMIN_PASSWORD``.
+        """
+        return username == DEFAULT_ADMIN_USERNAME and (
+            self.users.authenticate(DEFAULT_ADMIN_USERNAME, DEFAULT_ADMIN_PASSWORD) is not None
         )
 
     def _page_context(self, user):
+        """Render the account details every console page shows."""
         return {
             "role": user["role"],
             "username": user["username"],
+            "user_id": user["user_id"],
+            "email": user["email"] or "",
             "must_change_credentials": bool(session.get("must_change_credentials")),
         }
 
@@ -710,6 +753,18 @@ class ServerWebApp:
                 if err is not None:
                     return err
                 return view(*args, **kwargs)
+
+            return wrapped
+
+        def client_required(view):
+            """Reject requests without a valid client session token."""
+
+            @functools.wraps(view)
+            def wrapped(*args, **kwargs):
+                user = self._session_user()
+                if user is None:
+                    return jsonify({"ok": False, "error": "login required"}), 401
+                return view(user, *args, **kwargs)
 
             return wrapped
 
@@ -965,18 +1020,226 @@ class ServerWebApp:
 
         # ------------------------------------------------------------- accounts
 
+        # Public flows of the landing page: registration, password reset and
+        # the mailbox that delivers their verification codes.
+
+        @app.post("/api/register/send_code")
+        def api_register_send_code():
+            """Mail a registration code to an address that is still free."""
+            data = request.get_json(silent=True) or {}
+            email = str(data.get("email") or "").strip()
+            try:
+                if self.users.email_registered(email):
+                    return jsonify({"ok": False, "error": "this email is already registered"}), 400
+                return jsonify({"ok": True, **self._send_code("register", email)})
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+
+        @app.post("/api/register")
+        def api_register():
+            """Create an account once the mailed code checks out."""
+            data = request.get_json(silent=True) or {}
+            try:
+                user = self.users.register_with_code(
+                    str(data.get("username") or ""),
+                    str(data.get("email") or ""),
+                    str(data.get("password") or ""),
+                    str(data.get("code") or ""),
+                )
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            return jsonify({"ok": True, "user": user})
+
+        @app.post("/api/login/send_code")
+        def api_login_send_code():
+            """Mail a login code to the address of an existing account."""
+            data = request.get_json(silent=True) or {}
+            try:
+                _, email = self._account_with_email(str(data.get("identify") or ""))
+                return jsonify({"ok": True, **self._send_code("login", email)})
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+
+        @app.post("/api/password/send_code")
+        def api_password_send_code():
+            """Mail a password-reset code to the address of an existing account."""
+            data = request.get_json(silent=True) or {}
+            try:
+                _, email = self._account_with_email(str(data.get("identify") or ""))
+                return jsonify({"ok": True, **self._send_code("reset_password", email)})
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+
+        @app.post("/api/password/reset")
+        def api_password_reset():
+            """Set a new password once the mailed reset code checks out."""
+            data = request.get_json(silent=True) or {}
+            try:
+                self.users.reset_password_with_code(
+                    str(data.get("identify") or ""),
+                    str(data.get("code") or ""),
+                    str(data.get("password") or ""),
+                )
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            return jsonify({"ok": True})
+
+        # Client accounts: a web client logs in here and receives the session
+        # token that binds its TCP connection to the account.
+
+        @app.post("/api/client_login")
+        def api_client_login():
+            """Log a web client in with a password or a mailed verification code."""
+            data = request.get_json(silent=True) or {}
+            identify = str(data.get("identify") or "").strip()
+            password = str(data.get("password") or "")
+            code = str(data.get("code") or "").strip()
+            if not identify:
+                return jsonify({"ok": False, "error": "enter your user name or email"}), 400
+            if password:
+                user = self.users.authenticate(identify, password)
+                if user is None:
+                    return jsonify({"ok": False, "error": "invalid account or password"}), 401
+            elif code:
+                try:
+                    account, email = self._account_with_email(identify)
+                    self.users.verify_code("login", email, code)
+                except ValueError as e:
+                    return jsonify({"ok": False, "error": str(e)}), 401
+                user = account
+            else:
+                return jsonify({"ok": False, "error": "enter a password or a code"}), 400
+            try:
+                token = self.users.create_session(user["user_id"])
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            return jsonify({"ok": True, "token": token, "user": user})
+
+        @app.post("/api/client_verify")
+        def api_client_verify():
+            """Report whether a stored client session token is still valid."""
+            user = self._session_user()
+            if user is None:
+                return jsonify({"ok": False, "error": "login required"}), 401
+            return jsonify({"ok": True, "user": user})
+
+        @app.post("/api/client_logout")
+        def api_client_logout():
+            """Invalidate a client session token."""
+            data = request.get_json(silent=True) or {}
+            self.users.drop_session(str(data.get("token") or ""))
+            self._broadcast_clients()
+            return jsonify({"ok": True})
+
+        # Contacts: a client only ever sees the accounts it is a contact of.
+
+        @app.post("/api/contacts/search")
+        @client_required
+        def api_search_contacts(user):
+            """Search accounts by user id, username or email."""
+            data = request.get_json(silent=True) or {}
+            try:
+                matches = self.users.search_users(
+                    str(data.get("query") or ""), user["user_id"]
+                )
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            contacts = {c["user_id"] for c in self.users.contacts(user["user_id"])}
+            requests = self.users.contact_requests(user["user_id"])
+            outgoing = {r["user"]["user_id"] for r in requests["outgoing"]}
+            incoming = {r["user"]["user_id"] for r in requests["incoming"]}
+            online = self._bound_addresses()
+            results = []
+            for match in matches:
+                entry = dict(match)
+                if match["user_id"] in contacts:
+                    entry["relation"] = "contact"
+                elif match["user_id"] in outgoing:
+                    entry["relation"] = "outgoing"
+                elif match["user_id"] in incoming:
+                    entry["relation"] = "incoming"
+                else:
+                    entry["relation"] = "none"
+                entry["online"] = match["user_id"] in online
+                results.append(entry)
+            return jsonify({"ok": True, "results": results})
+
+        @app.post("/api/contacts/request")
+        @client_required
+        def api_request_contact(user):
+            """Ask another account to become a contact."""
+            data = request.get_json(silent=True) or {}
+            try:
+                target = self.users.request_contact(
+                    user["user_id"], str(data.get("user_id") or "")
+                )
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            return jsonify({"ok": True, "user": target})
+
+        @app.get("/api/contact_requests")
+        @client_required
+        def api_contact_requests(user):
+            """List the pending contact requests of the logged-in client."""
+            return jsonify({"ok": True, **self.users.contact_requests(user["user_id"])})
+
+        @app.post("/api/contacts/respond")
+        @client_required
+        def api_respond_contact(user):
+            """Accept or reject one incoming contact request."""
+            data = request.get_json(silent=True) or {}
+            try:
+                request_id = int(data.get("request_id"))
+            except (TypeError, ValueError):
+                return jsonify({"ok": False, "error": "invalid contact request"}), 400
+            accept = bool(data.get("accept"))
+            try:
+                requester = self.users.respond_request(user["user_id"], request_id, accept)
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            self._broadcast_clients()
+            return jsonify({"ok": True, "accepted": accept, "user": requester})
+
+        # Verification mailbox (administrators only): the settings are checked
+        # against the real server before they are stored.
+
+        @app.get("/api/email_config")
+        @admin_required
+        def api_get_email_config():
+            """Return the stored SMTP settings of the verification mailbox."""
+            config = self.mail.get_config() or {}
+            config.pop("password", None)
+            return jsonify({"ok": True, "enabled": self.mail.is_enabled(), "config": config})
+
+        @app.post("/api/email_config")
+        @admin_required
+        def api_set_email_config():
+            """Validate and store the SMTP settings, starting the mail service."""
+            data = request.get_json(silent=True) or {}
+            try:
+                config = self.mail.configure(data.get("config") or data)
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            config.pop("password", None)
+            return jsonify({"ok": True, "enabled": True, "config": config})
+
+        # Server console session and user administration.
+
         @app.post("/api/login")
         def api_login():
+            """Open the console session of a server user."""
             data = request.get_json(silent=True) or {}
-            username = str(data.get("username") or "").strip()
+            identify = str(data.get("identify") or "").strip()
             password = str(data.get("password") or "")
-            user = self.users.authenticate(username, password)
+            user = self.users.authenticate(identify, password)
             if user is None:
-                return jsonify({"ok": False, "error": "invalid username or password"}), 401
+                return jsonify({"ok": False, "error": "invalid account or password"}), 401
             session.clear()
             session["username"] = user["username"]
             session["role"] = user["role"]
-            session["must_change_credentials"] = self._default_admin_credentials(user, password)
+            session["must_change_credentials"] = self._default_admin_credentials_in_use(
+                user["username"]
+            )
             return jsonify(
                 {
                     "ok": True,
@@ -989,32 +1252,40 @@ class ServerWebApp:
 
         @app.post("/api/logout")
         def api_logout():
+            """Close the console session."""
             session.clear()
             return jsonify({"ok": True})
 
         @app.post("/api/account")
         @login_required
         def api_account():
-            """Change own username/password; the current password is required."""
+            """Change own username, email or password; the current password is required."""
             user = self._current_user()
             data = request.get_json(silent=True) or {}
             current_password = str(data.get("current_password") or "")
             new_username = str(data.get("username") or "").strip()
-            new_password = str(data.get("password") or "")
+            new_password = str(data.get("password") or "") or None
+            email = str(data.get("email") or "").strip() or None
             if self.users.authenticate(user["username"], current_password) is None:
                 return jsonify({"ok": False, "error": "current password is incorrect"}), 403
             try:
-                self.users.change_credentials(user["username"], new_username, new_password)
+                updated = self.users.update_credentials(
+                    user["user_id"],
+                    new_username=new_username,
+                    new_password=new_password,
+                    email=email,
+                )
             except ValueError as e:
                 return jsonify({"ok": False, "error": str(e)}), 400
-            session["username"] = new_username
-            session["must_change_credentials"] = self._default_admin_credentials(
-                {"username": new_username, "role": user["role"]}, new_password
+            session["username"] = updated["username"]
+            session["must_change_credentials"] = self._default_admin_credentials_in_use(
+                updated["username"]
             )
             return jsonify(
                 {
                     "ok": True,
-                    "username": new_username,
+                    "username": updated["username"],
+                    "user": updated,
                     "must_change_credentials": session["must_change_credentials"],
                 }
             )
@@ -1022,35 +1293,39 @@ class ServerWebApp:
         @app.get("/api/users")
         @admin_required
         def api_users():
-            return jsonify({"users": self.users.list()})
+            """List every account of this server."""
+            return jsonify({"users": self.users.list_users()})
 
         @app.post("/api/users")
         @admin_required
         def api_add_user():
+            """Create an account without the email registration flow."""
             data = request.get_json(silent=True) or {}
             try:
-                self.users.add(
+                self.users.add_user(
                     str(data.get("username") or "").strip(),
+                    str(data.get("email") or "").strip(),
                     str(data.get("password") or ""),
                     data.get("role"),
                 )
             except ValueError as e:
                 return jsonify({"ok": False, "error": str(e)}), 400
-            return jsonify({"ok": True, "users": self.users.list()})
+            return jsonify({"ok": True, "users": self.users.list_users()})
 
         @app.post("/api/users/delete")
         @admin_required
         def api_delete_user():
+            """Delete one account, keeping the last administrator."""
             user = self._current_user()
             data = request.get_json(silent=True) or {}
             username = str(data.get("username") or "").strip()
             if username == user["username"]:
                 return jsonify({"ok": False, "error": "you cannot remove your own account"}), 400
             try:
-                self.users.remove(username)
+                self.users.remove_user(username)
             except ValueError as e:
                 return jsonify({"ok": False, "error": str(e)}), 400
-            return jsonify({"ok": True, "users": self.users.list()})
+            return jsonify({"ok": True, "users": self.users.list_users()})
 
     # ------------------------------------------------------------------- run
 

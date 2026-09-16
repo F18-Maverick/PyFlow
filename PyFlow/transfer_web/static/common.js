@@ -113,7 +113,7 @@
 
     let shown = 0;
     state.clients.forEach((c) => {
-      // a client never lists itself; the server is never in the client list
+      // a client never lists itself; the client list holds only contacts
       if (MODE === "client" && isSelf(c)) return;
       shown++;
       const el = document.createElement("div");
@@ -124,10 +124,14 @@
         state.target[0] === c.ip &&
         state.target[1] === c.port;
       el.className = "instance" + (active ? " active" : "");
+      // Server-side accounts (web clients) carry a name; a bare instance does not.
+      const name = c.username ? c.username : key;
+      const tag = c.user_id ? c.user_id : "client";
       el.innerHTML =
         '<span class="dot client"></span>' +
-        '<span class="name">' + esc(key) + "</span>" +
-        '<span class="tag">client</span>';
+        '<span class="name">' + esc(name) + "</span>" +
+        '<span class="tag">' + esc(tag) + "</span>";
+      el.title = key + (c.email ? " · " + c.email : "");
       el.addEventListener("click", () => selectTarget([c.ip, c.port]));
       list.appendChild(el);
     });
@@ -135,7 +139,8 @@
       const empty = document.createElement("div");
       empty.className = "empty-hint";
       empty.style.padding = "16px 8px";
-      empty.textContent = "No clients connected";
+      empty.textContent =
+        MODE === "client" ? "No contact is connected" : "No clients connected";
       list.appendChild(empty);
     }
   }

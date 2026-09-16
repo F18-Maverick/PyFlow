@@ -124,18 +124,32 @@ uv run python PyFlow/transfer_web/setup_client.py
 ```
 
 Visitors of the server's web address get a white landing page (the
-addresses clients should connect to) with a **Login** button; the
-startup-configuration page, the status page and the web APIs behind them
-need a session. Accounts live in
-`PyFlow/transfer_web/.Flow_Web/users.json` (PBKDF2-SHA256 password
-records). The first run seeds the administrator `admin` / `admin`; while
-that exact pair is still in use, a login pops up a prominent warning to
-change the username and password **before** the server is exposed to a
-public network, or anyone who can reach it can administer it. Administrators
-manage users (`Users` in the sidebar) and are the only ones who can change
-the startup configuration or load/extend extension protocols; regular users
-get the status page with message/file/folder sending. `/api/server_info`
-stays public, as web clients query it before they connect.
+addresses clients should connect to) with **Login**, **Register** and
+**Change password** buttons; the startup-configuration page, the status
+page and the web APIs behind them need a session. Accounts live in the
+SQLite database `PyFlow/transfer_web/.Flow_Web/flow_web.db`: username,
+email, a PBKDF2-SHA256 password record and a unique 8-character user ID
+that other users search by. The first run seeds the administrator
+`admin` / `admin` (a legacy `users.json` is imported once and renamed);
+while that exact pair is still in use, a login pops up a prominent
+warning to change the username and password **before** the server is
+exposed to a public network, or anyone who can reach it can administer
+it. Administrators manage users (`Users` in the sidebar, which lists the
+user IDs) and are the only ones who can change the startup configuration
+or load/extend extension protocols; regular users get the status page
+with message/file/folder sending. `/api/server_info` stays public, as web
+clients query it before they connect.
+
+Registration, password change and code-based client login are verified by
+email: an administrator fills in the outgoing mailbox (host, port,
+account, authorization code, sender and encryption) in the
+startup-configuration page, the settings are checked against the real
+SMTP server before they are stored in
+`PyFlow/transfer_web/.Flow_Web/email_config.json`, and only then is the
+verification mail service started. Codes are valid for 5 minutes, one
+code may be requested per minute, and the send button counts the minute
+down. Without a working mailbox nobody can register or reset a password;
+the seeded administrator can still log in and configure one.
 
 On first run the server launcher opens the startup-configuration page
 showing every `TCP_Server_Base` parameter with its default; the saved
@@ -144,10 +158,18 @@ shape as `setup.json`). Once the TCP server is up, the server's web
 backend serves a status page and a client-facing API
 (`/api/server_info` returns the TCP address/port). The client launcher
 asks for the server address (an `http`/`https` domain or a bare IP) and
-connects through the server's web backend. Both pages show a sidebar of
-connected instances and message/file/folder sending (client-to-client
-sends are forwarded through the server); extension protocols are loaded by
-the client page and by administrators on the server page.
+connects through the server's web backend; it then asks the account to log
+in (username/email plus a password or a mailed code) and stores the
+credentials in `PyFlow/transfer_web/.Flow_Web/client_login.json`, so every
+reload logs the client in again until **Log out** deletes that file.
+Both pages show a sidebar of connected instances and message/file/folder
+sending (client-to-client sends are forwarded through the server); a web
+client sees only the accounts it is a contact of. Contacts are added with
+the **Contacts** button (search by user ID, username or email); the other
+side answers the request in its **Requests** list, and only after both
+accounts accepted each other does the contact appear in the sidebar.
+Extension protocols are loaded by the client page and by administrators on
+the server page.
 
 ### `setup.json`
 

@@ -11,7 +11,7 @@
 (function () {
   "use strict";
 
-  const state = { role: "user", username: "", mustChange: false };
+  const state = { role: "user", username: "", user_id: "", email: "", mustChange: false };
   const MIN_PASSWORD_LENGTH = 8;
 
   function esc(s) {
@@ -78,6 +78,10 @@
         '<input type="text" id="acc-username" value="' +
         escAttr(state.username) +
         '" autocomplete="username"></div>' +
+        '<div class="field"><label for="acc-email">Email (used for verification codes)</label>' +
+        '<input type="email" id="acc-email" value="' +
+        escAttr(state.email) +
+        '" autocomplete="email"></div>' +
         '<div class="field"><label for="acc-password">New password (at least ' +
         MIN_PASSWORD_LENGTH +
         " characters)</label>" +
@@ -97,6 +101,7 @@
     backdrop.querySelector("#acc-save").addEventListener("click", async () => {
       const current = backdrop.querySelector("#acc-current").value;
       const username = backdrop.querySelector("#acc-username").value.trim();
+      const email = backdrop.querySelector("#acc-email").value.trim();
       const password = backdrop.querySelector("#acc-password").value;
       const confirm = backdrop.querySelector("#acc-confirm").value;
       if (!current) return fail("Enter your current password.");
@@ -109,7 +114,7 @@
         await api("/api/account", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ current_password: current, username, password }),
+          body: JSON.stringify({ current_password: current, username, password, email }),
         });
         closeModal(backdrop);
         toast("Credentials updated", "ok");
@@ -126,8 +131,10 @@
     const backdrop = openModal(
       "<h2>Users</h2>" +
         '<div class="user-list" id="users-list"></div>' +
-        '<div class="field"><label for="user-username">New username</label>' +
+        '<div class="field"><label for="user-username">Username</label>' +
         '<input type="text" id="user-username" autocomplete="off"></div>' +
+        '<div class="field"><label for="user-email">Email (used for verification codes)</label>' +
+        '<input type="email" id="user-email" autocomplete="off"></div>' +
         '<div class="field"><label for="user-password">Password (at least ' +
         MIN_PASSWORD_LENGTH +
         " characters)</label>" +
@@ -155,7 +162,11 @@
           '<span class="name">' +
           esc(u.username) +
           (u.username === state.username ? " (you)" : "") +
-          '</span><span class="role">' +
+          '<span class="meta">' +
+          esc(u.email || "no email") +
+          " &middot; ID " +
+          esc(u.user_id) +
+          '</span></span><span class="role">' +
           esc(u.role) +
           "</span>";
         if (u.username !== state.username) {
@@ -195,9 +206,11 @@
     backdrop.querySelector("#users-close-btn").addEventListener("click", () => closeModal(backdrop));
     backdrop.querySelector("#user-add-btn").addEventListener("click", async () => {
       const username = backdrop.querySelector("#user-username").value.trim();
+      const email = backdrop.querySelector("#user-email").value.trim();
       const password = backdrop.querySelector("#user-password").value;
       const role = backdrop.querySelector("#user-role").value;
       if (!username) return fail("Enter a username.");
+      if (!email) return fail("Enter the email address of the account.");
       if (password.length < MIN_PASSWORD_LENGTH) {
         return fail("The password must be at least " + MIN_PASSWORD_LENGTH + " characters.");
       }
@@ -205,11 +218,12 @@
         const data = await api("/api/users", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ username, password, role }),
+          body: JSON.stringify({ username, email, password, role }),
         });
         status.className = "status-line";
         status.textContent = "";
         backdrop.querySelector("#user-username").value = "";
+        backdrop.querySelector("#user-email").value = "";
         backdrop.querySelector("#user-password").value = "";
         render(data.users || []);
         toast("User added", "ok");
