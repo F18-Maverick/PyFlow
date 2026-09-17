@@ -6,7 +6,10 @@ minutes and may not be requested twice a minute, contacts that are mutual, and
 client session tokens that stop working once dropped.
 """
 
+import contextlib
 import json
+import os
+import re
 import sqlite3
 import time
 
@@ -30,9 +33,15 @@ def store(tmp_path):
     db.close()
 
 
+@contextlib.contextmanager
 def _raw(db):
     """Open the underlying database for white-box manipulation of timestamps."""
-    return sqlite3.connect(db.path)
+    connection = sqlite3.connect(db.path)
+    try:
+        yield connection
+        connection.commit()
+    finally:
+        connection.close()
 
 
 def age_codes(db, seconds):
@@ -49,7 +58,7 @@ def test_new_store_seeds_the_default_admin(tmp_path):
     db = UserDatabase(str(tmp_path / "flow_web.db"))
     admin = db.find("admin")
     assert admin["role"] == "admin"
-    assert admin["user_id"] and admin["user_id"].isupper()
+    assert re.fullmatch(r"[0-9A-F]{8}", admin["user_id"])  # ids may be all digits
     assert db.authenticate("admin", "admin")["user_id"] == admin["user_id"]
     db.close()
 
@@ -310,6 +319,7 @@ def test_validate_email_and_mask_email():
     assert mask_email(None) == ""
 
 
+@pytest.mark.skipif(os.name != "posix", reason="file modes are a POSIX concept")
 def test_database_file_is_not_world_readable(tmp_path):
     db = UserDatabase(str(tmp_path / "flow_web.db"))
     mode = (tmp_path / "flow_web.db").stat().st_mode

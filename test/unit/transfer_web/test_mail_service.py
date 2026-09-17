@@ -7,6 +7,7 @@ configuration never sends, and the delivered message carries the code.
 """
 
 import json
+import os
 import smtplib
 import stat
 
@@ -105,7 +106,7 @@ def test_configure_validates_stores_and_enables_sending(service, tmp_path, monke
 
     written = json.loads((tmp_path / "email_config.json").read_text(encoding="utf-8"))
     assert written == stored
-    if stat and hasattr(stat, "S_IMODE"):
+    if os.name == "posix":
         assert stat.S_IMODE((tmp_path / "email_config.json").stat().st_mode) == 0o600
 
 

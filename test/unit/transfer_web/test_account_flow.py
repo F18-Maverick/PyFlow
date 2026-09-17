@@ -50,7 +50,8 @@ def web(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(app.mail, "send_code", record)
-    return app
+    yield app
+    app.users.close()
 
 
 @pytest.fixture
@@ -185,6 +186,7 @@ def test_registration_needs_a_mailbox_that_works(tmp_path, monkeypatch):
     resp = app.app.test_client().post("/api/register/send_code", json={"email": "a@example.com"})
     assert resp.status_code == 400
     assert "not configured" in resp.get_json()["error"]
+    app.users.close()
 
 
 def test_password_reset_verifies_the_code_before_storing_the_new_password(client, web):

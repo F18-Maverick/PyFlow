@@ -582,7 +582,10 @@ class ClientWebApp:
         os.makedirs(FLOW_WEB_DIR, exist_ok=True)
         with open(CLIENT_LOGIN_FILE, "w", encoding="utf-8") as f:
             json.dump(payload, f, indent=4, ensure_ascii=False)
-        os.chmod(CLIENT_LOGIN_FILE, 0o600)
+        try:
+            os.chmod(CLIENT_LOGIN_FILE, 0o600)
+        except OSError:
+            pass  # best effort: file modes are not portable
 
     def _load_login_file(self):
         """Return the saved login credentials, or ``None`` when absent."""

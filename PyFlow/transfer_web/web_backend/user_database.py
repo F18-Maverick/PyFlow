@@ -294,7 +294,7 @@ class UserDatabase:
                 self._seed_default_admin()
         except sqlite3.Error as e:
             traceback.print_exc()
-            self._conn = None
+            self._close_connection()
             self._error = f"the account database {self.path} cannot be read: {e}"
         try:
             os.chmod(self.path, 0o600)
@@ -1006,9 +1006,16 @@ class UserDatabase:
         """
         self._execute("DELETE FROM client_tokens WHERE token = ?", ((token or "").strip(),))
 
-    def close(self):
-        """Close the database connection."""
+    def _close_connection(self):
+        """Close and forget the database connection, if one is open."""
         with self._lock:
             if self._conn is not None:
-                self._conn.close()
+                try:
+                    self._conn.close()
+                except sqlite3.Error:
+                    traceback.print_exc()
                 self._conn = None
+
+    def close(self):
+        """Close the database connection."""
+        self._close_connection()

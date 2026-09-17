@@ -85,7 +85,8 @@ def server(tmp_path, monkeypatch):
         app.sent.append({"to": to_address, "code": code, "purpose": purpose})
 
     monkeypatch.setattr(app.mail, "send_code", record_code)
-    return app
+    yield app
+    app.users.close()
 
 
 @pytest.fixture

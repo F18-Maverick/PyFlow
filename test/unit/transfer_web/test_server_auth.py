@@ -7,6 +7,7 @@ configuration need an administrator), and the seeded ``admin``/``admin``
 account is hashed and flagged until its credentials are changed.
 """
 
+import contextlib
 import os
 import sqlite3
 import stat
@@ -30,7 +31,8 @@ def web(tmp_path, monkeypatch):
         mail_config_path=str(tmp_path / "email_config.json"),
     )
     app.app.config.update(TESTING=True)
-    return app
+    yield app
+    app.users.close()
 
 
 @pytest.fixture
@@ -104,7 +106,7 @@ def test_registration_stays_public_for_new_accounts(client):
 
 
 def test_default_admin_is_seeded_with_a_hashed_password(web, tmp_path):
-    with sqlite3.connect(tmp_path / "flow_web.db") as conn:
+    with contextlib.closing(sqlite3.connect(tmp_path / "flow_web.db")) as conn:
         rows = conn.execute("SELECT username, role, password FROM users").fetchall()
     admin = next(row for row in rows if row[0] == "admin")
     assert admin[1] == "admin"
@@ -241,3 +243,4 @@ def test_corrupt_store_does_not_restore_the_default_account(tmp_path):
     store = UserDatabase(str(tmp_path / "flow_web.db"))
     with pytest.raises(ValueError):
         store.authenticate("admin", "admin")  # a damaged store never re-seeds
+    store.close()  # the failed open released its connection already
