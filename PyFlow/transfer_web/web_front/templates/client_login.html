@@ -10,7 +10,7 @@
   <div class="center-wrap">
     <div class="card">
       <h1>Sign in to your account</h1>
-      <p class="subtitle">Connected to <code>{{ server_address }}</code>. Enter a user name or email address and either the account password or a verification code mailed to the account email.</p>
+      <p class="subtitle">Connected to <code>{{ server_address }}</code>. Enter a user name or email address, the account password <em>and</em> a verification code mailed to the account email.</p>
       <form id="login-form">
         <div class="field">
           <label for="identify">Username or email</label>
@@ -21,7 +21,7 @@
           <input type="password" id="password" autocomplete="current-password">
         </div>
         <div class="field">
-          <label for="code">Verification code (only one of the two is required)</label>
+          <label for="code">Verification code (mailed to the account email)</label>
           <input type="text" id="code" placeholder="code mailed to the account email" autocomplete="one-time-code">
           <div class="actions">
             <button type="button" class="btn btn-ghost" id="send-code-btn">Send code</button>
@@ -100,8 +100,12 @@
         fail("Enter your user name or email address.");
         return;
       }
-      if (!password && !code) {
-        fail("Enter the account password or the code mailed to your email.");
+      if (!password) {
+        fail("Enter the account password.");
+        return;
+      }
+      if (!code) {
+        fail("Enter the verification code mailed to your email address.");
         return;
       }
       loginBtn.disabled = true;

@@ -159,9 +159,10 @@ backend serves a status page and a client-facing API
 (`/api/server_info` returns the TCP address/port). The client launcher
 asks for the server address (an `http`/`https` domain or a bare IP) and
 connects through the server's web backend; it then asks the account to log
-in (username/email plus a password or a mailed code) and stores the
-credentials in `PyFlow/transfer_web/.Flow_Web/client_login.json`, so every
-reload logs the client in again until **Log out** deletes that file.
+in (username/email, the account password and a verification code mailed to
+the account address — both factors are required) and stores the password and
+the session token in `PyFlow/transfer_web/.Flow_Web/client_login.json`, so
+every reload logs the client in again until **Log out** deletes that file.
 Both pages show a sidebar of connected instances and message/file/folder
 sending (client-to-client sends are forwarded through the server); a web
 client sees only the accounts it is a contact of. Contacts are added with

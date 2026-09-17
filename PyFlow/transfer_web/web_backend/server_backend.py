@@ -32,8 +32,11 @@ code-based client logins are delivered by the mailbox configured from the
 startup-configuration page (see `mail_service`).
 
 Client accounts: the client web frontend logs in through ``/api/client_login``
-with a username/email plus a password or a mailed code, and receives a session
-token.  The token binds the TCP connection the client opens (``/web_bind``) to
+with a username/email, the account password *and* a mailed verification code —
+both factors are required — and receives a session token.  Re-entering the
+client web UI replays the saved credentials and token through
+``/api/client_verify``, which only accepts them while they still open that
+account.  The token binds the TCP connection the client opens (``/web_bind``) to
 that account, and the instance list pushed to a client is limited to its
 contacts, so accounts that never exchanged a contact request cannot see each
 other.
@@ -1089,38 +1092,68 @@ class ServerWebApp:
 
         @app.post("/api/client_login")
         def api_client_login():
-            """Log a web client in with a password or a mailed verification code."""
+            """Log a web client in against its password and a mailed verification code."""
             data = request.get_json(silent=True) or {}
             identify = str(data.get("identify") or "").strip()
             password = str(data.get("password") or "")
             code = str(data.get("code") or "").strip()
             if not identify:
                 return jsonify({"ok": False, "error": "enter your user name or email"}), 400
-            if password:
-                user = self.users.authenticate(identify, password)
-                if user is None:
-                    return jsonify({"ok": False, "error": "invalid account or password"}), 401
-            elif code:
-                try:
-                    account, email = self._account_with_email(identify)
-                    self.users.verify_code("login", email, code)
-                except ValueError as e:
-                    return jsonify({"ok": False, "error": str(e)}), 401
-                user = account
-            else:
-                return jsonify({"ok": False, "error": "enter a password or a code"}), 400
+            if not password or not code:
+                return (
+                    jsonify(
+                        {
+                            "ok": False,
+                            "error": "enter the account password and the mailed verification code",
+                        }
+                    ),
+                    400,
+                )
+            user = self.users.authenticate(identify, password)
+            if user is None:
+                return jsonify({"ok": False, "error": "invalid account or password"}), 401
             try:
-                token = self.users.create_session(user["user_id"])
+                _, email = self._account_with_email(identify)
+                self.users.verify_code("login", email, code)
             except ValueError as e:
-                return jsonify({"ok": False, "error": str(e)}), 400
+                return jsonify({"ok": False, "error": str(e)}), 401
+            token = self.users.create_session(user["user_id"])
             return jsonify({"ok": True, "token": token, "user": user})
 
         @app.post("/api/client_verify")
         def api_client_verify():
-            """Report whether a stored client session token is still valid."""
+            """Check a stored client session, optionally against its saved credentials.
+
+            A client that logs itself in again from
+            ``.Flow_Web/client_login.json`` sends the saved account and password
+            along with the token; the token alone only proves the session is
+            known, while the credentials prove they still open that account.
+            """
+            data = request.get_json(silent=True) or {}
             user = self._session_user()
             if user is None:
                 return jsonify({"ok": False, "error": "login required"}), 401
+            identify = str(data.get("identify") or "").strip()
+            password = str(data.get("password") or "")
+            if bool(identify) != bool(password):
+                return (
+                    jsonify(
+                        {"ok": False, "error": "send the saved account and its password together"}
+                    ),
+                    400,
+                )
+            if identify:
+                account = self.users.authenticate(identify, password)
+                if account is None or account["user_id"] != user["user_id"]:
+                    return (
+                        jsonify(
+                            {
+                                "ok": False,
+                                "error": "the saved credentials no longer open this account",
+                            }
+                        ),
+                        401,
+                    )
             return jsonify({"ok": True, "user": user})
 
         @app.post("/api/client_logout")

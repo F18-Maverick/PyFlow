@@ -156,7 +156,12 @@ def client(web):
     return web.app.test_client()
 
 
-def login(client, identify="alice", password="alices-password", code=""):
+def login(client, server, identify="alice", password="alices-password", code=None):
+    """Log the web client in with both factors, mailing a fresh code first."""
+    if code is None:
+        sent = client.post("/api/login/send_code", json={"identify": identify})
+        assert sent.status_code == 200, sent.get_json()
+        code = [c for c in server.sent if c["purpose"] == "login"][-1]["code"]
     return client.post(
         "/api/login", json={"identify": identify, "password": password, "code": code}
     )
@@ -186,18 +191,19 @@ def test_disconnected_client_gets_the_connect_page(web, client):
     assert names == ["client_connect.html"]
 
 
-def test_login_with_a_password_saves_the_credentials_file(web, client, account, tmp_path):
-    resp = login(client)
+def test_forced_login_saves_the_password_and_the_session_token(
+    web, client, server, account, tmp_path
+):
+    resp = login(client, server)
     assert resp.status_code == 200, resp.get_json()
     assert resp.get_json()["user"]["user_id"] == account["user_id"]
 
     saved = json.loads((tmp_path / "client_login.json").read_text(encoding="utf-8"))
-    assert saved == {
-        "server": "http://server.test",
-        "identify": "alice",
-        "password": "alices-password",
-        "token": "",
-    }
+    assert saved["server"] == "http://server.test"
+    assert saved["identify"] == "alice"
+    assert saved["password"] == "alices-password"
+    assert saved["token"] == web.session["token"]
+    assert saved["token"]
     if os.name == "posix":
         assert stat.S_IMODE(os.stat(tmp_path / "client_login.json").st_mode) == 0o600
 
@@ -212,34 +218,48 @@ def test_login_with_a_password_saves_the_credentials_file(web, client, account, 
     assert web.client.sent and wait_for_bind(web)
 
 
-def test_login_with_a_mailed_code_saves_the_token_instead_of_a_password(
-    web, client, server, account, tmp_path
-):
-    sent = client.post("/api/login/send_code", json={"identify": "alice@example.com"})
-    assert sent.status_code == 200
-    assert server.sent[-1]["purpose"] == "login"
-    code = server.sent[-1]["code"]
-    resp = login(client, identify="alice@example.com", password="", code=code)
+def test_forced_login_needs_the_password_and_a_mailed_code(web, client, server, account):
+    assert client.post("/api/login/send_code", json={"identify": "alice"}).status_code == 200
+    code = [c for c in server.sent if c["purpose"] == "login"][-1]["code"]
 
-    assert resp.status_code == 200, resp.get_json()
+    only_password = login(client, server, password="alices-password", code="")
+    assert only_password.status_code == 400
+    assert "password and the mailed verification code" in only_password.get_json()["error"]
 
-    saved = json.loads((tmp_path / "client_login.json").read_text(encoding="utf-8"))
-    assert saved["identify"] == "alice@example.com"
-    assert saved["password"] == ""  # no password was used, so a token is stored
-    assert saved["token"] == web.session["token"]
-    assert web.session["token"]
+    only_code = login(client, server, password="", code=code)
+    assert only_code.status_code == 400
+    assert "password and the mailed verification code" in only_code.get_json()["error"]
+
+    assert web.session is None  # neither attempt opened a session
+    assert login(client, server, code=code).status_code == 200
 
 
-def test_login_reports_incomplete_and_wrong_credentials(client):
-    assert login(client, password="").status_code == 400
-    assert login(client, identify="", password="x").status_code == 400
-    resp = login(client, password="wrong-password")
-    assert resp.status_code == 401
-    assert "invalid" in resp.get_json()["error"]
+def test_forced_login_reports_a_wrong_password_or_code(web, client, server, account):
+    assert client.post("/api/login/send_code", json={"identify": "alice"}).status_code == 200
+    code = [c for c in server.sent if c["purpose"] == "login"][-1]["code"]
+
+    wrong_password = login(client, server, password="not-the-password", code=code)
+    assert wrong_password.status_code == 401
+    assert "invalid" in wrong_password.get_json()["error"]
+
+    bogus = "000000" if code != "000000" else "111111"
+    wrong_code = login(client, server, password="alices-password", code=bogus)
+    assert wrong_code.status_code == 401
+    assert "incorrect" in wrong_code.get_json()["error"]
+
+    assert login(client, server, password="alices-password", code=code).status_code == 200
 
 
-def test_a_later_page_load_logs_in_again_from_the_saved_file(web, client, account):
-    assert login(client).status_code == 200
+def test_forced_login_needs_an_account(client):
+    missing = client.post("/api/login", json={"identify": "", "password": "x", "code": "1"})
+    assert missing.status_code == 400
+    assert client.post(
+        "/api/login", json={"identify": "alice", "password": "x", "code": "1"}
+    ).status_code == 401  # unknown account, refused by the server
+
+
+def test_a_later_page_load_logs_in_again_from_the_saved_file(web, client, server, account):
+    assert login(client, server).status_code == 200
     web.session = None  # as after the client backend is restarted
 
     with rendered_templates(web.app) as names:
@@ -261,10 +281,21 @@ def test_saved_credentials_of_another_server_are_ignored(web, client, tmp_path, 
     assert web.session is None
 
 
-def test_rejected_saved_credentials_are_explained_on_the_login_page(web, client, tmp_path, account):
+def test_rejected_saved_credentials_are_explained_on_the_login_page(
+    web, client, server, tmp_path, account
+):
+    assert login(client, server).status_code == 200
+    token = web.session["token"]
+    web.session = None
+    # the session token is still known, the saved password is not
     (tmp_path / "client_login.json").write_text(
         json.dumps(
-            {"server": "http://server.test", "identify": "alice", "password": "stale-password"}
+            {
+                "server": "http://server.test",
+                "identify": "alice",
+                "password": "stale-password",
+                "token": token,
+            }
         ),
         encoding="utf-8",
     )
@@ -275,8 +306,22 @@ def test_rejected_saved_credentials_are_explained_on_the_login_page(web, client,
     assert web.session is None
 
 
-def test_the_session_token_is_bound_to_the_tcp_connection(web, client, account):
-    assert login(client).status_code == 200
+def test_a_saved_login_without_a_token_or_password_needs_a_fresh_login(
+    web, client, server, tmp_path, account
+):
+    (tmp_path / "client_login.json").write_text(
+        json.dumps(
+            {"server": "http://server.test", "identify": "alice", "password": "alices-password"}
+        ),
+        encoding="utf-8",
+    )
+    body = client.get("/").get_data(as_text=True)
+    assert "the saved login is incomplete" in body
+    assert web.session is None
+
+
+def test_the_session_token_is_bound_to_the_tcp_connection(web, client, server, account):
+    assert login(client, server).status_code == 200
     assert wait_for_bind(web)
     assert web.client.sent[0] == f"/web_bind {web.session['token']}"
 
@@ -287,7 +332,7 @@ def test_the_session_token_is_bound_to_the_tcp_connection(web, client, account):
 def test_logout_deletes_the_file_and_ends_the_server_session(
     web, client, server, tmp_path, account
 ):
-    assert login(client).status_code == 200
+    assert login(client, server).status_code == 200
     token = web.session["token"]
 
     assert client.post("/api/logout").get_json()["ok"] is True
@@ -297,12 +342,14 @@ def test_logout_deletes_the_file_and_ends_the_server_session(
     assert verify.status_code == 401
 
 
-def test_contact_proxies_need_a_session_and_pass_the_token_through(web, client, account):
+def test_contact_proxies_need_a_session_and_pass_the_token_through(
+    web, client, server, account
+):
     assert client.post("/api/contacts/search", json={"query": "alice"}).status_code == 401
     assert client.get("/api/contact_requests").status_code == 401
 
     second = account
-    assert login(client, identify="alice", password="alices-password").status_code == 200
+    assert login(client, server, identify="alice", password="alices-password").status_code == 200
     token = web.session["token"]
 
     # alice finds herself nowhere and cannot add her own account
@@ -319,7 +366,7 @@ def test_contact_proxies_need_a_session_and_pass_the_token_through(web, client, 
 
 def test_contacts_can_be_added_answered_and_become_mutual(web, client, server, account):
     bob = _register(server, "bob", "bob@example.com")
-    assert login(client, "alice", "alices-password").status_code == 200
+    assert login(client, server, "alice", "alices-password").status_code == 200
 
     results = client.post("/api/contacts/search", json={"query": bob["user_id"]})
     found = results.get_json()["results"]
@@ -329,10 +376,7 @@ def test_contacts_can_be_added_answered_and_become_mutual(web, client, server, a
         "relation"
     ] == "outgoing"
 
-    bob_client = server.app.test_client()
-    bob_token = bob_client.post(
-        "/api/client_login", json={"identify": "bob", "password": "bobs-password"}
-    ).get_json()["token"]
+    bob_client, bob_token = server_login(server, "bob", "bobs-password")
     pending = bob_client.get(f"/api/contact_requests?token={bob_token}").get_json()["incoming"]
     assert [entry["user"]["username"] for entry in pending] == ["alice"]
     assert bob_client.post(
@@ -348,8 +392,10 @@ def test_contacts_can_be_added_answered_and_become_mutual(web, client, server, a
     ] == "contact"
 
 
-def test_a_server_401_drops_the_session_but_keeps_the_credentials(web, client, account, tmp_path):
-    assert login(client).status_code == 200
+def test_a_server_401_drops_the_session_but_keeps_the_credentials(
+    web, client, server, account, tmp_path
+):
+    assert login(client, server).status_code == 200
     web.session["token"] = "revoked-token"  # the server no longer knows this session
 
     resp = client.get("/api/contact_requests")
@@ -357,6 +403,19 @@ def test_a_server_401_drops_the_session_but_keeps_the_credentials(web, client, a
     assert "login required" in resp.get_json()["error"]
     assert web.session is None
     assert (tmp_path / "client_login.json").exists()  # the saved credentials survive
+
+
+def server_login(server, identify, password):
+    """Run the two-factor client login straight against the server backend."""
+    client = server.app.test_client()
+    assert client.post("/api/login/send_code", json={"identify": identify}).status_code == 200
+    code = [c for c in server.sent if c["purpose"] == "login"][-1]["code"]
+    resp = client.post(
+        "/api/client_login",
+        json={"identify": identify, "password": password, "code": code},
+    )
+    assert resp.status_code == 200, resp.get_json()
+    return client, resp.get_json()["token"]
 
 
 def _register(server, username, email):

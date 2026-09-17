@@ -87,6 +87,16 @@ def client_login(client, identify, password=None, code=None):
     )
 
 
+def login_token(client, web, identify, password):
+    """Run the full two-factor client login and return the session token."""
+    assert client.post("/api/login/send_code", json={"identify": identify}).status_code == 200
+    account = web.users.find(identify)
+    code = code_for(web, "login", account["email"])
+    data = client_login(client, identify, password=password, code=code).get_json()
+    assert data["ok"], data
+    return data["token"]
+
+
 def bind(web, address, token):
     """Attach a fake TCP connection to the account owning ``token``."""
     socket = object()
@@ -99,19 +109,14 @@ def bind(web, address, token):
     return socket
 
 
-def token_of(client, identify, password=None, code=None):
-    data = client_login(client, identify, password=password, code=code).get_json()
-    assert data["ok"], data
-    return data["token"]
-
-
 def test_the_public_server_info_and_status_survive_a_running_tcp_server(client, web):
     assert client.get("/api/server_info").get_json() == {
         "host": "127.0.0.1",
         "port": 65432,
         "is_enable_encrypto": False,
     }
-    assert client.post("/api/login", json={"identify": "admin", "password": "admin"}).status_code == 200
+    login = client.post("/api/login", json={"identify": "admin", "password": "admin"})
+    assert login.status_code == 200
     status = client.get("/api/status").get_json()
     assert status["running"] is True
     assert status["server_info"]["port"] == 65432
@@ -224,13 +229,16 @@ def test_password_reset_rejects_unknown_accounts_and_accounts_without_email(clie
     assert "no email address" in resp.get_json()["error"]
 
 
-def test_client_login_with_a_password_and_a_token(client, web):
+def test_client_login_needs_the_password_and_a_mailed_code(client, web):
     user = register(client, web, "carol", "carol@example.com")
+    assert client.post("/api/login/send_code", json={"identify": "carol"}).status_code == 200
+    code = code_for(web, "login", "carol@example.com")
 
-    resp = client_login(client, "carol@example.com", password="carols-password")
-    assert resp.status_code == 200
+    resp = client_login(client, "carol@example.com", password="carols-password", code=code)
+    assert resp.status_code == 200, resp.get_json()
     data = resp.get_json()
     assert data["user"]["user_id"] == user["user_id"]
+    assert data["user"]["username"] == "carol"
     token = data["token"]
 
     assert client.post("/api/client_verify", json={"token": token}).get_json()["ok"] is True
@@ -239,26 +247,81 @@ def test_client_login_with_a_password_and_a_token(client, web):
     assert client.post("/api/client_verify", json={"token": token}).status_code == 401
 
 
-def test_client_login_with_a_mailed_code(client, web):
+def test_client_login_rejects_a_single_factor(client, web):
     register(client, web, "carol", "carol@example.com")
     assert client.post("/api/login/send_code", json={"identify": "carol"}).status_code == 200
     code = code_for(web, "login", "carol@example.com")
 
-    resp = client_login(client, "carol@example.com", code=code)
-    assert resp.status_code == 200
-    assert resp.get_json()["user"]["username"] == "carol"
+    only_code = client_login(client, "carol@example.com", code=code)
+    assert only_code.status_code == 400
+    assert "password and the mailed verification code" in only_code.get_json()["error"]
 
-    # the code was spent by the login
-    assert client_login(client, "carol@example.com", code=code).status_code == 401
+    only_password = client_login(client, "carol@example.com", password="carols-password")
+    assert only_password.status_code == 400
+    assert "password and the mailed verification code" in only_password.get_json()["error"]
+
+    # neither attempt spent the code, so the full pair still works afterwards
+    assert client_login(
+        client, "carol@example.com", password="carols-password", code=code
+    ).status_code == 200
 
 
-def test_client_login_rejects_incomplete_or_wrong_credentials(client, web):
+def test_client_login_rejects_a_wrong_password_or_code(client, web):
     register(client, web, "carol", "carol@example.com")
+    assert client.post("/api/login/send_code", json={"identify": "carol"}).status_code == 200
+    code = code_for(web, "login", "carol@example.com")
+
+    wrong_password = client_login(
+        client, "carol@example.com", password="not-the-password", code=code
+    )
+    assert wrong_password.status_code == 401
+    assert "invalid account or password" in wrong_password.get_json()["error"]
+
+    wrong_code = "000000" if code != "000000" else "111111"
+    assert client_login(
+        client, "carol@example.com", password="carols-password", code=wrong_code
+    ).status_code == 401
+
+    # the code is spent by the successful login only
+    assert client_login(
+        client, "carol@example.com", password="carols-password", code=code
+    ).status_code == 200
+    assert client_login(
+        client, "carol@example.com", password="carols-password", code=code
+    ).status_code == 401  # a code is single use
+
+
+def test_client_login_rejects_unknown_accounts(client, web):
     assert client_login(client, "carol").status_code == 400
-    assert client_login(client, "", password="carols-password").status_code == 400
-    assert client_login(client, "carol", password="wrong-password").status_code == 401
-    assert client_login(client, "nobody", code="123456").status_code == 401
+    assert client_login(client, "", password="carols-password", code="123456").status_code == 400
     assert client.post("/api/login/send_code", json={"identify": "nobody"}).status_code == 400
+
+
+def test_client_verify_checks_the_saved_credentials_against_the_token(client, web):
+    user = register(client, web, "carol", "carol@example.com")
+    assert client.post("/api/login/send_code", json={"identify": "carol"}).status_code == 200
+    code = code_for(web, "login", "carol@example.com")
+    token = client_login(
+        client, "carol", password="carols-password", code=code
+    ).get_json()["token"]
+
+    replay = {"token": token, "identify": "carol", "password": "carols-password"}
+    assert client.post("/api/client_verify", json=replay).get_json()["user"]["user_id"] == user[
+        "user_id"
+    ]
+
+    stale = dict(replay, password="an-old-password")
+    rejected = client.post("/api/client_verify", json=stale)
+    assert rejected.status_code == 401
+    assert "no longer open this account" in rejected.get_json()["error"]
+
+    half = {"token": token, "identify": "carol"}
+    assert client.post("/api/client_verify", json=half).status_code == 400
+
+    # credentials of another account never unlock this session
+    register(client, web, "dave", "dave@example.com")
+    other = dict(replay, identify="dave", password="daves-password")
+    assert client.post("/api/client_verify", json=other).status_code == 401
 
 
 def test_a_client_sees_no_instance_until_the_contact_is_accepted(web):
@@ -267,8 +330,8 @@ def test_a_client_sees_no_instance_until_the_contact_is_accepted(web):
     register(admin, web, "bob", "bob@example.com")
 
     alice_addr, bob_addr = ("127.0.0.1", 1111), ("127.0.0.1", 2222)
-    alice_token = token_of(admin, "alice", password="alices-password")
-    bob_token = token_of(admin, "bob", password="bobs-password")
+    alice_token = login_token(admin, web, "alice", "alices-password")
+    bob_token = login_token(admin, web, "bob", "bobs-password")
     bind(web, alice_addr, alice_token)
     bind(web, bob_addr, bob_token)
 
@@ -318,8 +381,8 @@ def test_unbound_or_logged_out_clients_see_nothing(web):
     alice = register(admin, web, "alice", "alice@example.com")
     bob = register(admin, web, "bob", "bob@example.com")
     alice_addr, bob_addr = ("127.0.0.1", 1111), ("127.0.0.1", 2222)
-    alice_token = token_of(admin, "alice", password="alices-password")
-    bob_token = token_of(admin, "bob", password="bobs-password")
+    alice_token = login_token(admin, web, "alice", "alices-password")
+    bob_token = login_token(admin, web, "bob", "bobs-password")
     bind(web, alice_addr, alice_token)
     bind(web, bob_addr, bob_token)
 
@@ -343,7 +406,7 @@ def test_unbound_or_logged_out_clients_see_nothing(web):
 def test_bind_acknowledges_the_address_and_pushes_the_list(web):
     admin = web.app.test_client()
     register(admin, web, "alice", "alice@example.com")
-    token = token_of(admin, "alice", password="alices-password")
+    token = login_token(admin, web, "alice", "alices-password")
     address = ("127.0.0.1", 4444)
     socket = bind(web, address, token)
 
@@ -372,7 +435,7 @@ def test_contacts_endpoints_require_a_valid_token(web):
     ).status_code == 401
 
     register(anonymous, web, "alice", "alice@example.com")
-    token = token_of(anonymous, "alice", password="alices-password")
+    token = login_token(anonymous, web, "alice", "alices-password")
     assert anonymous.post(
         "/api/contacts/search", json={"token": token, "query": "  "}
     ).status_code == 400
@@ -383,9 +446,9 @@ def test_contact_requests_are_answered_one_way_only(web):
     alice = register(admin, web, "alice", "alice@example.com")
     bob = register(admin, web, "bob", "bob@example.com")
     register(admin, web, "carol", "carol@example.com")
-    alice_token = token_of(admin, "alice", password="alices-password")
-    bob_token = token_of(admin, "bob", password="bobs-password")
-    carol_token = token_of(admin, "carol", password="carols-password")
+    alice_token = login_token(admin, web, "alice", "alices-password")
+    bob_token = login_token(admin, web, "bob", "bobs-password")
+    carol_token = login_token(admin, web, "carol", "carols-password")
 
     admin.post("/api/contacts/request", json={"token": alice_token, "user_id": bob["user_id"]})
     requests = admin.get(f"/api/contact_requests?token={bob_token}").get_json()

@@ -24,13 +24,16 @@ client's receive threads through ``TCP_Client_Base``'s
 polled by the frontend via ``/api/events``.
 
 Accounts: a connected client logs in with a server account before the
-instance list is usable.  ``/api/login`` opens the session, the
-``/api/contacts/*`` and ``/api/contact_requests`` routes proxy the
-contact management to the server, and the session token is sent over TCP
-with ``/web_bind`` so the server can push the contact list of that
-account.  The credentials are remembered in
-``.Flow_Web/client_login.json`` (owner-readable only) and replayed on the
-next start; the login window is shown whenever no session is open.
+instance list is usable.  A forced login needs both factors — the account
+password and a verification code mailed to the account address — while a
+client that starts again replays the saved credentials and session token
+through ``/api/client_verify``.  ``/api/login`` opens the session, the
+``/api/contacts/*`` and ``/api/contact_requests`` routes proxy the contact
+management to the server, and the session token is sent over TCP with
+``/web_bind`` so the server can push the contact list of that account.  The
+credentials are remembered in ``.Flow_Web/client_login.json``
+(owner-readable only) and the login window is shown whenever no session could
+be restored.
 """
 
 import json
@@ -562,13 +565,13 @@ class ClientWebApp:
             raise ValueError(result.get("error") or "the server refused the request")
         return result
 
-    def _save_login_file(self, identify, password=None, token=None):
+    def _save_login_file(self, identify, password, token):
         """Store the credentials used to log in to this server.
 
         Args:
             identify (str): Username or e-mail the user logged in with.
-            password (str | None): Password of the account, when one was used.
-            token (str | None): Session token, when a mailed code was used.
+            password (str): Password the user typed; the account password.
+            token (str): Session token the server issued for this login.
         """
         payload = {
             "server": self._server_base,
@@ -616,10 +619,13 @@ class ClientWebApp:
     def _login(self, identify, password, code):
         """Log in to an account of the connected server.
 
+        A forced login always needs both factors: the account password and a
+        verification code mailed to the account address.
+
         Args:
             identify (str): Username or e-mail of the account.
-            password (str): Password of the account, empty when a code is used.
-            code (str): Mailed verification code, empty when a password is used.
+            password (str): Password of the account.
+            code (str): Mailed verification code of the ``login`` purpose.
 
         Returns:
             dict: The logged-in account without its password.
@@ -640,15 +646,18 @@ class ClientWebApp:
         self._bind_ack = False
         self._bound_address = None
         self._login_error = ""
-        if password:
-            self._save_login_file(identify, password=password)
-        else:
-            self._save_login_file(identify, token=token)
+        self._save_login_file(identify, password, token)
         self._bind_account()
         return user
 
     def _auto_login(self):
-        """Restore the saved session of this server when the server accepts it."""
+        """Restore the saved session of this server when the server accepts it.
+
+        The saved password and session token are replayed together: the token
+        proves the session is known, the credentials prove they still open the
+        account. A file without both, or one the server refuses, leaves the
+        login window in charge.
+        """
         if self.session is not None or not self._server_base:
             return
         saved = self._load_login_file()
@@ -657,14 +666,12 @@ class ClientWebApp:
         self._saved_identify = str(saved.get("identify") or "")
         password = str(saved.get("password") or "")
         token = str(saved.get("token") or "")
-        if not password and not token:
-            self._login_error = "the saved login holds no password or session token"
+        if not (self._saved_identify and password and token):
+            self._login_error = "the saved login is incomplete, sign in again"
             return
+        payload = {"token": token, "identify": self._saved_identify, "password": password}
         try:
-            if password:
-                self._login(self._saved_identify, password, "")
-                return
-            result = self._server_request("/api/client_verify", {"token": token})
+            result = self._server_request("/api/client_verify", payload)
         except ValueError as e:
             self._login_error = f"saved credentials were rejected: {e}"
             return
@@ -881,15 +888,23 @@ class ClientWebApp:
 
         @app.post("/api/login")
         def api_login():
-            """Log the web client in to an account of the connected server."""
+            """Log the web client in with the account password and a mailed code."""
             data = request.get_json(force=True)
             identify = str(data.get("identify") or "").strip()
             password = str(data.get("password") or "")
             code = str(data.get("code") or "").strip()
             if not identify:
                 return jsonify({"ok": False, "error": "enter your user name or email"}), 400
-            if not password and not code:
-                return jsonify({"ok": False, "error": "enter a password or a code"}), 400
+            if not password or not code:
+                return (
+                    jsonify(
+                        {
+                            "ok": False,
+                            "error": "enter the account password and the mailed verification code",
+                        }
+                    ),
+                    400,
+                )
             try:
                 user = self._login(identify, password, code)
             except _ServerRequestError as e:
