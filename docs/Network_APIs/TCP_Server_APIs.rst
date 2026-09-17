@@ -27,7 +27,9 @@ clients.
             is_enable_encrypto: Any=True,
             is_custom_keys: Any=None,
             max_mem_buff: Any=2048,
-            is_asynic_clients_io: Any=False) -> None:
+            is_asynic_clients_io: Any=False,
+            is_debug: Any=False,
+            is_print_log: Any=True) -> None:
             ...
 
 The TCP Server Setup API is defined in the ``TCP_Server_Base`` class.
@@ -53,6 +55,11 @@ The parameters of the ``__init__`` method are as follows:
   asyncio coroutines on one event loop instead of one thread per client. It
   lifts the ``max_clients`` limit, so a single server can hold thousands of
   concurrent connections.
+- ``is_debug``: A flag selecting how much detail is logged. With ``False``
+  (the default) the server logs command content and execution results only;
+  with ``True`` it also logs the key steps of the execution process.
+- ``is_print_log``: A flag indicating whether the server logs at all. With
+  ``False`` it prints nothing, whatever ``is_debug`` says.
 
 All parameters have default values:
 
@@ -76,6 +83,10 @@ All parameters have default values:
 - ``is_asynic_clients_io``: Default is ``False``
   (when ``True``, every accepted connection is served by a coroutine on one
   asyncio event loop, and ``max_clients`` is ignored)
+- ``is_debug``: Default is ``False``
+  (``True`` adds the execution-process lines to the command/result lines)
+- ``is_print_log``: Default is ``True``
+  (``False`` silences every line the server would print)
 
 The TCP Server Setup API will initialize all the necessary 
 parameters and resources for the TCP server.
@@ -210,7 +221,8 @@ connection is accepted and is responsible for:
 - adding the client entry into ``self.clients`` with socket, address, id, and connected time
 - printing connection information and current client count
 - sending a welcome message to the client
-- broadcasting ``/client_alloc_port_range`` information to all clients depending on port allocation mode
+- sending the ``/client_alloc_port_range`` information to that client depending
+  on the port allocation mode
 
 *Note: You can specify the port allocation mode in 
 the arguments which have been defined in the 

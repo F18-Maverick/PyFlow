@@ -79,6 +79,18 @@ def _wait_writable(client_socket, timeout):
             raise TimeoutError(f"peer did not accept data within {timeout} seconds")
 
 
+def _log_line(enabled, parts):
+    """Print one command/result line when ``is_print_log`` allows it."""
+    if enabled:
+        print(*parts)
+
+
+def _debug_line(enabled, is_debug, parts):
+    """Print one execution-process line; needs ``is_print_log`` and ``is_debug``."""
+    if enabled and is_debug:
+        print(*parts)
+
+
 def _parse_destination_path(command_part):
     """Extract the trailing destination directory from a received transfer
     command, or None when the command carries no destination.
@@ -243,6 +255,8 @@ class TCP_Server_Base:  # TCP server class
         is_asynic_clients_io (bool): Whether clients are served by coroutines on
             an event loop instead of one thread per client.
         is_enable_encrypto (bool): Whether the RSA channel is negotiated.
+        is_debug (bool): Whether execution-process lines are logged as well.
+        is_print_log (bool): Whether the instance logs anything at all.
     """
 
     def __init__(
@@ -261,6 +275,8 @@ class TCP_Server_Base:  # TCP server class
         is_custom_keys=None,
         max_mem_buff=2048,
         is_asynic_clients_io=False,
+        is_debug=False,
+        is_print_log=True,
     ):
         """Create the server and, unless extended, start accepting clients.
 
@@ -292,6 +308,10 @@ class TCP_Server_Base:  # TCP server class
                 an event loop instead of one thread per client, so a single
                 server can hold thousands of concurrent connections. Defaults to
                 False.
+            is_debug (bool): Log execution-process lines in addition to command
+                and result lines. Defaults to False.
+            is_print_log (bool): Log at all; False silences every line this
+                instance would print. Defaults to True.
 
         Raises:
             OSError: If the ``.Flow`` directories or ``decode_command_table.json``
@@ -380,6 +400,8 @@ class TCP_Server_Base:  # TCP server class
         self.is_enable_encrypto = is_enable_encrypto
         self.is_custom_keys = is_custom_keys
         self.is_asynic_clients_io = is_asynic_clients_io
+        self.is_debug = is_debug
+        self.is_print_log = is_print_log
         self._async_loop = None  # event loop driving the client coroutines (asynic clients io only)
         self._async_wakeup = None  # future `stop` completes to release the async accept loop
         self._crypto_lock = threading.RLock()  # serialises the crypto collections below (no-GIL safe); held only around short ops, never across I/O
@@ -399,6 +421,27 @@ class TCP_Server_Base:  # TCP server class
             pass
         else:
             self.start_TCP_Server()
+
+    def _log(self, *parts):
+        """Print a command/result line, unless ``is_print_log`` is False.
+
+        Args:
+            *parts (Any): Values forwarded to ``print``.
+        """
+        _log_line(self.is_print_log, parts)
+
+    def _debug(self, *parts):
+        """Print an execution-process line; needs ``is_print_log`` and ``is_debug``.
+
+        Args:
+            *parts (Any): Values forwarded to ``print``.
+        """
+        _debug_line(self.is_print_log, self.is_debug, parts)
+
+    def _log_exc(self):
+        """Print the traceback of the exception being handled, in debug mode only."""
+        if self.is_print_log and self.is_debug:
+            traceback.print_exc()
 
     def alloc_port(self, port_add_step, port_range_num):
         """Reserve this server's port range under the cross-process lock.
@@ -467,7 +510,7 @@ class TCP_Server_Base:  # TCP server class
             self.project_temp_info_dir, "clients_port_info.log"
         )
         if os.path.exists(client_port_temp_info_file_path):
-            print(
+            self._log(
                 "Warning: client port info file exists, means the client has already allocated a port, may cause port conflict!"
             )
         self.port_add_step = port_add_step
@@ -604,7 +647,7 @@ class TCP_Server_Base:  # TCP server class
             with self.alloc_add_port_lock:
                 if port in self.all_allocated_ports_list:
                     self.all_allocated_ports_list.remove(port)
-                    print("releasing file transfer port, current latest port:", port)
+                    self._debug("releasing file transfer port, current latest port:", port)
                 self.add_latest_port -= self.port_add_step
         else:
             pass
@@ -671,7 +714,7 @@ class TCP_Server_Base:  # TCP server class
         elif where_to_run == "client":
             registe_index = 1
         else:
-            print(f"Invalid where_to_run value: {where_to_run}, must be 'server' or 'client'")
+            self._log(f"Invalid where_to_run value: {where_to_run}, must be 'server' or 'client'")
             return False
         self._custom_handlers[registe_index][command_name] = handler
         self._custom_handler_threaded[registe_index][command_name] = run_in_thread
@@ -740,8 +783,9 @@ class TCP_Server_Base:  # TCP server class
         for listener in listeners:
             try:
                 listener(client_id, message)
-            except Exception:
-                traceback.print_exc()
+            except Exception as e:
+                self._log(f"message listener error: {e}")
+                self._log_exc()
 
     def _notify_file_received(self, client_id, full_path, name, size, command):
         with self._event_listeners_lock:
@@ -749,8 +793,9 @@ class TCP_Server_Base:  # TCP server class
         for listener in listeners:
             try:
                 listener(client_id, full_path, name, size, command)
-            except Exception:
-                traceback.print_exc()
+            except Exception as e:
+                self._log(f"file listener error: {e}")
+                self._log_exc()
 
     def _socket_key(self, sock):
         """Serializable key for a sender socket (its peer address).
@@ -915,8 +960,9 @@ class TCP_Server_Base:  # TCP server class
                 except PermissionError:
                     time.sleep(0.05)
             os.replace(tmp_path, path)
-        except Exception:
-            traceback.print_exc()
+        except Exception as e:
+            self._log(f"log file update failed: {e}")
+            self._log_exc()
 
     def submit_task(self, func, *args, **kwargs):
         """Run a callable on the instance's worker pool.
@@ -971,7 +1017,7 @@ class TCP_Server_Base:  # TCP server class
                     continue
                 except Exception as e:
                     if not stop_event.is_set():
-                        print(f"Temporary server error: {e}")
+                        self._log(f"Temporary server error: {e}")
                     break
             server_socket.close()
             self.pfree(port)
@@ -1040,10 +1086,10 @@ class TCP_Server_Base:  # TCP server class
                     self.send_message(client_info["socket"], message)
                 except:
                     disconnected_clients.append(addr)
-                    traceback.print_exc()
+                    self._log_exc()
             for addr in disconnected_clients:  # del disconnected clients
                 if addr in self.clients:
-                    print(f"deleting the disconnected client: {addr}")
+                    self._debug(f"deleting the disconnected client: {addr}")
                     self.clients[addr]["socket"].close()
                     del self.clients[addr]
 
@@ -1075,8 +1121,8 @@ class TCP_Server_Base:  # TCP server class
                         client_message_pair = [client_list, msg_list]
                         client_message_pair_list.append(client_message_pair)
                 except:
-                    traceback.print_exc()
-                    print(
+                    self._log_exc()
+                    self._log(
                         f"ErrorWhileParsingClientAddress: {part} is not a valid client address, skipped"
                     )
             else:
@@ -1096,7 +1142,7 @@ class TCP_Server_Base:  # TCP server class
                         client_socket = self.clients[client_addr]["socket"]
                         self.send_message(client_socket, msg)
                     else:
-                        print(f"Client {client_addr} not found, cannot send message: {msg}")
+                        self._log(f"Client {client_addr} not found, cannot send message: {msg}")
 
     def _crypto_get_send_lock(self, client_socket):
         """Per-socket lock serialising encrypt+send for one connection.
@@ -1129,7 +1175,7 @@ class TCP_Server_Base:  # TCP server class
             OSError: If the socket write fails (the original error is re-raised).
         """
         if not self.running or not client_socket:
-            print("disable the connect to server")
+            self._log("disable the connect to server")
             raise RuntimeError("connection error")
         with self._crypto_get_send_lock(client_socket):  # alloc+encrypt+sendall stay ordered per socket
             try:  # add newline character for server to distinguish messages
@@ -1139,7 +1185,7 @@ class TCP_Server_Base:  # TCP server class
                     if isinstance(message, bytes):
                         message = message.decode("utf-8")
                     if not isinstance(message, str):
-                        print(f"Unsupported message type: {type(message)}")
+                        self._log(f"Unsupported message type: {type(message)}")
                         return False
                     wire = self._crypto_encrypt_message(client_socket, message)
                     data = wire.encode("ascii") + b"\n"
@@ -1151,14 +1197,14 @@ class TCP_Server_Base:  # TCP server class
                 elif isinstance(message, bytes):
                     data = message
                 else:
-                    print(f"Unsupported message type: {type(message)}")
+                    self._log(f"Unsupported message type: {type(message)}")
                     return False
                 self._sendall(client_socket, data)
                 return True
             except Exception as e:
                 if not _is_closed_socket_error(e):
-                    print(f"send msg error: {e}")
-                    traceback.print_exc()
+                    self._log(f"send msg error: {e}")
+                    self._log_exc()
                 raise
 
     def _sendall(self, client_socket, data):
@@ -1281,7 +1327,7 @@ class TCP_Server_Base:  # TCP server class
                     if state is None:
                         return True, ""
                     if nonce != state.get("peer_nonce"):
-                        print("crypto: replay dropped (nonce mismatch)")
+                        self._debug("crypto: replay dropped (nonce mismatch)")
                         return True, ""
                     try:
                         seq = int(seq_str)
@@ -1289,7 +1335,7 @@ class TCP_Server_Base:  # TCP server class
                         return True, ""
                     expected = state.get("recv_seq", 0)
                     if seq != expected:
-                        print(
+                        self._debug(
                             f"crypto: replay/out-of-order dropped (seq {seq}, expected {expected})"
                         )
                         return True, ""
@@ -1335,18 +1381,18 @@ class TCP_Server_Base:  # TCP server class
                 state["peer_pub_event"] = threading.Event()
                 state["peer_pub_ok"] = None
         if do_close:
-            print("crypto: too many decode failures, closing connection")
+            self._log("crypto: too many decode failures, closing connection")
             try:
                 client_socket.close()
             except Exception:
-                traceback.print_exc()
+                self._log_exc()
             return
         if do_reload and self.crypto is not None:
             try:
                 self.crypto.reload_own_key()
             except Exception:
-                traceback.print_exc()
-        print("crypto: decode failure, re-exchanging public keys")
+                self._log_exc()
+        self._debug("crypto: decode failure, re-exchanging public keys")
         if do_exchange:
             if addr is not None:
                 threading.Thread(
@@ -1359,7 +1405,7 @@ class TCP_Server_Base:  # TCP server class
                     nonce = state.get("my_nonce") or self._crypto_fresh_nonce()
                 self._send_raw(client_socket, f"/crypto_key_exchange {nonce} 1")
             except Exception:
-                traceback.print_exc()
+                self._log_exc()
 
     @staticmethod
     def _crypto_fresh_nonce():
@@ -1414,19 +1460,19 @@ class TCP_Server_Base:  # TCP server class
         with self._crypto_lock:
             peer_pub_event = state.get("peer_pub_event")
         if peer_pub_event is None or not peer_pub_event.wait(timeout=60):
-            print("crypto: waiting for client public key timed out")
+            self._log("crypto: waiting for client public key timed out")
             return
         with self._crypto_lock:
             pub_ok = state.get("peer_pub_ok")
         if pub_ok is not True:
-            print("crypto: client public key rejected, connection dropped")
+            self._log("crypto: client public key rejected, connection dropped")
             return
         with self._crypto_lock:
             state["ready_sent"] = True
         try:
             self._send_raw(client_socket, "/crypto_ready")
         except Exception:
-            traceback.print_exc()
+            self._log_exc()
         self._crypto_try_server_flip(client_socket, state)
 
     def _crypto_push_pub_to_client(self, client_socket, client_address):
@@ -1459,14 +1505,14 @@ class TCP_Server_Base:  # TCP server class
                     break
                 waiting_time += 1
                 if waiting_time >= 200:
-                    print("crypto: transfer port waiting timeout, public key push failed")
+                    self._log("crypto: transfer port waiting timeout, public key push failed")
                     return False
             self.file_transfer_mode(
                 self.crypto.pub_path, client_address[0], file_server_port, file_transfer_client_port
             )
             self.pfree(file_transfer_client_port)
         except Exception:
-            traceback.print_exc()
+            self._log_exc()
             return False
         finally:
             with self._crypto_lock:
@@ -1499,12 +1545,12 @@ class TCP_Server_Base:  # TCP server class
                     )
                     state["peer_pub_ok"] = True
                     state["peer_pub_event"].set()
-                print(f"crypto: accepted public key from {peer_ip}:{peer_port} ({reason})")
+                self._log(f"crypto: accepted public key from {peer_ip}:{peer_port} ({reason})")
             else:
                 if state is not None:
                     state["peer_pub_ok"] = False
                     state["peer_pub_event"].set()
-                print(f"crypto: REJECTED public key from {peer_ip}:{peer_port}: {reason}")
+                self._log(f"crypto: REJECTED public key from {peer_ip}:{peer_port}: {reason}")
                 try:
                     os.remove(full_path)  # rejected key: do not leave it in received_files/
                 except OSError:
@@ -1514,11 +1560,11 @@ class TCP_Server_Base:  # TCP server class
             try:
                 self._send_raw(peer_socket, f"/crypto_reject {reason}")
             except Exception:
-                traceback.print_exc()
+                self._log_exc()
             try:
                 peer_socket.close()
             except Exception:
-                traceback.print_exc()
+                self._log_exc()
 
     def handle_client(self, client_socket, client_address):  # deal with each client
         """Serve one accepted client until it disconnects.
@@ -1550,7 +1596,7 @@ class TCP_Server_Base:  # TCP server class
             buffer = ""
             while True:
                 data = self.receive_message(client_socket, 4096)  # get msg from client
-                print(data)
+                self._debug(data)
                 if not data:
                     break
                 buffer += data.decode("utf-8")
@@ -1568,8 +1614,8 @@ class TCP_Server_Base:  # TCP server class
             pass  # peer dropped with RST; the finally block reports the disconnect once
         except Exception as e:
             if not _is_closed_socket_error(e):
-                print(f"error while deal with client {client_id} : {e}")
-                traceback.print_exc()
+                self._log(f"error while deal with client {client_id} : {e}")
+                self._log_exc()
         finally:
             self._unregister_client(client_socket, client_address, client_id)
 
@@ -1582,14 +1628,14 @@ class TCP_Server_Base:  # TCP server class
         """
         loop = self._async_loop
         if loop is None or loop.is_closed():
-            print(
+            self._log(
                 "asynic clients io is enabled but no event loop is running, "
                 "closing the connection"
             )
             try:
                 client_socket.close()
             except Exception:
-                traceback.print_exc()
+                self._log_exc()
             return
         loop.call_soon_threadsafe(
             loop.create_task, self._handle_client_async(client_socket, client_address)
@@ -1610,7 +1656,7 @@ class TCP_Server_Base:  # TCP server class
             buffer = ""
             while self.running:
                 data = await loop.sock_recv(client_socket, 4096)  # get msg from client
-                print(data)
+                self._debug(data)
                 if not data:
                     break
                 buffer += data.decode("utf-8")
@@ -1632,8 +1678,8 @@ class TCP_Server_Base:  # TCP server class
             pass  # peer dropped with RST; the finally block reports the disconnect once
         except Exception as e:
             if not _is_closed_socket_error(e):
-                print(f"error while deal with client {client_id} : {e}")
-                traceback.print_exc()
+                self._log(f"error while deal with client {client_id} : {e}")
+                self._log_exc()
         finally:
             try:
                 # a cancelled read can leave its poll callback registered on the fd
@@ -1663,8 +1709,8 @@ class TCP_Server_Base:  # TCP server class
         if self.is_enable_encrypto and self.crypto is not None:
             with self._crypto_lock:
                 self._crypto_sock_addr[client_socket] = client_address
-        print(f"new connection: {client_id}")
-        print(f"connection count mount: {len(self.clients)}")
+        self._debug(f"new connection: {client_id}")
+        self._debug(f"connection count mount: {len(self.clients)}")
         return client_id
 
     def _announce_client(self, client_socket, client_id):
@@ -1685,7 +1731,7 @@ class TCP_Server_Base:  # TCP server class
             # the server is stopping (or the peer vanished): the caller's
             # cleanup closes the connection; never let this escape
             if not _is_closed_socket_error(e):
-                print(f"error while welcoming client {client_id} : {e}")
+                self._log(f"error while welcoming client {client_id} : {e}")
             return False
         # announce our encryption mode; a mismatched peer is disconnected in handle_command
         try:
@@ -1694,17 +1740,26 @@ class TCP_Server_Base:  # TCP server class
             # the peer vanished right after the welcome: the caller's cleanup
             # closes the connection; never let this escape
             if not _is_closed_socket_error(e):
-                print(f"error while announcing crypto mode to {client_id} : {e}")
+                self._log(f"error while announcing crypto mode to {client_id} : {e}")
             return False
         if self.is_hand_alloc_port == True:
-            broadcast_clients_port_alloc_range_msg = "/client_alloc_port_range {}".format(
+            port_alloc_range_msg = "/client_alloc_port_range {}".format(
                 self.each_client_port_range
             )
-            self.broadcast(broadcast_clients_port_alloc_range_msg)
         else:
-            broadcast_clients_port_alloc_range_msg = "/client_alloc_port_range NO_LIMIT"
-            self.broadcast(broadcast_clients_port_alloc_range_msg)
-        print(self.clients)
+            port_alloc_range_msg = "/client_alloc_port_range NO_LIMIT"
+        # the range is fixed for the server's lifetime, so only the connection
+        # that just joined needs it (announcing it to every client is O(N) per
+        # accepted connection)
+        try:
+            self.send_message(client_socket, port_alloc_range_msg)
+        except Exception as e:
+            # the peer vanished right after the welcome: the caller's cleanup
+            # closes the connection; never let this escape
+            if not _is_closed_socket_error(e):
+                self._log(f"error while announcing the port range to {client_id} : {e}")
+            return False
+        self._debug(self.clients)
         return True
 
     def _process_client_line(self, client_socket, client_address, client_id, message):
@@ -1722,7 +1777,7 @@ class TCP_Server_Base:  # TCP server class
         ok, plain = self._crypto_process_line(client_socket, message)
         if ok:
             message = plain.strip()
-        print(message)
+        self._log(message)
         if message.startswith("/"):  # deal with special command
             self._record_event(client_socket, message)
             return self.handle_command(client_socket, client_address, message)
@@ -1730,7 +1785,7 @@ class TCP_Server_Base:  # TCP server class
         self._record_message(client_socket, message)
         timestamp = datetime.now().strftime("%H:%M:%S")  # deal with normal message
         log_msg = f"[{timestamp}] {client_id}: {message}"
-        print(log_msg)
+        self._log(log_msg)
         return f"msg send: {message}"
 
     def _unregister_client(self, client_socket, client_address, client_id):
@@ -1753,8 +1808,8 @@ class TCP_Server_Base:  # TCP server class
             self._encrypted_recv_buffers.pop(client_socket, None)
             self._crypto_send_locks.pop(client_socket, None)
         client_socket.close()
-        print(f"client disconnected: {client_id}")
-        print(f"current connection count: {len(self.clients)}")
+        self._debug(f"client disconnected: {client_id}")
+        self._debug(f"current connection count: {len(self.clients)}")
 
     def handle_command(
         self, client_socket, client_address, command
@@ -1778,7 +1833,7 @@ class TCP_Server_Base:  # TCP server class
                 (crypto lines, file transfers, and custom handlers that run in the
                 background).
         """
-        print(client_socket, client_address, command)
+        self._debug(client_socket, client_address, command)
         client_id = f"{client_address[0]}:{client_address[1]}"
         send_str = None
         if command == "/help":
@@ -1814,7 +1869,7 @@ class TCP_Server_Base:  # TCP server class
             except (IndexError, ValueError):
                 client_crypto = -1
             if client_crypto != (1 if self.is_enable_encrypto else 0):
-                print(
+                self._log(
                     f"crypto: encryption mode mismatch with client {client_id} "
                     f"(client={client_crypto}, server={1 if self.is_enable_encrypto else 0}), "
                     f"disconnecting"
@@ -1822,7 +1877,7 @@ class TCP_Server_Base:  # TCP server class
                 try:
                     client_socket.close()
                 except Exception:
-                    traceback.print_exc()
+                    self._log_exc()
             return None
         elif shlex.split(command.lower())[0] == "/file":
             self.file_transfer_server_recv_server_start_thread(client_id, client_socket, command)
@@ -1839,7 +1894,7 @@ class TCP_Server_Base:  # TCP server class
                         [self.file_transfer_server_port, file_client_id]
                     )
                 except:
-                    traceback.print_exc()
+                    self._log_exc()
                     pass
         elif shlex.split(command.lower())[0] == "/forward_item":
             threading.Thread(
@@ -1882,7 +1937,9 @@ class TCP_Server_Base:  # TCP server class
             with self._crypto_lock:  # only accept pushes from a connection that started the handshake (else the TOFU registry could be poisoned)
                 handshaking = client_address in self._crypto_state
             if not handshaking:
-                print(f"crypto: ignoring /crypto_pub_key from non-handshaking peer {client_id}")
+                self._log(
+                    f"crypto: ignoring /crypto_pub_key from non-handshaking peer {client_id}"
+                )
                 return None
             self.file_transfer_server_recv_server_start_thread(client_id, client_socket, command)
             return None
@@ -1937,11 +1994,11 @@ class TCP_Server_Base:  # TCP server class
             and command.lower().split(" ")[0] == "/crypto_reject"
         ):
             reason = command[len("/crypto_reject") :].strip()  # the peer rejected our public key (TOFU mismatch)
-            print(f"crypto: connection rejected by peer: {reason}")
+            self._log(f"crypto: connection rejected by peer: {reason}")
             try:
                 client_socket.close()
             except Exception:
-                traceback.print_exc()
+                self._log_exc()
             return None
         else:
             cmd_parts = shlex.split(command.strip())
@@ -1966,7 +2023,7 @@ class TCP_Server_Base:  # TCP server class
                     )
                     return response
             else:
-                print(f"Unknown command: {command}")
+                self._log(f"Unknown command: {command}")
 
     def _handle_forward_send_msg(self, sock, addr, cmd):
         """Relay plain messages to every reachable destination client.
@@ -2010,7 +2067,7 @@ class TCP_Server_Base:  # TCP server class
         """
         client_info = self.clients.get(target)
         if client_info is None:
-            print(forward_skip_message(target))
+            self._log(forward_skip_message(target))
             return False
         self.send_message(
             client_info["socket"],
@@ -2077,7 +2134,7 @@ class TCP_Server_Base:  # TCP server class
         """
         client_info = self.clients.get(target)
         if client_info is None:
-            print(forward_skip_message(target))
+            self._log(forward_skip_message(target))
             return False
         self.send_message(
             client_info["socket"],
@@ -2096,16 +2153,16 @@ class TCP_Server_Base:  # TCP server class
                 try:
                     self.send_message(client_socket, result)
                 except Exception as e:
-                    print(f"Error sending message: {e}")
+                    self._log(f"Error sending message: {e}")
                 return result
             return None
         except Exception as e:
             error_msg = f"Error in custom command handler: {e}\n"
-            traceback.print_exc()
+            self._log_exc()
             try:
                 self.send_message(client_socket, error_msg)
             except Exception as e:
-                print(f"Error sending error message: {e}")
+                self._log(f"Error sending error message: {e}")
             return error_msg
 
     def file_folder_transfer_server_recv_server_start_thread(  # start a file folder server thread on server
@@ -2204,7 +2261,7 @@ class TCP_Server_Base:  # TCP server class
                 name_len_bytes = b""
                 while len(name_len_bytes) < 4:
                     chunk = self.receive_message(client_file_socket, 4 - len(name_len_bytes))
-                    print(chunk)
+                    self._debug(chunk)
                     if not chunk:
                         try:
                             self.send_message(client_file_socket, self.error_sign)
@@ -2279,7 +2336,7 @@ class TCP_Server_Base:  # TCP server class
                             try:
                                 self.send_message(client_file_socket, self.error_sign)
                             except:
-                                traceback.print_exc()
+                                self._log_exc()
                                 pass
                             close_socket()
                             raise ConnectionError(
@@ -2296,7 +2353,7 @@ class TCP_Server_Base:  # TCP server class
                     self._splice_event_command(command, fname=final_filename),
                     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 )
-                print(f"file {filename} received from {client_id}, size {file_size} bytes")
+                self._log(f"file {filename} received from {client_id}, size {file_size} bytes")
                 if command_part[0] == "/crypto_pub_key":
                     with self._crypto_lock:
                         peer_addr = self._crypto_sock_addr.get(client_socket)
@@ -2312,10 +2369,10 @@ class TCP_Server_Base:  # TCP server class
                 try:
                     self.send_message(client_file_socket, self.server_received_file_data_sign)
                 except Exception:
-                    traceback.print_exc()
+                    self._log_exc()
                 close_socket()
             except Exception as e:
-                traceback.print_exc()
+                self._log_exc()
                 if full_path is not None and os.path.exists(full_path):
                     try:
                         os.remove(full_path)  # partial transfer: no half-written leftovers
@@ -2326,7 +2383,7 @@ class TCP_Server_Base:  # TCP server class
                 except Exception:
                     pass  # send_message already logged real errors; a dead peer is expected
                 close_socket()
-                print(f"ErrorWhileReceiveFile: {e}")
+                self._log(f"ErrorWhileReceiveFile: {e}")
                 return False
             else:
                 close_socket()
@@ -2354,8 +2411,8 @@ class TCP_Server_Base:  # TCP server class
                     target=file_transfer_client_recv, args=(client_id,), daemon=True
                 ).start()
         except Exception as e:
-            print(f"\nget file transfer msg error: {e}")
-            traceback.print_exc()
+            self._log(f"\nget file transfer msg error: {e}")
+            self._log_exc()
             close_socket()
         finally:
             server_file_socket.close()
@@ -2386,7 +2443,7 @@ class TCP_Server_Base:  # TCP server class
                         file_client_pair = [client_list, file_list]
                         file_client_pair_list.append(file_client_pair)
                 except:
-                    traceback.print_exc()
+                    self._log_exc()
             else:
                 if command_part_addr_times != 0:
                     file_client_pair = [client_list, file_list]
@@ -2415,8 +2472,8 @@ class TCP_Server_Base:  # TCP server class
                         else:
                             file_folder_transfer_command_message += " {}".format(shlex.quote(file))
                 except:
-                    traceback.print_exc()
-                    print(
+                    self._log_exc()
+                    self._log(
                         f"ErrorWhileParsingFilePath: {file} is not a valid file or folder path, skipped"
                     )
                     pass
@@ -2463,7 +2520,7 @@ class TCP_Server_Base:  # TCP server class
                     client_addr = ast.literal_eval(part)
                     client_addr_list.append(client_addr)
                 except:
-                    traceback.print_exc()
+                    self._log_exc()
             else:
                 transfer_file_list.append(part)
         for client_addr in client_addr_list:
@@ -2475,7 +2532,7 @@ class TCP_Server_Base:  # TCP server class
                     elif os.path.isdir(transfer_file):
                         item_type = "/file_folder"
                     else:
-                        print(
+                        self._log(
                             f"ErrorWhileParsingFilePath: {transfer_file} is not "
                             "a valid file or folder path, skipped"
                         )
@@ -2493,7 +2550,7 @@ class TCP_Server_Base:  # TCP server class
                     self.file_transfer_server_recv_client_start_thread(
                         file_transfer_command_message
                     )
-                    print(f"start to send file command: {file_transfer_command_message}")
+                    self._log(f"start to send file command: {file_transfer_command_message}")
                 elif item_type == "/file_folder":
                     folder_transfer_command_message = "/file_folder {} {}".format(
                         shlex.quote(transfer_file), shlex.quote(str(client_addr))
@@ -2505,7 +2562,7 @@ class TCP_Server_Base:  # TCP server class
                     self.folder_file_transfer_server_recv_client_start(
                         folder_transfer_command_message
                     )
-                    print(f"start to send folder command: {folder_transfer_command_message}")
+                    self._log(f"start to send folder command: {folder_transfer_command_message}")
 
     def folder_file_transfer_server_recv_client_start(self, message):
         command_part = shlex.split(message)
@@ -2518,7 +2575,7 @@ class TCP_Server_Base:  # TCP server class
             client_addr = ast.literal_eval(command_part[-2])
         client_socket = self.clients[client_addr]["socket"]
         if os.path.isdir(folder_path) == False:
-            print(f"{folder_path} is not a valid folder path")
+            self._log(f"{folder_path} is not a valid folder path")
             return False
         base_path = os.path.dirname(folder_path)
 
@@ -2547,14 +2604,14 @@ class TCP_Server_Base:  # TCP server class
                 self.file_transfer_server_recv_client_start_thread(
                     each_file_transfer_command_message, abspath
                 )
-                print(f"start to send folder command: {each_file_transfer_command_message}")
+                self._log(f"start to send folder command: {each_file_transfer_command_message}")
             else:
                 if destination_path:
                     folder_transfer_command_message += " {}".format(
                         shlex.quote(destination_path)
                     )
                 self.send_message(client_socket, folder_transfer_command_message.strip())
-                print(f"start to send folder command: {folder_transfer_command_message}")
+                self._log(f"start to send folder command: {folder_transfer_command_message}")
 
         def start_file_transfer_with_limit(rel_dir, file, root):
             cmd = "/file_folder {} {} {}".format(
@@ -2572,7 +2629,7 @@ class TCP_Server_Base:  # TCP server class
 
             thread = threading.Thread(target=limited_transfer, daemon=True)
             thread.start()
-            print(f"start to send file: {cmd} (limit {self.max_file_transfer_thread_num})")
+            self._log(f"start to send file: {cmd} (limit {self.max_file_transfer_thread_num})")
 
         def get_all_files_in_folder():
             for root, dirs, files in os.walk(folder_path):
@@ -2581,7 +2638,7 @@ class TCP_Server_Base:  # TCP server class
                     send_folder_transfer_command(rel_dir)
                 for file in files:
                     start_file_transfer_with_limit(rel_dir, file, root)
-            print(f"finished sending all files in folder {folder_path}")
+            self._log(f"finished sending all files in folder {folder_path}")
 
         transfer_path = get_relative_path(base_path, folder_path)
         send_folder_transfer_command(transfer_path)
@@ -2607,12 +2664,12 @@ class TCP_Server_Base:  # TCP server class
         try:
             client_socket = self.clients[client_ip]["socket"]
         except:
-            print(
+            self._log(
                 "ErrorWhileSearchingClientSocket: can not find the client socket, file sending failed"
             )
-            traceback.print_exc()
+            self._log_exc()
             return False
-        print(client_socket, client_address, message)
+        self._debug(client_socket, client_address, message)
         with self.file_client_id_lock:
             client_id = copy.copy(self.file_client_id)
             send_msg = message.strip() + " " + str(self.file_client_id) + "\n"
@@ -2640,7 +2697,7 @@ class TCP_Server_Base:  # TCP server class
                     pass
                 waiting_time += 1
                 if waiting_time >= 20:
-                    print(
+                    self._log(
                         "ErrorWhileReceiveFileServerPort: transfer port waiting timeout, file sending failed"
                     )
                     return False
@@ -2649,13 +2706,13 @@ class TCP_Server_Base:  # TCP server class
             )
             self.pfree(file_transfer_client_port)
         except IndexError:
-            print("invalid command, please use '/file <filename>'")
-            traceback.print_exc()
+            self._log("invalid command, please use '/file <filename>'")
+            self._log_exc()
 
     def file_transfer_mode(  # noqa: PLR0911 - peer-close and timeout exits are distinct outcomes
         self, filename, server_address, server_port, client_port, pause_fid=None
     ):
-        print(f"start to send file: {filename}")
+        self._log(f"start to send file: {filename}")
         client_file_socket = None
         reset_time = 0
 
@@ -2674,11 +2731,11 @@ class TCP_Server_Base:  # TCP server class
                 client_file_socket.connect((server_address, server_port))
                 break
             except Exception as e:
-                print(f"file transfer connection error: {e}")
-                traceback.print_exc()
+                self._log(f"file transfer connection error: {e}")
+                self._log_exc()
                 if reset_time >= 20:
                     close_socket()
-                    print("unable to connect to file transfer server, file sending failed")
+                    self._log("unable to connect to file transfer server, file sending failed")
                     return False
                 reset_time += 1
                 time.sleep(1)
@@ -2693,7 +2750,7 @@ class TCP_Server_Base:  # TCP server class
                 try:
                     data = self.receive_message(client_file_socket, 4096)
                     if not data:
-                        print("\nbreak the file transfer connection from server")
+                        self._log("\nbreak the file transfer connection from server")
                         try:
                             self.send_message(client_file_socket, self.error_sign)
                         except Exception:
@@ -2702,13 +2759,15 @@ class TCP_Server_Base:  # TCP server class
                         break
                     file_receive_data_from_server = data.decode("utf-8").strip()
                     if file_receive_data_from_server == self.error_sign:
-                        print("\nError sign received from server, file transfer may have failed")
+                        self._log(
+                            "\nError sign received from server, file transfer may have failed"
+                        )
                         close_socket()
                         break
                 except Exception as e:
-                    print(f"\nget file transfer msg error: {e}")
+                    self._log(f"\nget file transfer msg error: {e}")
                     if not _is_closed_socket_error(e):
-                        traceback.print_exc()
+                        self._log_exc()
                     try:
                         self.send_message(client_file_socket, self.error_sign)
                     except Exception:
@@ -2737,7 +2796,7 @@ class TCP_Server_Base:  # TCP server class
                         self.send_message(client_file_socket, self.error_sign)
                     except Exception:
                         pass  # send_message already logged real errors; a dead peer is expected
-                    print(
+                    self._log(
                         f"ErrorWhileSendFile: \
                           Wait file transfer function start sign timeout, \
                           file {filename} sending failed"
@@ -2781,33 +2840,33 @@ class TCP_Server_Base:  # TCP server class
                     except Exception:
                         pass  # send_message already logged real errors; a dead peer is expected
                     close_socket()
-                    print(
+                    self._log(
                         f"ErrorWhileSendFileData: \
                           wait file transfer confirmation sign timeout, \
                           file {filename} sending may have failed"
                     )
                     return False
-            print(f"Success: file {filename} sent successfully")
+            self._log(f"Success: file {filename} sent successfully")
             close_socket()
             return True
         except FileNotFoundError:
-            traceback.print_exc()
+            self._log_exc()
             try:
                 self.send_message(client_file_socket, self.error_sign)
             except Exception:
                 pass  # send_message already logged real errors; a dead peer is expected
             close_socket()
-            print(f"file {filename} not exist")
+            self._log(f"file {filename} not exist")
             return False
         except Exception as e:
             if not _is_closed_socket_error(e):
-                traceback.print_exc()
+                self._log_exc()
             try:
                 self.send_message(client_file_socket, self.error_sign)
             except Exception:
                 pass  # send_message already logged real errors; a dead peer is expected
             close_socket()
-            print(f"send error: {e}")
+            self._log(f"send error: {e}")
             return False
 
     # ---- native in-memory forward relay (server side) ----------------------
@@ -2867,10 +2926,10 @@ class TCP_Server_Base:  # TCP server class
         valid_targets = []
         for target in addrs:
             if target == (self.host, self.port):
-                print(f"forward: target {target} is the server itself, skipped")
+                self._log(f"forward: target {target} is the server itself, skipped")
                 continue
             if target not in self.clients:
-                print(f"forward: target {target} is unreachable, skipped")
+                self._log(f"forward: target {target} is unreachable, skipped")
                 continue
             valid_targets.append(target)
         if not valid_targets:
@@ -3000,11 +3059,11 @@ class TCP_Server_Base:  # TCP server class
                 try:
                     sock.connect((target[0], ports[tfid]))
                 except Exception as e:
-                    print(f"forward: cannot connect to target {target}: {e}")
+                    self._log(f"forward: cannot connect to target {target}: {e}")
                     sock.close()
                     continue
                 if not self._forward_read_sign(sock, self.server_start_file_transfer_sign):
-                    print(f"forward: target {target} did not start, skipped")
+                    self._log(f"forward: target {target} did not start, skipped")
                     sock.close()
                     continue
                 target_conns.append((tfid, target, sock))
@@ -3099,7 +3158,7 @@ class TCP_Server_Base:  # TCP server class
                 size_b = self._forward_recv_exact(up_sock, 8)
                 file_size = int.from_bytes(size_b, "big")
             except Exception as e:
-                print(f"forward: uploader header read failed: {e}")
+                self._log(f"forward: uploader header read failed: {e}")
                 for q in queues.values():
                     q.put(END)
                 return
@@ -3129,7 +3188,7 @@ class TCP_Server_Base:  # TCP server class
             self.send_message(up_sock, self.server_received_file_data_sign)
         except Exception:
             pass
-        print(f"forward: relayed {fname} to {result['ok']}/{len(target_conns)} targets")
+        self._log(f"forward: relayed {fname} to {result['ok']}/{len(target_conns)} targets")
 
     def start_TCP_Server(self):  # set up server socket
         """Bind the server socket, then accept clients until `stop` runs.
@@ -3149,12 +3208,12 @@ class TCP_Server_Base:  # TCP server class
                 socket.SOMAXCONN if self.is_asynic_clients_io else self.max_clients
             )
             self.running = True
-            print(f"TCP server deployed on {self.host}:{self.port}")
+            self._log(f"TCP server deployed on {self.host}:{self.port}")
             if self.is_asynic_clients_io:
-                print("clients io mode: asyncio, max clients mount: no limit")
+                self._debug("clients io mode: asyncio, max clients mount: no limit")
             else:
-                print(f"max clients mount: {self.max_clients}")
-            print("input '/stop' to stop the server\n")
+                self._debug(f"max clients mount: {self.max_clients}")
+            self._log("input '/stop' to stop the server\n")
             if self.is_input_command_in_console:
                 input_thread = threading.Thread(
                     target=self.console_input, daemon=True
@@ -3167,8 +3226,8 @@ class TCP_Server_Base:  # TCP server class
             else:
                 self._accept_clients_threaded()
         except Exception as e:
-            print(f"Server error: {e}")
-            traceback.print_exc()
+            self._log(f"Server error: {e}")
+            self._log_exc()
         finally:
             self.stop()
 
@@ -3187,7 +3246,8 @@ class TCP_Server_Base:  # TCP server class
                 client_thread.start()
             except OSError as e:
                 if not _is_closed_socket_error(e):
-                    traceback.print_exc()
+                    self._log(f"accept failed: {e}")
+                    self._log_exc()
                 break  # server socket closed, exit loop
 
     async def _accept_clients_async(self):
@@ -3219,10 +3279,12 @@ class TCP_Server_Base:  # TCP server class
                     client_socket, client_address = accept.result()
                 except OSError as e:
                     if not _is_closed_socket_error(e):
-                        traceback.print_exc()
+                        self._log(f"accept failed: {e}")
+                        self._log_exc()
                     break  # server socket closed, exit loop
-                except Exception:
-                    traceback.print_exc()
+                except Exception as e:
+                    self._log(f"accept loop error: {e}")
+                    self._log_exc()
                     break
                 client_socket.setblocking(False)
                 self.handle_client(client_socket, client_address)
@@ -3245,16 +3307,16 @@ class TCP_Server_Base:  # TCP server class
                 cmd = input()
                 deal_cmd = cmd.strip()
                 if deal_cmd.lower() == "/stop":
-                    print("shutting down...")
+                    self._log("shutting down...")
                     self.running = False
                     self.stop()
                 elif deal_cmd.lower() == "/status":
-                    print(f"current connection count: {len(self.clients)}")
-                    print(f"server running: {self.running}")
+                    self._log(f"current connection count: {len(self.clients)}")
+                    self._log(f"server running: {self.running}")
                 elif deal_cmd.lower() == "/clients":
                     with self.client_lock:
                         for addr, info in self.clients.items():
-                            print(f"  {info['id']} - connection time: {info['connected_time']}")
+                            self._log(f"  {info['id']} - connection time: {info['connected_time']}")
                 elif shlex.split(deal_cmd)[0].lower() == "/send_msg":
                     self.send_msg_to_specific_client(deal_cmd)
                 elif shlex.split(deal_cmd)[0].lower() == "/file":
@@ -3274,7 +3336,7 @@ class TCP_Server_Base:  # TCP server class
                     "/forward_file",
                     "/forward_folder",
                 ):
-                    print(
+                    self._log(
                         "forward commands are client-only; "
                         "run them on a client console, not on the server"
                     )
@@ -3303,7 +3365,7 @@ class TCP_Server_Base:  # TCP server class
                         " with different file list for each client, files and clients",
                         " should be in pairs, and clients should be in format of (ip, port)",
                     ]
-                    print("\n" + " ".join(help_text) + "\n")
+                    self._log("\n" + " ".join(help_text) + "\n")
                 else:
                     cmd_parts = shlex.split(deal_cmd)
                     if not cmd_parts:
@@ -3319,19 +3381,20 @@ class TCP_Server_Base:  # TCP server class
                             response = self._execute_custom_handler(handler, deal_cmd)
                             pass
                     else:
-                        print("Unrecognized command, input '/help' for available commands")
+                        self._log("Unrecognized command, input '/help' for available commands")
             except KeyboardInterrupt:
-                print("\nKeyboardInterrupt received, shutting down...")
+                self._log("\nKeyboardInterrupt received, shutting down...")
                 self.running = False
                 self.stop()
                 break
             except EOFError:
-                print("EOF received, shutting down...")
+                self._log("EOF received, shutting down...")
                 self.running = False
                 self.stop()
                 break
-            except:
-                traceback.print_exc()
+            except Exception as e:
+                self._log(f"console command error: {e}")
+                self._log_exc()
                 pass
 
     def stop(self):  # shutting down the server
@@ -3351,12 +3414,12 @@ class TCP_Server_Base:  # TCP server class
                 try:
                     client_info["socket"].close()
                 except:
-                    traceback.print_exc()
+                    self._log_exc()
                     pass
             self.clients.clear()
         if self.server_socket:  # close server socket
             self.server_socket.close()
-            print("server stopped")
+            self._log("server stopped")
         self._wake_async_accept_loop()
 
     def _wake_async_accept_loop(self):
@@ -3368,7 +3431,7 @@ class TCP_Server_Base:  # TCP server class
         try:
             loop.call_soon_threadsafe(wakeup.set_result, None)
         except RuntimeError:
-            traceback.print_exc()
+            self._log_exc()
 
 
 class TCP_Client_Base:  # TCP client class
@@ -3388,6 +3451,8 @@ class TCP_Client_Base:  # TCP client class
         client_port (int | None): Local port, None when the OS chose one.
         running (bool): True while the connection is up.
         is_enable_encrypto (bool): Whether the RSA channel is negotiated.
+        is_debug (bool): Whether execution-process lines are logged as well.
+        is_print_log (bool): Whether the instance logs anything at all.
     """
 
     def __init__(
@@ -3406,6 +3471,8 @@ class TCP_Client_Base:  # TCP client class
         is_enable_encrypto=True,
         is_custom_keys=None,
         max_mem_buff=2048,
+        is_debug=False,
+        is_print_log=True,
     ):
         """Create the client and, unless extended, connect and start reading.
 
@@ -3437,6 +3504,10 @@ class TCP_Client_Base:  # TCP client class
             max_mem_buff (int): Buffer ceiling in MiB, kept for parity with the
                 server class; the client's forward path does not read it today.
                 Defaults to 2048.
+            is_debug (bool): Log execution-process lines in addition to command
+                and result lines. Defaults to False.
+            is_print_log (bool): Log at all; False silences every line this
+                instance would print. Defaults to True.
 
         Raises:
             ValueError: If ``is_wait_server`` is True and ``timeout`` is not None.
@@ -3536,6 +3607,8 @@ class TCP_Client_Base:  # TCP client class
         self.is_extend_command = is_extend_command
         self.is_enable_encrypto = is_enable_encrypto
         self.is_custom_keys = is_custom_keys
+        self.is_debug = is_debug
+        self.is_print_log = is_print_log
         self._crypto_lock = threading.RLock()  # serialises the crypto collections (no-GIL safe); held only around short ops, never across I/O
         self._encrypted_sockets = set()
         self._encrypted_recv_buffers = {}
@@ -3596,7 +3669,7 @@ class TCP_Client_Base:  # TCP client class
         elif where_to_run == "client":
             registe_index = 1
         else:
-            print(f"Invalid where_to_run value: {where_to_run}, must be 'server' or 'client'")
+            self._log(f"Invalid where_to_run value: {where_to_run}, must be 'server' or 'client'")
             return False
         self._custom_handlers[registe_index][command_name] = handler
         self._custom_handler_threaded[registe_index][command_name] = run_in_thread
@@ -3664,8 +3737,9 @@ class TCP_Client_Base:  # TCP client class
         for listener in listeners:
             try:
                 listener(sender, message)
-            except Exception:
-                traceback.print_exc()
+            except Exception as e:
+                self._log(f"message listener error: {e}")
+                self._log_exc()
 
     def _notify_file_received(self, full_path, name, size, command):
         with self._event_listeners_lock:
@@ -3673,8 +3747,9 @@ class TCP_Client_Base:  # TCP client class
         for listener in listeners:
             try:
                 listener(full_path, name, size, command)
-            except Exception:
-                traceback.print_exc()
+            except Exception as e:
+                self._log(f"file listener error: {e}")
+                self._log_exc()
 
     def _socket_key(self, sock):
         """Serializable key for a sender socket (its peer address).
@@ -3839,8 +3914,9 @@ class TCP_Client_Base:  # TCP client class
                 except PermissionError:
                     time.sleep(0.05)
             os.replace(tmp_path, path)
-        except Exception:
-            traceback.print_exc()
+        except Exception as e:
+            self._log(f"log file update failed: {e}")
+            self._log_exc()
 
     def submit_task(self, func, *args, **kwargs):
         """Run a callable on the instance's worker pool.
@@ -3858,6 +3934,27 @@ class TCP_Client_Base:  # TCP client class
         future = self._custom_executor.submit(func, *args, **kwargs)
         future.add_done_callback(lambda f: self._task_semaphore.release())
         return future
+
+    def _log(self, *parts):
+        """Print a command/result line, unless ``is_print_log`` is False.
+
+        Args:
+            *parts (Any): Values forwarded to ``print``.
+        """
+        _log_line(self.is_print_log, parts)
+
+    def _debug(self, *parts):
+        """Print an execution-process line; needs ``is_print_log`` and ``is_debug``.
+
+        Args:
+            *parts (Any): Values forwarded to ``print``.
+        """
+        _debug_line(self.is_print_log, self.is_debug, parts)
+
+    def _log_exc(self):
+        """Print the traceback of the exception being handled, in debug mode only."""
+        if self.is_print_log and self.is_debug:
+            traceback.print_exc()
 
     def alloc_port(self, port_add_step, port_range_num):
         """Reserve this client's port range under the cross-process lock.
@@ -3926,7 +4023,7 @@ class TCP_Client_Base:  # TCP client class
             self.project_temp_info_dir, "server_port_info.log"
         )
         if os.path.exists(server_port_temp_info_file_path) == True:
-            print(
+            self._log(
                 "Warning: server port info file exists, means the server has already allocated a port, may cause port conflict!"
             )
         self.port_add_step = port_add_step
@@ -4061,7 +4158,7 @@ class TCP_Client_Base:  # TCP client class
             with self.alloc_add_port_lock:
                 if port in self.all_allocated_ports_list:
                     self.all_allocated_ports_list.remove(port)
-                    print("releasing file transfer port, current latest port:", port)
+                    self._debug("releasing file transfer port, current latest port:", port)
                 self.add_latest_port -= self.port_add_step
         else:
             pass
@@ -4100,7 +4197,7 @@ class TCP_Client_Base:  # TCP client class
             with self.alloc_minus_port_lock:
                 if port in self.all_allocated_ports_list:
                     self.all_allocated_ports_list.remove(port)
-                    print("releasing file transfer port, current latest port:", port)
+                    self._debug("releasing file transfer port, current latest port:", port)
                 self.minus_latest_port += self.port_add_step
         else:
             pass
@@ -4141,7 +4238,7 @@ class TCP_Client_Base:  # TCP client class
                     continue
                 except Exception as e:
                     if not stop_event.is_set():
-                        print(f"Temporary server error: {e}")
+                        self._log(f"Temporary server error: {e}")
                     break
             server_socket.close()
             self.pfree(port)
@@ -4202,7 +4299,7 @@ class TCP_Client_Base:  # TCP client class
         """
         self._send_raw(self.client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
         if not self._crypto_mode_event.wait(timeout=self._crypto_mode_timeout):
-            print("crypto: server did not announce its encryption mode, disconnecting")
+            self._log("crypto: server did not announce its encryption mode, disconnecting")
             self.close()
             return False
         if not self._crypto_mode_ok:
@@ -4231,7 +4328,7 @@ class TCP_Client_Base:  # TCP client class
                     self.client_socket.settimeout(self.timeout)  # connect over 5 seconds timeout
                 else:
                     self.client_socket.settimeout(5)
-                print(f"connecting to {self.host}:{self.port}...")
+                self._log(f"connecting to {self.host}:{self.port}...")
                 if self.client_port == None:
                     pass
                 else:
@@ -4253,27 +4350,27 @@ class TCP_Client_Base:  # TCP client class
                     with self._crypto_lock:
                         self._crypto_decode_failures = 0  # fresh connection, fresh breaker
                     self._crypto_start_exchange()
-                print("connect success! type '/help' to get help.\n")
+                self._log("connect success! type '/help' to get help.\n")
                 return True
             except socket.timeout:
                 if self.is_wait_server:
-                    print("waiting for server to start...")
+                    self._log("waiting for server to start...")
                     pass
                 else:
-                    print("timeout, unable to connect to server")
-                    traceback.print_exc()
+                    self._log("timeout, unable to connect to server")
+                    self._log_exc()
                     return False
             except ConnectionRefusedError:
                 if self.is_wait_server:
-                    print("waiting for server to start...")
+                    self._log("waiting for server to start...")
                     pass
                 else:
-                    print("connection rejected by server, please ensure the server is running")
-                    traceback.print_exc()
+                    self._log("connection rejected by server, please ensure the server is running")
+                    self._log_exc()
                     return False
             except Exception as e:
-                print(f"connection error: {e}")
-                traceback.print_exc()
+                self._log(f"connection error: {e}")
+                self._log_exc()
                 return False
 
     def receive_messages(self):  # get server msg
@@ -4290,7 +4387,7 @@ class TCP_Client_Base:  # TCP client class
             try:
                 data = self.receive_message(self.client_socket, 4096)
                 if not data:
-                    print("\nbreak the connection from server")
+                    self._log("\nbreak the connection from server")
                     self.running = False
                     self.free_port()
                     break
@@ -4323,19 +4420,19 @@ class TCP_Client_Base:  # TCP client class
                         if not message.startswith("/"):
                             self._notify_message_received(sender, message)
                             self._record_message(sender or self.client_socket, message)
-                        print(f"\n[server] {message}")
+                        self._log(f"\n[server] {message}")
             except socket.timeout:
                 continue
             except ConnectionResetError:
-                print("\nReset by server, connection closed")
-                traceback.print_exc()
+                self._log("\nReset by server, connection closed")
+                self._log_exc()
                 self.running = False
                 self.free_port()
                 break
             except Exception as e:
                 if not _is_closed_socket_error(e):
-                    print(f"\nget msg error: {e}")
-                    traceback.print_exc()
+                    self._log(f"\nget msg error: {e}")
+                    self._log_exc()
                 self.running = False
                 self.free_port()
                 break
@@ -4354,7 +4451,7 @@ class TCP_Client_Base:  # TCP client class
                 running, no socket was passed, or the payload type is unsupported.
         """
         if not self.running or not self.client_socket:
-            print("disable the connect to server")
+            self._log("disable the connect to server")
             return False
         with self._crypto_send_lock:  # alloc+encrypt+sendall stay ordered (no-GIL safe)
             try:  # add newline character for server to distinguish messages
@@ -4364,7 +4461,7 @@ class TCP_Client_Base:  # TCP client class
                     if isinstance(message, bytes):
                         message = message.decode("utf-8")
                     if not isinstance(message, str):
-                        print(f"Unsupported message type: {type(message)}")
+                        self._log(f"Unsupported message type: {type(message)}")
                         return False
                     wire = self._crypto_encrypt_message(client_socket, message)
                     data = wire.encode("ascii") + b"\n"
@@ -4376,14 +4473,14 @@ class TCP_Client_Base:  # TCP client class
                 elif isinstance(message, bytes):
                     data = message
                 else:
-                    print(f"Unsupported message type: {type(message)}")
+                    self._log(f"Unsupported message type: {type(message)}")
                     return False
                 client_socket.sendall(data)
                 return True
             except Exception as e:
                 if not _is_closed_socket_error(e):
-                    print(f"send msg error: {e}")
-                    traceback.print_exc()
+                    self._log(f"send msg error: {e}")
+                    self._log_exc()
                 return False
         
     def send_message_to_server(self, message):
@@ -4466,7 +4563,7 @@ class TCP_Client_Base:  # TCP client class
             if ok:
                 with self._crypto_lock:
                     if nonce != self._crypto_server_nonce:
-                        print("crypto: replay dropped (nonce mismatch)")
+                        self._debug("crypto: replay dropped (nonce mismatch)")
                         return True, ""
                     try:
                         seq = int(seq_str)
@@ -4474,7 +4571,7 @@ class TCP_Client_Base:  # TCP client class
                         return True, ""
                     expected = self._crypto_recv_seq
                     if seq != expected:
-                        print(
+                        self._debug(
                             f"crypto: replay/out-of-order dropped (seq {seq}, expected {expected})"
                         )
                         return True, ""
@@ -4507,25 +4604,25 @@ class TCP_Client_Base:  # TCP client class
                 do_exchange = True
                 self._crypto_my_nonce = self._crypto_fresh_nonce()
         if do_close:
-            print("crypto: too many decode failures, closing connection")
+            self._log("crypto: too many decode failures, closing connection")
             try:
                 self.close()
             except Exception:
-                traceback.print_exc()
+                self._log_exc()
             return
         if self.crypto is not None:
             try:
                 self.crypto.reload_own_key()
             except Exception:
-                traceback.print_exc()
-        print("crypto: decode failure, re-exchanging public keys")
+                self._log_exc()
+        self._debug("crypto: decode failure, re-exchanging public keys")
         if do_exchange:
             try:
                 threading.Thread(
                     target=self._crypto_exchange_thread, args=(True,), daemon=True
                 ).start()
             except Exception:
-                traceback.print_exc()
+                self._log_exc()
 
     def _crypto_start_exchange(self):
         """Start the client side of the public-key handshake (daemon)."""
@@ -4579,8 +4676,8 @@ class TCP_Client_Base:  # TCP client class
                 if self._crypto_still_current(gen):
                     raise TimeoutError("crypto handshake: server /crypto_ready never arrived")
         except Exception as e:
-            print(f"crypto handshake failed: {e}")
-            traceback.print_exc()
+            self._log(f"crypto handshake failed: {e}")
+            self._log_exc()
             try:
                 self.close()
             except Exception:
@@ -4650,7 +4747,7 @@ class TCP_Client_Base:  # TCP client class
             with self._crypto_lock:
                 pub_event = self._crypto_server_pub_event
             if not pub_event.wait(timeout=90):
-                print("crypto: waiting for server public key timed out")
+                self._log("crypto: waiting for server public key timed out")
                 return
             if push_thread is not None:
                 # the push is best-effort (its ack can lag behind a slow file
@@ -4705,14 +4802,14 @@ class TCP_Client_Base:  # TCP client class
                     break
                 waiting_time += 1
                 if waiting_time >= 200:
-                    print("crypto: transfer port waiting timeout, public key push failed")
+                    self._log("crypto: transfer port waiting timeout, public key push failed")
                     return False
             self.file_transfer_mode(
                 self.crypto.pub_path, self.host, file_server_port, file_transfer_client_port
             )
             self.pfree(file_transfer_client_port)
         except Exception:
-            traceback.print_exc()
+            self._log_exc()
             return False
         finally:
             with self._crypto_lock:
@@ -4741,11 +4838,11 @@ class TCP_Client_Base:  # TCP client class
                     peer_role, peer_ip, peer_port
                 )
                 self._crypto_server_pub_ok = True
-            print(f"crypto: accepted server public key ({reason})")
+            self._log(f"crypto: accepted server public key ({reason})")
         else:
             with self._crypto_lock:
                 self._crypto_server_pub_ok = False
-            print(f"crypto: REJECTED server public key: {reason}")
+            self._log(f"crypto: REJECTED server public key: {reason}")
             try:
                 os.remove(full_path)  # rejected key: do not leave it in received_files/
             except OSError:
@@ -4753,11 +4850,11 @@ class TCP_Client_Base:  # TCP client class
             try:
                 self._send_raw(self.client_socket, f"/crypto_reject {reason}")
             except Exception:
-                traceback.print_exc()
+                self._log_exc()
             try:
                 self.close()
             except Exception:
-                traceback.print_exc()
+                self._log_exc()
             return
         with self._crypto_lock:
             self._crypto_server_pub_event.set()
@@ -4786,7 +4883,7 @@ class TCP_Client_Base:  # TCP client class
                 self._crypto_mode_ok = peer_mode == expected
                 self._crypto_mode_event.set()
             if not self._crypto_mode_ok:
-                print(
+                self._log(
                     f"crypto: encryption mode mismatch with server "
                     f"(server={peer_mode}, client={expected}), disconnecting"
                 )
@@ -4795,12 +4892,14 @@ class TCP_Client_Base:  # TCP client class
         if command.lower().split(" ")[0] == "/client_alloc_port_range":
             if command.lower().split(" ")[1] == "no_limit":
                 self.is_hand_alloc_port = False
-                print("server has no limit on client port allocation")
+                self._log("server has no limit on client port allocation")
             else:
                 self.is_hand_alloc_port = True
                 self.each_client_port_range = int(command.split(" ")[1])
                 self.alloc_port(self.port_add_step, self.each_client_port_range)
-                print(f"server allocated port range for each client: {self.each_client_port_range}")
+                self._log(
+                    f"server allocated port range for each client: {self.each_client_port_range}"
+                )
         elif shlex.split(command.lower())[0] == "/server_file_transfer_port":
             with self.file_transfer_server_port_lock:
                 self.file_transfer_server_port = int(command.split(" ")[1])
@@ -4810,7 +4909,7 @@ class TCP_Client_Base:  # TCP client class
                         [self.file_transfer_server_port, file_client_id]
                     )
                 except:
-                    traceback.print_exc()
+                    self._log_exc()
                     pass
         elif (
             self.is_enable_encrypto
@@ -4840,7 +4939,7 @@ class TCP_Client_Base:  # TCP client class
             and command.lower().split(" ")[0] == "/crypto_reject"
         ):
             reason = command[len("/crypto_reject") :].strip()
-            print(f"crypto: connection rejected by server: {reason}")
+            self._log(f"crypto: connection rejected by server: {reason}")
             self.close()
         elif (
             self.is_enable_encrypto
@@ -4850,7 +4949,7 @@ class TCP_Client_Base:  # TCP client class
             with self._crypto_lock:
                 handshake_started = self._crypto_handshake_started
             if not handshake_started:  # only accept key pushes while a handshake is in progress
-                print("crypto: ignoring /crypto_pub_key outside a handshake")
+                self._debug("crypto: ignoring /crypto_pub_key outside a handshake")
                 return
             self.file_transfer_client_recv_server_start_thread(  # server pushes its key file; the receive hook TOFU-checks it
                 client_id, self.client_socket, command
@@ -4916,7 +5015,7 @@ class TCP_Client_Base:  # TCP client class
                 else:
                     self._execute_custom_handler(handler, command, self.client_socket, client_id)
             else:
-                print(f"Unknown server command: {command}")
+                self._log(f"Unknown server command: {command}")
 
     def _console_forward_send_msg(self, command):
         """Client console entry point for ``/forward_send_msg`` (client-only).
@@ -4928,7 +5027,7 @@ class TCP_Client_Base:  # TCP client class
         parts = shlex.split(command)
         items, addrs = parse_forward_items_and_addrs(parts[1:])
         if not items or not addrs:
-            print(
+            self._log(
                 "forward_send_msg: need at least one message and one destination, "
                 'e.g. /forward_send_msg "msg" "(\'127.0.0.1\', 3000)"'
             )
@@ -4963,16 +5062,16 @@ class TCP_Client_Base:  # TCP client class
                 try:
                     self.send_message(client_socket, result)
                 except Exception as e:
-                    print(f"Error sending message: {e}")
+                    self._log(f"Error sending message: {e}")
                 return result
             return None
         except Exception as e:
             error_msg = f"Error in custom command handler: {e}\n"
-            traceback.print_exc()
+            self._log_exc()
             try:
                 self.send_message(client_socket, error_msg)
             except Exception as e:
-                print(f"Error sending error message: {e}")
+                self._log(f"Error sending error message: {e}")
             return error_msg
 
     def interactive_mode(self):  # Interactive mode
@@ -5035,23 +5134,23 @@ class TCP_Client_Base:  # TCP client class
                                     )
                             else:
                                 self.send_message(self.client_socket, message)
-                                print(f"Unknown server command: {message}")
+                                self._log(f"Unknown server command: {message}")
                 except KeyboardInterrupt:
                     self.close()
-                    print("\nshutting down...")
-                    traceback.print_exc()
+                    self._log("\nshutting down...")
+                    self._log_exc()
                     self.send_message(self.client_socket, "/quit")
                     time.sleep(0.5)
                     break
                 except EOFError:
                     self.close()
-                    print("\nshutting down...")
-                    traceback.print_exc()
+                    self._log("\nshutting down...")
+                    self._log_exc()
                     self.send_message(self.client_socket, "/quit")
                     time.sleep(0.5)
                     break
                 except:
-                    traceback.print_exc()
+                    self._log_exc()
                     pass
         finally:
             self.close()
@@ -5079,7 +5178,7 @@ class TCP_Client_Base:  # TCP client class
         folder_path = command_part[1]
         destination_path = command_part[2] if len(command_part) >= 3 else None
         if os.path.isdir(folder_path) == False:
-            print(f"{folder_path} is not a valid folder path")
+            self._log(f"{folder_path} is not a valid folder path")
             return False
         base_path = os.path.dirname(folder_path)
 
@@ -5108,14 +5207,14 @@ class TCP_Client_Base:  # TCP client class
                 self.file_transfer_client_recv_client_start_thread(
                     each_file_transfer_command_message, abspath
                 )
-                print(f"start to send folder command: {each_file_transfer_command_message}")
+                self._log(f"start to send folder command: {each_file_transfer_command_message}")
             else:
                 if destination_path:
                     folder_transfer_command_message += " {}".format(
                         shlex.quote(destination_path)
                     )
                 self.send_message(self.client_socket, folder_transfer_command_message.strip())
-                print(f"start to send folder command: {folder_transfer_command_message}")
+                self._log(f"start to send folder command: {folder_transfer_command_message}")
 
         def start_file_transfer_with_limit(rel_dir, file, root):
             cmd = f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(file)}"
@@ -5131,7 +5230,7 @@ class TCP_Client_Base:  # TCP client class
 
             thread = threading.Thread(target=limited_transfer, daemon=True)
             thread.start()
-            print(f"start to send file: {cmd} (limit {self.max_thread_num})")
+            self._log(f"start to send file: {cmd} (limit {self.max_thread_num})")
 
         def get_all_files_in_folder():
             for root, dirs, files in os.walk(folder_path):
@@ -5140,7 +5239,7 @@ class TCP_Client_Base:  # TCP client class
                     send_folder_transfer_command(rel_dir)
                 for file in files:
                     start_file_transfer_with_limit(rel_dir, file, root)
-            print(f"finished sending all files in folder {folder_path}")
+            self._log(f"finished sending all files in folder {folder_path}")
 
         transfer_path = get_relative_path(base_path, folder_path)
         send_folder_transfer_command(transfer_path)
@@ -5162,7 +5261,7 @@ class TCP_Client_Base:  # TCP client class
                 self.file_transfer_client_recv_client_start_thread(
                     each_file_transfer_command_message
                 )
-                print(f"start to send file command: {each_file_transfer_command_message}")
+                self._log(f"start to send file command: {each_file_transfer_command_message}")
             finally:
                 self.file_semaphore.release()
 
@@ -5203,7 +5302,7 @@ class TCP_Client_Base:  # TCP client class
                     pass
                 waiting_time += 1
                 if waiting_time >= 20:
-                    print(
+                    self._log(
                         "ErrorWhileReceiveFileServerPort: transfer port waiting timeout, file sending failed"
                     )
                     return False
@@ -5212,13 +5311,13 @@ class TCP_Client_Base:  # TCP client class
             )
             self.pfree(file_transfer_client_port)
         except IndexError:
-            traceback.print_exc()
-            print("invalid command, please use '/file <filename>'")
+            self._log_exc()
+            self._log("invalid command, please use '/file <filename>'")
 
     def file_transfer_mode(  # noqa: PLR0911 - peer-close and timeout exits are distinct outcomes
         self, filename, server_address, server_port, client_port, pause_fid=None
     ):
-        print(f"start to send file: {filename}")
+        self._log(f"start to send file: {filename}")
         client_file_socket = None
         reset_time = 0
 
@@ -5237,11 +5336,11 @@ class TCP_Client_Base:  # TCP client class
                 client_file_socket.connect((server_address, server_port))
                 break
             except Exception as e:
-                print(f"file transfer connection error: {e}")
-                traceback.print_exc()
+                self._log(f"file transfer connection error: {e}")
+                self._log_exc()
                 if reset_time >= 20:
                     close_socket()
-                    print("unable to connect to file transfer server, file sending failed")
+                    self._log("unable to connect to file transfer server, file sending failed")
                     return False
                 reset_time += 1
                 time.sleep(1)
@@ -5256,7 +5355,7 @@ class TCP_Client_Base:  # TCP client class
                 try:
                     data = self.receive_message(client_file_socket, 4096)
                     if not data:
-                        print("\nbreak the file transfer connection from server")
+                        self._log("\nbreak the file transfer connection from server")
                         try:
                             self.send_message(client_file_socket, self.error_sign)
                         except Exception:
@@ -5265,13 +5364,15 @@ class TCP_Client_Base:  # TCP client class
                         break
                     file_receive_data_from_server = data.decode("utf-8").strip()
                     if file_receive_data_from_server == self.error_sign:
-                        print("\nError sign received from server, file transfer may have failed")
+                        self._log(
+                            "\nError sign received from server, file transfer may have failed"
+                        )
                         close_socket()
                         break
                 except Exception as e:
-                    print(f"\nget file transfer msg error: {e}")
+                    self._log(f"\nget file transfer msg error: {e}")
                     if not _is_closed_socket_error(e):
-                        traceback.print_exc()
+                        self._log_exc()
                     try:
                         self.send_message(client_file_socket, self.error_sign)
                     except Exception:
@@ -5300,7 +5401,7 @@ class TCP_Client_Base:  # TCP client class
                         self.send_message(client_file_socket, self.error_sign)
                     except Exception:
                         pass  # send_message already logged real errors; a dead peer is expected
-                    print(
+                    self._log(
                         f"ErrorWhileSendFile: \
                           Wait file transfer function start sign timeout, \
                           file {filename} sending failed"
@@ -5344,33 +5445,33 @@ class TCP_Client_Base:  # TCP client class
                     except Exception:
                         pass  # send_message already logged real errors; a dead peer is expected
                     close_socket()
-                    print(
+                    self._log(
                         f"ErrorWhileSendFileData: \
                           wait file transfer confirmation sign timeout, \
                           file {filename} sending may have failed"
                     )
                     return False
-            print(f"Success: file {filename} sent successfully")
+            self._log(f"Success: file {filename} sent successfully")
             close_socket()
             return True
         except FileNotFoundError:
-            traceback.print_exc()
+            self._log_exc()
             try:
                 self.send_message(client_file_socket, self.error_sign)
             except Exception:
                 pass  # send_message already logged real errors; a dead peer is expected
             close_socket()
-            print(f"file {filename} not exist")
+            self._log(f"file {filename} not exist")
             return False
         except Exception as e:
             if not _is_closed_socket_error(e):
-                traceback.print_exc()
+                self._log_exc()
             try:
                 self.send_message(client_file_socket, self.error_sign)
             except Exception:
                 pass  # send_message already logged real errors; a dead peer is expected
             close_socket()
-            print(f"send error: {e}")
+            self._log(f"send error: {e}")
             return False
 
     # ---- native in-memory forward (client side) ----------------------------
@@ -5413,11 +5514,11 @@ class TCP_Client_Base:  # TCP client class
         files = [p for p in items if os.path.isfile(p)]
         for p in items:
             if not os.path.isfile(p):
-                print(f"forward: {p} is not a valid file, skipped")
+                self._log(f"forward: {p} is not a valid file, skipped")
         if not files:
             return
         if not addrs:
-            print("forward: no target clients given")
+            self._log("forward: no target clients given")
             return
         threading.Thread(
             target=self._forward_driver,
@@ -5432,11 +5533,11 @@ class TCP_Client_Base:  # TCP client class
         folders = [p for p in items if os.path.isdir(p)]
         for p in items:
             if not os.path.isdir(p):
-                print(f"forward: {p} is not a valid folder, skipped")
+                self._log(f"forward: {p} is not a valid folder, skipped")
         if not folders:
             return
         if not addrs:
-            print("forward: no target clients given")
+            self._log("forward: no target clients given")
             return
         threading.Thread(
             target=self._forward_driver,
@@ -5465,8 +5566,9 @@ class TCP_Client_Base:  # TCP client class
                                 addrs,
                                 destination_path,
                             )
-        except Exception:
-            traceback.print_exc()
+        except Exception as e:
+            self._log(f"forward error: {e}")
+            self._log_exc()
 
     def _forward_rel_path(self, base_path, abs_path):
         base = os.path.normpath(base_path)
@@ -5481,7 +5583,7 @@ class TCP_Client_Base:  # TCP client class
 
     def _forward_one(self, kind, rel_dir, fname, abspath, addrs, destination_path=None):
         if not os.path.isfile(abspath):
-            print(f"forward: {abspath} is not a valid file, skipped")
+            self._log(f"forward: {abspath} is not a valid file, skipped")
             return
         msg = f"/forward_item {kind}"
         if kind == "folder":
@@ -5495,7 +5597,7 @@ class TCP_Client_Base:  # TCP client class
         deadline = time.time() + 30
         while time.time() < deadline:
             if self._forward_error is not None:
-                print(f"forward: server error: {self._forward_error}")
+                self._log(f"forward: server error: {self._forward_error}")
                 self._forward_error = None
                 return
             try:
@@ -5504,7 +5606,7 @@ class TCP_Client_Base:  # TCP client class
             except queue.Empty:
                 continue
         if upload is None:
-            print(f"forward: timed out waiting for an upload slot for {fname}")
+            self._log(f"forward: timed out waiting for an upload slot for {fname}")
             return
         fid, sport = upload
         client_port = self.palloc()
@@ -5609,7 +5711,7 @@ class TCP_Client_Base:  # TCP client class
                 name_len_bytes = b""
                 while len(name_len_bytes) < 4:
                     chunk = self.receive_message(client_file_socket, 4 - len(name_len_bytes))
-                    print(chunk)
+                    self._debug(chunk)
                     if not chunk:
                         try:
                             self.send_message(client_file_socket, self.error_sign)
@@ -5684,7 +5786,7 @@ class TCP_Client_Base:  # TCP client class
                             try:
                                 self.send_message(client_file_socket, self.error_sign)
                             except:
-                                traceback.print_exc()
+                                self._log_exc()
                                 pass
                             close_socket()
                             raise ConnectionError(
@@ -5701,16 +5803,16 @@ class TCP_Client_Base:  # TCP client class
                     self._splice_event_command(command, fname=final_filename),
                     datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 )
-                print(f"file {filename} received from {client_id}, size {file_size} bytes")
+                self._log(f"file {filename} received from {client_id}, size {file_size} bytes")
                 if command_part[0] == "/crypto_pub_key":
                     self._crypto_store_received_pub(full_path, "server", (self.host, self.port))
                 try:
                     self.send_message(client_file_socket, self.server_received_file_data_sign)
                 except Exception:
-                    traceback.print_exc()
+                    self._log_exc()
                 close_socket()
             except Exception as e:
-                traceback.print_exc()
+                self._log_exc()
                 if full_path is not None and os.path.exists(full_path):
                     try:
                         os.remove(full_path)  # partial transfer: no half-written leftovers
@@ -5721,7 +5823,7 @@ class TCP_Client_Base:  # TCP client class
                 except Exception:
                     pass  # send_message already logged real errors; a dead peer is expected
                 close_socket()
-                print(f"ErrorWhileReceiveFile: {e}")
+                self._log(f"ErrorWhileReceiveFile: {e}")
                 return False
             else:
                 close_socket()
@@ -5749,8 +5851,8 @@ class TCP_Client_Base:  # TCP client class
                     target=file_transfer_client_recv, args=(client_id,), daemon=True
                 ).start()
         except Exception as e:
-            print(f"\nget file transfer msg error: {e}")
-            traceback.print_exc()
+            self._log(f"\nget file transfer msg error: {e}")
+            self._log_exc()
             close_socket()
         finally:
             server_file_socket.close()
@@ -5767,7 +5869,7 @@ class TCP_Client_Base:  # TCP client class
         self._flush_events_dict()
         if self.client_socket:
             self.client_socket.close()
-        print("connection closed")
+        self._log("connection closed")
 
     def start_TCP_client(self):  # start client
         """Connect to the server and start the client loop.
@@ -5786,7 +5888,7 @@ class TCP_Client_Base:  # TCP client class
                 while self.running:
                     time.sleep(1)
         except KeyboardInterrupt:
-            print("\nclient shutting down...")
-            traceback.print_exc()
+            self._log("\nclient shutting down...")
+            self._log_exc()
         finally:
             self.close()

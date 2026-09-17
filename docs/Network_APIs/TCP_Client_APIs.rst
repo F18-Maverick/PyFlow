@@ -25,7 +25,10 @@ the TCP server and exchange data with the server.
             max_custom_workers: Any,
             is_extend_command: Any=False,
             is_enable_encrypto: Any=True,
-            is_custom_keys: Any=None) -> None: 
+            is_custom_keys: Any=None,
+            max_mem_buff: Any=2048,
+            is_debug: Any=False,
+            is_print_log: Any=True) -> None:
             ...
 
 The TCP Client Setup API is defined in the ``TCP_Client_Base`` class.
@@ -47,6 +50,11 @@ The parameters of the ``__init__`` method are as follows:
   user-supplied RSA keys. Both files must exist, parse as PEM, and pair
   with each other; an invalid pair is silently ignored and the default
   key lookup is used instead (``None`` keeps the default lookup).
+- ``is_debug``: A flag selecting how much detail is logged. With ``False``
+  (the default) the client logs command content and execution results only;
+  with ``True`` it also logs the key steps of the execution process.
+- ``is_print_log``: A flag indicating whether the client logs at all. With
+  ``False`` it prints nothing, whatever ``is_debug`` says.
 
 Every parameter has default values:
 
@@ -68,6 +76,13 @@ Every parameter has default values:
 - ``is_custom_keys``: Default is ``None`` 
   (a ``[pub_key_path, pvt_key_path]`` list uses a user-supplied keypair
   instead of the default ``~/.ssh`` / generated keys)
+- ``is_debug``: Default is ``False``
+  (``True`` adds the execution-process lines to the command/result lines)
+- ``is_print_log``: Default is ``True``
+  (``False`` silences every line the client would print)
+- ``max_mem_buff``: Default is ``2048``
+  (kept for parity with the server class; the client's forward path does not
+  read it today)
 
 The TCP Client Setup API will initialize all the necessary 
 parameters and resources for the TCP client.
@@ -200,7 +215,7 @@ In `handle_server_command`, the client processes built-in
 commands sent by the server, such as:
 
 - ``/client_alloc_port_range``: configures the client's manual 
-  port allocation range based on server broadcast.
+  port allocation range from the line the server sends it on connect.
 - ``/server_file_transfer_port``: receives the file transfer 
   port assigned by the server for an ongoing file operation.
 - ``/file`` and ``/file_folder``: handle file transfer requests 
@@ -655,8 +670,9 @@ of the server. They allow you to allocate ephemeral ports
 either automatically (by returning 0, letting the OS choose) 
 or manually within a configured range.
 
-To change the port allocation mode, the client listens to 
-the server's broadcast of ``/client_alloc_port_range``. 
+To configure the port allocation mode, the client reads the
+``/client_alloc_port_range`` line the server sends it right after
+the connection is accepted. 
 When the server sends that command with a number, the client 
 sets ``self.is_hand_alloc_port = True`` and configures the 
 range. If the server sends ``NO_LIMIT``, the client uses 

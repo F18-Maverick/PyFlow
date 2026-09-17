@@ -106,11 +106,12 @@ def _start_server(**kwargs):
     return server, thread
 
 
-def _stop_server(server, thread):
-    """Stop the server and assert its accept loop returned."""
+def _stop_server(server, thread, join=True):
+    """Stop the server; in asyncio mode also assert its accept loop returned."""
     server.stop()
-    thread.join(timeout=10)
-    assert not thread.is_alive(), "start_TCP_Server did not return after stop"
+    if join:  # thread mode: a blocked accept() is not woken by closing the socket
+        thread.join(timeout=10)
+        assert not thread.is_alive(), "start_TCP_Server did not return after stop"
 
 
 @pytest.fixture
@@ -202,15 +203,19 @@ def test_disconnected_client_is_dropped(asynic_server):
         alive.close()
 
 
-def test_file_transfer_over_coroutine_control_channel(asynic_server, tmp_path):
-    """A file pushed on a transfer socket arrives while the client runs as a coroutine."""
-    asynic_server.file_transfer_dir = str(tmp_path)
+@pytest.mark.parametrize("asynic", [False, True], ids=["threads", "asyncio"])
+def test_file_transfer_over_coroutine_control_channel(asynic, tmp_path):
+    """A file pushed on a transfer socket arrives while the client is served by the server."""
+    server, thread = _start_server(is_asynic_clients_io=asynic)
+    recv_dir = tmp_path / "server_recv"  # never the directory holding the source
+    recv_dir.mkdir()
+    server.file_transfer_dir = str(recv_dir)
     payload = os.urandom(8192)
     src = tmp_path / "upload.bin"
     src.write_bytes(payload)
     client = TCP_Client_Base(
         host="127.0.0.1",
-        port=asynic_server.port,
+        port=server.port,
         client_host="127.0.0.1",
         is_extend_command=True,
         is_input_command_in_console=False,
@@ -218,21 +223,23 @@ def test_file_transfer_over_coroutine_control_channel(asynic_server, tmp_path):
     )
     try:
         assert client.connect()
-        assert wait_until(lambda: len(asynic_server.clients) == 1)
-        server_sock = asynic_server.clients[client.client_socket.getsockname()]["socket"]
-        asynic_server.file_transfer_server_recv_server_start_thread(
-            "cid", server_sock, f"/file {src} 0"
-        )
-        port = _wait_transfer_port(client)
+        assert wait_until(lambda: len(server.clients) == 1)
+        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
+        server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
+        port = _wait_transfer_port(client, timeout=30)
         assert port is not None, "client did not advertise a transfer port"
 
-        client.file_transfer_mode(str(src), "127.0.0.1", port, 0)
+        sent = client.file_transfer_mode(str(src), "127.0.0.1", port, 0)
 
-        assert wait_until(lambda: any(tmp_path.iterdir())), "file was not received"
-        received = next(path for path in tmp_path.iterdir() if path.is_file())
-        assert received.read_bytes() == payload
+        # the file appears before it is fully written: wait for the complete payload
+        def received_matches():
+            files = [path for path in recv_dir.iterdir() if path.is_file()]
+            return bool(files) and files[0].read_bytes() == payload
+
+        assert wait_until(received_matches, timeout=30), f"file was not received (client ok={sent})"
     finally:
         client.close()
+        _stop_server(server, thread, join=asynic)
 
 
 def _wait_transfer_port(instance, timeout=10.0):
@@ -258,10 +265,14 @@ def test_stop_ends_the_event_loop(asynic_server):
 
 def test_thread_mode_still_refuses_clients_beyond_max_clients(threaded_server):
     """The default mode keeps its ``max_clients`` limit and refusal message."""
-    first, _ = _raw_connect(threaded_server.port)
+    port = threaded_server.port
+    first, greeting = _raw_connect(port)
+    local = first.getsockname()
     try:
-        assert wait_until(lambda: len(threaded_server.clients) == 1)
-        second, refusal = _raw_connect(threaded_server.port, greeting_lines=1)
+        # the greeting names the peer: this connection is the one the server registered
+        assert f"{local[0]}:{local[1]}".encode() in greeting, greeting
+        assert wait_until(lambda: local in threaded_server.clients), threaded_server.clients
+        second, refusal = _raw_connect(port, greeting_lines=1)
         try:
             assert b"Max connection mount" in refusal
             assert len(threaded_server.clients) == 1
@@ -306,6 +317,8 @@ def test_encrypted_channel_round_trip(tmp_path):
                 lambda: sum(len(v) for v in server.messages_dict.values()) == 1,
                 timeout=10,
             )
+            # the ack is echoed by the client's receive thread: wait for it
+            assert wait_until(lambda: "msg send: encrypted hello" in buf.getvalue(), timeout=10)
         stored = [entry[0] for entries in server.messages_dict.values() for entry in entries]
         assert stored == ["encrypted hello"]
         assert "msg send: encrypted hello" in buf.getvalue()
