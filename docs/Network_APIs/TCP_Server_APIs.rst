@@ -25,7 +25,9 @@ clients.
             max_custom_workers: Any,
             is_extend_command: Any=False,
             is_enable_encrypto: Any=True,
-            is_custom_keys: Any=None) -> None:
+            is_custom_keys: Any=None,
+            max_mem_buff: Any=2048,
+            is_asynic_clients_io: Any=False) -> None:
             ...
 
 The TCP Server Setup API is defined in the ``TCP_Server_Base`` class.
@@ -33,7 +35,8 @@ The parameters of the ``__init__`` method are as follows:
 
 - ``host``: The host IP address to bind the TCP server to.
 - ``port``: The port number to bind the TCP server to.
-- ``max_clients``: The maximum number of concurrent clients the server can handle.
+- ``max_clients``: The maximum number of concurrent clients the server can handle
+  (ignored when ``is_asynic_clients_io`` is ``True``).
 - ``port_add_step``: The step size for incrementing the port number.
 - ``port_range_num``: The number of ports to check in the range.
 - ``max_file_transfer_thread_num``: The maximum number of threads for file transfer operations.
@@ -46,6 +49,10 @@ The parameters of the ``__init__`` method are as follows:
   user-supplied RSA keys. Both files must exist, parse as PEM, and pair
   with each other; an invalid pair is silently ignored and the default
   key lookup is used instead (``None`` keeps the default lookup).
+- ``is_asynic_clients_io``: A flag indicating whether clients are served by
+  asyncio coroutines on one event loop instead of one thread per client. It
+  lifts the ``max_clients`` limit, so a single server can hold thousands of
+  concurrent connections.
 
 All parameters have default values:
 
@@ -66,6 +73,9 @@ All parameters have default values:
 - ``is_custom_keys``: Default is ``None`` 
   (a ``[pub_key_path, pvt_key_path]`` list uses a user-supplied keypair
   instead of the default ``~/.ssh`` / generated keys)
+- ``is_asynic_clients_io``: Default is ``False``
+  (when ``True``, every accepted connection is served by a coroutine on one
+  asyncio event loop, and ``max_clients`` is ignored)
 
 The TCP Server Setup API will initialize all the necessary 
 parameters and resources for the TCP server.
@@ -99,6 +109,11 @@ which is set to ``True`` after the server socket is
 successfully created. The ``self.running`` variable is 
 used to control the main loop of the TCP server, and it 
 will be set to ``False`` when the server is shutting down.*
+
+With ``is_asynic_clients_io=True`` the main loop is the asyncio event loop
+instead: it accepts clients in non-blocking mode and schedules one coroutine
+per connection, it never applies the ``max_clients`` limit, and `stop`
+releases it so the loop can end.
 
 The main loop of the TCP server setup function first checks whether the number
 of connected clients exceeds the maximum number of clients. The maximum number

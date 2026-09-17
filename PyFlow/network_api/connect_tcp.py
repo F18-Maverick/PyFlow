@@ -20,6 +20,7 @@ Concepts live in ``docs/Network_APIs/TCP_Server_APIs.rst`` and
 docstrings below.
 """
 
+import asyncio
 import os
 import ast
 import sys
@@ -27,6 +28,7 @@ import time
 import copy
 import shlex
 import socket
+import selectors
 import secrets
 import traceback
 import threading
@@ -57,6 +59,25 @@ def _is_closed_socket_error(exc):
     )
 
 MAX_DECODE_FAILURES = 3  # circuit breaker: close after N consecutive decode failures (re-exchange storm / garbage injection)
+SEND_WAIT_TIMEOUT = 30.0  # seconds a non-blocking client write waits for buffer room
+
+
+def _wait_writable(client_socket, timeout):
+    """Wait until a non-blocking socket accepts more data.
+
+    Args:
+        client_socket (socket.socket): Socket to wait on; must be non-blocking.
+        timeout (float): Maximum seconds to wait. Must be > 0.
+
+    Raises:
+        TimeoutError: If the socket stays unwritable for ``timeout`` seconds.
+        OSError: If the socket is closed or cannot be polled.
+    """
+    with selectors.DefaultSelector() as selector:
+        selector.register(client_socket, selectors.EVENT_WRITE)
+        if not selector.select(timeout):
+            raise TimeoutError(f"peer did not accept data within {timeout} seconds")
+
 
 def _parse_destination_path(command_part):
     """Extract the trailing destination directory from a received transfer
@@ -205,11 +226,13 @@ def parse_forward_originator(command, own_address=None):
 class TCP_Server_Base:  # TCP server class
     """TCP server: accept clients, dispatch commands, relay messages and files.
 
-    Each accepted connection is served by `handle_client` in its own thread: a
-    line starting with ``/`` goes to `handle_command` (built-in commands plus the
-    handlers registered with `register_command`), any other line is a plain
-    message delivered to the listeners registered with `add_message_listener` and
-    stored in ``messages_dict``.
+    Each accepted connection is served by `handle_client`, either in its own
+    thread (the default) or by a coroutine on an asyncio event loop when
+    ``is_asynic_clients_io`` is True: a line starting with ``/`` goes to
+    `handle_command` (built-in commands plus the handlers registered with
+    `register_command`), any other line is a plain message delivered to the
+    listeners registered with `add_message_listener` and stored in
+    ``messages_dict``.
 
     Attributes:
         host (str): Address the server socket binds to.
@@ -217,6 +240,8 @@ class TCP_Server_Base:  # TCP server class
         clients (dict): Accepted connections keyed by ``(ip, port)``; each value
             holds ``socket``, ``address``, ``id`` and ``connected_time``.
         running (bool): True while the accept loop runs.
+        is_asynic_clients_io (bool): Whether clients are served by coroutines on
+            an event loop instead of one thread per client.
         is_enable_encrypto (bool): Whether the RSA channel is negotiated.
     """
 
@@ -235,6 +260,7 @@ class TCP_Server_Base:  # TCP server class
         is_enable_encrypto=True,
         is_custom_keys=None,
         max_mem_buff=2048,
+        is_asynic_clients_io=False,
     ):
         """Create the server and, unless extended, start accepting clients.
 
@@ -242,7 +268,8 @@ class TCP_Server_Base:  # TCP server class
             host (str): Address the server socket binds to. Defaults to
                 "127.0.0.1".
             port (int): First port to bind; also the base of the allocation range.
-            max_clients (int): Maximum concurrent clients. Defaults to 10.
+            max_clients (int): Maximum concurrent clients served in thread mode;
+                ignored when ``is_asynic_clients_io`` is True. Defaults to 10.
             port_add_step (int): Step between candidate ports. Defaults to 1.
             port_range_num (int): Number of ports per step. Defaults to 100.
             max_file_transfer_thread_num (int): Concurrent file transfers allowed.
@@ -261,6 +288,10 @@ class TCP_Server_Base:  # TCP server class
                 instead of the default key lookup; an invalid pair is ignored.
             max_mem_buff (int): Buffering ceiling in MiB for the in-memory forward
                 pump; past it the uploader is told to pause. Defaults to 2048.
+            is_asynic_clients_io (bool): Serve clients with asyncio coroutines on
+                an event loop instead of one thread per client, so a single
+                server can hold thousands of concurrent connections. Defaults to
+                False.
 
         Raises:
             OSError: If the ``.Flow`` directories or ``decode_command_table.json``
@@ -348,6 +379,9 @@ class TCP_Server_Base:  # TCP server class
         self.is_extend_command = is_extend_command
         self.is_enable_encrypto = is_enable_encrypto
         self.is_custom_keys = is_custom_keys
+        self.is_asynic_clients_io = is_asynic_clients_io
+        self._async_loop = None  # event loop driving the client coroutines (asynic clients io only)
+        self._async_wakeup = None  # future `stop` completes to release the async accept loop
         self._crypto_lock = threading.RLock()  # serialises the crypto collections below (no-GIL safe); held only around short ops, never across I/O
         self._encrypted_sockets = set()
         self._encrypted_recv_buffers = {}
@@ -1119,7 +1153,7 @@ class TCP_Server_Base:  # TCP server class
                 else:
                     print(f"Unsupported message type: {type(message)}")
                     return False
-                client_socket.sendall(data)
+                self._sendall(client_socket, data)
                 return True
             except Exception as e:
                 if not _is_closed_socket_error(e):
@@ -1127,12 +1161,39 @@ class TCP_Server_Base:  # TCP server class
                     traceback.print_exc()
                 raise
 
+    def _sendall(self, client_socket, data):
+        """Write ``data`` in full, waiting for room on a non-blocking socket.
+
+        Args:
+            client_socket (socket.socket): Target connection.
+            data (bytes): Payload to write in full.
+
+        Raises:
+            OSError: If the socket write fails or the peer closed the
+                connection.
+            TimeoutError: If a non-blocking socket stays unwritable for
+                ``SEND_WAIT_TIMEOUT`` seconds.
+        """
+        if not self.is_asynic_clients_io:  # blocking socket: a single sendall is enough
+            client_socket.sendall(data)
+            return
+        view = memoryview(data)
+        while view:
+            try:
+                sent = client_socket.send(view)
+            except BlockingIOError:  # non-blocking socket with a full send buffer
+                _wait_writable(client_socket, SEND_WAIT_TIMEOUT)
+                continue
+            if sent == 0:  # the peer closed the connection
+                raise BrokenPipeError(errno.EPIPE, "socket closed while sending")
+            view = view[sent:]
+
     def _send_raw(self, client_socket, text):
         """Send a plaintext crypto-protocol message, bypassing encryption."""
         data = text.strip()
         if not data.endswith("\n"):
             data += "\n"
-        client_socket.sendall(data.encode("utf-8"))
+        self._sendall(client_socket, data.encode("utf-8"))
 
     def _crypto_mark_encrypted(self, client_socket, peer_role, peer_pem_path):
         with self._crypto_lock:
@@ -1464,14 +1525,132 @@ class TCP_Server_Base:  # TCP server class
 
         Registers the client, greets it, announces the encryption mode and reads
         lines until the peer closes: commands go to `handle_command`, plain
-        messages go to the message listeners and to ``messages_dict``. Runs in its
-        own thread; the client is removed from ``clients`` and the socket closed
-        when the read loop ends for any reason.
+        messages go to the message listeners and to ``messages_dict``. The client
+        is removed from ``clients`` and its socket closed when the read loop ends
+        for any reason.
+
+        With ``is_asynic_clients_io`` False (the default) the call blocks and owns
+        its thread; with it True the client is served by a coroutine on the
+        server's event loop instead, and the call returns as soon as that
+        coroutine is scheduled. A connection arriving while that mode is on but
+        no event loop runs is closed with a console notice.
 
         Args:
             client_socket (socket.socket): Accepted connection.
             client_address (tuple): Peer ``(ip, port)``; used as the client id and
                 as the key in ``clients``.
+        """
+        if self.is_asynic_clients_io:
+            self._schedule_client_coroutine(client_socket, client_address)
+            return
+        client_id = self._register_client(client_socket, client_address)
+        try:
+            if not self._announce_client(client_socket, client_id):
+                return
+            buffer = ""
+            while True:
+                data = self.receive_message(client_socket, 4096)  # get msg from client
+                print(data)
+                if not data:
+                    break
+                buffer += data.decode("utf-8")
+                while "\n" in buffer:  # deal with multiple messages in buffer
+                    line, buffer = buffer.split("\n", 1)
+                    message = line.strip()
+                    if not message:
+                        continue
+                    response = self._process_client_line(
+                        client_socket, client_address, client_id, message
+                    )
+                    if response:  # send response to client
+                        self.send_message(client_socket, response)
+        except ConnectionResetError:
+            pass  # peer dropped with RST; the finally block reports the disconnect once
+        except Exception as e:
+            if not _is_closed_socket_error(e):
+                print(f"error while deal with client {client_id} : {e}")
+                traceback.print_exc()
+        finally:
+            self._unregister_client(client_socket, client_address, client_id)
+
+    def _schedule_client_coroutine(self, client_socket, client_address):
+        """Schedule one accepted client on the server's asyncio event loop.
+
+        Args:
+            client_socket (socket.socket): Accepted connection.
+            client_address (tuple): Peer ``(ip, port)``.
+        """
+        loop = self._async_loop
+        if loop is None or loop.is_closed():
+            print(
+                "asynic clients io is enabled but no event loop is running, "
+                "closing the connection"
+            )
+            try:
+                client_socket.close()
+            except Exception:
+                traceback.print_exc()
+            return
+        loop.call_soon_threadsafe(
+            loop.create_task, self._handle_client_async(client_socket, client_address)
+        )
+
+    async def _handle_client_async(self, client_socket, client_address):
+        """Serve one accepted client until it disconnects, as a coroutine.
+
+        The socket is read through the event loop while the line dispatch and
+        every write run on worker threads, so a blocking command handler,
+        listener or peer cannot stall the other connections.
+        """
+        loop = asyncio.get_running_loop()
+        client_id = self._register_client(client_socket, client_address)
+        try:
+            if not await asyncio.to_thread(self._announce_client, client_socket, client_id):
+                return
+            buffer = ""
+            while self.running:
+                data = await loop.sock_recv(client_socket, 4096)  # get msg from client
+                print(data)
+                if not data:
+                    break
+                buffer += data.decode("utf-8")
+                while "\n" in buffer:  # deal with multiple messages in buffer
+                    line, buffer = buffer.split("\n", 1)
+                    message = line.strip()
+                    if not message:
+                        continue
+                    response = await asyncio.to_thread(
+                        self._process_client_line,
+                        client_socket,
+                        client_address,
+                        client_id,
+                        message,
+                    )
+                    if response:  # send response to client
+                        await asyncio.to_thread(self.send_message, client_socket, response)
+        except ConnectionResetError:
+            pass  # peer dropped with RST; the finally block reports the disconnect once
+        except Exception as e:
+            if not _is_closed_socket_error(e):
+                print(f"error while deal with client {client_id} : {e}")
+                traceback.print_exc()
+        finally:
+            try:
+                # a cancelled read can leave its poll callback registered on the fd
+                loop.remove_reader(client_socket.fileno())
+            except Exception:
+                pass
+            self._unregister_client(client_socket, client_address, client_id)
+
+    def _register_client(self, client_socket, client_address):
+        """Add one accepted connection to ``clients``.
+
+        Args:
+            client_socket (socket.socket): Accepted connection.
+            client_address (tuple): Peer ``(ip, port)``.
+
+        Returns:
+            str: Client id, ``"<ip>:<port>"``.
         """
         client_id = f"{client_address[0]}:{client_address[1]}"
         with self.client_lock:  # add new client
@@ -1486,24 +1665,37 @@ class TCP_Server_Base:  # TCP server class
                 self._crypto_sock_addr[client_socket] = client_address
         print(f"new connection: {client_id}")
         print(f"connection count mount: {len(self.clients)}")
+        return client_id
+
+    def _announce_client(self, client_socket, client_id):
+        """Greet one client and announce the encryption mode and port range.
+
+        Args:
+            client_socket (socket.socket): Connection to greet.
+            client_id (str): Client id used in the console log.
+
+        Returns:
+            bool: True when the peer was greeted, False when it was already gone
+                (the caller closes the connection either way).
+        """
         welcome_msg = f"Welcome!: {client_id}\n"  # send welcome message
         try:
             self.send_message(client_socket, welcome_msg)
         except Exception as e:
-            # the server is stopping (or the peer vanished): the finally
-            # block below cleans up; never let this escape the thread
+            # the server is stopping (or the peer vanished): the caller's
+            # cleanup closes the connection; never let this escape
             if not _is_closed_socket_error(e):
                 print(f"error while welcoming client {client_id} : {e}")
-            return
+            return False
         # announce our encryption mode; a mismatched peer is disconnected in handle_command
         try:
             self._send_raw(client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
         except Exception as e:
-            # the peer vanished right after the welcome: the finally block
-            # below cleans up; never let this escape the thread
+            # the peer vanished right after the welcome: the caller's cleanup
+            # closes the connection; never let this escape
             if not _is_closed_socket_error(e):
                 print(f"error while announcing crypto mode to {client_id} : {e}")
-            return
+            return False
         if self.is_hand_alloc_port == True:
             broadcast_clients_port_alloc_range_msg = "/client_alloc_port_range {}".format(
                 self.each_client_port_range
@@ -1513,56 +1705,56 @@ class TCP_Server_Base:  # TCP server class
             broadcast_clients_port_alloc_range_msg = "/client_alloc_port_range NO_LIMIT"
             self.broadcast(broadcast_clients_port_alloc_range_msg)
         print(self.clients)
-        buffer = ""
-        try:
-            while True:
-                data = self.receive_message(client_socket, 4096)  # get msg from client
-                print(data)
-                if not data:
-                    break
-                buffer += data.decode("utf-8")
-                while "\n" in buffer:  # deal with multiple messages in buffer
-                    line, buffer = buffer.split("\n", 1)
-                    message = line.strip()
-                    if not message:
-                        continue
-                    ok, plain = self._crypto_process_line(client_socket, message)
-                    if ok:
-                        message = plain.strip()
-                    print(message)
-                    if message.startswith("/"):  # deal with special command
-                        self._record_event(client_socket, message)
-                        response = self.handle_command(client_socket, client_address, message)
-                    else:
-                        self._notify_message_received(client_id, message)
-                        self._record_message(client_socket, message)
-                        timestamp = datetime.now().strftime("%H:%M:%S")  # deal with normal message
-                        log_msg = f"[{timestamp}] {client_id}: {message}"
-                        print(log_msg)
-                        response = f"msg send: {message}"
-                    if response:  # send response to client
-                        self.send_message(client_socket, response)
-        except ConnectionResetError:
-            pass  # peer dropped with RST; the finally block reports the disconnect once
-        except Exception as e:
-            if not _is_closed_socket_error(e):
-                print(f"error while deal with client {client_id} : {e}")
-                traceback.print_exc()
-        finally:
-            with self.client_lock:
-                if client_address in self.clients:
-                    del self.clients[client_address]
-            with self._crypto_lock:
-                self._crypto_state.pop(client_address, None)
-                self._crypto_sock_addr.pop(client_socket, None)
-                self._crypto_peer.pop(client_socket, None)
-                self._crypto_push_active.discard(client_socket)
-                self._encrypted_sockets.discard(client_socket)
-                self._encrypted_recv_buffers.pop(client_socket, None)
-                self._crypto_send_locks.pop(client_socket, None)
-            client_socket.close()
-            print(f"client disconnected: {client_id}")
-            print(f"current connection count: {len(self.clients)}")
+        return True
+
+    def _process_client_line(self, client_socket, client_address, client_id, message):
+        """Decrypt, log and dispatch one complete line from a client.
+
+        Args:
+            client_socket (socket.socket): Connection the line came from.
+            client_address (tuple): Peer ``(ip, port)``.
+            client_id (str): Client id used in the console log.
+            message (str): One line with its newline removed.
+
+        Returns:
+            str | None: Response for that client, or None when none is due.
+        """
+        ok, plain = self._crypto_process_line(client_socket, message)
+        if ok:
+            message = plain.strip()
+        print(message)
+        if message.startswith("/"):  # deal with special command
+            self._record_event(client_socket, message)
+            return self.handle_command(client_socket, client_address, message)
+        self._notify_message_received(client_id, message)
+        self._record_message(client_socket, message)
+        timestamp = datetime.now().strftime("%H:%M:%S")  # deal with normal message
+        log_msg = f"[{timestamp}] {client_id}: {message}"
+        print(log_msg)
+        return f"msg send: {message}"
+
+    def _unregister_client(self, client_socket, client_address, client_id):
+        """Drop one client's state and close its socket.
+
+        Args:
+            client_socket (socket.socket): Connection to close.
+            client_address (tuple): Peer ``(ip, port)``.
+            client_id (str): Client id used in the console log.
+        """
+        with self.client_lock:
+            if client_address in self.clients:
+                del self.clients[client_address]
+        with self._crypto_lock:
+            self._crypto_state.pop(client_address, None)
+            self._crypto_sock_addr.pop(client_socket, None)
+            self._crypto_peer.pop(client_socket, None)
+            self._crypto_push_active.discard(client_socket)
+            self._encrypted_sockets.discard(client_socket)
+            self._encrypted_recv_buffers.pop(client_socket, None)
+            self._crypto_send_locks.pop(client_socket, None)
+        client_socket.close()
+        print(f"client disconnected: {client_id}")
+        print(f"current connection count: {len(self.clients)}")
 
     def handle_command(
         self, client_socket, client_address, command
@@ -2943,19 +3135,25 @@ class TCP_Server_Base:  # TCP server class
         """Bind the server socket, then accept clients until `stop` runs.
 
         Blocks the calling thread. A console command thread is started when
-        ``is_input_command_in_console`` is True, every accepted connection gets its
-        own `handle_client` thread, and a client beyond ``max_clients`` is refused
-        with a message. Socket errors and the end of the accept loop both end in
-        `stop`.
+        ``is_input_command_in_console`` is True. Every accepted connection is
+        served by `handle_client`: in its own thread by default, or by a
+        coroutine on an asyncio event loop when ``is_asynic_clients_io`` is True,
+        in which case ``max_clients`` no longer limits the connection count.
+        Socket errors and the end of the accept loop both end in `stop`.
         """
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             self.server_socket.bind((self.host, self.port))
-            self.server_socket.listen(self.max_clients)
+            self.server_socket.listen(
+                socket.SOMAXCONN if self.is_asynic_clients_io else self.max_clients
+            )
             self.running = True
             print(f"TCP server deployed on {self.host}:{self.port}")
-            print(f"max clients mount: {self.max_clients}")
+            if self.is_asynic_clients_io:
+                print("clients io mode: asyncio, max clients mount: no limit")
+            else:
+                print(f"max clients mount: {self.max_clients}")
             print("input '/stop' to stop the server\n")
             if self.is_input_command_in_console:
                 input_thread = threading.Thread(
@@ -2964,26 +3162,73 @@ class TCP_Server_Base:  # TCP server class
                 input_thread.start()
             else:
                 pass
-            while self.running:  # main loop to accept clients
-                try:
-                    client_socket, client_address = self.server_socket.accept()
-                    if len(self.clients) >= self.max_clients:
-                        self.send_message(client_socket, "Max connection mount, try latter")
-                        client_socket.close()
-                        continue
-                    client_thread = threading.Thread(  # set up client handling thread
-                        target=self.handle_client, args=(client_socket, client_address), daemon=True
-                    )
-                    client_thread.start()
-                except OSError as e:
-                    if not _is_closed_socket_error(e):
-                        traceback.print_exc()
-                    break  # server socket closed, exit loop
+            if self.is_asynic_clients_io:
+                asyncio.run(self._accept_clients_async())
+            else:
+                self._accept_clients_threaded()
         except Exception as e:
             print(f"Server error: {e}")
             traceback.print_exc()
         finally:
             self.stop()
+
+    def _accept_clients_threaded(self):
+        """Accept clients until the server stops, one thread per client."""
+        while self.running:  # main loop to accept clients
+            try:
+                client_socket, client_address = self.server_socket.accept()
+                if len(self.clients) >= self.max_clients:
+                    self.send_message(client_socket, "Max connection mount, try latter")
+                    client_socket.close()
+                    continue
+                client_thread = threading.Thread(  # set up client handling thread
+                    target=self.handle_client, args=(client_socket, client_address), daemon=True
+                )
+                client_thread.start()
+            except OSError as e:
+                if not _is_closed_socket_error(e):
+                    traceback.print_exc()
+                break  # server socket closed, exit loop
+
+    async def _accept_clients_async(self):
+        """Accept clients until the server stops, one coroutine per client.
+
+        Runs the whole client side on one event loop: the listening socket is
+        used in non-blocking mode, and every accepted connection is handled by
+        `handle_client` on this loop, so the connection count is bounded only by
+        the file-descriptor limit. `stop` completes ``_async_wakeup`` to release
+        the loop; its remaining client coroutines are cancelled when it ends.
+        """
+        loop = asyncio.get_running_loop()
+        self._async_loop = loop
+        wakeup = loop.create_future()
+        self._async_wakeup = wakeup
+        try:
+            self.server_socket.setblocking(False)
+            while self.running:
+                accept = loop.create_task(loop.sock_accept(self.server_socket))
+                done, _ = await asyncio.wait({accept, wakeup}, return_when=asyncio.FIRST_COMPLETED)
+                if wakeup in done:
+                    if accept.done() and not accept.cancelled() and accept.exception() is None:
+                        accept.result()[0].close()  # accepted while stopping: dropped
+                    else:
+                        accept.cancel()
+                        await asyncio.gather(accept, return_exceptions=True)
+                    break
+                try:
+                    client_socket, client_address = accept.result()
+                except OSError as e:
+                    if not _is_closed_socket_error(e):
+                        traceback.print_exc()
+                    break  # server socket closed, exit loop
+                except Exception:
+                    traceback.print_exc()
+                    break
+                client_socket.setblocking(False)
+                self.handle_client(client_socket, client_address)
+        finally:
+            self._async_loop = None
+            self._async_wakeup = None
 
     def console_input(self):  # deal consule input
         """Read console commands until the server stops.
@@ -3093,7 +3338,8 @@ class TCP_Server_Base:  # TCP server class
         """Stop the server and release everything it owns.
 
         Closes the server socket and every client connection, flushes the message
-        and event stores, releases the allocated port range and clears ``running``.
+        and event stores, releases the allocated port range, clears ``running``
+        and releases the client event loop when ``is_asynic_clients_io`` is True.
         Safe to call more than once.
         """
         self.running = False
@@ -3111,6 +3357,18 @@ class TCP_Server_Base:  # TCP server class
         if self.server_socket:  # close server socket
             self.server_socket.close()
             print("server stopped")
+        self._wake_async_accept_loop()
+
+    def _wake_async_accept_loop(self):
+        """Release the accept coroutine, if any, so its event loop can end."""
+        loop = self._async_loop
+        wakeup = self._async_wakeup
+        if loop is None or loop.is_closed() or wakeup is None or wakeup.done():
+            return
+        try:
+            loop.call_soon_threadsafe(wakeup.set_result, None)
+        except RuntimeError:
+            traceback.print_exc()
 
 
 class TCP_Client_Base:  # TCP client class
