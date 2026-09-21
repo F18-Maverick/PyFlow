@@ -120,12 +120,96 @@ SERVER_PARAM_FIELDS = [
     ("is_enable_encrypto", "Enable encryption", "bool", True, "RSA-encrypt the TCP channel."),
     ("is_custom_keys", "Custom keys", "text", "", "Optional [pub_key_path, pvt_key_path] pair."),
     ("max_mem_buff", "Max memory buffer (MB)", "number", 2048, "In-memory transfer buffer in MB."),
+    (
+        "is_asynic_clients_io",
+        "Asyncio clients io",
+        "bool",
+        False,
+        "Serve clients with asyncio coroutines; max_clients is then ignored.",
+    ),
+    ("is_debug", "Debug log", "bool", False, "Log execution-process lines as well."),
+    ("is_print_log", "Print log", "bool", True, "Log at all; False silences the instance."),
 ]
 
 # Web-only settings (not TCP_Server_Base parameters).
 WEB_FIELDS = [
     ("web_port", "Web port", "number", DEFAULT_WEB_PORT, "Port of this web backend (clients query it)."),
 ]
+
+# The web "ftp" share is not FTP: it browses one folder on the server host and
+# hands selected entries to clients over the protocol's native /file and
+# /file_folder transfers.
+FTP_LIST_COMMAND = "/ftp_list"
+FTP_GET_COMMAND = "/ftp_get"
+FTP_LIST_OK_COMMAND = "/ftp_list_ok"
+FTP_GET_OK_COMMAND = "/ftp_get_ok"
+FTP_ERROR_COMMAND = "/ftp_error"
+
+
+def _ftp_resolve(root, rel_path):
+    """Resolve one share-relative path, refusing anything outside ``root``.
+
+    Args:
+        root (str): Absolute shared folder.
+        rel_path (str): Path relative to the share; "" is the share itself.
+
+    Returns:
+        tuple: ``(absolute_path, clean_relative_path)``.
+
+    Raises:
+        ValueError: If the path is absolute or escapes the shared folder.
+    """
+    raw = (rel_path or "").strip()
+    if os.path.isabs(raw):
+        raise ValueError("path must be relative to the shared folder")
+    rel = raw.replace("\\", "/").strip("/")
+    if ".." in rel.split("/"):
+        raise ValueError("path must stay inside the shared folder")
+    root_real = os.path.realpath(root)
+    target = os.path.realpath(os.path.join(root_real, rel)) if rel else root_real
+    if target != root_real and not target.startswith(root_real + os.sep):
+        raise ValueError("path must stay inside the shared folder")
+    return target, rel
+
+
+def _ftp_listing(root, rel_path):
+    """Build the listing of one folder inside the shared root.
+
+    Args:
+        root (str): Absolute shared folder.
+        rel_path (str): Folder to list, relative to the root ("" is the root).
+
+    Returns:
+        dict: ``{"path", "parent", "entries"}``; every entry is
+            ``{"name", "dir", "size", "mtime"}``, folders first, then files,
+            each group sorted by name.
+
+    Raises:
+        ValueError: If the folder escapes the share or is not a folder.
+        OSError: If the folder cannot be read.
+    """
+    target, rel = _ftp_resolve(root, rel_path)
+    if not os.path.isdir(target):
+        raise ValueError(f"not a folder: {rel or '/'}")
+    entries = []
+    for name in sorted(os.listdir(target), key=str.lower):
+        full = os.path.join(target, name)
+        try:
+            is_dir = os.path.isdir(full)
+            stat = os.stat(full)
+        except OSError:
+            continue
+        entries.append(
+            {
+                "name": name,
+                "dir": is_dir,
+                "size": 0 if is_dir else stat.st_size,
+                "mtime": int(stat.st_mtime),
+            }
+        )
+    entries.sort(key=lambda entry: (not entry["dir"], entry["name"].lower()))
+    parent = None if rel == "" else (os.path.dirname(rel) or "")
+    return {"path": rel, "parent": parent, "entries": entries}
 
 def _load_or_create_secret_key(path=None):
     """Persist the Flask session key so logins survive a restart."""
@@ -226,6 +310,8 @@ class ServerWebApp:
         self._event_seq = 0
         self._addr_tokens = {}  # connected client address -> account session token
         self._bind_lock = threading.Lock()
+        self.ftp_root = None  # shared folder of the web "ftp" server (host path)
+        self._ftp_lock = threading.Lock()
 
         self.users = UserDatabase(db_path)
         self.mail = MailService(mail_config_path)
@@ -263,8 +349,6 @@ class ServerWebApp:
     def _start_server(self, config):
         """Create, register and start the TCP_Server_Base instance."""
         params = dict(config)
-        # Web architecture constraints: extensions must be registered
-        # before start, and the web UI replaces the console input.
         params["is_extend_command"] = True
         params["is_input_command_in_console"] = False
         if params.get("is_custom_keys") in (None, ""):
@@ -283,6 +367,7 @@ class ServerWebApp:
         self.server.register_command(
             BIND_COMMAND, self._on_web_bind, where_to_run="server", run_in_thread=True
         )
+        self._register_ftp_commands()
         self.server.add_message_listener(self._on_incoming_message)
         self.server.add_file_listener(self._on_incoming_file)
         try:
@@ -459,6 +544,85 @@ class ServerWebApp:
             traceback.print_exc()
         self._broadcast_clients()
         return None
+
+    # ------------------------------------------------------------- "ftp" share
+
+    def _register_ftp_commands(self):
+        """Register the web "ftp" share commands on the running TCP server."""
+        if self.server is None:
+            return
+        self.server.register_command(
+            FTP_LIST_COMMAND, self._on_ftp_list, where_to_run="server", run_in_thread=True
+        )
+        self.server.register_command(
+            FTP_GET_COMMAND, self._on_ftp_get, where_to_run="server", run_in_thread=True
+        )
+
+    def _ftp_shared_root(self):
+        """Return the shared folder, or None while nothing is shared."""
+        with self._ftp_lock:
+            return self.ftp_root
+
+    def _on_ftp_list(self, sock, addr, cmd):
+        """Server side of ``/ftp_list``: answer with the folder listing.
+
+        Not FTP: the answer is a protocol line (``/ftp_list_ok`` or
+        ``/ftp_error``) carrying a JSON listing of one folder inside the
+        shared root.
+        """
+        parts = cmd.split(" ", 2)
+        request_id = parts[1] if len(parts) > 1 else "?"
+        raw = parts[2].strip() if len(parts) > 2 else ""
+        try:  # the web client sends the path as a JSON string; a raw path also works
+            decoded = json.loads(raw)
+        except ValueError:
+            decoded = None
+        rel_path = decoded if isinstance(decoded, str) else raw
+        root = self._ftp_shared_root()
+        if not root:
+            return f"{FTP_ERROR_COMMAND} {request_id} no folder is shared"
+        try:
+            listing = _ftp_listing(root, rel_path)
+        except (ValueError, OSError) as e:
+            return f"{FTP_ERROR_COMMAND} {request_id} {e}"
+        return f"{FTP_LIST_OK_COMMAND} {request_id} {json.dumps(listing)}"
+
+    def _on_ftp_get(self, sock, addr, cmd):
+        """Server side of ``/ftp_get``: push the selected share entries.
+
+        Every entry is handed to the protocol's native transfer (``/file`` for
+        a file, ``/file_folder`` for a folder) addressed to the asking client.
+        """
+        parts = cmd.split(" ", 2)
+        request_id = parts[1] if len(parts) > 1 else "?"
+        try:
+            wanted = json.loads(parts[2]) if len(parts) > 2 else []
+        except ValueError:
+            return f"{FTP_ERROR_COMMAND} {request_id} malformed request"
+        if not isinstance(wanted, list):
+            return f"{FTP_ERROR_COMMAND} {request_id} malformed request"
+        root = self._ftp_shared_root()
+        if not root:
+            return f"{FTP_ERROR_COMMAND} {request_id} no folder is shared"
+        if self._target_info(addr) is None:
+            return f"{FTP_ERROR_COMMAND} {request_id} client is not connected"
+        started = 0
+        skipped = 0
+        for entry in wanted:
+            try:
+                target, _rel = _ftp_resolve(root, str(entry))
+            except ValueError:
+                skipped += 1
+                continue
+            if not os.path.exists(target):
+                skipped += 1
+                continue
+            if os.path.isdir(target):
+                self._send_folder_to_client(tuple(addr), target)
+            else:
+                self._send_file_to_client(tuple(addr), target)
+            started += 1
+        return f"{FTP_GET_OK_COMMAND} {request_id} {started} {skipped}"
 
     # ------------------------------------------------ inbound event handling
 
@@ -976,6 +1140,48 @@ class ServerWebApp:
         def api_sync_clients():
             self._broadcast_clients()
             return jsonify({"ok": True})
+
+        @app.get("/api/ftp")
+        @login_required
+        def api_ftp_status():
+            root = self._ftp_shared_root()
+            return jsonify(
+                {"ok": True, "root": root, "shared": bool(root and os.path.isdir(root))}
+            )
+
+        @app.post("/api/ftp/add")
+        @admin_required
+        def api_ftp_add():
+            data = request.get_json(force=True)
+            raw = (data.get("path") or "").strip()
+            if not raw:
+                return jsonify({"ok": False, "error": "a folder path is required"}), 400
+            path = os.path.abspath(os.path.expanduser(raw))
+            if not os.path.isdir(path):
+                return jsonify({"ok": False, "error": f"not a folder: {path}"}), 400
+            with self._ftp_lock:
+                self.ftp_root = path
+            self._register_ftp_commands()
+            return jsonify({"ok": True, "root": path})
+
+        @app.post("/api/ftp/remove")
+        @admin_required
+        def api_ftp_remove():
+            with self._ftp_lock:
+                self.ftp_root = None
+            return jsonify({"ok": True})
+
+        @app.get("/api/ftp/list")
+        @login_required
+        def api_ftp_list():
+            root = self._ftp_shared_root()
+            if not root:
+                return jsonify({"ok": False, "error": "no folder is shared"}), 404
+            try:
+                listing = _ftp_listing(root, request.args.get("path", ""))
+            except (ValueError, OSError) as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            return jsonify({"ok": True, "root": root, "listing": listing})
 
         @app.get("/api/extensions_ui")
         @admin_required

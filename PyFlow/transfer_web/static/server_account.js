@@ -259,6 +259,170 @@
     backdrop.querySelector("#warn-later-btn").addEventListener("click", () => closeModal(backdrop));
   }
 
+
+  /* ---------------- "ftp" server (not FTP: the protocol's own transfers) ---------------- */
+
+  // The brand of the feature is the literal quoted "ftp": this is not the FTP
+  // protocol, it browses one folder of this host and hands the chosen entries
+  // to clients over the PyFlow file transfer commands.
+  const FTP_BUTTON_ADD = '+ "ftp" server';
+  const FTP_BUTTON_VIEW = '"ftp" server status';
+
+  function fmtSize(n) {
+    if (n == null || isNaN(n)) return "";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let v = Number(n);
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) {
+      v /= 1024;
+      i++;
+    }
+    return (v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)) + " " + units[i];
+  }
+
+  function ftpButton() {
+    return document.getElementById("ftp-btn");
+  }
+
+  async function refreshFtpButton() {
+    const btn = ftpButton();
+    if (!btn) return null;
+    try {
+      const data = await api("/api/ftp");
+      const shared = !!data.shared;
+      btn.textContent = shared ? FTP_BUTTON_VIEW : FTP_BUTTON_ADD;
+      return data.root || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function openFtpAddDialog(currentRoot) {
+    const backdrop = openModal(
+      "<h2>Add an &quot;ftp&quot; server</h2>" +
+        '<div class="note">This is not FTP: the chosen folder is served to connected ' +
+        "clients over the PyFlow file transfer protocol.</div>" +
+        '<div class="field"><label for="ftp-path">Folder to share (path on this host)</label>' +
+        '<input type="text" id="ftp-path" placeholder="e.g. /home/user/share" value="' +
+        escAttr(currentRoot || "") +
+        '"></div>' +
+        '<div class="status-line" id="ftp-status"></div>' +
+        '<div class="actions"><button class="btn" id="ftp-add-btn">Add</button> ' +
+        '<button class="btn btn-ghost" id="ftp-add-cancel">Cancel</button></div>'
+    );
+    const status = backdrop.querySelector("#ftp-status");
+    backdrop.querySelector("#ftp-add-cancel").addEventListener("click", () => closeModal(backdrop));
+    backdrop.querySelector("#ftp-add-btn").addEventListener("click", async () => {
+      const path = backdrop.querySelector("#ftp-path").value.trim();
+      if (!path) {
+        status.className = "status-line err";
+        status.textContent = "Enter a folder path";
+        return;
+      }
+      try {
+        const data = await api("/api/ftp/add", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path }),
+        });
+        closeModal(backdrop);
+        await refreshFtpButton();
+        toast('"ftp" server added: ' + data.root, "ok");
+        openFtpBrowser("");
+      } catch (e) {
+        status.className = "status-line err";
+        status.textContent = e.message;
+      }
+    });
+  }
+
+  // Share-relative path of one child entry of ``base``.
+  function ftpJoin(base, name) {
+    return base ? base + "/" + name : name;
+  }
+
+  function ftpRow(entry, relBase, openFolder) {
+    const row = document.createElement("div");
+    row.className = "ftp-row" + (entry.dir ? " dir" : "");
+    row.innerHTML =
+      '<span class="ftp-icon">' + (entry.dir ? "&#128193;" : "&#128196;") + "</span>" +
+      '<span class="ftp-name">' + esc(entry.name) + "</span>" +
+      '<span class="ftp-meta">' + (entry.dir ? "folder" : fmtSize(entry.size)) + "</span>" +
+      '<span class="ftp-meta">' + new Date(entry.mtime * 1000).toLocaleString() + "</span>";
+    if (entry.dir) {
+      row.title = "Open " + entry.name;
+      row.addEventListener("click", () => openFolder(ftpJoin(relBase, entry.name)));
+    }
+    return row;
+  }
+
+  async function openFtpBrowser(relPath) {
+    let data;
+    try {
+      data = await api("/api/ftp/list?path=" + encodeURIComponent(relPath || ""));
+    } catch (e) {
+      toast("Cannot list the shared folder: " + e.message, "err");
+      return;
+    }
+    const listing = data.listing || { entries: [] };
+    const backdrop = openModal(
+      "<h2>&quot;ftp&quot; server</h2>" +
+        '<div class="ftp-bar"><button class="btn btn-ghost" id="ftp-up">&uarr; Up</button>' +
+        '<span class="ftp-path" id="ftp-path">' +
+        esc("/" + (listing.path || "")) +
+        "</span>" +
+        '<span class="spacer"></span>' +
+        '<button class="btn btn-ghost" id="ftp-change">Change folder</button>' +
+        '<button class="btn btn-ghost" id="ftp-close">Close</button></div>' +
+        '<div class="note">Shared host folder: <code>' +
+        esc(data.root || "") +
+        "</code></div>" +
+        '<div class="ftp-list" id="ftp-list"></div>'
+    );
+    const list = backdrop.querySelector("#ftp-list");
+
+    function render() {
+      list.innerHTML = "";
+      if (!listing.entries.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty-hint";
+        empty.textContent = "This folder is empty";
+        list.appendChild(empty);
+        return;
+      }
+      listing.entries.forEach((entry) =>
+        list.appendChild(
+          ftpRow(entry, listing.path, (rel) => {
+            closeModal(backdrop);
+            openFtpBrowser(rel);
+          })
+        )
+      );
+    }
+
+    render();
+    const upBtn = backdrop.querySelector("#ftp-up");
+    if (listing.parent === null || listing.parent === undefined) {
+      upBtn.disabled = true;
+    } else {
+      upBtn.addEventListener("click", () => {
+        closeModal(backdrop);
+        openFtpBrowser(listing.parent);
+      });
+    }
+    backdrop.querySelector("#ftp-close").addEventListener("click", () => closeModal(backdrop));
+    backdrop.querySelector("#ftp-change").addEventListener("click", () => {
+      closeModal(backdrop);
+      openFtpAddDialog(data.root || "");
+    });
+  }
+
+  async function openFtpServer() {
+    const root = await refreshFtpButton();
+    if (root) openFtpBrowser("");
+    else openFtpAddDialog("");
+  }
+
   /* ---------------- session ---------------- */
 
   async function logout() {
@@ -275,12 +439,18 @@
       Object.assign(state, options || {});
       const usersBtn = document.getElementById("users-btn");
       if (usersBtn) usersBtn.addEventListener("click", openUsersModal);
+      const ftpBtn = document.getElementById("ftp-btn");
+      if (ftpBtn) {
+        ftpBtn.addEventListener("click", openFtpServer);
+        refreshFtpButton();
+      }
       const logoutBtn = document.getElementById("logout-btn");
       if (logoutBtn) logoutBtn.addEventListener("click", logout);
       if (state.mustChange) openDefaultCredentialsWarning();
     },
     openCredentials: openCredentialsModal,
     openUsers: openUsersModal,
+    openFtpServer: openFtpServer,
     logout: logout,
   };
 })();

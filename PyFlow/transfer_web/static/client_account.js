@@ -330,6 +330,159 @@
     refresh();
   }
 
+  /* ---------------- server "ftp" share (not FTP: native protocol transfers) ---------------- */
+
+  // Selected share-relative paths survive folder navigation, so a selection can
+  // span folders; the checkbox on the left of every row is the only state.
+  const ftpState = { path: "", selected: new Set(), listing: null };
+
+  function fmtSize(n) {
+    if (n == null || isNaN(n)) return "";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let v = Number(n);
+    let i = 0;
+    while (v >= 1024 && i < units.length - 1) {
+      v /= 1024;
+      i++;
+    }
+    return (v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)) + " " + units[i];
+  }
+
+  function ftpJoin(base, name) {
+    return base ? base + "/" + name : name;
+  }
+
+  function ftpEntryRow(entry, render, openFolder) {
+    const rel = ftpJoin(ftpState.path, entry.name);
+    const row = document.createElement("div");
+    row.className = "ftp-row" + (entry.dir ? " dir" : "") + (ftpState.selected.has(rel) ? " picked" : "");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = ftpState.selected.has(rel);
+    box.title = "Select " + entry.name;
+    row.appendChild(box);
+    const icon = document.createElement("span");
+    icon.className = "ftp-icon";
+    icon.innerHTML = entry.dir ? "&#128193;" : "&#128196;";
+    row.appendChild(icon);
+    const name = document.createElement("span");
+    name.className = "ftp-name";
+    name.textContent = entry.name;
+    row.appendChild(name);
+    const meta = document.createElement("span");
+    meta.className = "ftp-meta";
+    meta.textContent = entry.dir ? "folder" : fmtSize(entry.size);
+    row.appendChild(meta);
+    const when = document.createElement("span");
+    when.className = "ftp-meta";
+    when.textContent = new Date(entry.mtime * 1000).toLocaleString();
+    row.appendChild(when);
+
+    // Windows-explorer conventions: a single click toggles the checkbox of the
+    // row, a double click opens a folder and is ignored on a file (the two
+    // clicks of the double click cancel each other out).
+    function toggle() {
+      if (ftpState.selected.has(rel)) ftpState.selected.delete(rel);
+      else ftpState.selected.add(rel);
+      box.checked = ftpState.selected.has(rel);
+      row.classList.toggle("picked", box.checked);
+      render();
+    }
+    row.addEventListener("click", (e) => {
+      if (e.target !== box) toggle();
+    });
+    row.addEventListener("dblclick", () => {
+      if (!entry.dir) return; // double-clicking a file does nothing
+      openFolder(rel);
+    });
+    return row;
+  }
+
+  // Refresh the download button of a modal from the current selection.
+  function updateFtpFooter(backdrop) {
+    const downloadBtn = backdrop.querySelector("#ftp-download");
+    if (!downloadBtn) return;
+    downloadBtn.textContent = "Download selected (" + ftpState.selected.size + ")";
+    downloadBtn.disabled = ftpState.selected.size === 0;
+  }
+
+  function renderFtpModal(backdrop) {
+    const listing = ftpState.listing || { entries: [], path: "", parent: null };
+    const list = backdrop.querySelector("#ftp-list");
+    backdrop.querySelector("#ftp-path").textContent = "/" + (listing.path || "");
+    backdrop.querySelector("#ftp-up").disabled =
+      listing.parent === null || listing.parent === undefined;
+    updateFtpFooter(backdrop);
+    list.innerHTML = "";
+    if (!listing.entries.length) {
+      const empty = document.createElement("div");
+      empty.className = "empty-hint";
+      empty.textContent = "This folder is empty";
+      list.appendChild(empty);
+      return;
+    }
+    const refreshFooter = () => updateFtpFooter(backdrop);
+    const openFolder = (rel) => {
+      ftpState.path = rel;
+      loadFtpFolder(backdrop);
+    };
+    listing.entries.forEach((entry) =>
+      list.appendChild(ftpEntryRow(entry, refreshFooter, openFolder))
+    );
+  }
+
+  async function loadFtpFolder(backdrop) {
+    const modal = backdrop || document.querySelector(".modal-backdrop");
+    try {
+      const data = await post("/api/ftp/list", { path: ftpState.path });
+      ftpState.listing = data.listing || { entries: [], path: ftpState.path, parent: null };
+      ftpState.path = ftpState.listing.path || "";
+      if (modal) renderFtpModal(modal);
+    } catch (e) {
+      toast('Cannot open the server "ftp" server: ' + e.message, "err");
+      if (modal) closeModal(modal);
+    }
+  }
+
+  function openFtpModal() {
+    ftpState.path = "";
+    ftpState.selected = new Set();
+    const backdrop = openModal(
+      "<h2>Server &quot;ftp&quot;</h2>" +
+        '<div class="note">Files and folders below live on the server. Tick what you want ' +
+        "and download it over the PyFlow transfer protocol: click selects, double click opens " +
+        "a folder (a file ignores the double click).</div>" +
+        '<div class="ftp-bar"><button class="btn btn-ghost" id="ftp-up">&uarr; Up</button>' +
+        '<span class="ftp-path" id="ftp-path">/</span>' +
+        '<span class="spacer"></span>' +
+        '<button class="btn btn-ghost" id="ftp-refresh">Reload</button>' +
+        '<button class="btn btn-ghost" id="ftp-close">Close</button></div>' +
+        '<div class="ftp-list" id="ftp-list"></div>' +
+        '<div class="ftp-footer"><span class="spacer"></span>' +
+        '<button class="btn" id="ftp-download" disabled>Download selected (0)</button></div>'
+    );
+    backdrop.querySelector("#ftp-close").addEventListener("click", () => closeModal(backdrop));
+    backdrop.querySelector("#ftp-up").addEventListener("click", () => {
+      const parent = ftpState.listing ? ftpState.listing.parent : null;
+      if (parent === null || parent === undefined) return;
+      ftpState.path = parent;
+      loadFtpFolder(backdrop);
+    });
+    backdrop.querySelector("#ftp-refresh").addEventListener("click", () => loadFtpFolder(backdrop));
+    backdrop.querySelector("#ftp-download").addEventListener("click", async () => {
+      const paths = Array.from(ftpState.selected);
+      if (!paths.length) return;
+      try {
+        const data = await post("/api/ftp/download", { paths });
+        closeModal(backdrop);
+        toast("Download started (" + (data.started || 0) + " item(s))", "ok");
+      } catch (e) {
+        toast("Download failed: " + e.message, "err");
+      }
+    });
+    loadFtpFolder(backdrop);
+  }
+
   /* ---------------- session ---------------- */
 
   async function logout() {
@@ -350,11 +503,14 @@
       if (requestsBtn) requestsBtn.addEventListener("click", openRequestsModal);
       const userInfoBtn = document.getElementById("user-info-btn");
       if (userInfoBtn) userInfoBtn.addEventListener("click", openUserInfoModal);
+      const ftpBtn = document.getElementById("ftp-btn");
+      if (ftpBtn) ftpBtn.addEventListener("click", openFtpModal);
       const logoutBtn = document.getElementById("logout-btn");
       if (logoutBtn) logoutBtn.addEventListener("click", logout);
       pollRequests();
       setInterval(pollRequests, POLL_MS);
     },
+    openFtp: openFtpModal,
     logout: logout,
   };
 })();

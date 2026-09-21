@@ -79,6 +79,15 @@ BIND_RETRY_INTERVAL = 1.0
 # Timeout of one request to the server web backend, and the status its routes
 # answer with when the session is gone.
 REQUEST_TIMEOUT = 10
+
+# Web "ftp" share (not FTP): the server answers ``/ftp_list`` with a folder
+# listing of the folder it shares and pushes ``/ftp_get`` selections to this
+# client over the protocol's native /file and /file_folder transfers.
+FTP_LIST_COMMAND = "/ftp_list"
+FTP_GET_COMMAND = "/ftp_get"
+FTP_LIST_OK_COMMAND = "/ftp_list_ok"
+FTP_GET_OK_COMMAND = "/ftp_get_ok"
+FTP_ERROR_COMMAND = "/ftp_error"
 UNAUTHORIZED = 401
 
 # Ordered (key, label, type, default, help) for every TCP_Client_Base
@@ -116,6 +125,8 @@ CLIENT_PARAM_FIELDS = [
     ("is_enable_encrypto", "Enable encryption", "bool", True, "RSA-encrypt the TCP channel."),
     ("is_custom_keys", "Custom keys", "text", "", "Optional [pub_key_path, pvt_key_path] pair."),
     ("max_mem_buff", "Max memory buffer (MB)", "number", 2048, "In-memory transfer buffer in MB."),
+    ("is_debug", "Debug log", "bool", False, "Log execution-process lines as well."),
+    ("is_print_log", "Print log", "bool", True, "Log at all; False silences the instance."),
 ]
 
 
@@ -242,6 +253,9 @@ class ClientWebApp:
         self._bind_pending = False
         self._bind_lock = threading.Lock()
         self._bound_address = None
+        self._ftp_lock = threading.Lock()
+        self._ftp_seq = 0  # request ids for the "ftp" listing/download round trips
+        self._ftp_waiters = {}  # request id -> {"event": Event, "reply": tuple | None}
         self.app = Flask(
             __name__,
             template_folder=TEMPLATE_DIR,
@@ -314,6 +328,79 @@ class ClientWebApp:
         except Exception:
             traceback.print_exc()
 
+    def _ftp_request(self, command, payload, timeout=REQUEST_TIMEOUT):
+        """Send one "ftp" command to the server and wait for its answer.
+
+        Args:
+            command (str): ``/ftp_list`` or ``/ftp_get``.
+            payload (object): JSON-serializable request argument.
+            timeout (float): Seconds to wait for the answer.
+
+        Returns:
+            tuple: ``(reply_command, reply_payload)`` as sent by the server.
+
+        Raises:
+            _ServerRequestError: If the client is not connected, the write
+                fails, the server refuses the request or nothing arrives.
+        """
+        if not self.connected or self.client is None or not _channel_ready(self.client):
+            raise _ServerRequestError(503, "not connected to the server")
+        with self._ftp_lock:
+            self._ftp_seq += 1
+            request_id = str(self._ftp_seq)
+            slot = {"event": threading.Event(), "reply": None}
+            self._ftp_waiters[request_id] = slot
+        line = f"{command} {request_id} {json.dumps(payload, separators=(',', ':'))}"
+        try:
+            self.client.send_message(self.client.client_socket, line)
+        except Exception as e:
+            with self._ftp_lock:
+                self._ftp_waiters.pop(request_id, None)
+            raise _ServerRequestError(502, f"cannot reach the server: {e}") from e
+        try:
+            if not slot["event"].wait(timeout):
+                raise _ServerRequestError(504, "the server did not answer in time")
+        finally:
+            with self._ftp_lock:
+                self._ftp_waiters.pop(request_id, None)
+        reply_command, reply_payload = slot["reply"]
+        if reply_command == FTP_ERROR_COMMAND:
+            raise _ServerRequestError(502, str(reply_payload))
+        return reply_command, reply_payload
+
+    def _ftp_list(self, rel_path):
+        """Ask the server for one folder of its shared folder.
+
+        Args:
+            rel_path (str): Folder relative to the share; "" is the share root.
+
+        Returns:
+            dict: The server's listing payload.
+        """
+        _command, payload = self._ftp_request(FTP_LIST_COMMAND, rel_path)
+        return payload
+
+    def _ftp_download(self, rel_paths):
+        """Ask the server to push the selected share entries to this client.
+
+        Args:
+            rel_paths (list): Share-relative files and folders to download.
+
+        Returns:
+            dict: ``{"started": int, "skipped": int}``.
+        """
+        _command, payload = self._ftp_request(FTP_GET_COMMAND, list(rel_paths))
+        return payload
+
+    def _register_ftp_commands(self):
+        """Register the replies of the web "ftp" share on the TCP client."""
+        if self.client is None:
+            return
+        for command in (FTP_LIST_OK_COMMAND, FTP_GET_OK_COMMAND, FTP_ERROR_COMMAND):
+            self.client.register_command(
+                command, self._on_ftp_reply, where_to_run="server", run_in_thread=True
+            )
+
     def _restart(self):
         time.sleep(1)
         # Spawn a fresh process and exit: ``os.execv`` would keep the Flask
@@ -353,6 +440,31 @@ class ClientWebApp:
         address["id"] = f"{address['ip']}:{address['port']}"
         self._bound_address = address
         self._bind_ack = True
+        return None
+
+    def _on_ftp_reply(self, sock, addr, cmd):
+        """Server answer to one "ftp" request: wake the waiting HTTP request."""
+        parts = cmd.split(" ", 2)
+        if len(parts) < 2:
+            return None
+        command = parts[0].lower()
+        request_id = parts[1]
+        body = parts[2].strip() if len(parts) > 2 else ""
+        if command == FTP_LIST_OK_COMMAND:
+            try:
+                reply = (command, json.loads(body))
+            except ValueError:
+                reply = (FTP_ERROR_COMMAND, "malformed listing")
+        elif command == FTP_GET_OK_COMMAND:
+            started, _, skipped = body.partition(" ")
+            reply = (command, {"started": int(started or 0), "skipped": int(skipped or 0)})
+        else:
+            reply = (FTP_ERROR_COMMAND, body or "the server refused the request")
+        with self._ftp_lock:
+            slot = self._ftp_waiters.get(request_id)
+        if slot is not None:
+            slot["reply"] = reply
+            slot["event"].set()
         return None
 
     # ------------------------------------------------ inbound event handling
@@ -491,9 +603,7 @@ class ClientWebApp:
             "/web_clients_update", self._on_clients_update, where_to_run="server", run_in_thread=True
         )
         self.client.add_message_listener(self._on_incoming_message)
-        self.client.register_command(
-            BIND_OK_COMMAND, self._on_bind_ok, where_to_run="server", run_in_thread=True
-        )
+        self._register_ftp_commands()
         self.client.add_file_listener(self._on_incoming_file)
         try:
             add_extension.load_registered_extensions(self.client, "client")
@@ -1086,6 +1196,27 @@ class ClientWebApp:
                 return jsonify({"ok": False, "error": "not connected"}), 400
             self.client.send_message(self.client.client_socket, "/web_sync_clients")
             return jsonify({"ok": True})
+
+        @app.post("/api/ftp/list")
+        def api_ftp_list():
+            payload = request.get_json(silent=True) or {}
+            try:
+                listing = self._ftp_list(str(payload.get("path") or ""))
+            except _ServerRequestError as e:
+                return jsonify({"ok": False, "error": str(e)}), e.status
+            return jsonify({"ok": True, "listing": listing})
+
+        @app.post("/api/ftp/download")
+        def api_ftp_download():
+            payload = request.get_json(silent=True) or {}
+            wanted = payload.get("paths")
+            if not isinstance(wanted, list) or not wanted:
+                return jsonify({"ok": False, "error": "select at least one entry"}), 400
+            try:
+                result = self._ftp_download([str(entry) for entry in wanted])
+            except _ServerRequestError as e:
+                return jsonify({"ok": False, "error": str(e)}), e.status
+            return jsonify({"ok": True, **result})
 
         @app.get("/api/extensions_ui")
         def api_get_extensions_ui():
