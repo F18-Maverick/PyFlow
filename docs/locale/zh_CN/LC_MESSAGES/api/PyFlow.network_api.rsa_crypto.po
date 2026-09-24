@@ -1,0 +1,232 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, RayXu
+# This file is distributed under the same license as the PyFlow package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PyFlow \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-16 11:10+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: zh_CN\n"
+"Language-Team: zh_CN <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: ../../api/PyFlow.network_api.rsa_crypto.rst:2
+#: def9740b5a2e4aaeb2aeed8b4f02c0ec
+msgid "PyFlow.network\\_api.rsa\\_crypto module"
+msgstr ""
+
+#: 46d3090efafd4504870cf72a4bea22ab PyFlow.network_api.rsa_crypto:1 of
+msgid "crypto_api (C/OpenSSL) RSA integration for PyFlow's TCP layer."
+msgstr ""
+
+#: 5b1ff4a00b0f46258cda2e7440368de1 PyFlow.network_api.rsa_crypto:3 of
+msgid ""
+"A thin ctypes binding to the shared ``libcrypto_api`` plus the key "
+"lifecycle required by the encrypted TCP channel:"
+msgstr ""
+
+#: PyFlow.network_api.rsa_crypto:6 a5a0d6d600604683990a92555a49a3fe of
+msgid ""
+"Reuse an existing RSA keypair from ``~/.ssh`` (PEM private key) when one "
+"is present and parseable, otherwise generate a fresh keypair into "
+"``.Flow/pvt_key``. A caller-supplied keypair (``custom_keys``) is "
+"honoured when both files parse and the pair matches."
+msgstr ""
+
+#: PyFlow.network_api.rsa_crypto:10 bb413dc908624589a3e57f8a2c702728 of
+msgid ""
+"Anti-MITM identity check (TOFU): every connection exchanges public keys "
+"in plaintext. Each side records the peer in "
+"``.Flow/pub_key/pub_key.json`` under the peer's ``(ip, port)`` with the "
+"SHA-256 of its public key; a later connection from the same endpoint "
+"presenting a different key is rejected, and a known key seen from a new "
+"endpoint is re-registered under the new ``(ip, port)``."
+msgstr ""
+
+#: PyFlow.network_api.rsa_crypto:16 aec1a7998276428881efcfac6fe4cebe of
+msgid ""
+"RSA-OAEP encrypt/decrypt with the ``_VALID`` plaintext signature so a "
+"stale key (for example a rotated ``~/.ssh`` pair) is detected and the "
+"peers re-exchange their public keys."
+msgstr ""
+
+#: 60edbdead17c422782e688ab68f8a6d1 PyFlow.network_api.rsa_crypto:20 of
+msgid ""
+"The C library must be built first (``cmake -S . -B build && cmake --build"
+" build``); see ``load_library`` for the search paths."
+msgstr ""
+
+#: 67af7d5c5f41474fba915352e506a8b4
+#: PyFlow.network_api.rsa_crypto.CryptoLibraryError:1 of
+msgid "Raised when the shared libcrypto_api cannot be loaded."
+msgstr ""
+
+#: PyFlow.network_api.rsa_crypto.RsaKey:1 e620122ff0bc48dd985c4b6a0b3b41ce of
+msgid "Owns an ``pf_rsa_key_t*`` handle; frees it on GC."
+msgstr ""
+
+#: 1a7d8e9db5a3435486d716b13f2a2a56
+#: PyFlow.network_api.rsa_crypto.load_library:1 of
+msgid "Locate and load the shared crypto_api library (cached)."
+msgstr ""
+
+#: 670f4a719bf24c24b48ecb5d73b373ce
+#: PyFlow.network_api.rsa_crypto.get_local_mac:1 of
+msgid "Return a stable 48-bit machine identifier as colon-separated hex."
+msgstr ""
+
+#: PyFlow.network_api.rsa_crypto.get_local_mac:3
+#: f1306bb875d34b558f7418278fded413 of
+msgid ""
+"Uses ``uuid.getnode()`` (the real hardware MAC when one is available). "
+"Server and client on the same host share this value; the ``<role>_`` "
+"prefix in the key file names keeps them apart."
+msgstr ""
+
+#: 333763d798c54d52a9a56a3e4e3e2155 PyFlow.network_api.rsa_crypto.RsaCrypto:1
+#: of
+msgid "Key lifecycle plus RSA-OAEP encrypt/decrypt for one role."
+msgstr ""
+
+#: PyFlow.network_api.rsa_crypto.RsaCrypto:3 f52515121ac74575aaa36d45dd0341a2
+#: of
+msgid ""
+"``role`` is ``\"server\"`` or ``\"client\"`` and is used to name the "
+"locally generated keypair (``pvt_key/<role>_priv.pem``) and the peer key "
+"cache (``pub_key/<peer_role>_<ip>_<port>.pem``). Peer identity is tracked"
+" in ``pub_key/pub_key.json`` (TOFU, see ``verify_peer_pub``)."
+msgstr ""
+
+#: 56fed5bcfe194b7f90a0c662ae36d6c0
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.__init__:1 of
+msgid "Create the crypto wrapper for ``role`` (\"server\" or \"client\")."
+msgstr ""
+
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.__init__:3
+#: ca4e27664ccf40ce935d991db43f7c69 of
+msgid ""
+"``custom_keys`` may be a ``[pub_key_path, pvt_key_path]`` pair to use a "
+"user-supplied RSA keypair instead of the default lookup (``~/.ssh`` / "
+"generated). The pair is validated on first use (paths exist, files parse,"
+" the keys match); an invalid pair is ignored and the default lookup is "
+"used instead."
+msgstr ""
+
+#: 7d89122ff0f54090b67209e3b08ae29c
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.ensure_keys:1 of
+msgid "Load the RSA keypair (see module docstring) and cache handles."
+msgstr ""
+
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.ensure_keys:3
+#: d5e494e00be44891b33cb8e0ecfb8081 of
+msgid ""
+"Runs under ``_key_lock``: the private-key handle must never be replaced "
+"(or freed on GC) while another thread is decrypting."
+msgstr ""
+
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.reload_own_key:1
+#: f6f7d6ec8837464dad2dc647e6141a99 of
+msgid "Re-read the private key (e.g. after a ~/.ssh rotation)."
+msgstr ""
+
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.peer_pem_path:1
+#: e95d18da34d14376987a62f6cbbec778 of
+msgid ""
+"Path of the exchanged public key file for ``peer_role`` at ``(peer_ip, "
+"peer_port)``."
+msgstr ""
+
+#: 52dc6fb74f0c4175bfa2a2acc23cda0d
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.peer_pem_path:4 of
+msgid ""
+"The IP is sanitized for the filesystem (``:`` -> ``_`` so IPv6 literals "
+"are safe on every platform, including Windows)."
+msgstr ""
+
+#: 731d92a1b64342dfbf7c467af0a4c00e
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.verify_peer_pub:1 of
+msgid "TOFU check-and-record for a peer public key."
+msgstr ""
+
+#: 634283c14fb44424bf148a34d156fb71
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.verify_peer_pub:3 of
+msgid ""
+"``peer_pem`` is the PEM text received on this connection, ``(peer_ip, "
+"peer_port)`` the endpoint it came from. Returns ``(ok, reason)``:"
+msgstr ""
+
+#: 6bb58c88f8454d7daca92b5a478ae788
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.verify_peer_pub:7 of
+msgid ""
+"key already registered under any endpoint -> accept, and re-register it "
+"under the current endpoint when it moved (IPs are dynamic and ports are "
+"user-changeable);"
+msgstr ""
+
+#: 74e2bcc89bae4fe5aecf99e6208e21d1
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.verify_peer_pub:10 of
+msgid ""
+"key unknown but the endpoint already holds a *different* key -> reject (a"
+" trusted endpoint suddenly presenting a new key);"
+msgstr ""
+
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.verify_peer_pub:12
+#: f856b875adc34f4a80c2b21cd506b143 of
+msgid ""
+"key and endpoint both unknown -> accept and record (first connection is "
+"trusted, TOFU)."
+msgstr ""
+
+#: 556fdf46d6c543e0ab06e2d4fabad7f1
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.store_peer_pem:1 of
+msgid "Move a freshly received public key file into the key cache."
+msgstr ""
+
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.store_peer_pem:3
+#: a47e84f5d21949bf98e24834f18bed76 of
+msgid ""
+"Idempotent under concurrency: several transfers may deliver the same peer"
+" key at once (multi-connection handshakes, several client processes "
+"sharing one ``received_files/`` directory); if the source is already gone"
+" because a concurrent store moved it, success is assumed when the "
+"destination is in place."
+msgstr ""
+
+#: 135944d28da54948862e515eb828072d
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.encrypt_for_peer:1 of
+msgid "Encrypt ``plaintext`` with the peer's public key file."
+msgstr ""
+
+#: 4b4dded0ad904ce2bb87c9a43c8f87e5
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.encrypt_for_peer:3 of
+msgid ""
+"Returns the ASCII wire body (no trailing newline): each chunk is RSA-OAEP"
+" encrypted and base64 encoded, chunks joined with ``|``. Raises if no "
+"peer key is stored at ``peer_pem_path`` yet. The whole encryption runs "
+"under ``_peer_pub_cache_lock`` so the peer handle cannot be freed mid-"
+"encrypt (no-GIL safe)."
+msgstr ""
+
+#: 8f1687f4ab984c029859fd1f9cfb968c
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.decrypt_with_own:1 of
+msgid "Decrypt a wire body with our private key."
+msgstr ""
+
+#: 8a1d1504bf4248fa9e1288776d19810b
+#: PyFlow.network_api.rsa_crypto.RsaCrypto.decrypt_with_own:3 of
+msgid ""
+"Returns ``(True, plaintext)`` on success, or ``(False, None)`` when the "
+"key is stale/wrong or the ``_VALID`` signature is missing. Runs under "
+"``_key_lock`` so the handle cannot be freed by a concurrent "
+"``reload_own_key`` (no-GIL safe)."
+msgstr ""
+

@@ -14,12 +14,17 @@
         <div class="meta" id="server-meta">connecting...</div>
         <div class="sidebar-actions">
           <button class="btn btn-ghost" id="reload-btn" title="Reload instance list">&#8635; Reload</button>
+          {% if role == "admin" %}
+          <button class="btn btn-ghost" id="users-btn" title="Manage users">&#128100; Users</button>
           <button class="btn btn-ghost" id="add-ext-btn" title="Add an extension protocol file">+ Extension</button>
+          <button class="btn btn-ghost" id="ftp-btn" title="Share one folder on this host with the connected clients (not the FTP protocol)">+ "ftp" server</button>
           <a class="btn btn-ghost" href="/config" title="Change service startup configuration">&#9881; Change Config</a>
+          {% endif %}
+          <button class="btn btn-ghost" id="logout-btn" title="Log out">&#9099; Log out</button>
         </div>
       </div>
       <div class="instance-list" id="instance-list"></div>
-      <div class="sidebar-footer" id="sidebar-footer"></div>
+      <div class="sidebar-footer" id="sidebar-footer">{{ username }} &middot; {{ role }} &middot; ID {{ user_id }}</div>
     </aside>
     <main class="main">
       <div class="main-topbar">
@@ -38,13 +43,28 @@
         <div class="icon-bar" id="icon-bar">
           <button class="icon-btn" id="file-btn" title="Send file(s)">&#128193;</button>
           <button class="icon-btn" id="folder-btn" title="Send folder">&#128194;</button>
+          {% if role == "admin" %}
           <button class="icon-btn" id="plus-btn" title="Add an extension protocol">+</button>
+          {% endif %}
           <span class="hint" id="icon-hint"></span>
         </div>
       </div>
     </main>
   </div>
-  <script>window.WEB_MODE = "{{ mode }}";</script>
+  <script>
+    window.WEB_MODE = "{{ mode }}";
+    window.WEB_ROLE = {{ role|tojson }};
+  </script>
   <script src="/static/common.js"></script>
+  <script src="/static/server_account.js"></script>
+  <script>
+    PyFlowAccount.mount({
+      role: {{ role|tojson }},
+      username: {{ username|tojson }},
+      user_id: {{ user_id|tojson }},
+      email: {{ email|tojson }},
+      mustChange: {{ must_change_credentials|tojson }},
+    });
+  </script>
 </body>
 </html>

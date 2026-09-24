@@ -1,3 +1,13 @@
+"""Sphinx configuration for the PyFlow documentation.
+
+Docstrings are read as Google style by ``sphinx.ext.napoleon`` and pulled into the pages by
+``sphinx.ext.autodoc``; the API pages under ``docs/api/`` are generated with ``sphinx-apidoc``.
+The rules they follow live in ``docs/DOCSTRING_GUIDE.md``.
+"""
+
+import os
+import sys
+
 # Configuration file for the Sphinx documentation builder.
 #
 # For the full list of built-in configuration values, see the documentation:
@@ -14,7 +24,29 @@ release = "0.0.1-alpha"
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = []
+# autodoc imports the package, so the repository root (one level up) must be on sys.path.
+# Without this the docs only build from an environment where PyFlow is installed; reBuild.sh
+# runs from docs/, where Sphinx puts only docs/ itself on sys.path.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+extensions = [
+    "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
+]
+
+# Docstrings follow the Google style (docs/DOCSTRING_GUIDE.md); the NumPy style is rejected
+# there, so leave its parser off instead of silently accepting both.
+napoleon_google_docstring = True
+napoleon_numpy_docstring = False
+
+# The API pages under docs/api are generated with sphinx-apidoc; these defaults give them the
+# shape docs/DOCSTRING_GUIDE.md requires (class __init__ documented, source order).
+autodoc_default_options = {
+    "members": True,
+    "show-inheritance": True,
+    "member-order": "bysource",
+    "special-members": "__init__",
+}
 
 locale_dirs = ["locale/"]
 templates_path = ["_templates"]

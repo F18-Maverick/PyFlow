@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PyFlow Server</title>
+  <style>
+    /* Anonymous visitors get a plain white page: the server is up, connect to
+       it from a client, register an account, or log in to administer it. */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      background: #fff;
+      color: #1c1c1c;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.6;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .landing { width: 100%; max-width: 720px; text-align: center; }
+    .landing h1 { font-size: 22px; font-weight: 600; margin-bottom: 18px; }
+    .addresses { color: #444; font-size: 14px; margin-bottom: 30px; }
+    .addresses code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+      background: #f4f4f4;
+      border: 1px solid #e2e2e2;
+      border-radius: 4px;
+      padding: 2px 6px;
+    }
+    .addresses .pending { color: #8a6d3b; }
+    .landing-actions { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .landing-actions button {
+      border: 1px solid transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 15px;
+      padding: 10px 26px;
+    }
+    #login-btn { background: #1a73e8; color: #fff; }
+    #login-btn:hover { background: #1765cc; }
+    #register-btn { background: #fff; border-color: #1a73e8; color: #1a73e8; }
+    #register-btn:hover { background: #f0f6ff; }
+    #reset-btn { background: #fff; border-color: #cdcdcd; color: #333; }
+    #reset-btn:hover { background: #f2f2f2; }
+
+    .overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(20, 20, 20, 0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      overflow-y: auto;
+    }
+    .overlay[hidden] { display: none; }
+    .dialog {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.3);
+      padding: 24px 26px;
+      width: 100%;
+      max-width: 400px;
+      text-align: left;
+    }
+    .dialog[hidden] { display: none; }
+    .dialog h2 { font-size: 18px; margin-bottom: 6px; }
+    .dialog .note { color: #666; font-size: 13px; margin-bottom: 4px; }
+    .dialog label { display: block; color: #555; font-size: 13px; margin: 12px 0 4px; }
+    .dialog input {
+      background: #fff;
+      border: 1px solid #cdcdcd;
+      border-radius: 6px;
+      color: inherit;
+      font-size: 14px;
+      padding: 8px 10px;
+      width: 100%;
+    }
+    .dialog input:focus { border-color: #1a73e8; outline: none; }
+    .dialog .code-row { display: flex; gap: 8px; align-items: center; }
+    .dialog .code-row input { flex: 1; }
+    .dialog .code-row button {
+      background: #f2f2f2;
+      border: 1px solid #cdcdcd;
+      border-radius: 6px;
+      color: #333;
+      cursor: pointer;
+      font-size: 13px;
+      padding: 9px 12px;
+      white-space: nowrap;
+    }
+    .dialog .code-row button:disabled { color: #999; cursor: not-allowed; }
+    .dialog .error { color: #c0392b; font-size: 13px; min-height: 20px; margin-top: 10px; }
+    .dialog .error.ok { color: #1e7e48; }
+    .dialog-actions { display: flex; gap: 10px; margin-top: 14px; }
+    .dialog-actions button {
+      border: 1px solid transparent;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      padding: 9px 18px;
+    }
+    .dialog-actions .primary { background: #1a73e8; color: #fff; }
+    .dialog-actions .primary:hover { background: #1765cc; }
+    .dialog-actions .primary:disabled { cursor: not-allowed; opacity: 0.6; }
+    .dialog-actions .cancel { background: #fff; border-color: #cdcdcd; color: #333; }
+    .dialog-actions .cancel:hover { background: #f2f2f2; }
+  </style>
+</head>
+<body>
+  <div class="landing">
+    <h1>The PyFlow Server is running! Connect it in clients by the server host.</h1>
+    <p class="addresses">
+      {% if hint %}
+      Web address: <code>{{ hint.web }}</code><br>
+      TCP address: <code>{{ hint.tcp }}</code>
+      {% else %}
+      <span class="pending">The TCP server is not running yet. Log in as the administrator to configure it.</span>
+      {% endif %}
+    </p>
+    <div class="landing-actions">
+      <button id="login-btn">Login</button>
+      <button id="register-btn">Register</button>
+      <button id="reset-btn">Change password</button>
+    </div>
+  </div>
+
+  <div class="overlay" id="overlay" hidden>
+    <!-- Login -->
+    <div class="dialog" id="dlg-login" role="dialog" aria-modal="true" aria-labelledby="login-title">
+      <h2 id="login-title">Login</h2>
+      <form id="login-form">
+        <label for="login-identify">Username, email or user ID</label>
+        <input type="text" id="login-identify" autocomplete="username">
+        <label for="login-password">Password</label>
+        <input type="password" id="login-password" autocomplete="current-password">
+        <div class="error" id="login-error"></div>
+        <div class="dialog-actions">
+          <button type="submit" class="primary" id="login-submit">Login</button>
+          <button type="button" class="cancel" data-close>Cancel</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Register -->
+    <div class="dialog" id="dlg-register" role="dialog" aria-modal="true"
+         aria-labelledby="register-title" hidden>
+      <h2 id="register-title">Register</h2>
+      <p class="note">The code is sent to the email address below and is valid for 5 minutes.</p>
+      <form id="register-form">
+        <label for="reg-username">Username</label>
+        <input type="text" id="reg-username" autocomplete="off">
+        <label for="reg-email">Email</label>
+        <input type="email" id="reg-email" autocomplete="off">
+        <label for="reg-code">Verification code</label>
+        <div class="code-row">
+          <input type="text" id="reg-code" inputmode="numeric" autocomplete="off">
+          <button type="button" id="reg-send">Send code</button>
+        </div>
+        <label for="reg-password">Password (at least 8 characters)</label>
+        <input type="password" id="reg-password" autocomplete="new-password">
+        <label for="reg-confirm">Confirm password</label>
+        <input type="password" id="reg-confirm" autocomplete="new-password">
+        <div class="error" id="register-error"></div>
+        <div class="dialog-actions">
+          <button type="submit" class="primary" id="register-submit">Create account</button>
+          <button type="button" class="cancel" data-close>Cancel</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Password reset -->
+    <div class="dialog" id="dlg-reset" role="dialog" aria-modal="true"
+         aria-labelledby="reset-title" hidden>
+      <h2 id="reset-title">Change password</h2>
+      <form id="reset-form">
+        <label for="reset-identify">Username or email</label>
+        <input type="text" id="reset-identify" autocomplete="username">
+        <div id="reset-step-two" hidden>
+          <label for="reset-code">Verification code</label>
+          <div class="code-row">
+            <input type="text" id="reset-code" inputmode="numeric" autocomplete="off">
+            <button type="button" id="reset-send">Send code</button>
+          </div>
+          <label for="reset-password">New password (at least 8 characters)</label>
+          <input type="password" id="reset-password" autocomplete="new-password">
+          <label for="reset-confirm">Confirm new password</label>
+          <input type="password" id="reset-confirm" autocomplete="new-password">
+        </div>
+        <div class="error" id="reset-error"></div>
+        <div class="dialog-actions">
+          <button type="submit" class="primary" id="reset-submit">Send code</button>
+          <button type="button" class="cancel" data-close>Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+      const overlay = document.getElementById("overlay");
+      const dialogs = {
+        login: document.getElementById("dlg-login"),
+        register: document.getElementById("dlg-register"),
+        reset: document.getElementById("dlg-reset"),
+      };
+      const RESEND_SECONDS = 60;
+
+      function show(name) {
+        Object.entries(dialogs).forEach(([key, el]) => { el.hidden = key !== name; });
+        overlay.hidden = false;
+        const first = dialogs[name].querySelector("input");
+        if (first) first.focus();
+      }
+
+      function closeAll() {
+        overlay.hidden = true;
+        Object.values(dialogs).forEach((el) => {
+          el.querySelectorAll("input[type=password]").forEach((input) => { input.value = ""; });
+        });
+      }
+
+      document.getElementById("login-btn").addEventListener("click", () => show("login"));
+      document.getElementById("register-btn").addEventListener("click", () => show("register"));
+      document.getElementById("reset-btn").addEventListener("click", () => {
+        startReset();
+        show("reset");
+      });
+      overlay.addEventListener("click", (e) => { if (e.target === overlay) closeAll(); });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && !overlay.hidden) closeAll();
+      });
+      document.querySelectorAll("[data-close]").forEach((btn) => {
+        btn.addEventListener("click", closeAll);
+      });
+
+      function fail(el, message) {
+        el.className = "error";
+        el.textContent = message;
+      }
+
+      function succeed(el, message) {
+        el.className = "error ok";
+        el.textContent = message;
+      }
+
+      async function post(path, body) {
+        const resp = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || !data.ok) throw new Error(data.error || "HTTP " + resp.status);
+        return data;
+      }
+
+      /* One countdown per send button: a new code may be requested once it ends
+         (the server enforces the same minute between two codes). */
+      function startCountdown(button, label) {
+        let left = RESEND_SECONDS;
+        button.disabled = true;
+        button.textContent = label + " (" + left + "s)";
+        const timer = setInterval(() => {
+          left -= 1;
+          if (left <= 0) {
+            clearInterval(timer);
+            button.disabled = false;
+            button.textContent = label;
+            return;
+          }
+          button.textContent = label + " (" + left + "s)";
+        }, 1000);
+      }
+
+      /* ---------------- login ---------------- */
+
+      const loginForm = document.getElementById("login-form");
+      const loginError = document.getElementById("login-error");
+      const loginSubmit = document.getElementById("login-submit");
+
+      loginForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const identify = document.getElementById("login-identify").value.trim();
+        const password = document.getElementById("login-password").value;
+        if (!identify || !password) {
+          fail(loginError, "Enter your account and password.");
+          return;
+        }
+        loginSubmit.disabled = true;
+        loginError.className = "error";
+        loginError.textContent = "Signing in...";
+        try {
+          const data = await post("/api/login", { identify, password });
+          location.href = data.redirect || "/";
+        } catch (err) {
+          fail(loginError, err.message);
+          loginSubmit.disabled = false;
+        }
+      });
+
+      /* ---------------- register ---------------- */
+
+      const registerForm = document.getElementById("register-form");
+      const registerError = document.getElementById("register-error");
+      const registerSubmit = document.getElementById("register-submit");
+      const regSend = document.getElementById("reg-send");
+      const regEmail = document.getElementById("reg-email");
+
+      regSend.addEventListener("click", async () => {
+        const email = regEmail.value.trim();
+        if (!email) {
+          fail(registerError, "Enter the email address to register first.");
+          return;
+        }
+        registerError.className = "error";
+        registerError.textContent = "Sending the code...";
+        try {
+          const data = await post("/api/register/send_code", { email });
+          succeed(registerError, "Code sent to " + data.masked_email + " (valid 5 minutes).");
+          startCountdown(regSend, "Send code");
+          document.getElementById("reg-code").focus();
+        } catch (err) {
+          fail(registerError, err.message);
+        }
+      });
+
+      registerForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const username = document.getElementById("reg-username").value.trim();
+        const email = regEmail.value.trim();
+        const code = document.getElementById("reg-code").value.trim();
+        const password = document.getElementById("reg-password").value;
+        const confirm = document.getElementById("reg-confirm").value;
+        if (!username || !email || !code) {
+          fail(registerError, "Fill in the username, email and verification code.");
+          return;
+        }
+        if (password.length < 8) {
+          fail(registerError, "The password must be at least 8 characters.");
+          return;
+        }
+        if (password !== confirm) {
+          fail(registerError, "The two passwords do not match.");
+          return;
+        }
+        registerSubmit.disabled = true;
+        registerError.className = "error";
+        registerError.textContent = "Creating the account...";
+        try {
+          const data = await post("/api/register", { username, email, password, code });
+          registerForm.reset();
+          registerSubmit.disabled = false;
+          show("login");
+          document.getElementById("login-identify").value = data.user.username;
+          succeed(
+            loginError,
+            "Account " + data.user.username + " created. Your user ID is " +
+              data.user.user_id + " - other users find you by it."
+          );
+        } catch (err) {
+          fail(registerError, err.message);
+          registerSubmit.disabled = false;
+        }
+      });
+
+      /* ---------------- password reset ---------------- */
+
+      const resetForm = document.getElementById("reset-form");
+      const resetError = document.getElementById("reset-error");
+      const resetSubmit = document.getElementById("reset-submit");
+      const resetStepTwo = document.getElementById("reset-step-two");
+      const resetSend = document.getElementById("reset-send");
+      const resetIdentify = document.getElementById("reset-identify");
+
+      function startReset() {
+        resetStepTwo.hidden = true;
+        resetSubmit.textContent = "Send code";
+        resetError.className = "error";
+        resetError.textContent = "";
+      }
+
+      async function sendResetCode() {
+        const identify = resetIdentify.value.trim();
+        if (!identify) {
+          throw new Error("Enter the username or email of the account.");
+        }
+        const data = await post("/api/password/send_code", { identify });
+        resetStepTwo.hidden = false;
+        resetSubmit.textContent = "Change password";
+        startCountdown(resetSend, "Send code");
+        succeed(resetError, "Code sent to " + data.masked_email + " (valid 5 minutes).");
+        document.getElementById("reset-code").focus();
+      }
+
+      resetSend.addEventListener("click", async () => {
+        try {
+          await sendResetCode();
+        } catch (err) {
+          fail(resetError, err.message);
+        }
+      });
+
+      resetForm.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        if (resetStepTwo.hidden) {
+          // Step 1: send the code, then ask for it and the new password.
+          try {
+            await sendResetCode();
+          } catch (err) {
+            fail(resetError, err.message);
+          }
+          return;
+        }
+        // Step 2: the server verifies the code and stores the new password.
+        const identify = resetIdentify.value.trim();
+        const code = document.getElementById("reset-code").value.trim();
+        const password = document.getElementById("reset-password").value;
+        const confirm = document.getElementById("reset-confirm").value;
+        if (!code) {
+          fail(resetError, "Enter the verification code.");
+          return;
+        }
+        if (password.length < 8) {
+          fail(resetError, "The password must be at least 8 characters.");
+          return;
+        }
+        if (password !== confirm) {
+          fail(resetError, "The two passwords do not match.");
+          return;
+        }
+        resetSubmit.disabled = true;
+        resetError.className = "error";
+        resetError.textContent = "Changing the password...";
+        try {
+          await post("/api/password/reset", { identify, code, password });
+          // Back to step one, but keep the confirmation on screen.
+          resetForm.reset();
+          startReset();
+          succeed(resetError, "Password changed. You can log in now.");
+        } catch (err) {
+          fail(resetError, err.message);
+        }
+        resetSubmit.disabled = false;
+      });
+    })();
+  </script>
+</body>
+</html>

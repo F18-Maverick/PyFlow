@@ -59,6 +59,23 @@ a { color: var(--accent); }
   font-size: 13px;
 }
 
+/* ---------- server account (card topbar, credential warning, users) ---------- */
+
+.card-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.card-topbar .btn {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -365,6 +382,47 @@ a { color: var(--accent); }
 
 .modal .field { margin-bottom: 12px; }
 
+/* ---------- default-credential warning / user list ---------- */
+
+.modal.warn {
+  border-color: var(--err);
+  box-shadow: 0 0 0 2px rgba(255, 107, 107, 0.25), 0 16px 50px rgba(0, 0, 0, 0.5);
+}
+
+.modal .warn-title {
+  color: var(--err);
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 12px;
+}
+
+.modal .warn-body {
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.modal .warn-body p + p { margin-top: 10px; }
+
+.user-list { margin-bottom: 14px; }
+
+.user-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.user-row .name { flex: 1; font-size: 13px; }
+.user-row .role { font-size: 11px; color: var(--text-dim); }
+.user-row .btn { padding: 5px 10px; font-size: 12px; }
+
+.user-row .name .meta {
+  display: block;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
 .drop-zone {
   border: 2px dashed var(--border);
   border-radius: 8px;
@@ -398,6 +456,35 @@ a { color: var(--accent); }
 .ext-entry .info { flex: 1; }
 .ext-entry .info .name { font-size: 13px; }
 .ext-entry .info .cmd { font-size: 11px; color: var(--text-dim); }
+
+/* "ftp" share explorer (server console + client selection dialog) */
+.ftp-bar { display: flex; align-items: center; gap: 8px; margin: 8px 0 6px; }
+.ftp-bar .spacer { flex: 1; }
+.ftp-path { font-size: 12px; color: var(--text-dim); }
+.ftp-list {
+  max-height: 46vh;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.ftp-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.ftp-row:last-child { border-bottom: none; }
+.ftp-row:hover { background: var(--bg-3); }
+.ftp-row.dir { cursor: pointer; }
+.ftp-row .ftp-icon { width: 18px; text-align: center; }
+.ftp-row .ftp-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ftp-row .ftp-meta { font-size: 11px; color: var(--text-dim); white-space: nowrap; }
+.ftp-row input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); cursor: pointer; }
+.ftp-row.picked { background: rgba(90, 160, 255, 0.12); }
+.ftp-footer { display: flex; align-items: center; gap: 10px; margin-top: 14px; }
+.ftp-footer .spacer { flex: 1; }
 
 select {
   width: 100%;

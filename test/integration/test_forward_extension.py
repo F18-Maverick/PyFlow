@@ -26,6 +26,9 @@ class DummySocket:
     def sendall(self, data):
         self.data += data
 
+    def shutdown(self, how):
+        pass
+
     def close(self):
         pass
 

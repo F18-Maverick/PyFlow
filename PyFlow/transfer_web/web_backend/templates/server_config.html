@@ -5,42 +5,95 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PyFlow TCP Server Setup</title>
   <link rel="stylesheet" href="/static/common.css">
+  <style>
+    .stack { width: 100%; max-width: 640px; display: flex; flex-direction: column; gap: 18px; }
+    .card h2 { font-size: 17px; margin-bottom: 4px; }
+    .card + .card { margin-top: 0; }
+  </style>
 </head>
 <body>
   <div class="center-wrap">
-    <div class="card">
-      <h1>PyFlow TCP Server Setup</h1>
-      <p class="subtitle">Configure the TCP server. Every parameter has a default value; change only what you need.</p>
-      <form id="config-form" class="form-grid">
-        {% for key, label, ftype, default, help in fields %}
-        <div class="field">
-          <label for="f-{{ key }}">{{ label }}</label>
-          {% if ftype == "bool" %}
-          <div class="checkbox-row">
-            <input type="checkbox" id="f-{{ key }}" data-key="{{ key }}" data-type="bool"
-                   {% if default %}checked{% endif %}>
-            <span class="help">{{ help }}</span>
+    <div class="stack">
+      <div class="card">
+        <div class="card-topbar">
+          <span>{{ username }} &middot; {{ role }} &middot; ID {{ user_id }}</span>
+          <button class="btn btn-ghost" id="logout-btn" type="button">Log out</button>
+        </div>
+        <h1>PyFlow TCP Server Setup</h1>
+        <p class="subtitle">Configure the TCP server. Every parameter has a default value; change only what you need.</p>
+        <form id="config-form" class="form-grid">
+          {% for key, label, ftype, default, help in fields %}
+          <div class="field">
+            <label for="f-{{ key }}">{{ label }}</label>
+            {% if ftype == "bool" %}
+            <div class="checkbox-row">
+              <input type="checkbox" id="f-{{ key }}" data-key="{{ key }}" data-type="bool"
+                     {% if default %}checked{% endif %}>
+              <span class="help">{{ help }}</span>
+            </div>
+            {% else %}
+            <input type="{{ ftype }}" id="f-{{ key }}" data-key="{{ key }}" data-type="{{ ftype }}"
+                   value="{{ default }}" {% if ftype == "number" %}step="any"{% endif %}>
+            <div class="help">{{ help }}</div>
+            {% endif %}
           </div>
-          {% else %}
-          <input type="{{ ftype }}" id="f-{{ key }}" data-key="{{ key }}" data-type="{{ ftype }}"
-                 value="{{ default }}" {% if ftype == "number" %}step="any"{% endif %}>
-          <div class="help">{{ help }}</div>
-          {% endif %}
-        </div>
-        {% endfor %}
-        {% for key, label, ftype, default, help in web_fields %}
-        <div class="field">
-          <label for="f-{{ key }}">{{ label }}</label>
-          <input type="{{ ftype }}" id="f-{{ key }}" data-key="{{ key }}" data-type="{{ ftype }}"
-                 value="{{ default }}" {% if ftype == "number" %}step="any"{% endif %}>
-          <div class="help">{{ help }}</div>
-        </div>
-        {% endfor %}
-        <div class="actions full">
-          <button type="submit" class="btn" id="save-btn">Save &amp; Start Server</button>
-          <span class="status-line" id="status"></span>
-        </div>
-      </form>
+          {% endfor %}
+          {% for key, label, ftype, default, help in web_fields %}
+          <div class="field">
+            <label for="f-{{ key }}">{{ label }}</label>
+            <input type="{{ ftype }}" id="f-{{ key }}" data-key="{{ key }}" data-type="{{ ftype }}"
+                   value="{{ default }}" {% if ftype == "number" %}step="any"{% endif %}>
+            <div class="help">{{ help }}</div>
+          </div>
+          {% endfor %}
+          <div class="actions full">
+            <button type="submit" class="btn" id="save-btn">Save &amp; Start Server</button>
+            <span class="status-line" id="status"></span>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2>Verification email (SMTP)</h2>
+        <p class="subtitle">Account verification codes (registration, password reset, code login) are sent
+          through this mailbox. The settings are checked against the real SMTP server before they are stored
+          in <code>.Flow_Web/email_config.json</code>; until then no code can be sent. Re-enter the
+          authorization code when saving.</p>
+        <form id="email-form" class="form-grid">
+          <div class="field">
+            <label for="e-host">SMTP server address (Host)</label>
+            <input type="text" id="e-host" placeholder="smtp.example.com" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="e-port">SMTP port (Port)</label>
+            <input type="number" id="e-port" placeholder="465" step="1">
+          </div>
+          <div class="field">
+            <label for="e-username">Mailbox account (Username)</label>
+            <input type="text" id="e-username" placeholder="account@example.com" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="e-password">Authorization code / password</label>
+            <input type="password" id="e-password" autocomplete="new-password">
+          </div>
+          <div class="field">
+            <label for="e-from">Sender information (From)</label>
+            <input type="text" id="e-from" placeholder="PyFlow &lt;account@example.com&gt;" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="e-encryption">Encryption</label>
+            <select id="e-encryption">
+              <option value="ssl">SSL / TLS (implicit, typically port 465)</option>
+              <option value="starttls">STARTTLS (upgrade, typically port 587)</option>
+              <option value="none">None</option>
+            </select>
+          </div>
+          <div class="actions full">
+            <button type="submit" class="btn" id="email-save-btn">Save &amp; Start Mail Service</button>
+            <span class="status-line" id="email-status"></span>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
   <script>
@@ -125,6 +178,83 @@
         status.textContent = "Failed: " + err.message;
         saveBtn.disabled = false;
       }
+    });
+
+    /* ---------------- verification mailbox ---------------- */
+
+    const emailForm = document.getElementById("email-form");
+    const emailStatus = document.getElementById("email-status");
+    const emailSaveBtn = document.getElementById("email-save-btn");
+
+    function emailField(name) {
+      return document.getElementById("e-" + name);
+    }
+
+    async function loadEmailConfig() {
+      try {
+        const resp = await fetch("/api/email_config");
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) return;
+        const config = data.config || {};
+        ["host", "port", "username", "from"].forEach((key) => {
+          if (config[key] !== undefined && config[key] !== null) emailField(key).value = config[key];
+        });
+        if (config.encryption) emailField("encryption").value = config.encryption;
+        emailStatus.className = "status-line" + (data.enabled ? " ok" : "");
+        emailStatus.textContent = data.enabled
+          ? "The mail service is running."
+          : "No mailbox configured yet: verification codes cannot be sent.";
+      } catch (e) {
+        /* not signed in any more: the page will redirect on the next request */
+      }
+    }
+
+    emailForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      emailSaveBtn.disabled = true;
+      emailStatus.className = "status-line";
+      emailStatus.textContent = "Checking the SMTP settings against the server...";
+      const config = {
+        host: emailField("host").value.trim(),
+        port: emailField("port").value === "" ? null : Number(emailField("port").value),
+        username: emailField("username").value.trim(),
+        password: emailField("password").value,
+        from: emailField("from").value.trim(),
+        encryption: emailField("encryption").value,
+      };
+      try {
+        const resp = await fetch("/api/email_config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ config }),
+        });
+        const data = await resp.json();
+        if (!resp.ok || !data.ok) {
+          emailStatus.className = "status-line err";
+          emailStatus.textContent = "Failed: " + (data.error || resp.status);
+          emailSaveBtn.disabled = false;
+          return;
+        }
+        emailField("password").value = "";
+        emailStatus.className = "status-line ok";
+        emailStatus.textContent = "The settings were accepted; the mail service is running.";
+      } catch (err) {
+        emailStatus.className = "status-line err";
+        emailStatus.textContent = "Failed: " + err.message;
+      }
+      emailSaveBtn.disabled = false;
+    });
+
+    loadEmailConfig();
+  </script>
+  <script src="/static/server_account.js"></script>
+  <script>
+    PyFlowAccount.mount({
+      role: {{ role|tojson }},
+      username: {{ username|tojson }},
+      user_id: {{ user_id|tojson }},
+      email: {{ email|tojson }},
+      mustChange: {{ must_change_credentials|tojson }},
     });
   </script>
 </body>

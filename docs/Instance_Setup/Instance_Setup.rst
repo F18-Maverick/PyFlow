@@ -66,17 +66,21 @@ Command‑line Mode
 
 Use the following options:
 
-+----------------------+-------------------------------------------------------+
-| Option               | Description                                           |
-+======================+=======================================================+
-| ``--type {0,1}``     | **Required.** 0 = Server, 1 = Client.                |
-+----------------------+-------------------------------------------------------+
-| ``--setup_addr_port``| **Required.** Bind address and port (e.g. ``127.0.0.1:8000``). |
-+----------------------+-------------------------------------------------------+
-| ``--connect_addr_port``| Required for Client only. Server address and port to connect to. |
-+----------------------+-------------------------------------------------------+
-| ``--setup_num``      | *Ignored.* The script always launches a single instance. This flag is accepted for compatibility but has no effect. |
-+----------------------+-------------------------------------------------------+
++--------------------------+---------------------------------------------------+
+| Option                   | Description                                       |
++==========================+===================================================+
+| ``--type {0,1}``         | **Required.** 0 = Server, 1 = Client.             |
++--------------------------+---------------------------------------------------+
+| ``--setup_addr_port``    | **Required.** Bind address and port               |
+|                          | (e.g. ``127.0.0.1:8000``).                        |
++--------------------------+---------------------------------------------------+
+| ``--connect_addr_port``  | Required for Client only. Server address and      |
+|                          | port to connect to.                               |
++--------------------------+---------------------------------------------------+
+| ``--setup_num``          | *Ignored.* The script always launches a single    |
+|                          | instance. This flag is accepted for               |
+|                          | compatibility but has no effect.                  |
++--------------------------+---------------------------------------------------+
 
 Examples
 --------
@@ -154,12 +158,12 @@ loaded automatically for every instance whose ``setup.json``
 entry sets ``is_extend_command=True``:
 
 - ``command_control_extension_tcp.py`` – remote command
-execution with per-client log collection (``/command``).
+  execution with per-client log collection (``/command``).
 - ``forward_extension_tcp.py`` – forwarding files,
-multiple files, folders and multiple folders to any
-number of destination clients (``/file_forward``,
-``/multiple_file_forward``, ``/folder_forward``,
-``/multiple_folder_forward``).
+  multiple files, folders and multiple folders to any
+  number of destination clients (``/file_forward``,
+  ``/multiple_file_forward``, ``/folder_forward``,
+  ``/multiple_folder_forward``).
 
 Plain-message forwarding is native to the TCP protocol
 (no extension needed): the client-only command
@@ -173,11 +177,11 @@ The ``is_input_command_in_console`` flag selects how the
 instance is started:
 
 - ``True`` (default) – ``start_TCP_Server()`` /
-``start_TCP_client()`` is called directly and the
-console input loop runs in its own thread.
+  ``start_TCP_client()`` is called directly and the
+  console input loop runs in its own thread.
 - ``False`` – the instance runs in a background thread
-and the launcher keeps the process alive until the
-instance stops (useful for headless deployments).
+  and the launcher keeps the process alive until the
+  instance stops (useful for headless deployments).
 
 Both extensions also expose injectable registration
 (``setup_server_commands(instance)`` /
@@ -190,12 +194,12 @@ can be loaded onto the same instance from code.
 Internal Operation
 ==================
 
-- Each instance is launched in a new terminal window 
-- (or background process).
-- The configuration is passed via a temporary JSON 
-- file to avoid shell escaping issues.
-- If an instance fails to start, the error is 
-- displayed and the window pauses for inspection.
+- Each instance is launched in a new terminal window
+  (or background process).
+- The configuration is passed via a temporary JSON
+  file to avoid shell escaping issues.
+- If an instance fails to start, the error is
+  displayed and the window pauses for inspection.
 
 Requirements
 ============

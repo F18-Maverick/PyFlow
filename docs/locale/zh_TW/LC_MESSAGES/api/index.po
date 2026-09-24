@@ -1,0 +1,32 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, RayXu
+# This file is distributed under the same license as the PyFlow package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PyFlow \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-16 10:49+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: zh_TW\n"
+"Language-Team: zh_TW <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: ../../api/index.rst:2 8d57b43b04b14ab8a07c05fb89785684
+msgid "API Reference"
+msgstr ""
+
+#: ../../api/index.rst:4 2e33b7c5195747ebb1a15eb5e3e9c026
+msgid ""
+"The pages below are generated from the code by ``sphinx-apidoc`` (see the"
+" first line of ``docs/reBuild.sh``): each one pulls its text from the "
+"docstrings at build time, so nothing here is written by hand."
+msgstr ""
+

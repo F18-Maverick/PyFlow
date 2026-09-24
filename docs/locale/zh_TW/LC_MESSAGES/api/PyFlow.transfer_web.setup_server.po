@@ -1,0 +1,52 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, RayXu
+# This file is distributed under the same license as the PyFlow package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PyFlow \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-16 11:10+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: zh_TW\n"
+"Language-Team: zh_TW <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.18.0\n"
+
+#: ../../api/PyFlow.transfer_web.setup_server.rst:2
+#: e6642bb55a204188b0abd0b07207713e
+msgid "PyFlow.transfer\\_web.setup\\_server module"
+msgstr ""
+
+#: 5966876a4564470ea674311ddb3ef63e PyFlow.transfer_web.setup_server:1 of
+msgid "PyFlow TCP server web launcher."
+msgstr ""
+
+#: 588fea0dc68a4a308f9a7cfb6fe5d819 PyFlow.transfer_web.setup_server:3 of
+msgid "Checks ``transfer_web/.Flow_Web/setup_server.json``:"
+msgstr ""
+
+#: PyFlow.transfer_web.setup_server:5 c3df4df524da40b18a58607efd9b5e4a of
+msgid ""
+"missing  -> opens the server startup-configuration UI in the browser; the"
+" UI saves the config (same shape as ``flow_setup``'s ``setup.json``) and "
+"starts the TCP server class;"
+msgstr ""
+
+#: 211850fce6d34d50ae152bce6d1aa3af PyFlow.transfer_web.setup_server:8 of
+msgid "present  -> starts the TCP server class directly from the saved config."
+msgstr ""
+
+#: PyFlow.transfer_web.setup_server:10 cb510f0a77474eff8e8816fafc097343 of
+msgid ""
+"After the TCP server is up, the lightweight Flask backend serves the "
+"status page and the client-facing API (``/api/server_info`` etc.) on the "
+"server's address."
+msgstr ""
+
