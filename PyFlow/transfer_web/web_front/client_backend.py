@@ -380,16 +380,19 @@ class ClientWebApp:
         _command, payload = self._ftp_request(FTP_LIST_COMMAND, rel_path)
         return payload
 
-    def _ftp_download(self, rel_paths):
+    def _ftp_download(self, rel_paths, destination=None):
         """Ask the server to push the selected share entries to this client.
 
         Args:
             rel_paths (list): Share-relative files and folders to download.
+            destination (str | None): Folder on this host the entries are saved
+                into; ``None`` keeps the receiver's default transfer folder.
 
         Returns:
             dict: ``{"started": int, "skipped": int}``.
         """
-        _command, payload = self._ftp_request(FTP_GET_COMMAND, list(rel_paths))
+        payload = {"paths": list(rel_paths), "destination": destination or ""}
+        _command, payload = self._ftp_request(FTP_GET_COMMAND, payload)
         return payload
 
     def _register_ftp_commands(self):
@@ -1212,8 +1215,9 @@ class ClientWebApp:
             wanted = payload.get("paths")
             if not isinstance(wanted, list) or not wanted:
                 return jsonify({"ok": False, "error": "select at least one entry"}), 400
+            destination = str(payload.get("destination") or "").strip() or None
             try:
-                result = self._ftp_download([str(entry) for entry in wanted])
+                result = self._ftp_download([str(entry) for entry in wanted], destination)
             except _ServerRequestError as e:
                 return jsonify({"ok": False, "error": str(e)}), e.status
             return jsonify({"ok": True, **result})

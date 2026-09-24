@@ -3412,6 +3412,12 @@ class TCP_Server_Base:  # TCP server class
         with self.client_lock:  # close all clients connections
             for client_info in self.clients.values():
                 try:
+                    # a client thread blocked in recv() keeps the connection half
+                    # open past close(): the shutdown sends its FIN and wakes it
+                    client_info["socket"].shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass  # already disconnected
+                try:
                     client_info["socket"].close()
                 except:
                     self._log_exc()
@@ -5868,6 +5874,13 @@ class TCP_Client_Base:  # TCP client class
         self._flush_messages_dict()
         self._flush_events_dict()
         if self.client_socket:
+            try:
+                # the receive thread may be blocked in recv() on this socket:
+                # close() alone sends no FIN and leaves that read waiting for its
+                # timeout, so the server would not see the disconnect
+                self.client_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # peer already gone
             self.client_socket.close()
         self._log("connection closed")
 

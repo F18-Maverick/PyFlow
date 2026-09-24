@@ -122,6 +122,7 @@ def web(tmp_path, monkeypatch):
     """A ServerWebApp with a fake TCP server and its files under ``tmp_path``."""
     monkeypatch.setattr(server_backend, "FLOW_WEB_DIR", str(tmp_path))
     monkeypatch.setattr(server_backend, "SECRET_KEY_FILE", str(tmp_path / "web_secret_key"))
+    monkeypatch.setattr(server_backend, "SERVER_CONFIG_FILE", str(tmp_path / "setup_server.json"))
     app = server_backend.ServerWebApp(
         db_path=str(tmp_path / "flow_web.db"),
         mail_config_path=str(tmp_path / "email_config.json"),
@@ -200,14 +201,15 @@ def test_config_forms_list_the_new_flags(web, client, client_web):
 # ---- server side -------------------------------------------------------------
 
 
-def test_share_starts_empty_and_needs_an_admin(client):
+def test_share_starts_empty_and_needs_an_admin(client, tmp_path):
     """Nothing is shared until an administrator picks a folder."""
     assert client.get("/api/ftp").status_code == 401  # anonymous
     login(client)
     body = client.get("/api/ftp").get_json()
     assert body == {"ok": True, "root": None, "shared": False}
     assert client.get("/api/ftp/list").status_code == 404
-    assert client.post("/api/ftp/add", json={"path": "/tmp"}).status_code == 200  # admin
+    added = client.post("/api/ftp/add", json={"path": str(tmp_path)})  # admin
+    assert added.status_code == 200
 
 
 def test_add_and_remove_the_shared_folder(web, client, share):
@@ -296,6 +298,75 @@ def test_protocol_download_handler_pushes_the_selection(web, share):
     )
 
 
+def test_protocol_download_handler_honours_the_destination(web, share):
+    """A client-chosen download folder travels on the native transfer commands."""
+    handler = web.server.commands[("server", server_backend.FTP_GET_COMMAND)]
+    address = ("127.0.0.1", 41000)
+    web.server.clients[address] = {"socket": FakeSocket(), "address": address}
+    with web._ftp_lock:
+        web.ftp_root = str(share)
+
+    request = {"paths": ["alpha.txt", "sub"], "destination": "/tmp/picked"}
+    reply = handler(None, address, f"{server_backend.FTP_GET_COMMAND} 5 {json.dumps(request)}")
+    assert reply == f"{server_backend.FTP_GET_OK_COMMAND} 5 2 0"
+    assert [kind for kind, _cmd in web.server.pushes] == ["file", "folder"]
+    assert all("/tmp/picked" in command for _kind, command in web.server.pushes)
+
+    # an empty destination keeps the receiver's default transfer folder
+    web.server.pushes.clear()
+    request = {"paths": ["alpha.txt"], "destination": "  "}
+    reply = handler(None, address, f"{server_backend.FTP_GET_COMMAND} 6 {json.dumps(request)}")
+    assert reply == f"{server_backend.FTP_GET_OK_COMMAND} 6 1 0"
+    assert "/tmp/picked" not in web.server.pushes[0][1]
+
+    malformed = {"paths": "alpha.txt", "destination": "/tmp/picked"}
+    reply = handler(None, address, f"{server_backend.FTP_GET_COMMAND} 7 {json.dumps(malformed)}")
+    assert reply == f"{server_backend.FTP_ERROR_COMMAND} 7 malformed request"
+
+
+def test_shared_folder_is_persisted_and_restored(web, client, share, tmp_path, monkeypatch):
+    """Adding a share records it in the startup config; a restart restores it."""
+    login(client)
+    assert client.post("/api/ftp/add", json={"path": str(share)}).status_code == 200
+    config_path = tmp_path / "setup_server.json"
+    saved = json.loads(config_path.read_text(encoding="utf-8"))
+    assert saved["web"]["ftp_root"] == str(share)
+
+    # a restart with a saved server entry brings the share back
+    saved["servers"] = [{"host": "127.0.0.1", "port": 65432}]
+    config_path.write_text(json.dumps(saved), encoding="utf-8")
+    restarted = server_backend.ServerWebApp(
+        db_path=str(tmp_path / "restart.db"), mail_config_path=str(tmp_path / "mail.json")
+    )
+    started = []
+    monkeypatch.setattr(restarted, "_start_server", started.append)
+    restarted.start_from_config()
+    assert started == [{"host": "127.0.0.1", "port": 65432}]
+    assert restarted._ftp_shared_root() == str(share)
+    restarted.users.close()
+
+    assert client.post("/api/ftp/remove").get_json() == {"ok": True}
+    assert "ftp_root" not in json.loads(config_path.read_text(encoding="utf-8"))["web"]
+
+
+def test_saving_the_startup_config_keeps_the_shared_folder(web, client, share, monkeypatch):
+    """Re-saving the TCP parameters does not drop the shared "ftp" folder."""
+    login(client)
+    assert client.post("/api/ftp/add", json={"path": str(share)}).status_code == 200
+    started = []
+    monkeypatch.setattr(web, "_start_server", started.append)
+    web._bound_port = 5000
+    response = client.post(
+        "/api/save_config",
+        json={"params": {"host": "127.0.0.1", "port": 65432}, "web_port": 5000},
+    )
+    assert response.status_code == 200
+    assert started == [{"host": "127.0.0.1", "port": 65432}]
+    saved = server_backend._read_config_file()
+    assert saved["servers"] == [{"host": "127.0.0.1", "port": 65432}]
+    assert saved["web"] == {"port": 5000, "ftp_root": str(share)}
+
+
 # ---- client side -------------------------------------------------------------
 
 
@@ -350,7 +421,22 @@ def test_client_downloads_the_selection(client_web):
     assert response.get_json() == {"ok": True, "started": 3, "skipped": 0}
     sent = app.client.sent[0]
     assert sent.startswith(client_backend.FTP_GET_COMMAND + " ")
-    assert json.loads(sent.split(" ", 2)[2]) == ["alpha.txt", "sub", "sub/beta.bin"]
+    assert json.loads(sent.split(" ", 2)[2]) == {
+        "paths": ["alpha.txt", "sub", "sub/beta.bin"],
+        "destination": "",
+    }
+
+
+def test_client_download_passes_the_destination(client_web):
+    """A chosen download folder reaches the server; an empty one is dropped."""
+    app, client = client_web
+    app.client.replier = _server_reply(app, shared=True, started=1)
+    response = client.post(
+        "/api/ftp/download", json={"paths": ["alpha.txt"], "destination": " /tmp/picked "}
+    )
+    assert response.status_code == 200
+    payload = json.loads(app.client.sent[0].split(" ", 2)[2])
+    assert payload == {"paths": ["alpha.txt"], "destination": "/tmp/picked"}
 
 
 def test_client_download_needs_a_selection(client_web):

@@ -458,6 +458,9 @@
         '<button class="btn btn-ghost" id="ftp-refresh">Reload</button>' +
         '<button class="btn btn-ghost" id="ftp-close">Close</button></div>' +
         '<div class="ftp-list" id="ftp-list"></div>' +
+        '<div class="field"><label for="ftp-dest">Download to (folder on this host)</label>' +
+        '<input type="text" id="ftp-dest" placeholder="e.g. /home/user/downloads ' +
+        '(leave empty for the default transfer folder)"></div>' +
         '<div class="ftp-footer"><span class="spacer"></span>' +
         '<button class="btn" id="ftp-download" disabled>Download selected (0)</button></div>'
     );
@@ -472,8 +475,9 @@
     backdrop.querySelector("#ftp-download").addEventListener("click", async () => {
       const paths = Array.from(ftpState.selected);
       if (!paths.length) return;
+      const destination = backdrop.querySelector("#ftp-dest").value.trim();
       try {
-        const data = await post("/api/ftp/download", { paths });
+        const data = await post("/api/ftp/download", { paths, destination });
         closeModal(backdrop);
         toast("Download started (" + (data.started || 0) + " item(s))", "ok");
       } catch (e) {

@@ -138,7 +138,8 @@ WEB_FIELDS = [
 
 # The web "ftp" share is not FTP: it browses one folder on the server host and
 # hands selected entries to clients over the protocol's native /file and
-# /file_folder transfers.
+# /file_folder transfers.  The shared folder is kept in the startup config
+# (``web.ftp_root``), so a restart keeps serving it.
 FTP_LIST_COMMAND = "/ftp_list"
 FTP_GET_COMMAND = "/ftp_get"
 FTP_LIST_OK_COMMAND = "/ftp_list_ok"
@@ -160,9 +161,12 @@ def _ftp_resolve(root, rel_path):
         ValueError: If the path is absolute or escapes the shared folder.
     """
     raw = (rel_path or "").strip()
-    if os.path.isabs(raw):
+    rel = raw.replace("\\", "/")
+    # "/etc" is drive-relative on Windows (os.path.isabs is False there), so a
+    # leading separator and any drive prefix are refused on top of isabs
+    if os.path.isabs(raw) or rel.startswith("/") or os.path.splitdrive(raw)[0]:
         raise ValueError("path must be relative to the shared folder")
-    rel = raw.replace("\\", "/").strip("/")
+    rel = rel.strip("/")
     if ".." in rel.split("/"):
         raise ValueError("path must stay inside the shared folder")
     root_real = os.path.realpath(root)
@@ -275,6 +279,25 @@ def _load_json_list(path):
     return []
 
 
+def _read_config_file():
+    """Return the saved startup config, or ``{}`` when it is absent or unreadable."""
+    if not os.path.exists(SERVER_CONFIG_FILE):
+        return {}
+    try:
+        with open(SERVER_CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_config_file(config):
+    """Persist the startup config as indented JSON."""
+    os.makedirs(FLOW_WEB_DIR, exist_ok=True)
+    with open(SERVER_CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=4, ensure_ascii=False)
+
+
 def _config_display_value(key, value):
     """Render a saved config value for the config form input."""
     if value is None:
@@ -332,18 +355,22 @@ class ServerWebApp:
     # ------------------------------------------------------------------ setup
 
     def start_from_config(self):
-        """Read ``.Flow_Web/setup_server.json`` and start the TCP server."""
-        if not os.path.exists(SERVER_CONFIG_FILE):
-            self.mode = "config"
-            return
-        with open(SERVER_CONFIG_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        """Read ``.Flow_Web/setup_server.json`` and start the TCP server.
+
+        The saved "ftp" share is restored as well, so a folder shared before the
+        restart keeps being served.
+        """
+        data = _read_config_file()
         servers = data.get("servers", [])
         if not servers:
             self.mode = "config"
             return
         web = data.get("web", {}) or {}
         self.web_port = int(web.get("port", DEFAULT_WEB_PORT))
+        ftp_root = web.get("ftp_root")
+        if isinstance(ftp_root, str) and os.path.isdir(ftp_root):
+            with self._ftp_lock:
+                self.ftp_root = ftp_root
         self._start_server(servers[0])
 
     def _start_server(self, config):
@@ -563,6 +590,27 @@ class ServerWebApp:
         with self._ftp_lock:
             return self.ftp_root
 
+    def _persist_ftp_root(self, root):
+        """Remember the shared folder in the startup config so a restart restores it.
+
+        Args:
+            root (str | None): Folder now shared, or ``None`` once the share is
+                taken away.
+        """
+        config = _read_config_file()
+        web = dict(config.get("web") or {})
+        if root:
+            web["ftp_root"] = root
+        else:
+            web.pop("ftp_root", None)
+        config["servers"] = config.get("servers") or []
+        config.setdefault("clients", [])
+        config["web"] = web
+        try:
+            _write_config_file(config)
+        except OSError:
+            traceback.print_exc()
+
     def _on_ftp_list(self, sock, addr, cmd):
         """Server side of ``/ftp_list``: answer with the folder listing.
 
@@ -591,15 +639,26 @@ class ServerWebApp:
         """Server side of ``/ftp_get``: push the selected share entries.
 
         Every entry is handed to the protocol's native transfer (``/file`` for
-        a file, ``/file_folder`` for a folder) addressed to the asking client.
+        a file, ``/file_folder`` for a folder) addressed to the asking client,
+        carrying the receiver-side destination the client asked for (the
+        receiver's default transfer folder when it asked for none).
+
+        The request body is the list of share-relative entries; a client may
+        also send ``{"paths": [...], "destination": "..."}`` to pick where the
+        entries land on its own host.
         """
         parts = cmd.split(" ", 2)
         request_id = parts[1] if len(parts) > 1 else "?"
         try:
-            wanted = json.loads(parts[2]) if len(parts) > 2 else []
+            request = json.loads(parts[2]) if len(parts) > 2 else []
         except ValueError:
             return f"{FTP_ERROR_COMMAND} {request_id} malformed request"
-        if not isinstance(wanted, list):
+        destination = None
+        if isinstance(request, dict):
+            raw_destination = request.get("destination")
+            destination = str(raw_destination).strip() if raw_destination else None
+            request = request.get("paths")
+        if not isinstance(request, list):
             return f"{FTP_ERROR_COMMAND} {request_id} malformed request"
         root = self._ftp_shared_root()
         if not root:
@@ -608,7 +667,7 @@ class ServerWebApp:
             return f"{FTP_ERROR_COMMAND} {request_id} client is not connected"
         started = 0
         skipped = 0
-        for entry in wanted:
+        for entry in request:
             try:
                 target, _rel = _ftp_resolve(root, str(entry))
             except ValueError:
@@ -618,9 +677,9 @@ class ServerWebApp:
                 skipped += 1
                 continue
             if os.path.isdir(target):
-                self._send_folder_to_client(tuple(addr), target)
+                self._send_folder_to_client(tuple(addr), target, destination)
             else:
-                self._send_file_to_client(tuple(addr), target)
+                self._send_file_to_client(tuple(addr), target, destination)
             started += 1
         return f"{FTP_GET_OK_COMMAND} {request_id} {started} {skipped}"
 
@@ -974,10 +1033,12 @@ class ServerWebApp:
             data = request.get_json(force=True)
             params = data.get("params", {})
             web_port = int(data.get("web_port", DEFAULT_WEB_PORT))
-            os.makedirs(FLOW_WEB_DIR, exist_ok=True)
-            config = {"servers": [params], "clients": [], "web": {"port": web_port}}
-            with open(SERVER_CONFIG_FILE, "w", encoding="utf-8") as f:
-                json.dump(config, f, indent=4, ensure_ascii=False)
+            # Keep every web-only setting (the shared "ftp" folder among them)
+            # that this form does not own.
+            web = dict(_read_config_file().get("web") or {})
+            web["port"] = web_port
+            config = {"servers": [params], "clients": [], "web": web}
+            _write_config_file(config)
             self.web_port = web_port
             if self.server is not None and web_port == self._bound_port:
                 # Same web port: restart the TCP server in place; the Flask
@@ -1161,6 +1222,7 @@ class ServerWebApp:
                 return jsonify({"ok": False, "error": f"not a folder: {path}"}), 400
             with self._ftp_lock:
                 self.ftp_root = path
+            self._persist_ftp_root(path)
             self._register_ftp_commands()
             return jsonify({"ok": True, "root": path})
 
@@ -1169,6 +1231,7 @@ class ServerWebApp:
         def api_ftp_remove():
             with self._ftp_lock:
                 self.ftp_root = None
+            self._persist_ftp_root(None)
             return jsonify({"ok": True})
 
         @app.get("/api/ftp/list")

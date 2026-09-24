@@ -172,6 +172,15 @@ accounts accepted each other does the contact appear in the sidebar.
 Extension protocols are loaded by the client page and by administrators on
 the server page.
 
+The server page also offers a `"ftp"` share (administrator-only). It is not
+the FTP protocol: it browses one folder of the server host and hands the
+ticked entries to clients over the protocol's own `/file` and `/file_folder`
+transfers. The shared folder is kept in the startup configuration
+(`web.ftp_root` of `setup_server.json`), so a restart keeps serving it. The
+client's browse dialog takes an optional **Download to** folder: the entries
+land there on the client host, and in the default transfer folder
+(`PyFlow/network_api/received_files`) when the field is left empty.
+
 ### `setup.json`
 
 A pre-written `setup.json` is honoured by the launcher:

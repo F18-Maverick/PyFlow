@@ -26,6 +26,12 @@ def test_command_handler_parsing(server):
         def sendall(self, b):
             self.data += b
 
+        def shutdown(self, how):
+            pass
+
+        def close(self):
+            pass
+
     client_addr = ("127.0.0.1", 12345)
     dummy = DummySocket()
 
