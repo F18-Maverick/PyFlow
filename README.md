@@ -8,7 +8,7 @@ PyFlow is a high-level network protocol offering APIs and web apps, both of whic
 
 - **TCP server / client** — message exchange, custom commands, file transfer, and port allocation over a single control channel (`PyFlow/network_api/connect_tcp.py`).
 - **UDP communication** — connectionless messaging (`PyFlow/network_api/connect_udp.py`).
-- **Encrypted TCP channel** — RSA-OAEP message encryption with a TOFU (trust-on-first-use) peer-key registry, session nonces and sequence numbers against replay, and a circuit breaker against re-exchange storms. See [docs/Crypto](docs/Crypto/Crypto.rst) and the encrypted-channel sections of the TCP API docs.
+- **Encrypted TCP channel** — RSA-OAEP message encryption with a TOFU (trust-on-first-use) peer-key registry, session nonces and sequence numbers against replay, and a circuit breaker against re-exchange storms. See [docs/Crypto](docs/source/Crypto/Crypto.rst) and the encrypted-channel sections of the TCP API docs.
 - **C/OpenSSL cryptography library** — `libcrypto_api` provides RSA-OAEP, ECDH (P-256/384/521), HKDF-SHA256 and AES-256-GCM with a stable C API (`pf_*` prefix) usable from C, CMake or pkg-config.
 - **Multi-instance launcher** — `python -m PyFlow` (package entry point backed by `PyFlow/flow_setup.py`) starts one or more server/client instances from a CLI, an interactive prompt, or a `setup.json` configuration file.
 - **Extension protocols** — `command_control_extension_tcp.py` (remote command execution with log collection) and `forward_extension_tcp.py` (forwarding messages/files/folders to multiple destinations) plug into any instance via `setup_*_commands()`; `flow_setup.py` loads them automatically for every instance whose `setup.json` config sets `is_extend_command=True`, and starts instances in a background thread when `is_input_command_in_console=False`.
@@ -34,7 +34,8 @@ PyFlow/
 ├── flow_setup.py                     launcher implementation
 └── setup.json                        default launcher configuration (generated)
 test/                        Python tests (unit/ + integration/), C tests under test/crypto_api/
-docs/                        Sphinx documentation (multi-language)
+docs/                        documentation build root: Makefile / make.bat / reBuild.sh + _build output
+docs/source/                 Sphinx sources (English) with locale/ (ja, ko, ru, zh_CN, zh_TW)
 CMakeLists.txt               top-level build for the C library and C tests
 ```
 
@@ -217,10 +218,11 @@ The encrypted-channel tests (`test/unit/network_api/test_crypto_rsa.py`, `test/i
 
 ## Documentation
 
-Sphinx sources live in `docs/` (English source with `ja`/`ko`/`ru`/`zh_CN`/`zh_TW` translations). Build the HTML docs with:
+Sphinx sources live in `docs/source/` (English source with `ja`/`ko`/`ru`/`zh_CN`/`zh_TW` catalogues under `docs/source/locale/`); `docs/` holds the build wrappers. Build the HTML docs with:
 
 ```bash
-uv run python -m sphinx -b html docs build/sphinx_doc
+make -C docs html          # docs/Makefile; docs/make.bat html does the same on Windows
+uv run python -m sphinx -b html docs/source build/sphinx_doc   # equivalent, explicit paths
 ```
 
 Rebuild the translations (extract gettext, machine-translate new strings, compile `.mo`) with `docs/reBuild.sh`; it needs the documentation/translation dependencies from `pyproject.toml` (`sphinx`, `sphinx-intl`, `polib`, `deep-translator`).

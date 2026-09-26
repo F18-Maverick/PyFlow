@@ -1,0 +1,109 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, RayXu
+# This file is distributed under the same license as the PyFlow package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PyFlow \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-26 22:43+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: ko\n"
+"Language-Team: ko <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.10.3\n"
+
+#: ../../source/api/PyFlow.transfer_web.web_front.client_backend.rst:2
+#: 411a61682c95447192de34eca6a7b40c
+msgid "PyFlow.transfer\\_web.web\\_front.client\\_backend module"
+msgstr ""
+
+#: PyFlow.transfer_web.web_front.client_backend:1
+#: c5b03318abd74b32b6ffba1696f8b20b of
+msgid "Flask backend wrapping the PyFlow TCP client for the web tool."
+msgstr ""
+
+#: 13a2da9087074258858c4dd7a697671e
+#: PyFlow.transfer_web.web_front.client_backend:3 of
+msgid ""
+"The launcher (``setup_client.py``) starts this backend and opens the "
+"connect UI in the browser.  The user enters the server address (an "
+"``http``/``https`` domain or a bare IP); the backend queries the server's"
+" web backend ``/api/server_info`` for the TCP server address and port, "
+"then starts the ``TCP_Client_Base`` instance.  The backend stays up to "
+"relay the user's frontend actions:"
+msgstr ""
+
+#: 95d3503d45ac47ba8c8a9522aceb4764
+#: PyFlow.transfer_web.web_front.client_backend:10 of
+msgid "messages/files/folders to the server use the native transfer methods;"
+msgstr ""
+
+#: PyFlow.transfer_web.web_front.client_backend:11
+#: be1496ab996044798cfc05692616cd8a of
+msgid ""
+"messages to other clients use the native ``/forward_send_msg`` forwarding"
+" (a client-only command relayed by the server);"
+msgstr ""
+
+#: PyFlow.transfer_web.web_front.client_backend:13
+#: a59ab775ca734b828f09313089028a9f of
+msgid ""
+"files/folders to other clients are forwarded through the built-in "
+"``forward_extension_tcp`` extension."
+msgstr ""
+
+#: PyFlow.transfer_web.web_front.client_backend:16
+#: ea807a0c324b430c8731aa632d099643 of
+msgid ""
+"The sidebar instance list is kept fresh by the server's "
+"``/web_clients_update`` broadcasts; a reload button re-requests the list "
+"via ``/web_sync_clients``."
+msgstr ""
+
+#: 3656f3e4bded46b596db7d1bdc666b90
+#: PyFlow.transfer_web.web_front.client_backend:20 of
+msgid ""
+"Inbound events (plain-text messages and files pushed by the server, "
+"whether direct sends or client forwards) are captured on the TCP client's"
+" receive threads through ``TCP_Client_Base``'s "
+"``add_message_listener``/``add_file_listener`` APIs, queued here, and "
+"polled by the frontend via ``/api/events``."
+msgstr ""
+
+#: 565c32267ec64ccbb0904ef2ec5609df
+#: PyFlow.transfer_web.web_front.client_backend:26 of
+msgid ""
+"Accounts: a connected client logs in with a server account before the "
+"instance list is usable.  A forced login needs both factors — the account"
+" password and a verification code mailed to the account address — while a"
+" client that starts again replays the saved credentials and session token"
+" through ``/api/client_verify``.  ``/api/login`` opens the session, the "
+"``/api/contacts/*`` and ``/api/contact_requests`` routes proxy the "
+"contact management to the server, and the session token is sent over TCP "
+"with ``/web_bind`` so the server can push the contact list of that "
+"account.  The credentials are remembered in "
+"``.Flow_Web/client_login.json`` (owner-readable only) and the login "
+"window is shown whenever no session could be restored."
+msgstr ""
+
+#: 1e6c10d599f046398e16a7b47e0b8dab
+#: PyFlow.transfer_web.web_front.client_backend.ClientWebApp:1 of
+msgid "Flask app + TCP_Client_Base wrapper for the web tool."
+msgstr ""
+
+#: 6c87b744956640d682bef32158496990
+#: PyFlow.transfer_web.web_front.client_backend.ClientWebApp.start_from_config:1
+#: of
+msgid "Start the TCP client from ``.Flow_Web/setup_client.json`` and log in."
+msgstr ""
+
+#~ msgid "Read ``.Flow_Web/setup_client.json`` and start the TCP client."
+#~ msgstr ""
+

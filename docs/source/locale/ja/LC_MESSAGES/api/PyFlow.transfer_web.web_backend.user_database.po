@@ -1,0 +1,909 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, RayXu
+# This file is distributed under the same license as the PyFlow package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PyFlow \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-26 22:43+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.10.3\n"
+
+#: ../../source/api/PyFlow.transfer_web.web_backend.user_database.rst:2
+#: dc9d7f0370af4f84b5610f76a00874fd
+msgid "PyFlow.transfer\\_web.web\\_backend.user\\_database module"
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database:1
+#: be1bac4c72334efba35d0f089bb2569a of
+msgid "SQLite account, verification-code, contact and client-session store."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database:3
+#: b443eb9011264f1e8c1503e498927816 of
+msgid ""
+"A PyFlow web server keeps every account in ``.Flow_Web/flow_web.db``: the"
+" administrator console logins and the client accounts registered from the"
+" server's landing page.  Each account carries a public user id next to "
+"its username and email, and is looked up by any of the three."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database:8
+#: e42676deb2094a34bcd12bd80b4af816 of
+msgid ""
+"A missing database file is created and seeded with the default "
+"administrator (``DEFAULT_ADMIN_USERNAME`` / ``DEFAULT_ADMIN_PASSWORD``); "
+"a legacy ``.Flow_Web/users.json`` is imported once and renamed.  A "
+"database file that exists but cannot be read is never re-seeded, so a "
+"damaged store cannot silently restore the default account."
+msgstr ""
+
+#: 240012f61c214ccd90aea5d18f092b23
+#: PyFlow.transfer_web.web_backend.user_database.hash_password:1 of
+msgid "Build a PBKDF2-SHA256 password record."
+msgstr ""
+
+#: ../../source/api/PyFlow.transfer_web.web_backend.user_database.rst
+#: 03b5105941cd45d0aa2b892e6d27dcde 08f35658a8d34562bba8ef4facfe3190
+#: 1371f3c053b94c9b9d41c3cddef40f26 17dddd6e9c3249608ec7e69e8628c68d
+#: 23360f7fe2fe4e1192094e3902982b3c 2c7583e83f034445853fb00f0ddfd322
+#: 2e29e7995f074bb4bd2f1dcc7be18122 2ff02927d9624bd897cdf87bc5b1499e
+#: 50de8079354740f8bef04f89c39e38ce 56cf746c3d36465b9381b04a2b6286bc
+#: 5f0415d691444dddb6bad6236d65031d 6622eceb274e4743afe13ead0aca27f7
+#: 6e5ea788ade04ba0a41763944119f399 6e6f70ca4e80409b9f79b85c7300fd05
+#: 6e98017cfada453bb5c23fbc702a5433 80b2de2ae51148efa2bfa2cbffb36e60
+#: 8ef2aad1087c4c8d98c4d89ce8b090ae 95d01dac2843497c90c8cf12022efb96
+#: 990a26d14b9748c68e1428b7e98bb65e a4c2a5fbb7cf482fa0be0e3339b78f6f
+#: ad00f6310bac4c7d8dd43d716db82a15 b0dd965ae2df47e4bf0b310176523984
+#: c0252e6343014a8dbbeb34381e3a4225 c1f9a7ad7e5c408c92e53a0f6af76fb2
+#: c5d854410bae4a67a65ff6e4c7cf04d0 ccdfb76dea2441da82f25ffcf9868c97
+#: d0a3923b94a54c818e938905758f4fab e138c07957ec485ba3f2f5c78a33c6a3
+#: f4626e71ff14478581752c5035f3ec2c
+msgid "Parameters"
+msgstr ""
+
+#: 69a7b2997e394a91bc350b56153902c1
+#: PyFlow.transfer_web.web_backend.user_database.hash_password:3
+#: PyFlow.transfer_web.web_backend.user_database.new_password_record:3
+#: ad374d4ec88d4190a587405b8650ebc6 of
+msgid "Plain password to hash."
+msgstr ""
+
+#: 43103091388f4246bfcfb373484cdcdb
+#: PyFlow.transfer_web.web_backend.user_database.hash_password:5 of
+msgid "Per-account salt, stored in the record."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.hash_password:7
+#: f208789714bb4f25ace2f7f1bafb3cdd of
+msgid "PBKDF2 iteration count. Defaults to ``PBKDF2_ITERATIONS``."
+msgstr ""
+
+#: ../../source/api/PyFlow.transfer_web.web_backend.user_database.rst
+#: 07012b6a428c4fe284c21005f3f31ed7 0c6bd7d5ddd94472ac5e0733ace11502
+#: 0da09684672e4bc09358505167d8ab36 0f915ca08a8b444dbc7af17206eb14f2
+#: 144934daca874afdb2593c89b6c7aa2f 328bd690bc2e4944a82e692f9fc2a8f0
+#: 3af13ede10e244ac81ef988184de85e2 4138d32b5f444576a8b005e599f2df6f
+#: 56816c5d42484d11b24a04612e011a6c 578fbd6d58014462ad8f6385bb396613
+#: 5d19b7f0bd8d4c2d90ed468dfd148689 5f533efd6add4409a5c0d2b36058f0ce
+#: 7075482e965143858945d574b65e1417 8506634b5be24ffda8469c561220a5e9
+#: 8e6764323d8c4fc7bcfec0a107b965a4 a3f0891915004fdd943b0e8a3f0f8eca
+#: ac69791e47b04dcda46f0a20e033c25d acdc50b6e6fb48f99ce91f2662f5f357
+#: bcaa30ce2456497a8264b05819f490bc be52e8b34b2f4ec9a1a893550128006a
+#: cf825fc7c4ea48598ca6c63df16e2c86 d12cdd38a613402d937ff2a9973feef7
+#: da1422cf257841ba8f1ea950e5d79ff7 f36f65d42df84cdba98844fcf79709e4
+#: f47073a239cc495fb4eb9d97565f2bd3
+msgid "Returns"
+msgstr ""
+
+#: 3d071818ca9a4af0b5535e002e9bfbf6
+#: PyFlow.transfer_web.web_backend.user_database.hash_password:10 of
+msgid "Record shaped ``pbkdf2_sha256$<iterations>$<salt>$<hex digest>``."
+msgstr ""
+
+#: ../../source/api/PyFlow.transfer_web.web_backend.user_database.rst
+#: 14d6cae0267a447b9610011582a115ec 239b808a0eb747e4b184cac9d06b7755
+#: 3f504ed485704c58b2e4700146043292 46a3c1dff8214cd99820697ee548e1be
+#: 5aec80ff8bdf4718bea839f8a0a4efa5 5b62637615ae4af8805a7441d406374c
+#: 5cdfad86e9a044ae89e40c44a1b766bb 644b64bf4c6044f2ac99ab37e709c96e
+#: 65ce23c07d7a4b3f8bdc448b00978bf6 6e7096581b0a41f59ba3f9622cd8bb5a
+#: 7f4b79237eb6404c88f91be3ba096e12 82625e132eec42d38b0a0169e37847b5
+#: 8271e9650d6f4f02a54ad11fcbb25bfc 891ff18c9f824528a338d31a5fa621c5
+#: 8d7206d1b5204059b8552c63fec0809c 904d69a7df3c40c8b54404b3b3260024
+#: b219e5c2116049c48be6b9ff2834290b b5d16db5129a49ef9f62394a33025dbd
+#: b730f971e9f343d484ed3162d7a4654c c2eae217076a4a55b3c56535cd05ea52
+#: cc396ef2e0604cbf8556b2dc53a8962c dbafa9caaa144871bbbbeea8573249ca
+#: e3aefdd9920a44d292767d04bb5a029e f2f2e590a6e6460da65745fadfea6e3d
+#: fa50fed0dd944a1b8cf22c657a51d142
+msgid "Return type"
+msgstr ""
+
+#: 7b77ee74b8244c0eb4699d438ef8680d
+#: PyFlow.transfer_web.web_backend.user_database.new_password_record:1 of
+msgid "Build a password record with a fresh random salt."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.new_password_record:6
+#: d55ee6581d5740d0a1feeb6e90831d46 of
+msgid "Record produced by `hash_password` with a new 16-byte hex salt."
+msgstr ""
+
+#: 7a83c92ddb7f48b4ad581fab5215a695
+#: PyFlow.transfer_web.web_backend.user_database.dummy_password_record:1 of
+msgid ""
+"Return a throwaway record, so an unknown account costs a real "
+"verification."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.verify_password:1
+#: eb70debba99749839ed837d1a3f0db1d of
+msgid "Check a plain password against a stored record."
+msgstr ""
+
+#: 8e3adc3f8d984f9ab40bb13dc2e8ad6e
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.authenticate:5
+#: PyFlow.transfer_web.web_backend.user_database.verify_password:3
+#: bca1fa8f7c31420098a864e13f4b83a9 of
+msgid "Plain password to check."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.verify_password:5
+#: bbe7c7588e0a49ea8509cffdaa13821e of
+msgid "Record produced by `hash_password`."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.verify_password:8
+#: aee648edfc6b44fda8489804df904567 of
+msgid ""
+"True when the password matches the record; False for a malformed     or "
+"mismatching record."
+msgstr ""
+
+#: 793e0f563684438ebd51b071ba2d88d8
+#: PyFlow.transfer_web.web_backend.user_database.verify_password:10 of
+msgid "True when the password matches the record; False for a malformed"
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.verify_password:11
+#: e0fb8cab78bd46a597c11e12a4039c2c of
+msgid "or mismatching record."
+msgstr ""
+
+#: 817d6ab3c7234f6daad668605895be9e
+#: PyFlow.transfer_web.web_backend.user_database.validate_username:1 of
+msgid "Validate an account username."
+msgstr ""
+
+#: 14de18cfd74c4cac9e49314c124c53fd
+#: PyFlow.transfer_web.web_backend.user_database.validate_username:3 of
+msgid "Login name to validate."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.validate_username:6
+#: d8b76a0329964fa0916181fbb1440f24 of
+msgid "The username with surrounding whitespace removed."
+msgstr ""
+
+#: ../../source/api/PyFlow.transfer_web.web_backend.user_database.rst
+#: 02f5b630cc40457b9ac59f9f3380e18b 0d6bf82e0e5d45388bb5f0b6e9426597
+#: 18ae627ed7964208b628402ebbbc8237 1fbb6d44e31240ada47e999ddd41dbb8
+#: 1fcc6403415c46f0977b7bc684b23bec 45beec46dfab4a87a390f9f2d966a996
+#: 478ce1c55d6e4fa8a482b9238bbed935 5a4a62573dbf4ca986b49b01bce18806
+#: 5bcfb3de9e7a4fcbaf3e928405b28bae 7ccf58ab420a4dc99810099d6389b3c2
+#: 9c035e1fa90841579ccd9dd8cc2d883f a2a57c4fc66844bca04d37bb81b8b54d
+#: c12615cce71a4bb3a022dfb74878126e d5a28d0061ce49d2b9530a4ece92ecee
+#: e8c99f5250f942a291b69b5024083a6b fccfbdd4ec304c39b1aee2114b44296e
+msgid "Raises"
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.validate_username:9
+#: a8ae428feda1415ea78cbd12a545ac46 of
+msgid "If the username is not 1-64 characters without whitespace."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.validate_email:1
+#: b476f02b871f47a68c9139f9f972685d of
+msgid "Validate an email address."
+msgstr ""
+
+#: 051a4285db9c40dab3e4203f1b7d782a
+#: PyFlow.transfer_web.web_backend.user_database.validate_email:3 of
+msgid "Address to validate."
+msgstr ""
+
+#: 8c306d0c3dfd4e9bbd83d6bfc73f413e
+#: PyFlow.transfer_web.web_backend.user_database.validate_email:6 of
+msgid "The address with surrounding whitespace removed."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.validate_email:9
+#: bc6b05ee70a14733a51f24cd1564cad8 of
+msgid "If the address is not ``local@domain.tld`` shaped."
+msgstr ""
+
+#: 077968e3ff074437b564551911710f04
+#: PyFlow.transfer_web.web_backend.user_database.validate_password:1 of
+msgid "Validate a plain password."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.validate_password:3
+#: d404d123dbd7494891f96f855753f10e of
+msgid "Password to validate."
+msgstr ""
+
+#: 1d5301e965544e51b96008d68af98980
+#: PyFlow.transfer_web.web_backend.user_database.validate_password:6 of
+msgid "The password unchanged."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.validate_password:9
+#: b7f9cec524d44f4794c5dcfeeb6b0379 of
+msgid "If the password is shorter than ``MIN_PASSWORD_LENGTH``."
+msgstr ""
+
+#: 0bab5de4624c4dd3a5ec4cfd2e3d9397
+#: PyFlow.transfer_web.web_backend.user_database.mask_email:1 of
+msgid "Hide the local part of an address for display."
+msgstr ""
+
+#: 133754f439c24ce3885357bb59c99148
+#: PyFlow.transfer_web.web_backend.user_database.mask_email:3 of
+msgid "Address to mask."
+msgstr ""
+
+#: 18393686b84448038f99387e61b1a536
+#: PyFlow.transfer_web.web_backend.user_database.mask_email:6 of
+msgid ""
+"``a***@example.com`` shaped text, or an empty string when ``email``     "
+"is empty."
+msgstr ""
+
+#: 415fd52aed6a4490ab32912a64ca1dd7
+#: PyFlow.transfer_web.web_backend.user_database.mask_email:8 of
+msgid "``a***@example.com`` shaped text, or an empty string when ``email``"
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.mask_email:9
+#: cd140ee67bef42b4b1bc4bb86b37f68a of
+msgid "is empty."
+msgstr ""
+
+#: 855f63f30cf041fb8705630bd16da4a7
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase:1 of
+msgid ""
+"SQLite account store with verification codes, contacts and client "
+"sessions."
+msgstr ""
+
+#: 665c0fcc08eb4b86a204285ce6f06986
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase:3 of
+msgid ""
+"Every method is safe to call from several threads; writes are serialized "
+"on one connection."
+msgstr ""
+
+#: 8e5b8e0a4e2c4b109d60fedd26885c5e
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.__init__:1 of
+msgid "Open or create the account database."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.__init__:3
+#: d745862c998c44999999c3a80dce49ba of
+msgid ""
+"Database file to use; defaults to ``.Flow_Web/flow_web.db``. The parent "
+"directory is created on demand, and a missing file is seeded with the "
+"default administrator."
+msgstr ""
+
+#: 5e9e0f74ca7e497a8eb4b64414e0e885
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register:1 of
+msgid "Create an account from the registration form."
+msgstr ""
+
+#: 345ca44d44f44697abce1cdf618ab1fd 9955313cba1347fab7bf3548e8b20404
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.add_user:3
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register:3
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register_with_code:6
+#: b53d9bbc44fa4a09a9469b061e0d9d65 of
+msgid "Login name, 1-64 characters without spaces and unique in the store."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register:6
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register_with_code:9
+#: be34a4304aa4467cbf1c67076c5a1bdb fa5951fc24a8400cb6e6a8c64181ef28 of
+msgid "Address the verification code was sent to; unique in the store."
+msgstr ""
+
+#: 2593f2de35664520ba4126e2e63a77c5
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.add_user:8
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register:9
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register_with_code:12
+#: a4ec8c14004745baa8ba2dc74b1abe4e bd2eb75af1dd4b14aa729dc5702c9f93 of
+msgid "Plain password, at least ``MIN_PASSWORD_LENGTH`` characters."
+msgstr ""
+
+#: 44832705d3be4d81bd3182e62dd54335
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register:13 of
+msgid ""
+"New account without its password (``user_id``, ``username``,     "
+"``email``, ``role``)."
+msgstr ""
+
+#: 130a36bf20434284b1a351660f202ad0
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register:15 of
+msgid "New account without its password (``user_id``, ``username``,"
+msgstr ""
+
+#: 9570f0bec15049dcbe8ddfb0edc03b5b
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register:16 of
+msgid "``email``, ``role``)."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.add_user:17
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register:19
+#: e2c4539e5f2d43b68a40573e0814bf5c f4692dfda66f46a48da9c4700423693c of
+msgid ""
+"If a field is malformed or the username or email is     already "
+"registered."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.email_registered:1
+#: edba00d9b0424ad0a38367905b232f8e of
+msgid "Report whether an email address already belongs to an account."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.email_registered:3
+#: db34de161edf4d6cb2fcda74173c86c4 of
+msgid "Address to look up."
+msgstr ""
+
+#: 96fbf2b285ce4c4793d7ee547d2b5b75
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.email_registered:6
+#: of
+msgid "True when one account uses the address."
+msgstr ""
+
+#: 01257c7735bf4d4eb9ff6e08a9a4c935
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.email_registered:9
+#: of
+msgid "If the address is malformed."
+msgstr ""
+
+#: 4a714b3bdaed463bbb84cc5b93197ccc
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register_with_code:1
+#: of
+msgid "Register an account after consuming the code sent to its email."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register_with_code:3
+#: f8acbf123868454d9702c0611857aa84 of
+msgid ""
+"The code is only spent once every field is valid, so a rejected "
+"registration does not cost the user a new code."
+msgstr ""
+
+#: 27ca6063dd5748129d9df322943d5d4d
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register_with_code:15
+#: of
+msgid "Code delivered for the ``register`` purpose."
+msgstr ""
+
+#: 34cc4cb2ce744470892c5ac680176177 54ebbdf0ea5b4686b4182c9912320aa2
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.add_user:14
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register_with_code:18
+#: of
+msgid "New account without its password."
+msgstr ""
+
+#: 571e601b04eb4545a2e21200d993e1a5
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.register_with_code:21
+#: of
+msgid ""
+"If a field is malformed, the username or email is taken,     or the code "
+"is wrong, expired or missing."
+msgstr ""
+
+#: 4216328fe8cd499e9b2e33a8f5f33dc3
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.reset_password_with_code:1
+#: of
+msgid "Set a new password after consuming the code sent to the account email."
+msgstr ""
+
+#: 446a017626c746b1bcc27c441e1d1cc4 49b8902370f342c7891a20623b0ffb50
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.reset_password_with_code:3
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.update_credentials:3
+#: of
+msgid "User id, username or email address of the account."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.reset_password_with_code:5
+#: c3c00bb0eaa447239b6b2fe600c6b937 of
+msgid "Code delivered for the ``reset_password`` purpose."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.reset_password_with_code:7
+#: f292d95860924511b68034fd32cd9a59 of
+msgid "Replacement plain password, at least ``MIN_PASSWORD_LENGTH`` characters."
+msgstr ""
+
+#: 5e44610ed5c547418dad23ab35709d33
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.reset_password_with_code:11
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.update_credentials:15
+#: bd8fb193909d4711972476f308acc5e7 of
+msgid "Updated account without its password."
+msgstr ""
+
+#: 1ba3ba43c70c4134bc6eabf78caf15bb
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.reset_password_with_code:14
+#: of
+msgid ""
+"If no account matches ``identify``, it has no email     address, the new "
+"password is malformed, or the code is wrong,     expired or missing."
+msgstr ""
+
+#: 2c90b9b39d4442b4b08bc54916f4625f
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.add_user:1 of
+msgid "Create an account on behalf of an administrator."
+msgstr ""
+
+#: 43677d8d47e24347b3e023871c7a9368
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.add_user:6 of
+msgid "Unique address of the account."
+msgstr ""
+
+#: 36df67421b30464090d59a74d298fde9
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.add_user:11 of
+msgid "\"admin\" or \"user\"; anything else is stored as \"user\"."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.find:1
+#: eca9f4b7b6fa4808881cfdef5e5ba541 of
+msgid "Look an account up by user id, username or email."
+msgstr ""
+
+#: 21a5cc9b73384d58a0172b491f495783
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.find:3 of
+msgid "User id, username or email address; matched case-insensitively."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.find:7
+#: bb25905c95c2479f97328ddac06cdf9a of
+msgid "Account without its password, or ``None`` when nothing     matches."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.find:9
+#: c7029339dcae4294a1600252ebf73451 of
+msgid "Account without its password, or ``None`` when nothing"
+msgstr ""
+
+#: 404a5829d62d413aafc621ad0f0722ce
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.find:10 of
+msgid "matches."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.authenticate:1
+#: bf2b4cf239194bda8ab2258b84c2de22 of
+msgid "Check a password against one account."
+msgstr ""
+
+#: 073b026d8efb409abe12faa4a7889f7e 232effc95a714617a2e78cbdac201b4f
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.authenticate:3
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.remove_user:3 of
+msgid "User id, username or email address."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.authenticate:8
+#: bec4f586d2c64f57955655cfd705c6ad of
+msgid ""
+"Account without its password when the password is     correct, otherwise "
+"``None``."
+msgstr ""
+
+#: 7245534f893743e2a70e460154c4b374
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.authenticate:10
+#: of
+msgid "Account without its password when the password is"
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.authenticate:11
+#: e39f2101832d41a38b5ba7ecdd6d6e1d of
+msgid "correct, otherwise ``None``."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.list_users:1
+#: deaffa35932e4b06b5564b1968bcb9a3 of
+msgid "List every account sorted by username."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.list_users:3
+#: b042721396b948efa804cc185c2c9e79 of
+msgid "Accounts without their passwords."
+msgstr ""
+
+#: 9ff0622c60f04abc9b50db77bde56a91
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.update_credentials:1
+#: of
+msgid "Update the username, password or email of one account."
+msgstr ""
+
+#: 932608b14da44d7596521ea365385753
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.update_credentials:5
+#: of
+msgid "Replacement login name; ``None`` keeps the current one."
+msgstr ""
+
+#: 7139b8289d514fbca9e66503c5c9aad6
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.update_credentials:8
+#: of
+msgid "Replacement plain password; ``None`` keeps the current one."
+msgstr ""
+
+#: 3897cf4e55c2432981ddb0e637649690
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.update_credentials:11
+#: of
+msgid "Replacement address; ``None`` keeps the current one."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.update_credentials:18
+#: ef9546b661ff4e1c979dae9d8938257b of
+msgid ""
+"If the account is unknown, a replacement is malformed,     or the new "
+"username or email is already in use."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.remove_user:1
+#: c9fca8857afa488480e7fda9be6dcd95 of
+msgid "Delete one account, keeping at least one administrator."
+msgstr ""
+
+#: 8ea76f47e1ee4aad87dec8639792a8fe
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.remove_user:6 of
+msgid "If the account is unknown or it is the last     administrator."
+msgstr ""
+
+#: 757b3412a4684f5a88a338e6335115a3
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.issue_code:1 of
+msgid "Store a fresh verification code for a purpose and target."
+msgstr ""
+
+#: 549130f2a22b4c36acf528d6ef5b8f84 93a23941569d4d7990d97798538d7642
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.discard_codes:6
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.issue_code:3
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.verify_code:3
+#: d64e9952a9be4c64b911306a09278e55 of
+msgid "One of ``CODE_PURPOSES``."
+msgstr ""
+
+#: 47e300650980450680ef33b7158ec8e0
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.issue_code:5 of
+msgid "Email address the code is delivered to."
+msgstr ""
+
+#: 4068e4ab137a469ab5fcf62f9d254702
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.issue_code:8 of
+msgid ""
+"``{\"code\", \"expires_in\", \"resend_after\"}`` with the plaintext     "
+"code, its lifetime in seconds and the cooldown before another     code "
+"may be requested."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.issue_code:10
+#: df45e853ef0444b6b8564cd50cba8608 of
+msgid "``{\"code\", \"expires_in\", \"resend_after\"}`` with the plaintext"
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.issue_code:11
+#: e5d7dbdaba4843e3bfe64188057f1349 of
+msgid ""
+"code, its lifetime in seconds and the cooldown before another code may be"
+" requested."
+msgstr ""
+
+#: 652bc854c7694220824c64828f3dd9ba
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.issue_code:15 of
+msgid ""
+"If the purpose or target is invalid, or a code for the     same purpose "
+"and target was issued less than     ``CODE_RESEND_SECONDS`` ago."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.verify_code:1
+#: dbe3dc1ea44842b0b9dba276ffd9981b of
+msgid "Consume the verification code of a purpose and target."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.discard_codes:8
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.verify_code:5
+#: aff3f10d5b1049f58b07bc590496e6e4 eb90d7d0efd24a96b9d2374a98c0130a of
+msgid "Email address the code was sent to."
+msgstr ""
+
+#: 453c6b901c9e473d90699c77304f4035
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.verify_code:7 of
+msgid "Code as typed by the user."
+msgstr ""
+
+#: 8a0fec47a6f8447e90304aebf4216c8e
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.verify_code:10 of
+msgid ""
+"If no code was requested for the pair, it expired, the     code is wrong,"
+" or ``CODE_MAX_ATTEMPTS`` wrong entries were     already made."
+msgstr ""
+
+#: 1b9f2ea8e3da44329a02912917fbb886
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.discard_codes:1
+#: of
+msgid "Delete every stored code of a purpose and target."
+msgstr ""
+
+#: 3b4b2d7cbcc54c3e843c97782b379772
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.discard_codes:3
+#: of
+msgid ""
+"Used when the code could not be delivered, so the cooldown does not block"
+" an immediate retry."
+msgstr ""
+
+#: 3fb6ca3291b54bbca036f7ab3d90cc86
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:1 of
+msgid "Find accounts by user id, username or email substring."
+msgstr ""
+
+#: 30944d7667804c34b00c18e5d30e6fee
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:3 of
+msgid ""
+"Text matched case-insensitively inside the user id, username or email; "
+"1-64 characters after trimming."
+msgstr ""
+
+#: 45524dd69f3a42a28e945a77259748ef
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:6 of
+msgid "Account to leave out of the results, usually the searcher's own."
+msgstr ""
+
+#: 46647ef5120d4499b0acc832f0335840
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:10
+#: of
+msgid ""
+"At most ``SEARCH_RESULT_LIMIT`` accounts without their     passwords, "
+"sorted by username."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:12
+#: e6a48d62fb864a2faf5e7b48f1da9481 of
+msgid "At most ``SEARCH_RESULT_LIMIT`` accounts without their"
+msgstr ""
+
+#: 3a7e7aca222a4891be89b3629cb73b77
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:13
+#: of
+msgid "passwords, sorted by username."
+msgstr ""
+
+#: 8f0118afa4f4499e86ecdcf019dc27af
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:16
+#: of
+msgid "If the query is empty or longer than 64 characters."
+msgstr ""
+
+#: 104b12482c044a479a57c2861c75ee49
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contacts:1 of
+msgid "List the accounts one account is allowed to see."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contacts:3
+#: a8fc40d976ff439a8664b2d13e4aa95e of
+msgid "Owner account."
+msgstr ""
+
+#: 5f7bcc9292d34c7a92a0fb5661247ce0
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contacts:6 of
+msgid "Contact accounts without their passwords, sorted by     username."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contacts:8
+#: bd0ba55d948d4ebb97f3b678a04a1e63 of
+msgid "Contact accounts without their passwords, sorted by"
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contacts:9
+#: a24fff32804948a9b838d1dea0818125 of
+msgid "username."
+msgstr ""
+
+#: 71bfc6f34ecd4491aac12b5e43569547
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.are_contacts:1 of
+msgid "Report whether two accounts are contacts of each other."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.are_contacts:3
+#: a89bb3d2f7484e5984c9c27e78951411 of
+msgid "First account."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.are_contacts:5
+#: db3b8f26e4bd4af69ea50ac81dc22ae9 of
+msgid "Second account."
+msgstr ""
+
+#: 7bd24454f67c492ebbba81578e01ac5e
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.are_contacts:8 of
+msgid "True when ``user_id`` lists ``other_user_id`` as a contact."
+msgstr ""
+
+#: 988a646a76d24eacadff9699a6e00e3c
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.request_contact:1
+#: of
+msgid "Ask another account to become a contact."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.request_contact:3
+#: cd9868a50b9440ff9fb4a35f4f7133f3 of
+msgid "Account sending the request."
+msgstr ""
+
+#: 8fce5f5dbf54480c83af4980213477a7
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.request_contact:5
+#: of
+msgid "Account the request is addressed to."
+msgstr ""
+
+#: 1e36be5f94b04c72a771468785673ad8
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.request_contact:8
+#: of
+msgid "Target account without its password."
+msgstr ""
+
+#: 8da5067b43064600ac6f56b84bde1b6f
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.request_contact:11
+#: of
+msgid ""
+"If the target is unknown, it is the sender's own     account, the two are"
+" already contacts, or a request is already     pending."
+msgstr ""
+
+#: 2178dac5bcb44ac5a328498b1d80c2e5
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contact_requests:1
+#: of
+msgid "List the pending contact requests of one account."
+msgstr ""
+
+#: 133d255676e84c3fa5490ab5b5349ab7
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contact_requests:3
+#: of
+msgid "Account whose requests are read."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contact_requests:6
+#: ff097c5423e84c099efad711e4a3cf6d of
+msgid ""
+"``{\"incoming\": [...], \"outgoing\": [...]}`` where each entry is     "
+"``{\"id\", \"user\", \"created_at\"}`` and ``user`` is the other     "
+"account without its password."
+msgstr ""
+
+#: 9e686839a5f64355a76145779ae7e9c4
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contact_requests:8
+#: of
+msgid "``{\"incoming\": [...], \"outgoing\": [...]}`` where each entry is"
+msgstr ""
+
+#: 144448e83f2848ddad839ef8d89b103d
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contact_requests:9
+#: of
+msgid ""
+"``{\"id\", \"user\", \"created_at\"}`` and ``user`` is the other account "
+"without its password."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:1
+#: b0d1f8e188bb412ca551578a12cc8a88 of
+msgid "Accept or reject a pending contact request addressed to one account."
+msgstr ""
+
+#: 35437de2f4f34910b0657029f7808aa8
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:3
+#: of
+msgid "Accepting records the contact for both accounts."
+msgstr ""
+
+#: 102f3e7a2b384c048cb94ce6f8ab39da
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:5
+#: of
+msgid "Account answering the request."
+msgstr ""
+
+#: 1f86541af7de4b369025b60881c529af
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:7
+#: of
+msgid "Request id as reported by `contact_requests`."
+msgstr ""
+
+#: 5eb8331e7eb14a63853d4ca1cf0a4aae
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:9
+#: of
+msgid "True to accept the request, False to reject it."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:12
+#: c40478554a6042c9971a3fe4304a9fa0 of
+msgid "Requester account without its password."
+msgstr ""
+
+#: 2df873bd3c314676844e918cd522c619
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:15
+#: of
+msgid ""
+"If the request is unknown, is not addressed to     ``user_id``, or is not"
+" pending any more."
+msgstr ""
+
+#: 2df72b51e3b6400881d2fa9ad32f99f3
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.create_session:1
+#: of
+msgid "Open a client session for one account."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.create_session:3
+#: b89c59cb4ca042ffa53d18ef6f101687 of
+msgid "Account the session belongs to."
+msgstr ""
+
+#: 774af16f272342928da65c75c2c8019a
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.create_session:6
+#: of
+msgid "Session token; clients send it back with every request."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.create_session:9
+#: ec04920c2fb3456b8432de3e859d823b of
+msgid "If the account is unknown."
+msgstr ""
+
+#: 842414ad69994840ac760cc4d57482a6
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.session_user:1 of
+msgid "Resolve a client session token."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.session_user:3
+#: a1f81ad87d864a95ba4151c586ebda5a of
+msgid "Token returned by `create_session`."
+msgstr ""
+
+#: 850bb5e633d24377956ea66785e7dc27
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.session_user:6 of
+msgid "Account without its password, or ``None`` when the     token is unknown."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.session_user:8
+#: f700ea61dd154ccf8e3feda5031c649a of
+msgid "Account without its password, or ``None`` when the"
+msgstr ""
+
+#: 931c1c0f1a4546d0a9e0a33b35906e40
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.session_user:9 of
+msgid "token is unknown."
+msgstr ""
+
+#: 14f36553c642411aaa1f4ebdd462d00b
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.drop_session:1 of
+msgid "Invalidate one client session token."
+msgstr ""
+
+#: 2eb7cca64d6e40f29b923739b1c0cfe4
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.drop_session:3 of
+msgid "Token returned by `create_session`; an unknown token is ignored."
+msgstr ""
+
+#: 8f53093f033b4caf9bcd3b9f25eebce6
+#: PyFlow.transfer_web.web_backend.user_database.UserDatabase.close:1 of
+msgid "Close the database connection."
+msgstr ""
+

@@ -19,8 +19,11 @@ test/src/
 docs/_build/
 docs/build/
 docs/.doctrees/
-docs/locale/**/*.mo
+docs/source/locale/**/*.mo
 docs/.sync
+# The top-level `Makefile` entry above is CMake's in-source-build rule; the Sphinx makefile
+# under docs/ is a checked-in source file.
+!docs/Makefile
 *.bak
 *~
 PyFlow/setup.json

@@ -1,0 +1,59 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, RayXu
+# This file is distributed under the same license as the PyFlow package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PyFlow \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-26 22:43+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: zh_TW\n"
+"Language-Team: zh_TW <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.10.3\n"
+
+#: ../../source/api/PyFlow.transfer_web.setup_client.rst:2
+#: 8379b786205a4447995cf82b275ee87a
+msgid "PyFlow.transfer\\_web.setup\\_client module"
+msgstr ""
+
+#: 8412539bd9af49e8976ccf5c028061d4 PyFlow.transfer_web.setup_client:1 of
+msgid "PyFlow TCP client web launcher."
+msgstr ""
+
+#: PyFlow.transfer_web.setup_client:3 d2ed4df91a474301aee43eaf09e1ac87 of
+msgid ""
+"Starts a lightweight Flask backend on 127.0.0.1 and opens the connect UI "
+"in the browser.  The user enters the server address (an http/https domain"
+" or a bare IP); the backend asks the server's web backend for the TCP "
+"server address/port, starts the TCP client, and keeps the backend running"
+" to relay the user's frontend actions.  The account of the server logs in"
+" from the same backend: saved credentials in "
+"``.Flow_Web/client_login.json`` are replayed on every start, and the "
+"login window appears whenever no session could be restored."
+msgstr ""
+
+#: PyFlow.transfer_web.setup_client.main:1 fd5a9b075a2a4b9a97dbad26743e0403 of
+msgid "Start the client web backend and serve its UI."
+msgstr ""
+
+#~ msgid ""
+#~ "Starts a lightweight Flask backend on"
+#~ " 127.0.0.1 and opens the connect UI"
+#~ " in the browser.  The user enters "
+#~ "the server address (an http/https domain"
+#~ " or a bare IP); the backend "
+#~ "asks the server's web backend for "
+#~ "the TCP server address/port, starts the"
+#~ " TCP client, and keeps the backend"
+#~ " running to relay the user's frontend"
+#~ " actions."
+#~ msgstr ""
+

@@ -1,0 +1,182 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) 2026, RayXu
+# This file is distributed under the same license as the PyFlow package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, 2026.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: PyFlow \n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-09-26 22:43+0800\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language: ko\n"
+"Language-Team: ko <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=utf-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Generated-By: Babel 2.10.3\n"
+
+#: ../../source/api/PyFlow.transfer_web.web_backend.server_backend.rst:2
+#: 7bc35f7e619347e0b976ca49c973de8f
+msgid "PyFlow.transfer\\_web.web\\_backend.server\\_backend module"
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.server_backend:1
+#: fd1d19a74e7a4e14a3863a4f2d4e6eef of
+msgid "Flask backend wrapping the PyFlow TCP server for the web tool."
+msgstr ""
+
+#: 6fa9dfd64064447c82ade7290b523d5c
+#: PyFlow.transfer_web.web_backend.server_backend:3 of
+msgid "Two modes, one process:"
+msgstr ""
+
+#: 8e61412bb72d49b086f03a2245cd959d
+#: PyFlow.transfer_web.web_backend.server_backend:5 of
+msgid ""
+"``config`` mode: serves the server startup-configuration UI.  The UI "
+"shows every ``TCP_Server_Base`` parameter with its default value; on "
+"submit the config is written to ``.Flow_Web/setup_server.json`` (same "
+"shape as ``flow_setup``'s ``setup.json``) and the TCP server class is "
+"started."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.server_backend:10
+#: b15a182866794bf7bfe71605fc47a301 of
+msgid ""
+"``status`` mode: serves the minimal status page plus the same "
+"sidebar/input UI as the client frontend (forwarding disabled; native "
+"sends to connected clients allowed).  Also exposes the HTTP API that "
+"clients use to discover the TCP server address/port."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.server_backend:15
+#: a297544539714d03afa00d1112541712 of
+msgid ""
+"The backend monitors ``server.clients``: whenever a client connects or "
+"disconnects it broadcasts the current instance list to every connected "
+"client (``/web_clients_update``), and it re-checks the list every minute."
+msgstr ""
+
+#: 9ad7bd78687141a8a282a951ddc57689
+#: PyFlow.transfer_web.web_backend.server_backend:20 of
+msgid ""
+"Inbound events (plain-text messages and file uploads arriving from "
+"clients) are captured on the TCP server's receive threads through "
+"``TCP_Server_Base``'s ``add_message_listener``/``add_file_listener`` "
+"APIs, queued here, and polled by the frontend via ``/api/events``."
+msgstr ""
+
+#: 69da06074d1141308bd12409e851f506
+#: PyFlow.transfer_web.web_backend.server_backend:25 of
+msgid ""
+"Authentication: anonymous visitors get a white landing page (the server "
+"addresses, a login button, a registration button and a password-reset "
+"button); the configuration and status pages need a session.  Accounts "
+"live in the SQLite store ``.Flow_Web/flow_web.db`` (see `user_database`);"
+" the first run seeds the ``admin``/``admin`` administrator and the "
+"frontend warns on every login until those default credentials are "
+"changed.  Registration, password reset and code-based client logins are "
+"delivered by the mailbox configured from the startup-configuration page "
+"(see `mail_service`)."
+msgstr ""
+
+#: 1fb7feafe6ba447e992cd3ebd42801c8
+#: PyFlow.transfer_web.web_backend.server_backend:34 of
+msgid ""
+"Client accounts: the client web frontend logs in through "
+"``/api/client_login`` with a username/email, the account password *and* a"
+" mailed verification code — both factors are required — and receives a "
+"session token.  Re-entering the client web UI replays the saved "
+"credentials and token through ``/api/client_verify``, which only accepts "
+"them while they still open that account.  The token binds the TCP "
+"connection the client opens (``/web_bind``) to that account, and the "
+"instance list pushed to a client is limited to its contacts, so accounts "
+"that never exchanged a contact request cannot see each other."
+msgstr ""
+
+#: 123122acd40847679e349c6e3b8d9c5e
+#: PyFlow.transfer_web.web_backend.server_backend.ServerWebApp:1 of
+msgid "Flask app + TCP_Server_Base wrapper for the web tool."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.server_backend.ServerWebApp.__init__:1
+#: b7ccb1c765d744b988819d0afbbab22d of
+msgid "Create the Flask app and its stores."
+msgstr ""
+
+#: ../../source/api/PyFlow.transfer_web.web_backend.server_backend.rst
+#: b841315945d14f34a8ef0541284d23e3
+msgid "Parameters"
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.server_backend.ServerWebApp.__init__:3
+#: c8c0a79297824242960049876ebd3e56 of
+msgid ""
+"Port of this web backend; defaults to ``DEFAULT_WEB_PORT``. A busy port "
+"falls back to the next free one."
+msgstr ""
+
+#: 652d75ee0a3d4dd18396a8e2b5aa315e
+#: PyFlow.transfer_web.web_backend.server_backend.ServerWebApp.__init__:6 of
+msgid "SQLite account database; defaults to ``.Flow_Web/flow_web.db``."
+msgstr ""
+
+#: 34f17ede4f7c4556a62f8cc47f3c399d
+#: PyFlow.transfer_web.web_backend.server_backend.ServerWebApp.__init__:9 of
+msgid ""
+"JSON file with the SMTP settings; defaults to "
+"``.Flow_Web/email_config.json``."
+msgstr ""
+
+#: 011de011008f44dc9c247510315a2341
+#: PyFlow.transfer_web.web_backend.server_backend.ServerWebApp.start_from_config:1
+#: of
+msgid "Read ``.Flow_Web/setup_server.json`` and start the TCP server."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.server_backend.ServerWebApp.start_from_config:3
+#: baae3df9217643d0a41c83324c8f035d of
+msgid ""
+"The saved \"ftp\" share is restored as well, so a folder shared before "
+"the restart keeps being served."
+msgstr ""
+
+#~ msgid ""
+#~ "Authentication: anonymous visitors get a "
+#~ "white landing page (the server addresses"
+#~ " plus a login button); the "
+#~ "configuration and status pages need a"
+#~ " session.  Accounts live in "
+#~ "``.Flow_Web/users.json``; the first run seeds"
+#~ " the ``admin``/``admin`` administrator, and "
+#~ "the frontend warns on every login "
+#~ "until those default credentials are "
+#~ "changed."
+#~ msgstr ""
+
+#~ msgid "Account store backing the server web login (``.Flow_Web/users.json``)."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "Passwords are PBKDF2-SHA256 records with "
+#~ "a per-user salt.  A missing store"
+#~ " file seeds the default ``admin``/``admin``"
+#~ " administrator; a store file that "
+#~ "exists but cannot be read is *not*"
+#~ " re-seeded, so a damaged file "
+#~ "can never silently restore the default"
+#~ " account."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "Return ``{\"username\", \"role\"}`` for valid"
+#~ " credentials, else ``None``."
+#~ msgstr ""
+
+#~ msgid "Rename ``username`` and set its password (self-service)."
+#~ msgstr ""
+

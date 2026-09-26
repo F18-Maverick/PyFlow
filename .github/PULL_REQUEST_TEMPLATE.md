@@ -27,18 +27,18 @@
 ## Documentation impact
 
 - [ ] No user-visible change
-- [ ] Updated docs/...
+- [ ] Updated docs/source/...
 - [ ] Changelog only
 - [ ] Needs a follow-up issue #___
 
 ## Design decisions
 
 - [ ] No significant design decision in this change
-- [ ] Added a design note: docs/design/___
+- [ ] Added a design note: docs/source/design/___
 - [ ] Implicit assumptions to record (explained below)
 
 ---
 
 ### Design note summary (if any)
 
-<Fill this in when "implicit assumptions to record" is ticked; or link the `docs/changes/PR-*.md` note.>
+<Fill this in when "implicit assumptions to record" is ticked; or link the `docs/source/changes/PR-*.md` note.>

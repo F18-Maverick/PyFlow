@@ -46,6 +46,13 @@ dev = [
     "sphinx-intl>=2.3.2",
 ]
 
+[project.optional-dependencies]
+docs = [
+    "deep-translator",
+    "sphinx>=8.1.3",
+    "sphinx-intl>=2.3.2",
+]
+
 [tool.ruff]
 target-version = "py310"
 line-length = 100
@@ -53,7 +60,7 @@ exclude = ["build/", "dist/", ".git/", "__pycache__/"]
 
 [tool.ruff.lint]
 select = ["E", "F", "PL", "I", "D"]
-# Docstring rules follow docs/DOCSTRING_GUIDE.md (Google style): the NumPy section rules and
+# Docstring rules follow docs/source/DOCSTRING_GUIDE.md (Google style): the NumPy section rules and
 # the two mutually exclusive pairs are dropped, everything else stays on.
 ignore = [
     "D203", # blank line before a class docstring; conflicts with D211 (Google has none)

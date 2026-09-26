@@ -15,7 +15,7 @@ The forwarding extensions use the module-level parsers
 `parse_forwarded_message`, `parse_forward_items_and_addrs`,
 `parse_forward_originator` and `forward_skip_message`.
 
-Concepts live in ``docs/Network_APIs/TCP_Server_APIs.rst`` and
+Concepts live in ``docs/source/Network_APIs/TCP_Server_APIs.rst`` and
 ``TCP_Client_APIs.rst``; argument, return and exception contracts live in the
 docstrings below.
 """
