@@ -11,9 +11,13 @@ sphinx-apidoc -o source/api -T -e --separate --module-first --force ../PyFlow
 sphinx-build -b gettext source _build/gettext
 
 # 2. Update the catalogues (source/locale/**/*.po) and machine-translate the still-empty
-#    ones, including the docstring-generated api/*.po pages (--include-generated).
+#    ones, including the docstring-generated api/*.po pages (--include-generated). The step
+#    is best-effort: --ignore-failures turns a failed run into a warning, and the trailing
+#    guard covers a translation step that cannot start at all (missing interpreter or
+#    dependency), so step 3 always runs on whatever is already translated.
 sphinx-intl update -p _build/gettext -d source/locale
-python3.14 source/batch_translate_po.py --include-generated ${TRANSLATE_ARGS:-}
+python3.14 source/batch_translate_po.py --include-generated --ignore-failures ${TRANSLATE_ARGS:-} \
+  || echo "⚠️ 翻译步骤未能执行，继续构建（英文与已有译文仍然可用）。"
 
 # 3. Compile the catalogues and build one HTML tree per language.
 sphinx-intl build -d source/locale

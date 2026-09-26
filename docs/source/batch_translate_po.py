@@ -41,12 +41,18 @@ requests are paced by ``REQUEST_DELAY``; a rate-limited entry is retried after
 ``RATE_LIMIT_BACKOFF`` seconds; after ``MAX_CONSECUTIVE_FAILURES`` failures in a row the run
 stops with an explanation.
 
+``--ignore-failures`` makes the run best-effort for build pipelines (``docs/reBuild.sh``,
+Read the Docs): every failure — a missing ``locale/`` directory, an unconfigured engine, a
+stopped run, or an unexpected exception — is reported and the script still exits ``0``, so
+the HTML build that follows keeps running on the catalogues that are already translated.
+
 Usage:
     python3 batch_translate_po.py                 # every language, mymemory (no key, no proxy)
     python3 batch_translate_po.py --engine baidu  # better quality once BAIDU_APPID/KEY exist
     python3 batch_translate_po.py --lang ja       # a single language
     python3 batch_translate_po.py --limit 5       # at most 5 entries per file
     python3 batch_translate_po.py --proxy http://127.0.0.1:7897   # route via an explicit proxy
+    python3 batch_translate_po.py --include-generated --ignore-failures   # full pipeline run
 """
 
 import argparse
@@ -633,7 +639,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     Returns:
         argparse.ArgumentParser: Parser with the ``--lang``, ``--engine``, ``--limit``,
-            ``--delay``, ``--proxy`` and ``--include-generated`` options.
+            ``--delay``, ``--proxy``, ``--include-generated`` and ``--ignore-failures``
+            options.
     """
     parser = argparse.ArgumentParser(description="批量翻译 locale/**/LC_MESSAGES 下的 .po 文件")
     parser.add_argument(
@@ -662,6 +669,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-generated",
         action="store_true",
         help="连带翻译生成的 api/*.po（默认跳过：docstring 属 API 单源，且字符量占绝大部分）",
+    )
+    parser.add_argument(
+        "--ignore-failures",
+        action="store_true",
+        help="尽力而为：任何失败（目录缺失、引擎未配置、连续失败中止、异常）都只报警告并返回 0，"
+        "供 reBuild.sh / Read the Docs 等构建流程使用",
     )
     return parser
 
@@ -706,18 +719,18 @@ def translate_language(lang: str, locale_dir: Path, session: Session, include_ge
     return failed, False
 
 
-def main(argv=None):
+def run_translation(args) -> int:
     """Translate the configured languages under ``locale/``.
 
     Args:
-        argv (list | None): Command-line arguments; None uses ``sys.argv``.
+        args (argparse.Namespace): Options from :func:`build_parser`: ``lang``, ``engine``,
+            ``limit``, ``delay``, ``proxy`` and ``include_generated``.
 
     Returns:
         int: 0 on completion (individual entries may still have failed), 1 when
             ``locale/`` is missing, the engine is unconfigured, or the run stopped on
             repeated failures.
     """
-    args = build_parser().parse_args(argv)
     locale_dir = find_locale_dir(Path(__file__).parent)
 
     if not locale_dir:
@@ -758,6 +771,34 @@ def main(argv=None):
         print("\n✅ 所有翻译任务完成！")
     print("📌 请运行: sphinx-intl build")
     return 0
+
+
+def main(argv=None):
+    """Run one translation pass, optionally without ever failing the caller.
+
+    Args:
+        argv (list | None): Command-line arguments; None uses ``sys.argv``.
+
+    Returns:
+        int: 0 on completion, or on any failure when ``--ignore-failures`` is given (the
+            failure is printed and the caller's build continues). Otherwise 1 when
+            ``locale/`` is missing, the engine is unconfigured, the run stopped on repeated
+            failures, or an unexpected exception escaped :func:`run_translation`.
+    """
+    args = build_parser().parse_args(argv)
+    try:
+        status = run_translation(args)
+    except Exception as e:  # best-effort mode swallows any engine/network failure
+        if not args.ignore_failures:
+            raise
+        print(f"❌ 翻译过程异常：{type(e).__name__}: {e}")
+        status = 1
+
+    if status and args.ignore_failures:
+        print("⚠️ 翻译未完成；--ignore-failures 下按成功返回，后续构建继续。")
+        print("ℹ️ 已经写入 .po 的译文保持不变，修复后重新运行即可续跑。")
+        return 0
+    return status
 
 
 if __name__ == "__main__":
