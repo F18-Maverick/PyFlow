@@ -19,7 +19,7 @@ import sys
 project = "PyFlow"
 copyright = "2026, RayXu"
 author = "RayXu"
-release = "0.0.1-alpha"
+release = "0.5.0"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
