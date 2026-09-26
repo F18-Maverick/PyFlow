@@ -31,4 +31,5 @@ python:
       extra_requirements:
         - docs
 
-
+commands:
+  - docs/reBuild.sh
