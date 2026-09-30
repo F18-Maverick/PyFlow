@@ -6,103 +6,111 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: PyFlow \n"
+"Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-09-16 11:10+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
-"Language: zh_CN\n"
 "Language-Team: zh_CN <LL@li.org>\n"
-"Plural-Forms: nplurals=1; plural=0;\n"
+"Language: zh_CN\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
 "Generated-By: Babel 2.18.0\n"
 
 #: ../../api/PyFlow.forward_extension_tcp.rst:2
 #: 39b0ca283c7c48b08f66a67eb80766b0
 msgid "PyFlow.forward\\_extension\\_tcp module"
-msgstr ""
+msgstr "PyFlow.forward\\_extension\\_tcp模块"
 
 #: PyFlow.forward_extension_tcp:1 ad6b75f791c543dea48894cd8bac6941 of
 msgid "Forward extension for the TCP protocol."
-msgstr ""
+msgstr "TCP协议的转发扩展。"
 
 #: PyFlow.forward_extension_tcp:3 ff4264b5fba24d7d93e9bb3e398edfd5 of
 msgid ""
-"Disk-based, upload-then-push forwarding of files and folders to a list of"
-" destination clients. This is deliberately a second implementation of "
-"file forwarding: the native TCP protocol already streams files and "
-"folders in memory (``/forward_file`` / ``/forward_folder`` on a client "
-"console, relayed by the server as ``/forward_item`` with no disk I/O on "
-"the server), while this extension uploads the data to the server's "
-"transfer directory first and then asks the server to push the stored "
-"copies. Plain-message forwarding is native as well (the client-only "
-"command ``/forward_send_msg``, relayed by the server), so no string "
-"forwarding lives here."
+"Disk-based, upload-then-push forwarding of files and folders to a list of "
+"destination clients. This is deliberately a second implementation of file "
+"forwarding: the native TCP protocol already streams files and folders in "
+"memory (``/forward_file`` / ``/forward_folder`` on a client console, relayed"
+" by the server as ``/forward_item`` with no disk I/O on the server), while "
+"this extension uploads the data to the server's transfer directory first and"
+" then asks the server to push the stored copies. Plain-message forwarding is"
+" native as well (the client-only command ``/forward_send_msg``, relayed by "
+"the server), so no string forwarding lives here."
 msgstr ""
+"基于磁盘，上传然后推送将文件和文件夹转发到目标客户端列表。这是文件转发的第二个实现：本机TCP协议已经在内存中流式传输文件和文件夹（客户端控制台上的“/forward_file”/“/forward_folder”"
+" ，由服务器转发为“/forward_item” ，服务器上没有磁盘I/O ） ，而此扩展首先将数据上传到服务器的传输目录， "
+"然后要求服务器推送存储的副本。纯消息转发也是本机的（仅客户端命令``/forward_send_msg `` ，由服务器中继） "
+"，因此此处没有字符串转发。"
 
 #: 2f49002886224f5bb68eb09f2c4a8a30 PyFlow.forward_extension_tcp:14 of
 msgid "Transfer families added by this extension:"
-msgstr ""
+msgstr "此扩展添加的转移家庭："
 
 #: PyFlow.forward_extension_tcp:16 ab1c45d0c28345c2898a54c66c98416b of
 msgid "/file_forward <file_path> <(ip, port)> ..."
-msgstr ""
+msgstr "/file_forward <file_path> &lt; (ip, port) &gt;..."
 
 #: 93ef2915b1fa4bd9b4b42e8e6ec747f8 PyFlow.forward_extension_tcp:17 of
 msgid "forward one file to every listed destination"
-msgstr ""
+msgstr "将一个文件转发到每个列出的目的地"
 
 #: 9773fb5cd9414f0aabb496ae3a32005a PyFlow.forward_extension_tcp:18 of
 msgid "/multiple_file_forward <file1> <file2> ... <(ip, port)> ..."
-msgstr ""
+msgstr "/multiple_file_forward<file1> <file2>... &lt; (ip, port) &gt;..."
 
 #: PyFlow.forward_extension_tcp:19 ee54881259274d6b9085bf71b44d659a of
 msgid "forward several files to every listed destination"
-msgstr ""
+msgstr "将多个文件转发到每个列出的目标"
 
 #: 19144093ca8d45e988dfcfe09221bf6a PyFlow.forward_extension_tcp:20 of
 msgid "/folder_forward <folder_path> <(ip, port)> ..."
-msgstr ""
+msgstr "/folder_forward <folder_path> &lt; (ip, port) &gt;..."
 
 #: PyFlow.forward_extension_tcp:21 b73d9263c9874b1e9ea5a714138d72d8 of
 msgid "forward one folder (structure preserved) to every destination"
-msgstr ""
+msgstr "将一个文件夹（保留结构）转发到每个目的地"
 
 #: 4f7e8bb4b31c4eddbb78d815e85f8795 PyFlow.forward_extension_tcp:22 of
 msgid "/multiple_folder_forward <folder1> <folder2> ... <(ip, port)> ..."
 msgstr ""
+"/multiple_folder_forward<folder1> <folder2>... &lt; (ip, port) &gt;..."
 
 #: 9e95e860d39744f8ba3d52ddaf357943 PyFlow.forward_extension_tcp:23 of
 msgid "forward several folders to every listed destination"
-msgstr ""
+msgstr "将多个文件夹转发到每个列出的目标"
 
 #: 612162f14a574132bf396a1b6ea853f1 PyFlow.forward_extension_tcp:25 of
 msgid ""
 "Items come first, destinations last; every destination is written as a "
-"Python address tuple, e.g. ``\"('127.0.0.1', 3000)\"``. There is no limit"
-" on the number or size of items or destinations."
+"Python address tuple, e.g. ``\"('127.0.0.1', 3000)\"``. There is no limit on"
+" the number or size of items or destinations."
 msgstr ""
+"项目在先，目的地在后；每个目的地都写为Python地址元组，例如`` \"('127.0.0.1', 3000)\" "
+"``。商品或目的地的数量或大小没有限制。"
 
 #: 1b0ec7328493432fb876117b1f76bb3b PyFlow.forward_extension_tcp:29 of
 msgid ""
-"The commands are only available on the client console: they are "
-"registered in the \"client\" handler group, so typing them on the server "
-"console is rejected as an unrecognized command. Forwarding goes through "
-"the server - the client uploads the data over the normal transfer channel"
-" (the server stores it in its transfer directory) and then asks the "
-"server to push it to the destinations, which receive it through the main "
-"protocol's own receive paths. Destinations that are unreachable (not "
-"connected to the server, or the server itself, which is never in the "
-"client table) are skipped and the remaining destinations are still "
-"served."
+"The commands are only available on the client console: they are registered "
+"in the \"client\" handler group, so typing them on the server console is "
+"rejected as an unrecognized command. Forwarding goes through the server - "
+"the client uploads the data over the normal transfer channel (the server "
+"stores it in its transfer directory) and then asks the server to push it to "
+"the destinations, which receive it through the main protocol's own receive "
+"paths. Destinations that are unreachable (not connected to the server, or "
+"the server itself, which is never in the client table) are skipped and the "
+"remaining destinations are still served."
 msgstr ""
+"这些命令仅在客户端控制台上可用：它们在“客户端”处理程序组中注册，因此在服务器控制台上键入它们将被拒绝为无法识别的命令。转发通过服务器-"
+"客户端通过正常传输通道上传数据（服务器将其存储在其传输目录中） ，然后要求服务器将其推送到目的地，目的地通过主协议自己的接收路径接收数据。 "
+"无法访问的目标（未连接到服务器或服务器本身，从未在客户端表中）将被跳过，其余的目标仍将被提供。"
 
 #: 443d9fe7a21148d984a0e3f2f3cb2c28
 #: PyFlow.forward_extension_tcp.setup_client_commands:1 of
 msgid "Register the file/folder forward commands on a client instance."
-msgstr ""
+msgstr "在客户端实例上注册file/folder forward命令。"
 
 #: 5dbc099afeb54fbb859bf5760331adfd
 #: PyFlow.forward_extension_tcp.setup_client_commands:3 of
@@ -112,34 +120,37 @@ msgid ""
 "shared handler via functools.partial; where_to_run=\"client\" makes them "
 "fire from console input only."
 msgstr ""
+"邮件转发(``/forward_send_msg "
+"``)是本机的，不需要设置。每个命令通过functools.partial将其传输类型和单个/多个策略绑定到共享处理程序中；其中_to_run = "
+"\"client\"使它们仅从控制台输入激发。"
 
 #: 392556d0850f44b1b64dae0fe65a748c
 #: PyFlow.forward_extension_tcp.setup_server_commands:1 of
 msgid "Register the file/folder forward relays on a server instance."
-msgstr ""
+msgstr "在服务器实例上注册文件/文件夹转发中继。"
 
 #: 399725c6728441568702225abc50b2c4
 #: PyFlow.forward_extension_tcp.setup_server_commands:3 of
 msgid ""
 "The message relay (``/forward_send_msg``) is native and needs no setup. "
-"These handlers are triggered by relay requests sent by clients, i.e. they"
-" live in the \"server\" group: messages coming in from other instances "
-"are dispatched there. The /xxx_forward commands themselves stay in the "
-"client group, so typing them on the server console is rejected as "
-"unrecognized."
+"These handlers are triggered by relay requests sent by clients, i.e. they "
+"live in the \"server\" group: messages coming in from other instances are "
+"dispatched there. The /xxx_forward commands themselves stay in the client "
+"group, so typing them on the server console is rejected as unrecognized."
 msgstr ""
+"消息中继（ ``/forward_send_msg `` "
+"）是本机的，不需要设置。这些处理程序由客户端发送的中继请求触发，即它们位于“服务器”组中：来自其他实例的消息被分派到那里。/xxx_forward命令本身保留在客户端组中，因此在服务器控制台上键入它们将被拒绝为无法识别。"
 
-#: 337c29db84fe4d3099a2e3d5e135d0d1 PyFlow.forward_extension_tcp.client_setup:1
-#: of
+#: 337c29db84fe4d3099a2e3d5e135d0d1
+#: PyFlow.forward_extension_tcp.client_setup:1 of
 msgid ""
 "Create and start a forwarding-capable client (mirrors the control "
 "extension)."
-msgstr ""
+msgstr "创建并启动支持转发的客户端（镜像控件扩展）。"
 
-#: 99ee11955438459d84f5c1ae6f3fedbb PyFlow.forward_extension_tcp.server_setup:1
-#: of
+#: 99ee11955438459d84f5c1ae6f3fedbb
+#: PyFlow.forward_extension_tcp.server_setup:1 of
 msgid ""
 "Create and start a forwarding-capable server (mirrors the control "
 "extension)."
-msgstr ""
-
+msgstr "创建并启动支持转发的服务器（镜像控件扩展）。"

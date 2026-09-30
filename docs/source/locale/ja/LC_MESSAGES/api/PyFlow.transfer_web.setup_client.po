@@ -22,7 +22,7 @@ msgstr ""
 #: ../../source/api/PyFlow.transfer_web.setup_client.rst:2
 #: 8379b786205a4447995cf82b275ee87a
 msgid "PyFlow.transfer\\_web.setup\\_client module"
-msgstr ""
+msgstr "PyFlow.transfer \\_web.setup \\_ clientモジュール"
 
 #: 8412539bd9af49e8976ccf5c028061d4 PyFlow.transfer_web.setup_client:1 of
 msgid "PyFlow TCP client web launcher."

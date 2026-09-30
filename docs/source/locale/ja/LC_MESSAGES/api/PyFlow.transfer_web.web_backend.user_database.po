@@ -628,18 +628,18 @@ msgstr ""
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.verify_code:1
 #: dbe3dc1ea44842b0b9dba276ffd9981b of
 msgid "Consume the verification code of a purpose and target."
-msgstr ""
+msgstr "目的とターゲットの検証コードを使用します。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.discard_codes:8
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.verify_code:5
 #: aff3f10d5b1049f58b07bc590496e6e4 eb90d7d0efd24a96b9d2374a98c0130a of
 msgid "Email address the code was sent to."
-msgstr ""
+msgstr "コードが送信されたメールアドレス。"
 
 #: 453c6b901c9e473d90699c77304f4035
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.verify_code:7 of
 msgid "Code as typed by the user."
-msgstr ""
+msgstr "ユーザーが入力したコード。"
 
 #: 8a0fec47a6f8447e90304aebf4216c8e
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.verify_code:10
@@ -648,12 +648,14 @@ msgid ""
 "If no code was requested for the pair, it expired, the     code is wrong, or"
 " ``CODE_MAX_ATTEMPTS`` wrong entries were     already made."
 msgstr ""
+"ペアのコードが要求されなかった場合、期限切れ、コードが間違っている、または'' CODE_MAX_ATTEMPTS "
+"''間違ったエントリがすでに行われています。"
 
 #: 1b9f2ea8e3da44329a02912917fbb886
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.discard_codes:1
 #: of
 msgid "Delete every stored code of a purpose and target."
-msgstr ""
+msgstr "目的とターゲットのすべての保存されたコードを削除します。"
 
 #: 3b4b2d7cbcc54c3e843c97782b379772
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.discard_codes:3
@@ -661,13 +663,13 @@ msgstr ""
 msgid ""
 "Used when the code could not be delivered, so the cooldown does not block an"
 " immediate retry."
-msgstr ""
+msgstr "コードを配信できなかったときに使用されるため、クールダウンによって即時の再試行がブロックされることはありません。"
 
 #: 3fb6ca3291b54bbca036f7ab3d90cc86
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:1
 #: of
 msgid "Find accounts by user id, username or email substring."
-msgstr ""
+msgstr "ユーザーID、ユーザー名、またはメールのサブストリングでアカウントを検索します。"
 
 #: 30944d7667804c34b00c18e5d30e6fee
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:3
@@ -675,13 +677,13 @@ msgstr ""
 msgid ""
 "Text matched case-insensitively inside the user id, username or email; 1-64 "
 "characters after trimming."
-msgstr ""
+msgstr "テキストは、ユーザーID、ユーザー名、またはメールアドレス内で大文字と小文字を区別せずに一致しました。トリミング後は1〜64文字です。"
 
 #: 45524dd69f3a42a28e945a77259748ef
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:6
 #: of
 msgid "Account to leave out of the results, usually the searcher's own."
-msgstr ""
+msgstr "検索結果から除外するアカウント、通常は検索者自身のアカウント。"
 
 #: 46647ef5120d4499b0acc832f0335840
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:10
@@ -689,94 +691,94 @@ msgstr ""
 msgid ""
 "At most ``SEARCH_RESULT_LIMIT`` accounts without their     passwords, sorted"
 " by username."
-msgstr ""
+msgstr "パスワードがない最大'' SEARCH_RESULT_LIMIT ''アカウントは、ユーザー名でソートされています。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:12
 #: e6a48d62fb864a2faf5e7b48f1da9481 of
 msgid "At most ``SEARCH_RESULT_LIMIT`` accounts without their"
-msgstr ""
+msgstr "最大'' SEARCH_RESULT_LIMIT ''アカウント"
 
 #: 3a7e7aca222a4891be89b3629cb73b77
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:13
 #: of
 msgid "passwords, sorted by username."
-msgstr ""
+msgstr "ユーザー名でソートされたパスワード。"
 
 #: 8f0118afa4f4499e86ecdcf019dc27af
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.search_users:16
 #: of
 msgid "If the query is empty or longer than 64 characters."
-msgstr ""
+msgstr "クエリが空であるか、64文字を超える場合。"
 
 #: 104b12482c044a479a57c2861c75ee49
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contacts:1 of
 msgid "List the accounts one account is allowed to see."
-msgstr ""
+msgstr "1つのアカウントで閲覧が許可されているアカウントを一覧表示します。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contacts:3
 #: a8fc40d976ff439a8664b2d13e4aa95e of
 msgid "Owner account."
-msgstr ""
+msgstr "所有者アカウント。"
 
 #: 5f7bcc9292d34c7a92a0fb5661247ce0
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contacts:6 of
 msgid "Contact accounts without their passwords, sorted by     username."
-msgstr ""
+msgstr "パスワードのないアカウントに連絡し、ユーザー名で並べ替えます。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contacts:8
 #: bd0ba55d948d4ebb97f3b678a04a1e63 of
 msgid "Contact accounts without their passwords, sorted by"
-msgstr ""
+msgstr "パスワードのないアカウントに連絡する（並べ替え順）"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contacts:9
 #: a24fff32804948a9b838d1dea0818125 of
 msgid "username."
-msgstr ""
+msgstr "ユーザー名"
 
 #: 71bfc6f34ecd4491aac12b5e43569547
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.are_contacts:1
 #: of
 msgid "Report whether two accounts are contacts of each other."
-msgstr ""
+msgstr "2つのアカウントがお互いの連絡先であるかどうかを報告します。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.are_contacts:3
 #: a89bb3d2f7484e5984c9c27e78951411 of
 msgid "First account."
-msgstr ""
+msgstr "最初のアカウント。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.are_contacts:5
 #: db3b8f26e4bd4af69ea50ac81dc22ae9 of
 msgid "Second account."
-msgstr ""
+msgstr "2つ目のアカウント。"
 
 #: 7bd24454f67c492ebbba81578e01ac5e
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.are_contacts:8
 #: of
 msgid "True when ``user_id`` lists ``other_user_id`` as a contact."
-msgstr ""
+msgstr "'' user_id ''が連絡先として'' other_user_id ''をリストする場合はtrueです。"
 
 #: 988a646a76d24eacadff9699a6e00e3c
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.request_contact:1
 #: of
 msgid "Ask another account to become a contact."
-msgstr ""
+msgstr "別のアカウントに連絡先になるよう依頼します。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.request_contact:3
 #: cd9868a50b9440ff9fb4a35f4f7133f3 of
 msgid "Account sending the request."
-msgstr ""
+msgstr "リクエストを送信しているアカウント。"
 
 #: 8fce5f5dbf54480c83af4980213477a7
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.request_contact:5
 #: of
 msgid "Account the request is addressed to."
-msgstr ""
+msgstr "リクエストの宛先となるアカウント。"
 
 #: 1e36be5f94b04c72a771468785673ad8
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.request_contact:8
 #: of
 msgid "Target account without its password."
-msgstr ""
+msgstr "パスワードのないターゲットアカウント。"
 
 #: 8da5067b43064600ac6f56b84bde1b6f
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.request_contact:11
@@ -784,19 +786,19 @@ msgstr ""
 msgid ""
 "If the target is unknown, it is the sender's own     account, the two are "
 "already contacts, or a request is already     pending."
-msgstr ""
+msgstr "ターゲットが不明な場合は、送信者自身のアカウントであるか、2人がすでに連絡先であるか、要求がすでに保留中です。"
 
 #: 2178dac5bcb44ac5a328498b1d80c2e5
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contact_requests:1
 #: of
 msgid "List the pending contact requests of one account."
-msgstr ""
+msgstr "1つのアカウントの保留中の問い合わせリクエストを一覧表示します。"
 
 #: 133d255676e84c3fa5490ab5b5349ab7
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contact_requests:3
 #: of
 msgid "Account whose requests are read."
-msgstr ""
+msgstr "要求が読み込まれたアカウント。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contact_requests:6
 #: ff097c5423e84c099efad711e4a3cf6d of
@@ -805,12 +807,14 @@ msgid ""
 "``{\"id\", \"user\", \"created_at\"}`` and ``user`` is the other     account"
 " without its password."
 msgstr ""
+"''{\" incoming \":[... ],\" outgoing \":[... ]}''各エントリは''{\" id \",\" user "
+"\",\" created_at \"}''であり、'' user ''はパスワードのない他のアカウントです。"
 
 #: 9e686839a5f64355a76145779ae7e9c4
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contact_requests:8
 #: of
 msgid "``{\"incoming\": [...], \"outgoing\": [...]}`` where each entry is"
-msgstr ""
+msgstr "''{\" incoming \":[... ],\" outgoing \":[... ]}''各エントリは"
 
 #: 144448e83f2848ddad839ef8d89b103d
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.contact_requests:9
@@ -818,41 +822,41 @@ msgstr ""
 msgid ""
 "``{\"id\", \"user\", \"created_at\"}`` and ``user`` is the other account "
 "without its password."
-msgstr ""
+msgstr "''{\" id \", \"user \",\" created_at \"}''および'' user ''は、パスワードのない他のアカウントです。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:1
 #: b0d1f8e188bb412ca551578a12cc8a88 of
 msgid "Accept or reject a pending contact request addressed to one account."
-msgstr ""
+msgstr "1つのアカウント宛ての保留中の問い合わせリクエストを承認または却下します。"
 
 #: 35437de2f4f34910b0657029f7808aa8
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:3
 #: of
 msgid "Accepting records the contact for both accounts."
-msgstr ""
+msgstr "を受け入れると、両方のアカウントの問い合わせが記録されます。"
 
 #: 102f3e7a2b384c048cb94ce6f8ab39da
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:5
 #: of
 msgid "Account answering the request."
-msgstr ""
+msgstr "リクエストに応答するアカウント。"
 
 #: 1f86541af7de4b369025b60881c529af
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:7
 #: of
 msgid "Request id as reported by `contact_requests`."
-msgstr ""
+msgstr "`contact_requests`によって報告されたリクエストID。"
 
 #: 5eb8331e7eb14a63853d4ca1cf0a4aae
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:9
 #: of
 msgid "True to accept the request, False to reject it."
-msgstr ""
+msgstr "リクエストを受け入れる場合はTRUE、拒否する場合はFALSE。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:12
 #: c40478554a6042c9971a3fe4304a9fa0 of
 msgid "Requester account without its password."
-msgstr ""
+msgstr "パスワードのない依頼者アカウント。"
 
 #: 2df873bd3c314676844e918cd522c619
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.respond_request:15
@@ -860,72 +864,72 @@ msgstr ""
 msgid ""
 "If the request is unknown, is not addressed to     ``user_id``, or is not "
 "pending any more."
-msgstr ""
+msgstr "要求が不明である場合、'' user_id ''に宛てられていない場合、またはそれ以上保留されていない場合。"
 
 #: 2df72b51e3b6400881d2fa9ad32f99f3
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.create_session:1
 #: of
 msgid "Open a client session for one account."
-msgstr ""
+msgstr "1つのアカウントのクライアントセッションを開きます。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.create_session:3
 #: b89c59cb4ca042ffa53d18ef6f101687 of
 msgid "Account the session belongs to."
-msgstr ""
+msgstr "セッションが属するアカウント。"
 
 #: 774af16f272342928da65c75c2c8019a
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.create_session:6
 #: of
 msgid "Session token; clients send it back with every request."
-msgstr ""
+msgstr "セッショントークン。クライアントはリクエストごとにトークンを返します。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.create_session:9
 #: ec04920c2fb3456b8432de3e859d823b of
 msgid "If the account is unknown."
-msgstr ""
+msgstr "アカウントが不明な場合。"
 
 #: 842414ad69994840ac760cc4d57482a6
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.session_user:1
 #: of
 msgid "Resolve a client session token."
-msgstr ""
+msgstr "クライアントセッショントークンを解決します。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.session_user:3
 #: a1f81ad87d864a95ba4151c586ebda5a of
 msgid "Token returned by `create_session`."
-msgstr ""
+msgstr "トークンは`create_session`によって返されました。"
 
 #: 850bb5e633d24377956ea66785e7dc27
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.session_user:6
 #: of
 msgid ""
 "Account without its password, or ``None`` when the     token is unknown."
-msgstr ""
+msgstr "パスワードのないアカウント、またはトークンが不明な場合は「なし」。"
 
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.session_user:8
 #: f700ea61dd154ccf8e3feda5031c649a of
 msgid "Account without its password, or ``None`` when the"
-msgstr ""
+msgstr "パスワードのないアカウント、または「なし」の場合"
 
 #: 931c1c0f1a4546d0a9e0a33b35906e40
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.session_user:9
 #: of
 msgid "token is unknown."
-msgstr ""
+msgstr "トークンが不明です。"
 
 #: 14f36553c642411aaa1f4ebdd462d00b
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.drop_session:1
 #: of
 msgid "Invalidate one client session token."
-msgstr ""
+msgstr "1つのクライアントセッショントークンを無効にします。"
 
 #: 2eb7cca64d6e40f29b923739b1c0cfe4
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.drop_session:3
 #: of
 msgid "Token returned by `create_session`; an unknown token is ignored."
-msgstr ""
+msgstr "`create_session`によって返されたトークン。不明なトークンは無視されます。"
 
 #: 8f53093f033b4caf9bcd3b9f25eebce6
 #: PyFlow.transfer_web.web_backend.user_database.UserDatabase.close:1 of
 msgid "Close the database connection."
-msgstr ""
+msgstr "データベース接続を閉じます。"
