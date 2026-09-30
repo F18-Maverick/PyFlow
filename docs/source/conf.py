@@ -49,12 +49,21 @@ autodoc_default_options = {
     "special-members": "__init__",
 }
 
+_rtd_lang = os.environ.get("READTHEDOCS_LANGUAGE", "en")
+_lang_map = {
+    "ja": "ja",
+    "ko": "ko",
+    "ru": "ru",
+    "zh-cn": "zh_CN",
+    "zh-tw": "zh_TW",
+}
+language = _lang_map.get(_rtd_lang, _rtd_lang)
+
 locale_dirs = ["locale/"]
 templates_path = ["_templates"]
 # The build directory (docs/_build) lives outside this source directory, so it needs no
 # exclusion here; only generated catalogues and editor droppings do.
 exclude_patterns = ["Thumbs.db", ".DS_Store", "locale/**/*.po", "locale/**/*.bak"]
-language = "en"
 
 
 # -- Options for HTML output -------------------------------------------------

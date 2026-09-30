@@ -6,6 +6,11 @@ Walks ``locale/<lang>/LC_MESSAGES/**/*.po`` recursively and translates every
 entry whose ``msgstr`` is still empty. A failed entry keeps its empty ``msgstr``,
 so running the script again continues where it left off.
 
+Translations are written back as soon as ``SAVE_INTERVAL`` of them accumulate, and once more
+when a file ends or the run stops (abort, Ctrl-C, crash). A file with 279 pending entries
+where the last 79 keep failing therefore keeps the first 200 already persisted by the time
+the run gives up, instead of discarding the whole file's work and burning the quota again.
+
 Engines (``--engine``)
     ``mymemory``  MyMemory REST API — **default, no key at all**. Reachable without a proxy
                 (verified from a mainland connection), so it needs neither an account nor a
@@ -77,6 +82,7 @@ MAX_RETRIES = 3  # 单条翻译失败重试次数
 RATE_LIMIT_BACKOFF = (10, 30)  # 被限流后的退避秒数，按尝试次数递增
 RATE_LIMIT_MARKERS = ("too many requests", "server error", "429", "quota")
 MAX_CONSECUTIVE_FAILURES = 3  # 连续失败达到该数量即停止本轮
+SAVE_INTERVAL = 20  # 每译好多少条就把该文件落盘一次（>0；中断时最多丢这么多条）
 ENABLE_TRANSLATION = True
 
 GOOGLE_LANG = {
@@ -522,11 +528,36 @@ def is_generated_page(po_path: Path, lang_dir: Path) -> bool:
     return bool(parts) and parts[0] == "api"
 
 
+def write_po(po, po_path: Path, backup: Path | None):
+    """Persist one catalogue atomically, keeping the pre-run file as ``.bak``.
+
+    Args:
+        po (polib.POFile): Catalogue holding the translations done so far.
+        po_path (Path): Target .po file.
+        backup (Path | None): Backup returned by an earlier call, if any.
+
+    Returns:
+        Path: The backup path; only the first call of a run creates it, so the later
+            flushes do not overwrite the file as it was before the run.
+    """
+    if backup is None:
+        backup = po_path.with_suffix(po_path.suffix + ".bak")
+        po_path.replace(backup)
+    temp = po_path.with_suffix(po_path.suffix + ".tmp")
+    po.save(str(temp))
+    temp.replace(po_path)  # 原子替换：落盘途中被打断也不会留下写了一半的 .po
+    return backup
+
+
 def translate_po_file(po_path: Path, target_lang: str, locale_dir: Path, session: Session):
     """Translate the untranslated entries of one .po file.
 
     Only entries with an empty ``msgstr`` and a non-empty ``msgid`` are touched;
     failed ones stay empty, so the function can be run again until all are done.
+
+    Every ``SAVE_INTERVAL`` translations are written to disk, and the loop flushes once
+    more on the way out — the ``RateLimitAbort``, ``KeyboardInterrupt`` and crash paths
+    included — so a file that stops halfway keeps the entries that already succeeded.
 
     Args:
         po_path (Path): The .po file to translate.
@@ -562,33 +593,50 @@ def translate_po_file(po_path: Path, target_lang: str, locale_dir: Path, session
     reused = 0
     failed = 0
     consecutive = 0
-    for idx, entry in enumerate(empty_entries, 1):
-        if idx % 10 == 0 or idx == 1 or idx == len(empty_entries):
-            print(f"     ⏳ 进度: {idx}/{len(empty_entries)} - {entry.msgid[:40]}...")
+    pending = 0  # 已译好但尚未落盘的条数
+    backup = None
 
-        key = (target_code, entry.msgid)
-        if key in session.cache:  # 同一字符串在多个文件/语言里重复出现，只请求一次
-            entry.msgstr = session.cache[key]
-            reused += 1
-            continue
+    def flush():
+        """Write the entries translated so far, so an interrupted run keeps them."""
+        nonlocal pending, backup
+        if not pending:
+            return
+        backup = write_po(po, po_path, backup)
+        pending = 0
+        print(f"     💾 已落盘 {translated + reused} 条（增量写入，中断不丢）")
 
-        result = translate_text(translator, entry.msgid, session)
-        if result is None:
-            failed += 1
-            consecutive += 1
-            if consecutive >= MAX_CONSECUTIVE_FAILURES:
-                raise RateLimitAbort(f"{consecutive} consecutive failures")
-            continue
-        consecutive = 0
-        entry.msgstr = result
-        session.cache[key] = result
-        translated += 1
+    try:
+        for idx, entry in enumerate(empty_entries, 1):
+            if idx % 10 == 0 or idx == 1 or idx == len(empty_entries):
+                print(f"     ⏳ 进度: {idx}/{len(empty_entries)} - {entry.msgid[:40]}...")
+
+            key = (target_code, entry.msgid)
+            if key in session.cache:  # 同一字符串在多个文件/语言里重复出现，只请求一次
+                entry.msgstr = session.cache[key]
+                reused += 1
+                pending += 1
+            else:
+                result = translate_text(translator, entry.msgid, session)
+                if result is None:
+                    failed += 1
+                    consecutive += 1
+                    if consecutive >= MAX_CONSECUTIVE_FAILURES:
+                        raise RateLimitAbort(f"{consecutive} consecutive failures")
+                    continue
+                consecutive = 0
+                entry.msgstr = result
+                session.cache[key] = result
+                translated += 1
+                pending += 1
+
+            if pending >= SAVE_INTERVAL:
+                flush()
+    finally:
+        flush()  # 中止、Ctrl-C 或异常退出时同样保住已完成的译文
 
     if translated or reused:
-        backup = po_path.with_suffix(po_path.suffix + ".bak")
-        po_path.rename(backup)
-        po.save(str(po_path))
-        print(f"     ✅ 完成: 新译 {translated} 条，复用 {reused} 条，备份: {backup.name}")
+        saved = f"，备份: {backup.name}" if backup else ""
+        print(f"     ✅ 完成: 新译 {translated} 条，复用 {reused} 条{saved}")
     else:
         print("     ⚠️ 未新增任何翻译")
     if failed:
