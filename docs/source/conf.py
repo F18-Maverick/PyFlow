@@ -59,6 +59,17 @@ _lang_map = {
 }
 language = _lang_map.get(_rtd_lang, _rtd_lang)
 
+if language == "ja":
+    latex_engine = "platex"
+elif language in ("zh_CN", "zh_TW", "ko", "ru"):
+    latex_engine = "xelatex"
+
+# xelatex common style Latin Modern didn't include Cyrillic characters, Russian PDF needs explicit font specification.
+if language == "ru":
+    latex_elements = {
+        "fontpkg": r"\usepackage{fontspec}\setmainfont{DejaVu Serif}",
+    }
+
 locale_dirs = ["locale/"]
 templates_path = ["_templates"]
 # The build directory (docs/_build) lives outside this source directory, so it needs no
