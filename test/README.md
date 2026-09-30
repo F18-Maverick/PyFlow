@@ -1,5 +1,9 @@
 # Test layout
 
+<!-- readme-translations:start -->
+[English](../README.md) | [日本語](../docs/readme_translations/README.ja.md) | [简体中文](../docs/readme_translations/README.zh_CN.md) | [繁體中文](../docs/readme_translations/README.zh_TW.md) | [한국어](../docs/readme_translations/README.ko.md) | [Русский](../docs/readme_translations/README.ru.md)
+<!-- readme-translations:end -->
+
 Tests are split first by the real dependencies they touch, then mirrored
 against the package layout one level deep: `PyFlow/<pkg>/` maps to
 `test/<tier>/<pkg>/`, and root-level modules map to the tier root. A new

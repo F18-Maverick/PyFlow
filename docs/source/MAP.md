@@ -10,6 +10,7 @@
 | `docs/Makefile` / `docs/make.bat` | Sphinx build wrappers (`make html` → `docs/_build/html`) | ✅ present |
 | `docs/reBuild.sh` | Full rebuild: gettext extract, machine translation, per-language HTML | ✅ present |
 | `docs/source/` | Sphinx source directory: every hand-written document | ✅ present |
+| `docs/readme_translations/` | Machine-translated `README.md` (`README.<lang>.md`) plus its translation memory | ✅ present |
 | `docs/source/conf.py` | Sphinx configuration | ✅ present |
 | `docs/source/templates/` | Change-note, design-note and how-to templates | ✅ present |
 | `docs/source/changes/` | Auto-generated per-PR change notes | ❌ not created yet |
@@ -43,6 +44,11 @@
 ## Translations
 
 `source/locale/` holds the gettext catalogues (`.po`): zh_TW, zh_CN, ru, ko, ja.
+
+`docs/readme_translations/` holds the translated README (`README.<lang>.md`, same languages),
+written by `docs/source/batch_translate_po.py` before it translates the catalogues; the script
+also refreshes the language bar in `README.md`, `test/README.md` and every translation, and
+keeps `readme_cache.json` as the memory that makes a rerun request only changed blocks.
 
 ## Known gaps
 

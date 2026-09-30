@@ -15,8 +15,10 @@ Engines (``--engine``)
     ``mymemory``  MyMemory REST API — **default, no key at all**. Reachable without a proxy
                 (verified from a mainland connection), so it needs neither an account nor a
                 proxy. Anonymous quota is 5,000 characters per day per IP, which covers this
-                project's ~4.8k characters per pass; set ``MYMEMORY_EMAIL`` (any address, no
-                registration) to raise it to 50,000. Quality is translation-memory grade.
+                project's ~4.8k characters of catalogues per pass but not the README: the
+                README costs another ~8.3k characters per language. Set ``MYMEMORY_EMAIL``
+                (any address, no registration) to raise the daily quota to 50,000, which fits
+                one full README pass. Quality is translation-memory grade.
     ``baidu``   Baidu Translate open API — needs ``BAIDU_APPID`` plus ``BAIDU_KEY``
                 (deep-translator's ``BAIDU_APPKEY`` is accepted too) and real-name
                 registration. Domestic, so it needs no proxy. Free standard tier is 50k
@@ -41,6 +43,20 @@ in by autodoc, and keeping them English keeps the API text single-sourced (see
 ``DOCSTRING_GUIDE.md`` section 11) — they also account for ~97% of the characters.
 Use ``--include-generated`` to translate them anyway.
 
+The repository ``README.md`` is translated **before** the catalogues, into the same languages,
+and written to ``docs/readme_translations/README.<lang>.md``. A language bar linking the
+translations is inserted into ``README.md``, ``test/README.md`` and every translation, right
+below the badges (below the title where a README has no badges). Markdown is translated block
+by block: fenced code blocks, link-only lines (badges), table rows, the ``# PyFlow`` title and
+the language bar itself are copied verbatim, while inline code, links, URLs and bold markers
+inside a translatable block are masked with ``{tN}`` placeholders and checked after the
+response — a block whose placeholders come back changed keeps its English text instead of
+shipping broken markdown. Blocks are cached in
+``docs/readme_translations/readme_cache.json``, keyed by the SHA-256 of their English source
+(like the ``.po`` files, the cache is committed): a rerun requests only the blocks whose
+English changed, and a quota-exhausted run cannot overwrite a finished translation with
+English.
+
 Rate limits and failures are handled instead of aborting the run:
 requests are paced by ``REQUEST_DELAY``; a rate-limited entry is retried after
 ``RATE_LIMIT_BACKOFF`` seconds; after ``MAX_CONSECUTIVE_FAILURES`` failures in a row the run
@@ -55,18 +71,21 @@ Usage:
     python3 batch_translate_po.py                 # every language, mymemory (no key, no proxy)
     python3 batch_translate_po.py --engine baidu  # better quality once BAIDU_APPID/KEY exist
     python3 batch_translate_po.py --lang ja       # a single language
-    python3 batch_translate_po.py --limit 5       # at most 5 entries per file
+    python3 batch_translate_po.py --limit 5       # at most 5 entries per file and README language
     python3 batch_translate_po.py --proxy http://127.0.0.1:7897   # route via an explicit proxy
     python3 batch_translate_po.py --include-generated --ignore-failures   # full pipeline run
 """
 
 import argparse
+import json
 import os
+import re
 import sys
 import time
-from hashlib import md5
+from hashlib import md5, sha256
 from importlib.util import find_spec
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import urlparse
 
 import requests
@@ -84,6 +103,8 @@ RATE_LIMIT_MARKERS = ("too many requests", "server error", "429", "quota")
 MAX_CONSECUTIVE_FAILURES = 3  # 连续失败达到该数量即停止本轮
 SAVE_INTERVAL = 20  # 每译好多少条就把该文件落盘一次（>0；中断时最多丢这么多条）
 ENABLE_TRANSLATION = True
+TRANSLATE_README = True  # 翻译仓库根 README.md（优先于 .po），并把语言链接栏写回每个 README
+README_TRANSLATION_DIR = "readme_translations"  # README 译本目录，相对 docs/
 
 GOOGLE_LANG = {
     "zh_CN": "zh-CN",
@@ -549,6 +570,560 @@ def write_po(po, po_path: Path, backup: Path | None):
     return backup
 
 
+# ================= README 翻译 =================
+# 译文目录：docs/readme_translations/README.<lang>.md；翻译记忆：同目录 readme_cache.json
+README_REPO_ROOT = Path(__file__).resolve().parents[2]
+README_DIR = README_REPO_ROOT / "docs" / README_TRANSLATION_DIR
+README_SOURCE_NAME = "README.md"
+README_BAR_FILES = ("README.md", "test/README.md")  # 每个 README 都带上语言链接栏
+README_CACHE_NAME = "readme_cache.json"
+README_LANGUAGES = ["en", *LANGUAGES]  # 链接栏顺序：英文源 + 文档各语言
+README_LANGUAGE_NAMES = {
+    "en": "English",
+    "ja": "日本語",
+    "ko": "한국어",
+    "ru": "Русский",
+    "zh_CN": "简体中文",
+    "zh_TW": "繁體中文",
+}
+README_BAR_START = "<!-- readme-translations:start -->"
+README_BAR_END = "<!-- readme-translations:end -->"
+README_FENCE_RE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+README_HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.*)$")
+README_LIST_RE = re.compile(r"^([ \t]*(?:[-*+]|\d+[.)])[ \t]+)(.*)$")
+README_QUOTE_RE = re.compile(r"^([ \t]*>[ \t]*)(.*)$")
+README_HR_RE = re.compile(r"^[ \t]*(?:[-*_][ \t]*){3,}$")
+# 链接/图片，允许一层嵌套（badge 是 [![alt](img)](link)）
+README_LINK_PATTERN = r"!?\[(?:[^\[\]]|\[[^\[\]]*\])*\]\([^)]*\)"
+README_LINK_RE = re.compile(README_LINK_PATTERN)
+README_PROTECT_RE = re.compile(
+    r"`[^`]*`"  # 行内代码
+    r"|"
+    + README_LINK_PATTERN  # 链接 / 图片
+    + r"|<[A-Za-z/][^>\s]*>"  # 自动链接 / HTML 标签
+    r"|https?://[^\s)>]+"  # 裸 URL
+    r"|\*\*"  # 粗体标记
+)
+README_TOKEN_RE = re.compile(r"\{\s*t\s*(\d+)\s*\}")  # MyMemory 会把 {t0} 写成 {t 0}
+# ==============================================
+
+
+class ReadmeBlock(NamedTuple):
+    """One unit of the README: a verbatim block or a run of translatable text.
+
+    Attributes:
+        translatable (bool): Whether ``text`` is meant to be translated.
+        prefix (str): Leading markdown marker kept out of the translation, such as the
+            ``"## "`` of a heading or the ``"- "`` of a list item; empty when verbatim.
+        text (str): Block content, without ``prefix``.
+    """
+
+    translatable: bool
+    prefix: str
+    text: str
+
+
+class ReadmeSpan(NamedTuple):
+    """One run of a README block that must survive the translation untouched.
+
+    Attributes:
+        text (str): The original string, restored verbatim into the translation.
+        glued_left (bool): Whether the run sits flush against the text before it, so a space
+            the engine inserted in front of the token has to be dropped again.
+        glued_right (bool): Whether the run sits flush against the text after it.
+    """
+
+    text: str
+    glued_left: bool
+    glued_right: bool
+
+
+class ReadmeResult(NamedTuple):
+    """Outcome of translating the README blocks of one language.
+
+    Attributes:
+        failed (int): Blocks left in English because the engine refused them.
+        translated (int): Blocks translated by this call.
+        reused (int): Blocks taken from the translation memory.
+        aborted (bool): Whether the endpoint kept refusing and the run should stop.
+    """
+
+    failed: int
+    translated: int
+    reused: int
+    aborted: bool
+
+
+def readme_translation_path(lang: str) -> Path:
+    """Return the file holding one language's README translation.
+
+    Args:
+        lang (str): Language code such as "ja" or "zh_CN".
+
+    Returns:
+        Path: ``docs/readme_translations/README.<lang>.md`` inside the repository.
+    """
+    return README_DIR / f"README.{lang}.md"
+
+
+def readme_block_key(text: str) -> str:
+    """Return the translation-memory key of one README block.
+
+    Args:
+        text (str): English source text of the block.
+
+    Returns:
+        str: Truncated SHA-256 digest of the UTF-8 text.
+    """
+    return sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def is_readme_verbatim_line(line: str) -> bool:
+    """Report whether a README line must be copied without translation.
+
+    Args:
+        line (str): One markdown line.
+
+    Returns:
+        bool: True for blank lines, horizontal rules, table rows, HTML comments and
+            link-only lines such as the badge row.
+    """
+    stripped = line.strip()
+    if not stripped or README_HR_RE.match(line):
+        return True
+    if stripped.startswith("|") or stripped.startswith("<!--"):
+        return True
+    return bool(README_LINK_RE.search(line)) and not README_LINK_RE.sub("", line).strip()
+
+
+def is_readme_paragraph_line(line: str) -> bool:
+    """Report whether a README line continues the paragraph being gathered.
+
+    Args:
+        line (str): One markdown line.
+
+    Returns:
+        bool: True for a plain text line that starts no block of its own.
+    """
+    if is_readme_verbatim_line(line):
+        return False
+    return not (
+        README_FENCE_RE.match(line)
+        or README_HEADING_RE.match(line)
+        or README_LIST_RE.match(line)
+        or README_QUOTE_RE.match(line)
+    )
+
+
+def _take_readme_fence(lines: list[str], index: int, blocks: list) -> int:
+    """Append the fenced code block at ``index`` and return the next line index.
+
+    Args:
+        lines (list[str]): README lines, split on newlines.
+        index (int): Index of the opening fence.
+        blocks (list): Block list to append to.
+
+    Returns:
+        int: Index of the first line after the closing fence.
+    """
+    fence = README_FENCE_RE.match(lines[index]).group(1)
+    end = index + 1
+    while end < len(lines) and not lines[end].strip().startswith(fence):
+        end += 1
+    if end < len(lines):
+        end += 1  # 连同收尾的 ``` 一起复制
+    blocks.append(ReadmeBlock(False, "", "\n".join(lines[index:end])))
+    return end
+
+
+def split_readme_blocks(text: str) -> list[ReadmeBlock]:
+    """Split README markdown into verbatim and translatable blocks.
+
+    Args:
+        text (str): Markdown source, with the language bar already removed.
+
+    Returns:
+        list[ReadmeBlock]: Blocks in document order; joining ``prefix + text`` of every block
+            with newlines yields the markdown to write. A paragraph wrapped over several
+            source lines becomes one line, since markdown re-wraps it when rendering.
+    """
+    lines = text.split("\n")
+    blocks: list[ReadmeBlock] = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        if README_FENCE_RE.match(line):
+            index = _take_readme_fence(lines, index, blocks)
+            continue
+        heading = README_HEADING_RE.match(line)
+        if heading and len(heading.group(1)) > 1:  # H1 是项目名，保持原文
+            blocks.append(ReadmeBlock(True, heading.group(1) + " ", heading.group(2)))
+            index += 1
+            continue
+        marker = README_LIST_RE.match(line) or README_QUOTE_RE.match(line)
+        if marker:
+            blocks.append(ReadmeBlock(True, marker.group(1), marker.group(2)))
+            index += 1
+            continue
+        if heading:
+            blocks.append(ReadmeBlock(False, "", line))
+            index += 1
+            continue
+        if is_readme_verbatim_line(line):
+            blocks.append(ReadmeBlock(False, "", line))
+            index += 1
+            continue
+        end = index
+        while end < len(lines) and is_readme_paragraph_line(lines[end]):
+            end += 1
+        joined = " ".join(one.strip() for one in lines[index:end])
+        blocks.append(ReadmeBlock(True, "", joined))
+        index = end
+    return blocks
+
+
+def protect_readme_text(text: str):
+    """Mask the parts of a block that the translation engine must not touch.
+
+    Args:
+        text (str): Markdown text of one translatable block.
+
+    Returns:
+        tuple: ``(masked, spans)`` — the text with inline code, links, URLs, tags and bold
+            markers replaced by ``{tN}`` tokens, and the replaced runs in token order.
+    """
+    spans: list[ReadmeSpan] = []
+
+    def replace(match: re.Match) -> str:
+        spans.append(
+            ReadmeSpan(
+                match.group(0),
+                match.start() > 0 and not text[match.start() - 1].isspace(),
+                match.end() < len(text) and not text[match.end()].isspace(),
+            )
+        )
+        return f"{{t{len(spans) - 1}}}"
+
+    return README_PROTECT_RE.sub(replace, text), spans
+
+
+def restore_readme_text(text: str, spans: list[ReadmeSpan]) -> str:
+    """Put the masked runs back into a translated block.
+
+    The engine pads the tokens and the text around them with spaces (``{t0}`` comes back as
+    ``{t 0}``), which would break the markdown glued to a run — ``**`` followed by a space is
+    no longer bold — so whitespace the source did not have is dropped again here.
+
+    Args:
+        text (str): Translation of the masked block, carrying the ``{tN}`` tokens.
+        spans (list[ReadmeSpan]): Runs returned by :func:`protect_readme_text`.
+
+    Returns:
+        str: The translation with every token replaced by its original run.
+
+    Raises:
+        ValueError: If a token is missing, duplicated or unknown, which means the engine
+            rewrote the placeholders and the translation cannot be trusted.
+    """
+    seen = sorted(int(match.group(1)) for match in README_TOKEN_RE.finditer(text))
+    if seen != list(range(len(spans))):
+        raise ValueError(f"占位符 {seen} != 0..{len(spans) - 1}")
+
+    pieces = []
+    position = 0
+    for match in README_TOKEN_RE.finditer(text):
+        span = spans[int(match.group(1))]
+        gap = match.start()
+        if span.glued_left:
+            while gap > position and text[gap - 1].isspace():
+                gap -= 1
+        pieces.append(text[position:gap])
+        pieces.append(span.text)
+        position = match.end()
+        if span.glued_right:
+            while position < len(text) and text[position].isspace():
+                position += 1
+    pieces.append(text[position:])
+    return "".join(pieces)
+
+
+def translate_readme_block(translator, text: str, session: Session):
+    """Translate one README block with its spans masked.
+
+    Args:
+        translator (object): Engine instance exposing ``translate(text)``.
+        text (str): Markdown text of the block, without its leading marker.
+        session (Session): Run state holding the request pacer.
+
+    Returns:
+        str | None: The translated block, or None when the engine failed or mangled the
+            placeholders, in which case the English text must be kept.
+    """
+    masked, spans = protect_readme_text(text)
+    if not any(char.isalpha() for char in README_TOKEN_RE.sub("", masked)):
+        return text  # 整块只有代码/链接，无可翻译文本
+    translation = translate_text(translator, masked, session)
+    if translation is None:
+        return None
+    try:
+        restored = restore_readme_text(translation, spans)
+    except ValueError as error:
+        print(f"     ❌ 占位符被改写，保留英文: {text[:40]}... → {error}")
+        return None
+    return " ".join(restored.split())  # 单行块：折叠换行与多余空白
+
+
+def load_readme_cache(path: Path) -> dict:
+    """Load the README translation memory of earlier runs.
+
+    Args:
+        path (Path): Cache file holding ``{lang: {block key: translation}}``.
+
+    Returns:
+        dict: The parsed memory; empty when the file is missing, unreadable or not a JSON
+            object.
+    """
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
+        print(f"⚠️ README 翻译缓存不可用，本轮重新翻译: {error}")
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_readme_cache(path: Path, cache: dict) -> None:
+    """Persist the README translation memory for the next run.
+
+    Args:
+        path (Path): Cache file to write.
+        cache (dict): ``{lang: {block key: translation}}``, pruned to the blocks this run
+            saw.
+    """
+    ordered = {lang: dict(sorted(cache[lang].items())) for lang in sorted(cache)}
+    write_text_atomic(path, json.dumps(ordered, ensure_ascii=False, indent=2) + "\n")
+
+
+def write_text_atomic(path: Path, text: str) -> bool:
+    """Write a text file through a temporary sibling, skipping identical content.
+
+    Args:
+        path (Path): Target file.
+        text (str): Full content to write, encoded as UTF-8.
+
+    Returns:
+        bool: True when the file changed on disk.
+    """
+    if path.is_file() and path.read_text(encoding="utf-8") == text:
+        return False
+    temp = path.with_suffix(path.suffix + ".tmp")
+    temp.write_text(text, encoding="utf-8")
+    temp.replace(path)  # 原子替换：中途被打断不会留下写了一半的 README
+    return True
+
+
+def readme_bar_lines(from_path: Path) -> list[str]:
+    """Render the language bar linking every translation of the README.
+
+    Args:
+        from_path (Path): README the bar is written into, used to resolve the links.
+
+    Returns:
+        list[str]: The opening marker, the link row and the closing marker.
+    """
+    links = []
+    for lang in README_LANGUAGES:
+        target = (
+            README_REPO_ROOT / README_SOURCE_NAME if lang == "en" else readme_translation_path(lang)
+        )
+        relative = os.path.relpath(target, from_path.parent).replace(os.sep, "/")
+        links.append(f"[{README_LANGUAGE_NAMES.get(lang, lang)}]({relative})")
+    return [README_BAR_START, " | ".join(links), README_BAR_END]
+
+
+def readme_bar_index(lines: list[str]) -> int:
+    """Return the line index where the language bar belongs.
+
+    Args:
+        lines (list[str]): README lines, split on newlines.
+
+    Returns:
+        int: Index just below the title and the badge row, in front of the body text.
+    """
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    if index < len(lines):
+        index += 1  # 跳过标题行（# PyFlow / # Test layout）
+    while index < len(lines) and (
+        not lines[index].strip() or is_readme_verbatim_line(lines[index])
+    ):
+        index += 1
+    return index
+
+
+def strip_readme_bar(text: str) -> str:
+    """Remove the language bar of a README.
+
+    Args:
+        text (str): README content, with or without a language bar.
+
+    Returns:
+        str: The content without the bar; byte-identical to the pre-bar source when the bar
+            sits where :func:`readme_bar_index` puts it.
+    """
+    lines = text.split("\n")
+    if README_BAR_START not in lines or README_BAR_END not in lines:
+        return text
+    start = lines.index(README_BAR_START)
+    end = lines.index(README_BAR_END)
+    del lines[start : end + 1]
+    if (
+        start > 0
+        and start < len(lines)
+        and not lines[start].strip()
+        and not lines[start - 1].strip()
+    ):
+        del lines[start]  # 去掉插入时留下的多余空行
+    return "\n".join(lines)
+
+
+def update_readme_bar(path: Path) -> bool:
+    """Insert or refresh the language bar of one README.
+
+    Args:
+        path (Path): README file to update.
+
+    Returns:
+        bool: True when the file changed on disk.
+    """
+    lines = path.read_text(encoding="utf-8").split("\n")
+    bar = readme_bar_lines(path)
+    if README_BAR_START in lines and README_BAR_END in lines:
+        start = lines.index(README_BAR_START)
+        end = lines.index(README_BAR_END)
+        updated = lines[:start] + bar + lines[end + 1 :]
+    else:
+        index = readme_bar_index(lines)
+        updated = lines[:index] + bar + [""] + lines[index:]
+    return write_text_atomic(path, "\n".join(updated))
+
+
+def translate_readme_language(lang: str, blocks: list[ReadmeBlock], cache: dict, session: Session):
+    """Translate the README blocks into one language and write its translation file.
+
+    Args:
+        lang (str): Target language code such as "ja" or "zh_CN".
+        blocks (list): Blocks of the stripped README source.
+        cache (dict): Translation memory ``{lang: {block key: translation}}``, replaced in
+            place by the blocks this call saw.
+        session (Session): Run state holding the engine, pacer and limit.
+
+    Returns:
+        ReadmeResult: Blocks failed, translated and reused, and whether the endpoint kept
+            refusing.
+    """
+    translator = ENGINES[session.engine](lang, session.proxy)
+    stored = cache.get(lang) or {}
+    output = [
+        block.text if not block.translatable else block.prefix + block.text for block in blocks
+    ]
+    kept: dict = {}
+    translated = reused = failed = consecutive = requests = 0
+    aborted = False
+    try:
+        for index, block in enumerate(blocks):
+            if not block.translatable:
+                continue
+            key = readme_block_key(block.text)
+            if key in stored:  # 英文原文没变：直接复用，不再请求
+                output[index] = block.prefix + stored[key]
+                kept[key] = stored[key]
+                reused += 1
+                continue
+            if session.limit and requests >= session.limit:
+                continue  # 达到 --limit：保持英文，下一轮继续
+            requests += 1
+            if requests % 10 == 0:
+                print(f"     ⏳ README {lang} 进度: 处理 {index + 1}/{len(blocks)} 块")
+            result = translate_readme_block(translator, block.text, session)
+            if result is None:
+                failed += 1
+                consecutive += 1
+                if consecutive >= MAX_CONSECUTIVE_FAILURES:
+                    raise RateLimitAbort(f"{consecutive} consecutive failures")
+                continue
+            consecutive = 0
+            output[index] = block.prefix + result
+            kept[key] = result
+            translated += 1
+    except RateLimitAbort:
+        aborted = True
+        print(f"     ⛔ README {lang}: 连续失败，落盘已完成的块后停止本轮")
+
+    cache[lang] = kept
+    write_text_atomic(readme_translation_path(lang), "\n".join(output) + "\n")
+    print(f"  🌐 README {lang}: 新译 {translated} 块，复用 {reused} 块，保留英文 {failed} 块")
+    return ReadmeResult(failed, translated, reused, aborted)
+
+
+def translate_readme(session: Session, langs: list[str]):
+    """Translate the repository README and refresh the language bar of every README.
+
+    Blocks that fail keep their English text and are retried on the next run; blocks whose
+    English source did not change come from the translation memory, so a run only requests
+    what changed.
+
+    Args:
+        session (Session): Run state holding the engine, pacer and limit.
+        langs (list[str]): Target language codes; the link bar always lists
+            ``README_LANGUAGES``.
+
+    Returns:
+        int: Number of blocks left in English.
+
+    Raises:
+        RateLimitAbort: If the endpoint keeps refusing, after the finished blocks, the cache
+            and the language bars have been written.
+    """
+    source_path = README_REPO_ROOT / README_SOURCE_NAME
+    blocks = split_readme_blocks(strip_readme_bar(source_path.read_text(encoding="utf-8")))
+    README_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path = README_DIR / README_CACHE_NAME
+    cache = load_readme_cache(cache_path)
+    translatable = sum(1 for block in blocks if block.translatable)
+    target = README_DIR.relative_to(README_REPO_ROOT)
+    print(f"\n📖 翻译 README → {target}/（{translatable} 个可译块）")
+
+    failed = 0
+    aborted = False
+    for lang in langs:
+        result = translate_readme_language(lang, blocks, cache, session)
+        failed += result.failed
+        if result.aborted:
+            aborted = True
+            break
+
+    save_readme_cache(cache_path, cache)
+    bar_files = [README_REPO_ROOT / name for name in README_BAR_FILES]
+    bar_files += [readme_translation_path(lang) for lang in README_LANGUAGES if lang != "en"]
+    for path in bar_files:
+        if path.is_file():
+            update_readme_bar(path)
+    if aborted:
+        raise RateLimitAbort(f"README {lang}")
+    return failed
+
+
+def report_abort():
+    """Explain why the run stopped on repeated failures and how to resume."""
+    print(f"\n⛔ 连续 {MAX_CONSECUTIVE_FAILURES} 条翻译失败，停止本轮。")
+    print("ℹ️ google 引擎遇到的是反滥用拦截，换代理节点无效（实测跨大洲换 IP 仍 429）。")
+    print("   改用 --engine baidu（国内直连）或 --engine microsoft（带 key）。")
+    print("ℹ️ 已完成的译文均已写入 .po 与 README 译本；重新运行本脚本即可续跑。")
+
+
 def translate_po_file(po_path: Path, target_lang: str, locale_dir: Path, session: Session):
     """Translate the untranslated entries of one .po file.
 
@@ -701,7 +1276,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="翻译引擎：mymemory（默认，免 key，无需代理）/ baidu（需 key）/"
         " microsoft（需 key）/ google（常被反滥用拦截）",
     )
-    parser.add_argument("--limit", type=int, default=0, help="每个文件最多翻译多少条（0=全部）")
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        help="每个 .po 文件、以及每种语言的 README，最多翻译多少条（0=全部）",
+    )
     parser.add_argument(
         "--delay",
         type=float,
@@ -737,34 +1317,29 @@ def translate_language(lang: str, locale_dir: Path, session: Session, include_ge
         include_generated (bool): Whether the generated ``api/*.po`` pages are included.
 
     Returns:
-        tuple: ``(failed, aborted)`` — the number of entries that failed and whether the
-            endpoint kept refusing, in which case the caller stops the run.
+        int: Number of entries that failed and keep their empty ``msgstr``.
+
+    Raises:
+        RateLimitAbort: If the endpoint keeps refusing, after the current file was flushed.
     """
     lang_dir = locale_dir / lang / "LC_MESSAGES"
     if not lang_dir.is_dir():
         print(f"⚠️ 跳过 {lang}：目录不存在")
-        return 0, False
+        return 0
 
     po_files, skipped = collect_po_files(lang_dir, include_generated)
     if not po_files:
         print(f"⚠️ 跳过 {lang}：没有可翻译的 .po 文件")
-        return 0, False
+        return 0
 
     suffix = f"，跳过 {skipped} 个生成页" if skipped else ""
     print(f"\n🌐 处理语言: {lang} ({len(po_files)} 个文件{suffix})")
 
     failed = 0
     for po_file in po_files:
-        try:
-            file_failed, _ = translate_po_file(po_file, lang, locale_dir, session)
-        except RateLimitAbort:
-            print(f"\n⛔ 连续 {MAX_CONSECUTIVE_FAILURES} 条翻译失败，停止本轮。")
-            print("ℹ️ google 引擎遇到的是反滥用拦截，换代理节点无效（实测跨大洲换 IP 仍 429）。")
-            print("   改用 --engine baidu（国内直连）或 --engine azure（带 key）。")
-            print("ℹ️ 已完成的译文均已写入 .po；重新运行本脚本即可续跑。")
-            return failed, True
+        file_failed, _ = translate_po_file(po_file, lang, locale_dir, session)
         failed += file_failed
-    return failed, False
+    return failed
 
 
 def run_translation(args) -> int:
@@ -806,12 +1381,16 @@ def run_translation(args) -> int:
         return 1
 
     session = Session(args.delay, args.limit, args.proxy, args.engine)
+    languages = args.lang or LANGUAGES
     total_failed = 0
-    for lang in args.lang or LANGUAGES:
-        failed, aborted = translate_language(lang, locale_dir, session, args.include_generated)
-        total_failed += failed
-        if aborted:
-            return 1
+    try:
+        if TRANSLATE_README:  # README 优先：先译 README，再译 .po
+            total_failed += translate_readme(session, languages)
+        for lang in languages:
+            total_failed += translate_language(lang, locale_dir, session, args.include_generated)
+    except RateLimitAbort:
+        report_abort()
+        return 1
 
     if total_failed:
         print(f"\n⚠️ 完成，但有 {total_failed} 条失败（保持未翻译），重新运行本脚本即可继续。")

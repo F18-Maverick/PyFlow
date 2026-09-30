@@ -2,6 +2,10 @@
 
 [![CI](https://github.com/F18-Maverick/PyFlow/workflows/CI/badge.svg)](https://github.com/F18-Maverick/PyFlow/actions)  [![readthedocs](https://img.shields.io/readthedocs/pyflow-net)](https://pyflow-net.readthedocs.io/en/latest/)  [![coverage](https://img.shields.io/codecov/c/github/F18-Maverick/PyFlow)](https://app.codecov.io/gh/F18-Maverick/PyFlow)  [![Pypi](https://img.shields.io/pypi/v/pyflow-net.svg)](https://pypi.org/project/pyflow-net/)  [![supported_version](https://img.shields.io/pypi/pyversions/pyflow-net)](https://img.shields.io/pypi/pyversions/pyflow-net)  [![lisence](https://img.shields.io/github/license/F18-Maverick/PyFlow)](https://github.com/F18-Maverick/PyFlow/blob/main/LICENSE)  [![commit](https://img.shields.io/github/last-commit/F18-Maverick/PyFlow)](https://github.com/F18-Maverick/PyFlow/commits/main/)
 
+<!-- readme-translations:start -->
+[English](README.md) | [日本語](docs/readme_translations/README.ja.md) | [简体中文](docs/readme_translations/README.zh_CN.md) | [繁體中文](docs/readme_translations/README.zh_TW.md) | [한국어](docs/readme_translations/README.ko.md) | [Русский](docs/readme_translations/README.ru.md)
+<!-- readme-translations:end -->
+
 PyFlow is a high-level network protocol offering APIs and web apps, both of which transfer messages, files, and folders, along with extensible interfaces and other features.
 
 ## Features
