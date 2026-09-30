@@ -15,7 +15,7 @@ PyFlow is a high-level network protocol offering APIs and web apps, both of whic
 - **Encrypted TCP channel** — RSA-OAEP message encryption with a TOFU (trust-on-first-use) peer-key registry, session nonces and sequence numbers against replay, and a circuit breaker against re-exchange storms. See [docs/Crypto](docs/source/Crypto/Crypto.rst) and the encrypted-channel sections of the TCP API docs.
 - **C/OpenSSL cryptography library** — `libcrypto_api` provides RSA-OAEP, ECDH (P-256/384/521), HKDF-SHA256 and AES-256-GCM with a stable C API (`pf_*` prefix) usable from C, CMake or pkg-config.
 - **Multi-instance launcher** — `python -m PyFlow` (package entry point backed by `PyFlow/flow_setup.py`) starts one or more server/client instances from a CLI, an interactive prompt, or a `setup.json` configuration file.
-- **Extension protocols** — `command_control_extension_tcp.py` (remote command execution with log collection) and `forward_extension_tcp.py` (forwarding messages/files/folders to multiple destinations) plug into any instance via `setup_*_commands()`; `flow_setup.py` loads them automatically for every instance whose `setup.json` config sets `is_extend_command=True`, and starts instances in a background thread when `is_input_command_in_console=False`.
+- **Extension protocols** — `command_control_extension_tcp.py` (remote command execution with log collection) and `forward_extension_tcp.py` (upload-then-push forwarding of files/folders to multiple destinations; plain-message forwarding `forward_send_msg` is native to the TCP layer, not part of this extension) plug into any instance via `setup_*_commands()`; `flow_setup.py` loads them automatically for every instance whose `setup.json` config sets `is_extend_command=True`, and starts instances in a background thread when `is_input_command_in_console=False`. Extension files can also be registered persistently with `flow_setup.py --add` / `--delete` (kept in `PyFlow/added_extensions.json` and loaded on every launch by `add_extension.py`).
 - **Web tool** — `PyFlow/transfer_web/` wraps the TCP protocol in a browser UI for non-library use: `setup_server.py` opens a startup-configuration page (saved to `.Flow_Web/setup_server.json`, same shape as `setup.json`) and then serves a status page plus a client-facing API; `setup_client.py` connects to a server by address, and both pages offer a sidebar of connected instances, message/file/folder sending (with forwarding to other clients), and extension loading. Backed by Flask.
 
 ## Architecture
@@ -30,7 +30,8 @@ PyFlow/
 │   ├── rsa_crypto.py        ctypes binding to libcrypto_api + TOFU key registry
 │   └── decode_command_table.json   wire-format table for the file-transfer protocol
 ├── command_control_extension_tcp.py  command-control extension over TCP
-├── forward_extension_tcp.py          forward extension over TCP (messages/files/folders to multiple destinations)
+├── forward_extension_tcp.py          forward extension over TCP (files/folders to multiple destinations)
+├── add_extension.py                  persistent extension registry (added_extensions.json) used by the launcher
 ├── transfer_web/                     web tool: setup_server.py / setup_client.py launchers,
 │   │                                 web_backend/ (Flask + TCP server wrapper),
 │   │                                 web_front/ (Flask + TCP client wrapper), static/ (shared UI)
@@ -38,8 +39,10 @@ PyFlow/
 ├── flow_setup.py                     launcher implementation
 └── setup.json                        default launcher configuration (generated)
 test/                        Python tests (unit/ + integration/), C tests under test/crypto_api/
-docs/                        documentation build root: Makefile / make.bat / reBuild.sh + _build output
-docs/source/                 Sphinx sources (English) with locale/ (ja, ko, ru, zh_CN, zh_TW)
+docs/                        documentation build root: Makefile / make.bat / reBuild.sh /
+                             readthedocs_build.sh (Read-the-Docs pre-build) + docs/readme_translations/
+docs/source/                 Sphinx sources (English) with locale/ (ja, ko, ru, zh_CN, zh_TW), the
+                             generated api/ pages, batch_translate_po.py and DOCSTRING_GUIDE.md
 CMakeLists.txt               top-level build for the C library and C tests
 ```
 
@@ -110,6 +113,17 @@ Start a client that connects to that server (and binds its own local address/por
 uv run python -m PyFlow --type 1 --setup_addr_port 127.0.0.1:23456 --connect_addr_port 127.0.0.1:12345
 ```
 
+Register (or unregister) an extension protocol file so that every later launch
+loads it, regardless of `is_extend_command`:
+
+```bash
+uv run python -m PyFlow --add path/to/my_extension.py
+uv run python -m PyFlow --delete path/to/my_extension.py
+```
+
+The registration is stored in `PyFlow/added_extensions.json` by
+`add_extension.py` and re-read on every launch.
+
 ### Web tool (browser UI)
 
 The web tool wraps the TCP protocol in a browser UI for non-library use
@@ -175,7 +189,12 @@ the **Contacts** button (search by user ID, username or email); the other
 side answers the request in its **Requests** list, and only after both
 accounts accepted each other does the contact appear in the sidebar.
 Extension protocols are loaded by the client page and by administrators on
-the server page.
+the server page. The web tool keeps its remaining state in the same
+`.Flow_Web/` directory: `setup_client.json` (last client startup
+configuration), `client_last_server.json` (last server address offered by
+the connect page), `client_extensions_ui.json` /
+`server_extensions_ui.json` (extension UI state) and an `uploads/`
+staging directory.
 
 The server page also offers a `"ftp"` share (administrator-only). It is not
 the FTP protocol: it browses one folder of the server host and hands the
@@ -218,7 +237,7 @@ uv run pytest                       # full Python suite
 ctest --test-dir build       # C library tests
 ```
 
-The encrypted-channel tests (`test/unit/network_api/test_crypto_rsa.py`, `test/integration/network_api/test_crypto_tcp.py`) are skipped automatically when `libcrypto_api` has not been built; everything else runs regardless. The suite passes on Python 3.10–3.14, including the free-threaded (no-GIL) 3.14 build.
+The encrypted-channel tests (`test/unit/network_api/test_crypto_rsa.py`, `test/integration/network_api/test_crypto_tcp.py`) are skipped automatically when `libcrypto_api` has not been built; everything else runs regardless. CI runs the suite on Python 3.10–3.14, on both Ubuntu and Windows; it also passes on the free-threaded (no-GIL) 3.14 build.
 
 ## Documentation
 
@@ -229,7 +248,7 @@ make -C docs html          # docs/Makefile; docs/make.bat html does the same on 
 uv run python -m sphinx -b html docs/source build/sphinx_doc   # equivalent, explicit paths
 ```
 
-Rebuild the translations (extract gettext, machine-translate new strings, compile `.mo`) with `docs/reBuild.sh`; it needs the documentation/translation dependencies from `pyproject.toml` (`sphinx`, `sphinx-intl`, `polib`, `deep-translator`).
+Rebuild the translations (extract gettext, machine-translate new strings, compile `.mo`) with `docs/reBuild.sh`; it needs the documentation/translation dependencies from `pyproject.toml` (`sphinx`, `sphinx-intl`, `polib`, `deep-translator`) and a `python3.14` executable on `PATH`, because the script calls `source/batch_translate_po.py` with that interpreter. It writes one HTML tree per language under `docs/_build/html/<lang>`. Read the Docs runs `docs/readthedocs_build.sh` as its pre-build step, which only compiles the existing catalogues and builds the single HTML tree for the RTD output directory.
 
 ## License
 

@@ -18,6 +18,7 @@ documentation for details.
 
    Network_APIs/TCP_Server_APIs
    Network_APIs/TCP_Client_APIs
+   Network_APIs/UDP_APIs
    File_Transfer/File_Transfer
    Port_Allocation/Port_Allocation
    Instance_Setup/Instance_Setup

@@ -41,6 +41,62 @@ from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
 
+def _process_is_alive(pid):
+    """Report whether the process recorded in a port-range entry still runs.
+
+    Args:
+        pid (int | None): Process id from the record; ``None`` (a record written
+            before pids were stored) counts as alive so it is never dropped just
+            for lacking one.
+
+    Returns:
+        bool: True when the process exists, or when that cannot be determined
+            (keeping an entry is harmless, dropping a live one is not).
+    """
+    if not isinstance(pid, int) or pid <= 0:
+        return True
+    if os.name == "nt":  # os.kill(pid, 0) would terminate the process on Windows
+        import ctypes
+
+        SYNCHRONIZE = 0x00100000
+        WAIT_TIMEOUT = 0x00000102
+        ERROR_INVALID_PARAMETER = 87
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
+        if not handle:
+            # a nonexistent pid is reported as an invalid parameter; access
+            # denied means the process is there but owned by someone else
+            return kernel32.GetLastError() != ERROR_INVALID_PARAMETER
+        try:
+            return kernel32.WaitForSingleObject(handle, 0) == WAIT_TIMEOUT
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # exists, owned by another user
+    except OSError:
+        return True  # unknown state: keep the entry
+    return True
+
+
+def _port_record_stale(entry):
+    """Report whether a port-range entry belongs to a process that has exited.
+
+    Args:
+        entry (dict): One record entry (``server_port_info`` / ``client_port_info``).
+
+    Returns:
+        bool: True when the entry can be reclaimed.
+    """
+    pid = entry.get("pid")
+    if pid is None:  # pre-pid record: keep the older rule
+        return entry.get("is_running") is False
+    return not _process_is_alive(pid)
+
+
 def _is_closed_socket_error(exc):
     """True when the error means a socket that is already closed
     (EBADF / ENOTSOCK, Windows winsock WSAENOTSOCK 10038, ECONNRESET /
@@ -342,6 +398,10 @@ class TCP_Server_Base:  # TCP server class
         self.max_clients = max_clients
         self.is_hand_alloc_port = is_hand_alloc_port
         self.is_input_command_in_console = is_input_command_in_console
+        # `running` must exist before alloc_port(): the port-range record
+        # reports it, and a manual-mode instance is live while it holds a range.
+        self.running = False
+        self._stopped = False  # a stop() before start_TCP_Server() must stick
         self.alloc_port(port_add_step, port_range_num)
         self.server_socket = None
         self.clients = {}  # store client info
@@ -349,7 +409,6 @@ class TCP_Server_Base:  # TCP server class
         self.file_transfer_server_port_lock = threading.Lock()
         self.file_server_port_list = []
         self.file_client_id = 0
-        self.running = False
         self.client_lock = threading.Lock()  # add the threading lock
         self.max_file_transfer_thread_num = max_file_transfer_thread_num
         MAX_CONCURRENT_FILES = self.max_file_transfer_thread_num
@@ -456,8 +515,12 @@ class TCP_Server_Base:  # TCP server class
             while self.is_server_port_temp_info_file_locked():
                 time.sleep(0.1)
             self.server_port_temp_info_file_lock()
-            self.hand_alloc_port(port_add_step, port_range_num)
-            self.server_port_temp_info_file_unlock()
+            try:
+                self.hand_alloc_port(port_add_step, port_range_num)
+            finally:
+                # a failing allocation must not leave the lock behind: every
+                # later instance would wait for it forever
+                self.server_port_temp_info_file_unlock()
 
     def free_port(self):
         """Release this server's reserved port range.
@@ -468,8 +531,10 @@ class TCP_Server_Base:  # TCP server class
             while self.is_server_port_temp_info_file_locked():
                 time.sleep(0.1)
             self.server_port_temp_info_file_lock()
-            self.hand_free_port()
-            self.server_port_temp_info_file_unlock()
+            try:
+                self.hand_free_port()
+            finally:
+                self.server_port_temp_info_file_unlock()
 
     def server_port_temp_info_file_lock(self):
         """Create the lock file that reserves the server port range for this process."""
@@ -531,7 +596,9 @@ class TCP_Server_Base:  # TCP server class
                 "port": self.port,
                 "min_port": self.min_port,
                 "max_port": self.max_port,
-                "is_running": self.running,
+                "is_running": True,
+                "pid": os.getpid(),   # the sweep reclaims the range once it is gone
+                "started_at": time.time(),
             }
             self.server_port_info.append(each_server_info)
             with open(self.port_temp_info_path, "w", encoding="utf-8") as f:
@@ -539,6 +606,15 @@ class TCP_Server_Base:  # TCP server class
         else:
             with open(self.port_temp_info_path, "r", encoding="utf-8") as f:
                 self.server_port_info = ast.literal_eval(f.read())
+            # drop the entries whose owning process is gone: a killed instance
+            # never reaches hand_free_port, and its range is free again
+            self.server_port_info = [
+                entry for entry in self.server_port_info if not _port_record_stale(entry)
+            ]
+            if not self.server_port_info:  # nobody holds a range: start over
+                os.remove(self.port_temp_info_path)
+                self.hand_alloc_port(port_add_step, port_range_num)
+                return
             self.server_num = self.server_port_info[len(self.server_port_info) - 1]["server_id"] + 1
             auto_port_add = (
                 self.server_port_info[len(self.server_port_info) - 1]["max_port"]
@@ -560,12 +636,14 @@ class TCP_Server_Base:  # TCP server class
                 "port": self.port,
                 "min_port": self.min_port,
                 "max_port": self.max_port,
-                "is_running": self.running,
+                # this instance is live while it holds the range: hand_free_port()
+                # drops the entry on a clean stop, and the pid lets a later
+                # instance reclaim the range of one that was killed
+                "is_running": True,
+                "pid": os.getpid(),
+                "started_at": time.time(),
             }
             self.server_port_info.append(each_server_info)
-            for is_running in range(len(self.server_port_info) - 1, -1, -1):
-                if self.server_port_info[is_running]["is_running"] == False:
-                    del self.server_port_info[is_running]
             with open(self.port_temp_info_path, "w", encoding="utf-8") as f:
                 f.write(str(self.server_port_info))
 
@@ -575,9 +653,14 @@ class TCP_Server_Base:  # TCP server class
         if os.path.exists(self.port_temp_info_path):
             with open(self.port_temp_info_path, "r", encoding="utf-8") as f:
                 self.server_port_info = ast.literal_eval(f.read())
-            for server_num in range(len(self.server_port_info)):
-                if self.server_port_info[server_num]["server_id"] == self.server_num:
-                    del self.server_port_info[server_num]
+            # rebuild instead of deleting by index: other live instances keep
+            # their entries, so this one is not necessarily the last, and a
+            # shrinking list would make the next index run past its end
+            self.server_port_info = [
+                entry
+                for entry in self.server_port_info
+                if entry["server_id"] != self.server_num
+            ]
             if len(self.server_port_info) == 0:
                 os.remove(self.port_temp_info_path)
             else:
@@ -594,15 +677,13 @@ class TCP_Server_Base:  # TCP server class
         alloc_port = 0
         while True:
             alloc_port = self.file_palloc()
-            time.sleep(0.1)
             if alloc_port is not None:
                 return alloc_port
-            else:
-                alloc_port = self.spy_palloc()
-                if alloc_port is not None:
-                    return alloc_port
-                else:
-                    pass
+            alloc_port = self.spy_palloc()
+            if alloc_port is not None:
+                return alloc_port
+            # both directions are exhausted: wait for a port to come back
+            time.sleep(0.1)
 
     def pfree(self, port):
         """Release a port obtained from `palloc`.
@@ -1820,8 +1901,8 @@ class TCP_Server_Base:  # TCP server class
         ``/crypto_mode``, ``/file``, ``/file_folder``,
         ``/server_file_transfer_port`` and the crypto exchange lines) are handled
         here; any other name goes to the handlers registered for the "server" side
-        via `register_command`. An encryption-mode mismatch closes the connection;
-        an unknown command is only reported on the console.
+        via `register_command`. An encryption-mode mismatch and ``/quit`` close the
+        connection; an unknown command is only reported on the console.
 
         Args:
             client_socket (socket.socket): Connection the line came from.
@@ -1830,7 +1911,8 @@ class TCP_Server_Base:  # TCP server class
 
         Returns:
             str | None: Response for that client, or None when no response is due
-                (crypto lines, file transfers, and custom handlers that run in the
+                (crypto lines, file transfers, ``/quit``, which answers on the
+                socket before shutting it down, and custom handlers that run in the
                 background).
         """
         self._debug(client_socket, client_address, command)
@@ -1861,8 +1943,19 @@ class TCP_Server_Base:  # TCP server class
                 send_str = f"online clients ({len(client_list)}): {', '.join(client_list)}" + "\n"
                 return send_str
         elif command == "/quit":
-            send_str = "Bye!" + "\n"
-            return send_str
+            # the goodbye is written here (not returned) so the connection can
+            # be shut down right after it: a client that stays connected after
+            # /quit must not keep the server reading from the session
+            try:
+                self.send_message(client_socket, "Bye!\n")
+            except Exception as e:
+                if not _is_closed_socket_error(e):
+                    self._log(f"error while sending goodbye to {client_id} : {e}")
+            try:
+                client_socket.shutdown(socket.SHUT_RDWR)
+            except Exception:
+                pass  # already gone or not connected any more
+            return None
         elif command.lower().split(" ")[0] == "/crypto_mode":
             try:
                 client_crypto = int(command.split(" ")[1])
@@ -3207,6 +3300,11 @@ class TCP_Server_Base:  # TCP server class
             self.server_socket.listen(
                 socket.SOMAXCONN if self.is_asynic_clients_io else self.max_clients
             )
+            if self._stopped:
+                # stop() arrived while the socket was being bound: stay stopped
+                # instead of reviving the server (its listener would leak)
+                self.server_socket.close()
+                return
             self.running = True
             self._log(f"TCP server deployed on {self.host}:{self.port}")
             if self.is_asynic_clients_io:
@@ -3245,7 +3343,9 @@ class TCP_Server_Base:  # TCP server class
                 )
                 client_thread.start()
             except OSError as e:
-                if not _is_closed_socket_error(e):
+                # an accept error while stopping is the expected wake-up from
+                # stop()'s shutdown(), not a fault worth a traceback
+                if self.running and not _is_closed_socket_error(e):
                     self._log(f"accept failed: {e}")
                     self._log_exc()
                 break  # server socket closed, exit loop
@@ -3406,6 +3506,7 @@ class TCP_Server_Base:  # TCP server class
         Safe to call more than once.
         """
         self.running = False
+        self._stopped = True  # also cancels a start_TCP_Server() still binding
         self.free_port()
         self._flush_messages_dict()
         self._flush_events_dict()
@@ -3424,6 +3525,14 @@ class TCP_Server_Base:  # TCP server class
                     pass
             self.clients.clear()
         if self.server_socket:  # close server socket
+            try:
+                # close() alone does not release the port: a thread blocked in
+                # accept() keeps the descriptor open until the syscall returns,
+                # so the listener would stay up. shutdown() ends that accept
+                # immediately (the loop treats the error as the stop signal).
+                self.server_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # not connected / already shut down
             self.server_socket.close()
             self._log("server stopped")
         self._wake_async_accept_loop()
@@ -3554,6 +3663,7 @@ class TCP_Client_Base:  # TCP client class
         self.timeout = timeout
         self.client_socket = None
         self.running = False
+        self._stopped = False  # a close() before connect() must stick
         self.receive_thread = None
         self.command_decode_table_str = None
         self.max_thread_num = max_thread_num
@@ -3975,8 +4085,12 @@ class TCP_Client_Base:  # TCP client class
             while self.is_client_port_temp_info_file_locked():
                 time.sleep(0.1)
             self.client_port_temp_info_file_lock()
-            self.hand_alloc_port(port_add_step, port_range_num)
-            self.client_port_temp_info_file_unlock()
+            try:
+                self.hand_alloc_port(port_add_step, port_range_num)
+            finally:
+                # a failing allocation must not leave the lock behind: every
+                # later instance would wait for it forever
+                self.client_port_temp_info_file_unlock()
 
     def free_port(self):
         """Release this client's reserved port range.
@@ -3987,8 +4101,10 @@ class TCP_Client_Base:  # TCP client class
             while self.is_client_port_temp_info_file_locked():
                 time.sleep(0.1)
             self.client_port_temp_info_file_lock()
-            self.hand_free_port()
-            self.client_port_temp_info_file_unlock()
+            try:
+                self.hand_free_port()
+            finally:
+                self.client_port_temp_info_file_unlock()
 
     def client_port_temp_info_file_lock(self):
         """Create the lock file that reserves the client port range for this process."""
@@ -4049,7 +4165,9 @@ class TCP_Client_Base:  # TCP client class
                 "port": self.port,
                 "min_port": self.min_port,
                 "max_port": self.max_port,
-                "is_running": self.running,
+                "is_running": True,
+                "pid": os.getpid(),   # the sweep reclaims the range once it is gone
+                "started_at": time.time(),
             }
             self.client_port_info.append(each_client_info)
             with open(self.port_temp_info_path, "w", encoding="utf-8") as f:
@@ -4057,6 +4175,14 @@ class TCP_Client_Base:  # TCP client class
         else:
             with open(self.port_temp_info_path, "r", encoding="utf-8") as f:
                 self.client_port_info = ast.literal_eval(f.read())
+            # drop the entries whose owning process is gone (see the server twin)
+            self.client_port_info = [
+                entry for entry in self.client_port_info if not _port_record_stale(entry)
+            ]
+            if not self.client_port_info:  # nobody holds a range: start over
+                os.remove(self.port_temp_info_path)
+                self.hand_alloc_port(port_add_step, port_range_num)
+                return
             self.client_num = self.client_port_info[len(self.client_port_info) - 1]["client_id"] + 1
             auto_port_add = (
                 self.client_port_info[len(self.client_port_info) - 1]["max_port"]
@@ -4078,12 +4204,14 @@ class TCP_Client_Base:  # TCP client class
                 "port": self.port,
                 "min_port": self.min_port,
                 "max_port": self.max_port,
-                "is_running": self.running,
+                # the client is connected while it holds the range: hand_free_port()
+                # drops the entry on disconnect, and the pid lets a later
+                # instance reclaim the range of one that was killed
+                "is_running": True,
+                "pid": os.getpid(),
+                "started_at": time.time(),
             }
             self.client_port_info.append(each_client_info)
-            for is_running in range(len(self.client_port_info) - 1, -1, -1):
-                if self.client_port_info[is_running]["is_running"] == False:
-                    del self.client_port_info[is_running]
             with open(self.port_temp_info_path, "w", encoding="utf-8") as f:
                 f.write(str(self.client_port_info))
 
@@ -4093,9 +4221,14 @@ class TCP_Client_Base:  # TCP client class
         if os.path.exists(self.port_temp_info_path):
             with open(self.port_temp_info_path, "r", encoding="utf-8") as f:
                 self.client_port_info = ast.literal_eval(f.read())
-            for client_num in range(len(self.client_port_info)):
-                if self.client_port_info[client_num]["client_id"] == self.client_num:
-                    del self.client_port_info[client_num]
+            # rebuild instead of deleting by index: other live instances keep
+            # their entries, so this one is not necessarily the last, and a
+            # shrinking list would make the next index run past its end
+            self.client_port_info = [
+                entry
+                for entry in self.client_port_info
+                if entry["client_id"] != self.client_num
+            ]
             if len(self.client_port_info) == 0:
                 os.remove(self.port_temp_info_path)
             else:
@@ -4111,15 +4244,13 @@ class TCP_Client_Base:  # TCP client class
         alloc_port = 0
         while True:
             alloc_port = self.file_palloc()
-            time.sleep(0.1)
             if alloc_port is not None:
                 return alloc_port
-            else:
-                alloc_port = self.spy_palloc()
-                if alloc_port is not None:
-                    return alloc_port
-                else:
-                    pass
+            alloc_port = self.spy_palloc()
+            if alloc_port is not None:
+                return alloc_port
+            # both directions are exhausted: wait for a port to come back
+            time.sleep(0.1)
 
     def pfree(self, port):
         """Release a port obtained from `palloc`.
@@ -4341,6 +4472,12 @@ class TCP_Client_Base:  # TCP client class
                     self.local_address = (self.client_host, self.client_port)
                     self.client_socket.bind(self.local_address)
                 self.client_socket.connect((self.host, self.port))
+                if self._stopped:
+                    # close() arrived while the socket was connecting: stay
+                    # closed instead of reviving the connection
+                    self.client_socket.close()
+                    self.client_socket = None
+                    return False
                 self.running = True
                 self.receive_thread = threading.Thread(
                     target=self.receive_messages
@@ -5120,7 +5257,10 @@ class TCP_Client_Base:  # TCP client class
                             # client-only message forwarding: relayed by the server
                             self._console_forward_send_msg(message)
                         else:
-                            cmd_name = message[0].lower()
+                            # the registered name is the whole first token
+                            # ("/mycmd"), not the line's first character
+                            cmd_parts = shlex.split(message)
+                            cmd_name = cmd_parts[0].lower() if cmd_parts else ""
                             if cmd_name in self._custom_handlers[1]:
                                 handler = self._custom_handlers[1][cmd_name]
                                 run_in_thread = self._custom_handler_threaded[1].get(
@@ -5257,19 +5397,23 @@ class TCP_Client_Base:  # TCP client class
         if len(file_list) >= 2 and not os.path.isfile(file_list[-1]):
             destination_path = file_list.pop()
         for file in file_list:
-            self.file_semaphore.acquire()
-            try:
-                each_file_transfer_command_message = "/file {}".format(shlex.quote(file))
-                if destination_path:
-                    each_file_transfer_command_message += " {}".format(
-                        shlex.quote(destination_path)
-                    )
-                self.file_transfer_client_recv_client_start_thread(
-                    each_file_transfer_command_message
+            each_file_transfer_command_message = "/file {}".format(shlex.quote(file))
+            if destination_path:
+                each_file_transfer_command_message += " {}".format(
+                    shlex.quote(destination_path)
                 )
-                self._log(f"start to send file command: {each_file_transfer_command_message}")
-            finally:
-                self.file_semaphore.release()
+
+            def limited_transfer(cmd=each_file_transfer_command_message):
+                # hold the slot for the whole transfer, not only for the
+                # thread start, so max_thread_num really caps concurrency
+                self.file_semaphore.acquire()
+                try:
+                    self.file_transfer_client_recv_client_start(cmd, None)
+                finally:
+                    self.file_semaphore.release()
+
+            threading.Thread(target=limited_transfer, daemon=True).start()
+            self._log(f"start to send file command: {each_file_transfer_command_message}")
 
     def file_transfer_client_recv_client_start_thread(self, message, file_folder_abspath=None):
         file_transfer_client_recv_client_start_thread = threading.Thread(
@@ -5870,6 +6014,7 @@ class TCP_Client_Base:  # TCP client class
         event stores and closes the socket. Safe to call more than once.
         """
         self.running = False
+        self._stopped = True  # also cancels a connect() still in flight
         self.free_port()
         self._flush_messages_dict()
         self._flush_events_dict()
@@ -5890,9 +6035,12 @@ class TCP_Client_Base:  # TCP client class
         Enters `interactive_mode` when ``is_input_command_in_console`` is True,
         otherwise keeps the process alive while the connection is up. Exits the
         process with status 1 when the connection cannot be established; Ctrl-C and
-        the end of the connection both run `close`.
+        the end of the connection both run `close`. A client that was closed while
+        still connecting returns quietly, because that stop was asked for.
         """
         if not self.connect():
+            if self._stopped:
+                return  # close() won the race with the connection attempt
             sys.exit(1)
         try:
             if self.is_input_command_in_console:

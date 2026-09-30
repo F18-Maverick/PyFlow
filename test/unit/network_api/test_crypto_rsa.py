@@ -4,11 +4,12 @@ These tests need the shared libcrypto_api; they are skipped when the C
 library has not been built (see CMakeLists.txt at the repository root).
 """
 
+import ctypes
 import os
 import sys
+import threading
 
 import pytest
-import threading
 
 
 from PyFlow.network_api import rsa_crypto
@@ -455,3 +456,43 @@ def test_exclusive_file_lock_windows_retries(monkeypatch, tmp_path):
     busy_rounds = 2  # failed attempts before the lock frees
     assert len(nb_lock_calls) >= busy_rounds + 1  # then success
     assert nb_lock_calls[-1] is False  # and the lock is released again
+
+
+def test_stale_public_key_file_is_repaired_after_key_rotation(tmp_path):
+    """Regenerate a pub file left over from a previous ``~/.ssh/id_rsa``.
+
+    The exchanged public key is derived from the private key in use, so a
+    rotated key must not keep pushing the previous public key: the file is
+    rewritten as soon as its content differs (an unchanged file is still left
+    alone, see ``test_ensure_keys_never_rewrites_existing_pub``).
+    """
+    lib = rsa_crypto.load_library()
+    ssh_dir = tmp_path / "ssh"
+    ssh_dir.mkdir()
+    id_rsa = ssh_dir / "id_rsa"
+
+    def write_ssh_key():
+        handle = ctypes.c_void_p()
+        assert (
+            lib.pf_rsa_keygen(rsa_crypto.DEFAULT_KEY_BITS, ctypes.byref(handle))
+            == rsa_crypto.PF_OK
+        )
+        key = rsa_crypto.RsaKey(handle.value, lib)
+        try:
+            assert lib.pf_rsa_write_priv(key.handle, str(id_rsa).encode(), None) == 0
+        finally:
+            del key
+
+    write_ssh_key()
+    crypto = rsa_crypto.RsaCrypto("server", str(tmp_path), str(ssh_dir))
+    crypto.ensure_keys()
+    assert crypto.priv_path == str(id_rsa)
+    before = open(crypto.pub_path, "rb").read()
+
+    write_ssh_key()  # rotate ~/.ssh/id_rsa under the same name
+    crypto.reload_own_key()
+
+    after = open(crypto.pub_path, "rb").read()
+    assert after != before
+    wire = crypto.encrypt_for_peer(crypto.pub_path, "rotated")
+    assert crypto.decrypt_with_own(wire) == (True, "rotated")

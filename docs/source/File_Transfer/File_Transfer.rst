@@ -21,7 +21,8 @@ The design follows a **two-phase handshake** pattern:
 
 All file transfers use **stream-oriented reading/writing**
 with fixed-size chunks
-(by default 64 KiB) to avoid blocking and to handle large
+(65536 bytes, hardcoded in both directions) to avoid
+blocking and to handle large
 files efficiently.
 
 *Note: For a high-level overview of the server and client
@@ -42,22 +43,39 @@ command) also acts as the
 **sender** of the file data; the other side acts as the
 **receiver**.
 
-The protocol uses a set of predefined string constants,
-loaded from
-``decode_command_table.json``:
+The low-level wire markers are stored in
+``PyFlow/network_api/decode_command_table.json``, which each
+instance reads in its constructor and exposes both as
+``command_decode_table`` and as individual attributes. The
+attributes used by the transfer loop are:
 
-- ``server_start_file_transfer_sign`` - sent by the
+- ``server_start_file_transfer_sign`` — from
+  ``file_send_server_start_file_transfer``
+  (``/FILE_SEND_SERVER_START_FILE_TRANSFER``), sent by the
   receiver to the sender,
   indicating that the receiver is ready.
-- ``server_received_file_header_sign`` - sent by the
+- ``send_file_header_sign`` / ``send_file_data_sign`` — from
+  ``file_send_server_header`` / ``file_send_server_data``; both
+  attributes are set but not referenced by the transfer loop.
+- ``server_received_file_header_sign`` /
+  ``server_received_file_data_sign`` — from
+  ``file_receive_client_header`` / ``file_receive_client_data``;
+  the header one is sent by the
   receiver after it has
-  successfully read the filename and file size.
-- ``server_received_file_data_sign`` - sent by the
-  receiver after the complete
+  successfully read the filename and file size, the data one after the complete
   file has been written to disk.
-- ``error_sign`` - sent by either side when an error
+- ``error_sign`` — from ``file_send_receive_error`` (``/FER``),
+  sent by either side when an error
   occurs, causing the
   transfer socket to be closed.
+
+The remaining keys of the table cover the other three
+direction/phase combinations. Protocol control lines that are
+not part of this table (``/server_file_transfer_port``,
+``/client_alloc_port_range``, ``/pause_trans``,
+``/start_trans``, ``/forward_item``, ``/forward_upload``,
+``/forward_error``, ``/crypto_*``) are hardcoded in
+``connect_tcp.py``.
 
 ### Metadata Exchange
 
@@ -73,7 +91,7 @@ is connected:
 - Send the filename encoded in UTF-8.
 - Send the file size as an 8-byte unsigned integer
   (big-endian).
-- Send the file content in 64 KiB chunks until EOF.
+- Send the file content in 65536-byte chunks until EOF.
 - Wait for the completion acknowledgement
   (``server_received_file_data_sign``) with a dynamic
   timeout (base 30 seconds
@@ -113,26 +131,24 @@ Commands starting with ``/file``, ``/multiple_file``,
 ``/file_folder``, or
 ``/multiple_file_folder`` are recognised. For each such
 command, the client
-calls the corresponding thread-safe entry point (the
-methods ending with
-``_thread``).
+calls the corresponding entry point described below.
 
-### Thread-Safe Entry Points
+### Entry Points
 
-The client provides the following thread-safe methods for
-initiating transfers:
+The console dispatches to these methods:
 
 - ``file_transfer_client_recv_client_start_thread(message,
-  file_folder_abspath=None)``
+  file_folder_abspath=None)`` for ``/file`` — this one does spawn a
+  daemon thread that runs the worker function.
 - ``folder_file_transfer_client_recv_client_start(message)``
 - ``multiple_file_transfer_client_recv_client_start(message)``
 - ``multiple_folder_file_transfer_client_recv_client_start(message)``
 
-Each of these methods creates a new daemon thread that
-executes the actual
-worker function (the non-``_thread`` version). This
-prevents the console thread
-from being blocked.
+The last three run synchronously on the console thread; they walk the
+tree or the file list and spawn one worker thread per file themselves, so the
+console keeps reading input while the transfers run. Every worker holds
+``file_semaphore`` for the whole transfer, so at most ``max_thread_num`` of
+them run at once.
 
 ### Worker Function (Client Side)
 
@@ -166,19 +182,23 @@ Its logic is as follows:
 
 For folder transfers, the worker function
 ``folder_file_transfer_client_recv_client_start(message)``
-recursively walks the
-directory tree. For each subdirectory (except the top
-level), it sends a
-``/file_folder <relative_path>`` command over the main
-connection to create the
-corresponding directory on the server. For each file, it
-calls
-``file_transfer_client_recv_client_start_thread`` with a
+walks the
+directory tree on the console thread. It first sends a
+``/file_folder <relative_path>`` command for the top-level folder itself
+to create the
+corresponding directory on the server, then sends the same command for
+every subdirectory it walks into. For each file, it starts a daemon
+thread that holds
+``file_semaphore`` around the actual transfer, with a
 command of the form
-``/file_folder <relative_path> <file_name>``. A semaphore
-(``file_semaphore``) limits the number of concurrent file
-transfers to
-``max_thread_num``.
+``/file_folder <relative_path> <file_name>``, so the number of concurrent
+file transfers is
+limited to ``max_thread_num``.
+
+``multiple_file_transfer_client_recv_client_start`` loops over the given
+files and starts one worker thread per file, each holding ``file_semaphore``
+around its own transfer, so the concurrent transfers are capped by
+``max_thread_num`` on that path too.
 
 ### Server-Side Handler (Receiving)
 
@@ -374,21 +394,23 @@ Command syntax:
   ``/multiple_file_folder <folder1> <folder2> ... [destination_file_path]``
 
 - Server console (the receiver is the target client, given
-  as a quoted address tuple):
+  as a quoted ``(ip, port)``
+  address tuple, not as a client id):
 
-  ``/file <file_path> <client_id> [destination_file_path]``
+  ``/file <file_path> <(ip, port)> [destination_file_path]``
 
-  ``/file_folder <folder_path> <client_id> [destination_file_path]``
+  ``/file_folder <folder_path> <(ip, port)> [destination_file_path]``
 
-  ``/multiple_file_multiple_client <file1> <file2> ... <client_id1> <client_id2> ... [destination_file_path]``
+  ``/multiple_file_multiple_client <file1> <file2> ... <(ip, port)1> <(ip, port)2> ... [destination_file_path]``
 
-  ``/diff_multiple_file_diff_multiple_client <file1> ... <client_id1> ... [destination_file_path]``
+  ``/diff_multiple_file_diff_multiple_client <file1> ... <(ip, port)1> ... [destination_file_path]``
 
 For the multiple-item commands the destination is the last
 argument; when the
-last argument is an existing local file/folder it is
-treated as another item to
-transfer instead.
+last argument is not a ``(ip, port)`` tuple it is treated as the
+destination path (for the ``/multiple_file_multiple_client`` form, items are
+classified per token, so files and addresses may be interleaved and a last
+argument that is not an existing local file/folder is the destination).
 
 .. _native-in-memory-forward:
 
@@ -400,8 +422,8 @@ forwarding feature that
 relays data from one client to several other clients
 through the server
 **without any disk I/O on the server**. Unlike the
-forward extension (which
-uploads to disk and then downloads from disk), the server
+forward extension (which uploads the data to the server's transfer
+directory first and then has the server push the stored copies), the server
 only holds the data
 in memory and streams it straight to the target clients.
 This avoids the
@@ -437,7 +459,7 @@ machinery:
 
 1. The forwarding client streams the file with the
    standard file-transfer
-   byte stream (metadata header + 64 KiB chunks) to a
+   byte stream (metadata header + 65536-byte chunks) to a
    transfer socket on the
    server.
 2. The server acts as a pure relay: it reads the stream
@@ -457,9 +479,8 @@ machinery:
 
 Because uploader, server and targets may have different
 bandwidths, data can
-pile up in the server's memory. Both ``TCP_Server_Base``
-and ``TCP_Client_Base``
-take a ``max_mem_buff`` parameter (in MB, default 2048,
+pile up in the server's memory. ``TCP_Server_Base``
+takes a ``max_mem_buff`` parameter (in MiB, default 2048,
 i.e. 2 GB) that bounds
 the memory the forwarding machinery may hold in that
 process. When the server's
@@ -496,9 +517,9 @@ ensure stability during file transfers.
 This semaphore limits the number of simultaneous file
 transfers (used primarily
 when sending folders or multiple files). Each transfer
-runs in its own thread,
-and the semaphore is acquired before the thread is
-started.
+runs in its own thread and the worker acquires the semaphore for the whole
+transfer, so both the folder and the ``/multiple_file`` path are capped at
+``max_thread_num`` (``max_file_transfer_thread_num`` on the server).
 
 ### Threading Model
 
@@ -549,15 +570,20 @@ Two modes are available:
   and the operating system assigns a free port when the
   socket is bound. This is
   the recommended mode for most use cases.
-- **Manual mode** (``is_hand_alloc_port=True``): Ports
+- **Manual mode** (``is_hand_alloc_port=True`` on the
+  server constructor; on the client the flag is set by the server's
+  ``/client_alloc_port_range`` message): Ports
   are drawn from a
   configurable range ``[self.min_port, self.max_port]``
   with a step size
-  ``port_add_step``. The server broadcasts the allowed
-  range to clients via
+  ``port_add_step``. The server sends the allowed
+  range to each client that connects
+  via
   ``/client_alloc_port_range``, and clients then use the
   same manual allocation
-  logic.
+  logic. See
+  :doc:`../Port_Allocation/Port_Allocation` for the range record and the
+  retry behaviour.
 
 *Note: For more details about port allocation, please
 visit the Port Allocation API
@@ -599,8 +625,9 @@ Error Handling and Timeouts
 All socket operations are wrapped in try-except blocks.
 When an exception occurs
 (e.g., connection reset, file not found), the error is
-logged with
-``traceback.print_exc()`` and the transfer is aborted
+logged through the instance's ``_log_exc`` helper, which
+prints the traceback only when both ``is_print_log`` and
+``is_debug`` are true, and the transfer is aborted
 gracefully. The
 ``error_sign`` is sent if possible, and the transfer
 socket is closed.
@@ -620,11 +647,7 @@ APIs, please see the tables at the end of this document.
 
 .. code-block:: python
 
-    def file_transfer_server_recv_client_start(
-        self,
-        message: str,
-        file_folder_abspath: str = None
-    ) -> None | False
+    def file_transfer_server_recv_client_start(self, message, file_folder_abspath)
 
 Initiates a server-to-client file transfer. ``message`` is the command string
 (e.g., ``/file /path/to/file.txt (127.0.0.1,54321)``). If
@@ -635,60 +658,45 @@ folder.
 
 .. code-block:: python
 
-    def file_transfer_server_recv_client_start_thread(
-        self,
-        message: str,
-        file_folder_abspath: str = None
-    ) -> None
+    def file_transfer_server_recv_client_start_thread(self, message, file_folder_abspath=None)
 
 Thread-safe version that starts a new thread for the transfer.
 
 .. code-block:: python
 
-    def folder_file_transfer_server_recv_client_start(
-        self,
-        message: str
-    ) -> None | False
+    def folder_file_transfer_server_recv_client_start(self, message)
 
 Sends an entire folder from server to client. ``message`` should be of the form
-``/file_folder <folder_path> <client_address>``.
+``/file_folder <folder_path> <(ip, port)> [destination_file_path]``.
 
 .. code-block:: python
 
-    def multiple_file_multiple_client_transfer_server_recv_client_start(
-        self,
-        message: str
-    ) -> None
+    def multiple_file_multiple_client_transfer_server_recv_client_start(self, message)
 
-Sends multiple files to multiple clients. The message format is
-``/multiple_file_multiple_client <file1> <file2> ...
-<client_addr1> <client_addr2> ...``.
-Files must appear before clients.
+Sends multiple items to multiple clients. The message format is
+``/multiple_file_multiple_client <item1> <item2> ...
+<(ip, port)1> <(ip, port)2> ... [destination]``; every token is classified
+on its own (a ``(ip, port)`` literal is a target, anything else is an item),
+so items and targets may be interleaved. Each item is dispatched as a file
+or as a folder depending on what it is on disk, and an optional trailing
+destination path is accepted.
 
 .. code-block:: python
 
-    def diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(
-        self,
-        message: str
-    ) -> None
+    def diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(self, message)
 
-Sends different file lists to different clients. The message alternates between
-groups: a list of files, then a list of client addresses,
-then the next list of
-files, etc. Example:
+Sends different file lists to different clients. Files that appear before
+a group of client addresses are sent to that group; a new group starts as
+soon as a file token follows one or more addresses. Example:
 ``/diff_multiple_file_diff_multiple_client a.txt b.txt
-(ip1,port1) (ip2,port2) c.txt (ip3,port3)``
+(ip1,port1) (ip2,port2) c.txt (ip3,port3)`` — ``a.txt`` and ``b.txt`` go to
+``(ip1,port1)`` and ``(ip2,port2)``, ``c.txt`` to ``(ip3,port3)``. An
+optional trailing destination path is accepted.
 
 .. code-block:: python
 
     def file_transfer_server_recv_server_start(
-        self,
-        client_id: str,
-        client_socket: socket.socket,
-        command: str,
-        new_save_path: str = None,
-        file_name: str = None
-    ) -> None
+        self, client_id, client_socket, command, new_save_path=None, file_name=None)
 
 Receives a file from a client. Called internally when the server receives a
 ``/file`` command from a client.
@@ -696,15 +704,8 @@ Receives a file from a client. Called internally when the server receives a
 .. code-block:: python
 
     def file_transfer_mode_recv(
-        self,
-        server_file_address: str,
-        server_file_port: int,
-        client_socket: socket.socket,
-        client_id: str,
-        new_save_path: str,
-        file_name: str,
-        command: str
-    ) -> None
+        self, server_file_address, server_file_port, client_socket,
+        client_id, new_save_path, file_name, command)
 
 Low-level receive function that performs the handshake and writes the incoming
 file to disk.
@@ -712,12 +713,7 @@ file to disk.
 .. code-block:: python
 
     def file_transfer_mode(
-        self,
-        filename: str,
-        server_address: str,
-        server_port: int,
-        client_port: int
-    ) -> bool
+        self, filename, server_address, server_port, client_port, pause_fid=None)
 
 Low-level send function that connects to the receiver and transmits the file.
 
@@ -725,11 +721,7 @@ Low-level send function that connects to the receiver and transmits the file.
 
 .. code-block:: python
 
-    def file_transfer_client_recv_client_start(
-        self,
-        message: str,
-        file_folder_abspath: str = None
-    ) -> None | False
+    def file_transfer_client_recv_client_start(self, message, file_folder_abspath)
 
 Initiates a client-to-server file transfer. ``message`` is the user command
 (e.g., ``/file mydoc.txt``). Used internally by the
@@ -737,100 +729,59 @@ interactive console.
 
 .. code-block:: python
 
-    def file_transfer_client_recv_client_start_thread(
-        self,
-        message: str,
-        file_folder_abspath: str = None
-    ) -> None
+    def file_transfer_client_recv_client_start_thread(self, message, file_folder_abspath=None)
 
 Thread-safe version.
 
 .. code-block:: python
 
-    def folder_file_transfer_client_recv_client_start(
-        self,
-        message: str
-    ) -> None | False
+    def folder_file_transfer_client_recv_client_start(self, message)
 
 Sends a folder from client to server.
 
 .. code-block:: python
 
-    def multiple_file_transfer_client_recv_client_start(
-        self,
-        message: str
-    ) -> None
+    def multiple_file_transfer_client_recv_client_start(self, message)
 
 Sends multiple files from client to server.
 
 .. code-block:: python
 
-    def multiple_folder_file_transfer_client_recv_client_start(
-        self,
-        message: str
-    ) -> None
+    def multiple_folder_file_transfer_client_recv_client_start(self, message)
 
 Sends multiple folders from client to server.
 
 .. code-block:: python
 
     def file_transfer_client_recv_server_start(
-        self,
-        client_id: str,
-        client_socket: socket.socket,
-        command: str,
-        new_save_path: str = None,
-        file_name: str = None
-    ) -> None
+        self, client_id, client_socket, command, new_save_path=None, file_name=None)
 
 Receives a file from the server (called when the server initiates a transfer).
 
 .. code-block:: python
 
-    def file_transfer_client_recv_server_start_thread(
-        self,
-        client_id: str,
-        client_socket: socket.socket,
-        command: str
-    ) -> None
+    def file_transfer_client_recv_server_start_thread(self, client_id, client_socket, command)
 
 Thread-safe version.
 
 .. code-block:: python
 
-    def file_folder_transfer_client_recv_server_start_thread(
-        self,
-        command: str,
-        client_id: str,
-        client_socket: socket.socket
-    ) -> None
+    def file_folder_transfer_client_recv_server_start_thread(self, command, client_id, client_socket)
 
 Receives a folder from the server.
 
 .. code-block:: python
 
     def file_transfer_mode_recv(
-        self,
-        server_file_address: str,
-        server_file_port: int,
-        client_socket: socket.socket,
-        client_id: str,
-        new_save_path: str,
-        file_name: str,
-        command: str
-    ) -> None
+        self, server_file_address, server_file_port, client_socket,
+        client_id, new_save_path, file_name, command)
 
 Low-level receive function on the client side.
 
 .. code-block:: python
 
     def file_transfer_mode(
-        self,
-        filename: str,
-        server_address: str,
-        server_port: int,
-        client_port: int
-    ) -> bool
+        self, filename, server_address, server_port, client_port, pause_fid=None)
 
 Low‑level send function on the client side (identical to server's version).
 
@@ -850,6 +801,7 @@ reference.
 - ``folder_file_transfer_server_recv_client_start``
 - ``multiple_file_multiple_client_transfer_server_recv_client_start``
 - ``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``
+- ``file_folder_transfer_server_recv_server_start_thread`` (folder receiving)
 
 (The low-level helpers
 ``file_transfer_server_recv_server_start``,

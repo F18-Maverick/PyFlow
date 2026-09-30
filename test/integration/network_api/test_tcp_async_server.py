@@ -13,7 +13,7 @@ import threading
 import time
 
 import pytest
-from helpers import wait_until
+from helpers import server_ready, wait_until
 
 from PyFlow.network_api import rsa_crypto
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
@@ -255,12 +255,25 @@ def _wait_transfer_port(instance, timeout=10.0):
 
 
 def test_stop_ends_the_event_loop(asynic_server):
-    """`stop` releases the accept loop, so the listener stops accepting."""
+    """`stop` releases the accept loop, so the listener stops accepting.
+
+    The accept loop closes the listener slightly after ``running`` flips, so the
+    refusal is polled instead of asserted on the first connect (a tight
+    assertion here failed under load with "DID NOT RAISE OSError").
+    """
+    assert server_ready(asynic_server), "server did not start"
     port = asynic_server.port
     asynic_server.stop()
     assert wait_until(lambda: not asynic_server.running)
-    with pytest.raises(OSError):
-        socket.create_connection(("127.0.0.1", port), timeout=2)
+
+    def connection_refused():
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=2).close()
+            return False
+        except OSError:
+            return True
+
+    assert wait_until(connection_refused, timeout=5), "listener still accepted a connection"
 
 
 def test_thread_mode_still_refuses_clients_beyond_max_clients(threaded_server):

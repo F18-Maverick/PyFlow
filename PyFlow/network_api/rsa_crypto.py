@@ -338,31 +338,40 @@ class RsaCrypto:
             self._priv_key = priv_key
 
     def _ensure_pub_file(self, lib, priv_handle, pub_path):
-        """Write the public key file when missing (idempotent, locked).
+        """Write the public key file when it is missing or does not match the private key.
 
-        The pub file is produced atomically by ``_generate_keypair``, so an
-        existing file is left alone: rewriting it on every ``ensure_keys``
-        raced with concurrent readers on Windows, where ``os.replace()``
-        fails with EACCES ("Access is denied") while another handle is open.
-        The lock serialises repairs; ``os.replace`` keeps them atomic.
+        The public key is re-derived from the private key on every load, so a
+        rotated ``~/.ssh/id_rsa`` (or a hand-edited key pair) cannot leave a
+        stale public key in place. The file is only replaced when its content
+        actually differs: rewriting it on every ``ensure_keys`` raced with
+        concurrent readers on Windows, where ``os.replace()`` fails with
+        EACCES ("Access is denied") while another handle is open. The lock
+        serialises repairs; ``os.replace`` keeps them atomic.
+
+        Raises:
+            RuntimeError: If the public key cannot be written.
         """
-        if os.path.exists(pub_path):
-            return
-        with _exclusive_file_lock(pub_path):
-            if os.path.exists(pub_path):
-                return
-            tmp_pub = "{}.{}.tmp".format(pub_path, uuid.uuid4().hex)
+        tmp_pub = "{}.{}.tmp".format(pub_path, uuid.uuid4().hex)
+        try:
+            err = lib.pf_rsa_write_pub(priv_handle, tmp_pub.encode("utf-8"))
+            if err != PF_OK:
+                raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
+            with open(tmp_pub, "rb") as f:
+                fresh_pub = f.read()
             try:
-                err = lib.pf_rsa_write_pub(priv_handle, tmp_pub.encode("utf-8"))
-                if err != PF_OK:
-                    raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
+                with open(pub_path, "rb") as f:
+                    current_pub = f.read()
+            except OSError:
+                current_pub = None
+            if current_pub == fresh_pub:
+                return
+            with _exclusive_file_lock(pub_path):
                 _os_replace_retry(tmp_pub, pub_path)
+        finally:
+            try:
+                os.unlink(tmp_pub)
             except Exception:
-                try:
-                    os.unlink(tmp_pub)
-                except Exception:
-                    pass
-                raise
+                pass  # already moved into place
 
     def reload_own_key(self):
         """Re-read the private key (e.g. after a ~/.ssh rotation)."""

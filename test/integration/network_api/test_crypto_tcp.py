@@ -672,3 +672,17 @@ def test_crypto_mode_mismatch_disconnects(tmp_path):
     finally:
         client_on.close()
         server_off.stop()
+
+
+def test_encrypted_quit_closes_the_session(tcp_pair):
+    """Answer ``/quit`` and end the session on the encrypted channel too.
+
+    The goodbye is encrypted like every other line, and the server then shuts
+    the connection down, so the client must observe the disconnect.
+    """
+    server, client, _tmp = tcp_pair
+    assert _wait_flip(client), "client never flipped to encrypted mode"
+    assert wait_until(lambda: len(server._encrypted_sockets) == 1, timeout=5)
+    assert client.send_message(client.client_socket, "/quit") is True
+    assert wait_until(lambda: not server.clients, timeout=5), "server kept the encrypted session"
+    assert _wait_disconnected(client), "client did not see the server close the connection"

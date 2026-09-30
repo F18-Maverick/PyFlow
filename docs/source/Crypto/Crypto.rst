@@ -13,6 +13,10 @@ The module provides:
 - AES-256-GCM authenticated encryption for ECDH sessions.
 - PEM key persistence and structured error reporting.
 
+The library version is 1.0.0 (``PF_CRYPTO_VERSION_MAJOR`` /
+``PF_CRYPTO_VERSION_MINOR`` / ``PF_CRYPTO_VERSION_PATCH`` and
+``PF_CRYPTO_VERSION_STRING`` in ``pf_crypto.h``).
+
 The public headers are located in ``PyFlow/crypto_api/include``:
 
 - ``pf_crypto.h`` - common errors, OpenSSL diagnostics, and HKDF.
@@ -38,8 +42,13 @@ Build it from the repository root:
     cmake --build build --parallel
     ctest --test-dir build --output-on-failure
 
+``ctest --test-dir`` was added in CMake 3.20; with the 3.16 minimum the
+equivalent is ``ctest --output-on-failure`` run from inside ``build/``.
+
 The C test suite lives in ``test/crypto_api/`` (``test_hkdf``, ``test_rsa``,
-``test_ecdh``) and is built and run together with the library.
+``test_ecdh``). It is built only when ``CRYPTO_API_BUILD_TESTS`` (default
+``ON``) and ``BUILD_TESTING`` are both enabled, and then runs together with
+the library.
 
 The library is built as a shared object (``libcrypto_api.so``) so it can
 be loaded from Python: ``PyFlow/network_api/rsa_crypto.py`` is a ctypes
@@ -48,19 +57,37 @@ binding used by the TCP layer to encrypt messages with RSA-OAEP (see the
 binding also implements the TCP layer's anti-MITM identity check (TOFU):
 peer public keys are exchanged on every connection, recorded under the
 peer's ``(ip, port)`` in ``network_api/.Flow/pub_key/pub_key.json`` with
-their SHA-256, and a changed key for a recorded endpoint rejects the
-connection. The binding looks for the library via
-``ctypes.util.find_library`` and in ``build/`` next to the repository root.
+the SHA-256 of the received PEM text, and a changed key for a recorded
+endpoint rejects the connection; a key already known under another
+endpoint is accepted and re-registered under the new one. The encryption
+state machine is bounded: three consecutive decode failures trip a
+circuit breaker (``MAX_DECODE_FAILURES`` in ``connect_tcp.py``) that stops
+re-keying, and a key that is stale or rotated makes the TCP layer reload
+its own key and re-exchange. The binding looks for the library via
+``ctypes.util.find_library`` and then next to the repository root in
+``build/`` (``libcrypto_api.so``, ``libcrypto_api.dylib``,
+``libcrypto_api.dll`` and ``build/Release/crypto_api.dll``).
+
+The build produces the SOVERSIONed names ``libcrypto_api.so.1`` /
+``libcrypto_api.so.1.0.0`` plus the ``libcrypto_api.so`` loader symlink.
 
 CMake install rules export the ``crypto_api`` library, its public headers,
 and a CMake package configuration. All CMake content sits at the
 repository root: the CMake package template and the pkg-config template
-are ``cmake/crypto_apiConfig.cmake.in`` and ``crypto_api.pc.in``.
+are ``cmake/crypto_apiConfig.cmake.in`` and ``crypto_api.pc.in``. Consumers
+use the CMake target ``crypto_api::crypto_api`` (or ``find_package(crypto_api)``,
+``SameMajorVersion`` compatible), or pkg-config module ``crypto_api``
+(``-lcrypto_api`` for linking, ``-lcrypto`` as a private dependency).
 
 Common API
 ==========
 
-All public functions return ``pf_err_t``. ``PF_OK`` indicates success.
+Most public functions return ``pf_err_t``; ``PF_OK`` indicates success.
+Functions that report a size or a string instead have their own return
+type (``pf_err_string`` returns ``const char *``,
+``pf_crypto_openssl_errors`` returns ``void``,
+``pf_rsa_ciphertext_len`` and ``pf_rsa_max_plaintext_len`` return
+``size_t``, and the ``*_free`` functions return ``void``).
 Use ``pf_err_string`` to convert an error code to readable text and
 ``pf_crypto_openssl_errors`` to retrieve the pending OpenSSL error queue.
 
@@ -81,7 +108,9 @@ Use ``pf_err_string`` to convert an error code to readable text and
 The library uses caller-provided output buffers for fixed-size results.
 Functions that return allocated buffers document that the caller must
 release them with ``free``. Opaque key handles must be released with their
-corresponding ``*_free`` function.
+corresponding ``*_free`` function. HKDF output is capped at
+``PF_CRYPTO_HKDF_SHA256_MAX_OUT`` (8160 bytes) by both
+``pf_crypto_hkdf_sha256`` and ``pf_ecdh_derive_key``.
 
 RSA API
 =======
@@ -111,8 +140,12 @@ RSA-OAEP with SHA-256 for encryption and decryption. Key sizes from 2048 to
     pf_rsa_key_free(key);
 
 The first encryption call with ``out == NULL`` queries the required output
-size. RSA encryption is binary-safe and accepts an explicit input length.
-The maximum plaintext size is returned by ``pf_rsa_max_plaintext_len``.
+size; ``pf_rsa_decrypt`` supports the same query pattern. RSA encryption
+is binary-safe (it accepts an explicit input length, embedded NUL bytes
+included) and rejects inputs longer than the value returned by
+``pf_rsa_max_plaintext_len`` with ``PF_ERR_INVALID_ARG``.
+``pf_rsa_ciphertext_len`` returns the ciphertext size for a key (equal to
+its modulus size in bytes), and ``pf_rsa_key_free`` releases a key handle.
 
 Public and private keys can be stored as PEM files:
 
@@ -134,8 +167,9 @@ curve names are:
 - ``PF_ECDH_CURVE_P384``
 - ``PF_ECDH_CURVE_P521``
 
-Public keys are exchanged as PEM SubjectPublicKeyInfo strings. Parsed peer
-keys are checked before use.
+An unknown curve name returns ``PF_ERR_UNSUPPORTED``, and ``NULL`` selects
+P-256. Public keys are exchanged as PEM SubjectPublicKeyInfo strings.
+Parsed peer keys are checked to lie on the curve before use.
 
 .. code-block:: c
 
@@ -158,8 +192,11 @@ keys are checked before use.
     pf_ecdh_keypair_free(local);
 
 The higher-level ``pf_ecdh_seal`` and ``pf_ecdh_open`` APIs are recommended
-for application payloads. They derive an AES-256-GCM key with HKDF-SHA256,
-include a random salt and IV, and authenticate optional AAD.
+for application payloads. They derive an AES-256-GCM key with HKDF-SHA256
+from a random 16-byte salt and bind both public keys (in byte-sorted
+canonical order) as the HKDF ``info``, so the same key pair always agrees
+regardless of call order and a peer using a different key pair fails
+authentication. They authenticate optional AAD.
 
 The ``pf_ecdh_seal`` output format is:
 
@@ -169,7 +206,13 @@ The ``pf_ecdh_seal`` output format is:
 
 The fixed overhead is ``PF_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext
 is allowed. A failed tag check returns ``PF_ERR_AUTH_FAILED`` and no
-plaintext is returned.
+plaintext is returned. On success the output buffer is ``malloc``-ed and
+the caller frees it.
+
+ECDH key pairs can be persisted with ``pf_ecdh_keypair_write_priv`` and
+``pf_ecdh_keypair_read_priv`` (PKCS#8 PEM, optionally passphrase-protected
+with AES-256-CBC); ``pf_ecdh_keypair_free`` and ``pf_ecdh_pubkey_free``
+release the handles.
 
 Security Notes
 ==============
@@ -178,7 +221,10 @@ ECDH provides key agreement, but it does not authenticate public-key
 ownership by itself. Public keys must be exchanged over an authenticated
 channel or verified with an external signature/certificate mechanism.
 
-Private key files may be protected with a passphrase. Applications should
+Private key files may be protected with a passphrase: ``pf_rsa_write_priv``
+and ``pf_ecdh_keypair_write_priv`` encrypt the PKCS#8 PEM with AES-256-CBC
+when a passphrase is given, and the matching read function needs the same
+passphrase. Applications should
 restrict their file permissions and avoid logging passphrases, private keys,
 or plaintext session keys.
 
@@ -187,7 +233,9 @@ Error Handling
 
 The main error codes are:
 
-- ``PF_ERR_INVALID_ARG`` - invalid pointer or length.
+- ``PF_ERR_INVALID_ARG`` - NULL argument, illegal length or bad parameter
+  combination (e.g. out-of-range RSA key size, a NULL salt/info with a
+  non-zero length, or a plaintext longer than the key allows).
 - ``PF_ERR_NOMEM`` - allocation failure.
 - ``PF_ERR_OPENSSL`` - OpenSSL operation failure.
 - ``PF_ERR_IO`` - file operation failure.

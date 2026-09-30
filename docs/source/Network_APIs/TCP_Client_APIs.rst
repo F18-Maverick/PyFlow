@@ -38,18 +38,25 @@ The parameters of the ``__init__`` method are as follows:
 - ``client_host``: The local host IP address to bind the client socket to.
 - ``port``: The server port number to connect to.
 - ``client_port``: The local port number to bind the client socket to (``None`` means let the OS choose).
-- ``timeout``: The socket timeout in seconds for connection and receive operations (``None`` means no timeout).
+- ``timeout``: The socket timeout in seconds for connection and receive operations. ``None`` (the default) is not "no timeout": the socket then uses a fixed 5-second timeout, and receive timeouts are swallowed by the receive loop (it simply continues).
 - ``port_add_step``: The step size for incrementing the port number (used only in manual allocation mode).
 - ``max_thread_num``: The maximum number of threads for concurrent file transfer operations.
 - ``is_input_command_in_console``: A flag indicating whether to input commands in the console (interactive mode).
 - ``is_wait_server``: A flag indicating whether to keep retrying connection until the server is available.
 - ``max_custom_workers``: The maximum number of custom worker threads.
+- ``is_extend_command``: A flag for extension protocols. With ``False`` (the
+  default) the constructor starts the client itself by calling
+  ``start_TCP_client()``; with ``True`` it does not, so an extension can
+  register its commands first and connect later.
 - ``is_enable_encrypto``: A flag indicating whether the messages exchanged with
   the server are RSA-encrypted (see :ref:`tcp-client-encrypted-channel-api`).
 - ``is_custom_keys``: An optional ``[pub_key_path, pvt_key_path]`` pair of
   user-supplied RSA keys. Both files must exist, parse as PEM, and pair
   with each other; an invalid pair is silently ignored and the default
   key lookup is used instead (``None`` keeps the default lookup).
+- ``max_mem_buff``: The buffering ceiling in MiB, stored as bytes
+  (``self.max_mem_buff``). It is kept for parity with the server class; the
+  client's forward path does not read it today. The default is 2048.
 - ``is_debug``: A flag selecting how much detail is logged. With ``False``
   (the default) the client logs command content and execution results only;
   with ``True`` it also logs the key steps of the execution process.
@@ -114,8 +121,8 @@ connect to the server by calling the `connect` method.
 If the connection fails and ``is_wait_server`` is ``True``, 
 the client will keep retrying; otherwise it will exit.
 
-*Note: The client socket created in the `start_TCP_client` 
-method is based on IPv4 and uses the parameters 
+*Note: The client socket is created in the `connect` method
+(called by `start_TCP_client`), is based on IPv4 and uses the parameters
 ``self.host`` and ``self.port`` which are provided when 
 creating the client instance.*
 
@@ -166,8 +173,13 @@ For shutting down the client, the `close` method is defined as:
         ...
 
 In the `close` method, we set ``self.running`` to ``False``, 
-free any allocated ports by calling `free_port`, and then 
-close the client socket. This ensures a clean disconnection.
+free any allocated ports by calling `free_port`, flush the
+message and event stores, and then half-close
+(``shutdown(SHUT_RDWR)``) and close the client socket. This ensures a clean disconnection.
+
+``close`` also wins against a connection attempt that is still in flight:
+if it runs before ``connect`` puts the socket up, that call closes the socket
+it just connected and returns ``False`` instead of reviving the client.
 
 *Note: The `free_port` method works similarly to the server 
 side, releasing any manually allocated ports if manual 
@@ -201,7 +213,10 @@ connection and is responsible for:
 - buffering incoming data until newline-terminated messages are complete
 - splitting and processing each message line-by-line
 - routing special commands (starting with ``/``) that come from the server to `handle_server_command`
-- printing normal (non‑command) messages to the console with a ``[server]`` prefix
+- printing every received line to the console with a ``[server]`` prefix
+  (command lines included, after ``handle_server_command`` has processed them)
+- unwrapping forwarded lines (``/send_msg_from``) so a message another client
+  forwarded here is attributed to its author
 - handling connection resets and other socket errors, and cleaning up when the server closes the connection
 
 .. code-block:: python
@@ -220,6 +235,12 @@ commands sent by the server, such as:
   port assigned by the server for an ongoing file operation.
 - ``/file`` and ``/file_folder``: handle file transfer requests 
   initiated by the server (server-to-client transfers).
+- ``/crypto_mode``, ``/crypto_key_exchange``,
+  ``/crypto_key_exchange_ack``, ``/crypto_reject``,
+  ``/crypto_pub_key``, ``/crypto_ready``: the encrypted-channel
+  handshake messages; a ``/crypto_mode`` mismatch closes the connection.
+- ``/forward_upload``, ``/pause_trans``, ``/start_trans``,
+  ``/forward_error``: forwarding and transfer-control messages.
 
 If you have registered custom commands using the command 
 extension API, `handle_server_command` will also check 
@@ -229,7 +250,9 @@ and execute it accordingly.
 *Note: For more details of the command extension API, 
 see the :ref:`tcp-client-command-api` section.*
 
-- logging errors and disconnecting when the server closes the socket.
+Closing the connection when the server goes away is not part of
+`handle_server_command`: it is `receive_messages` that reports the
+disconnect and clears ``self.running``.
 
 .. code-block:: python
 
@@ -269,6 +292,39 @@ The client also provides an interactive input loop (`interactive_mode`)
 that reads user input from the console and sends messages 
 to the server.
 
+.. _tcp-client-event-listener-api:
+
+TCP Client inbound event listener API
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+External code can observe traffic without replacing the
+protocol loop:
+
+.. code-block:: python
+
+    def add_message_listener(self, listener)
+    def remove_message_listener(self, listener)
+    def add_file_listener(self, listener)
+    def remove_file_listener(self, listener)
+
+``add_message_listener`` registers ``listener(sender_id, message)``
+for every inbound plain message (lines that do not start with ``/``;
+commands go to `handle_server_command` instead). ``sender_id`` is the
+author's ``"ip:port"`` — for a message another client forwarded here
+through the ``/send_msg_from`` envelope it is the forwarding client, and
+it is ``None`` for a direct push from the server. ``add_file_listener``
+registers ``listener(client_id, full_path, name, size, command)`` and
+fires after a file sent by the server has been fully written to disk.
+Both listeners run on a protocol thread, so they must not block, and an
+exception inside a listener is logged and swallowed. The ``remove_*``
+counterparts unregister a listener and ignore unknown ones.
+
+Received messages and events are also stored per sender socket in
+``messages_dict`` / ``events_dict`` (each entry a ``[content,
+timestamp]`` pair). When a store reaches ``max_dict_size`` (64 KiB) it
+is flushed to ``messages_log.json`` / ``events_log.json`` under
+``network_api/.Flow`` and cleared; ``close`` flushes both stores.
+
 .. _tcp-client-encrypted-channel-api:
 
 TCP Client encrypted channel API
@@ -281,11 +337,18 @@ connecting, before any message content is encrypted.
 Key material
 ^^^^^^^^^^^^
 
-- If a PEM private key exists at ``~/.ssh/id_rsa`` it is reused; otherwise a
-  fresh RSA-2048 keypair is generated into ``network_api/.Flow/pvt_key``
-  (``client_priv.pem`` / ``client_pub.pem``). The exchanged public key is
-  always derived from the private key, so a rotated ``~/.ssh`` pair is
-  picked up automatically.
+- If a parseable PEM private key exists at ``~/.ssh/id_rsa`` it is reused;
+  otherwise a fresh RSA-2048 keypair is generated into
+  ``network_api/.Flow/pvt_key``
+  (``client_priv.pem`` / ``client_pub.pem``). An ``~/.ssh/id_rsa`` that
+  cannot be parsed is skipped, not reported.
+- The public-key file next to the private key is re-derived from the private
+  key on every load: if it is missing or does not match the key in use (a
+  rotated ``~/.ssh/id_rsa``, a hand-edited pair) it is replaced, so the
+  exchanged public key always belongs to the private key that encrypts and
+  decrypts. An identical file is left untouched, which keeps a second instance
+  from replacing a file another process has open for reading (Windows rejects
+  ``os.replace`` with EACCES while a handle is open).
 - A user-supplied keypair can be forced with ``is_custom_keys =
   [pub_key_path, pvt_key_path]``: both files must exist, parse as PEM and
   pair with each other (a probe encrypted with the public key must decrypt
@@ -300,9 +363,11 @@ Anti-MITM identity check (TOFU)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Every connection re-exchanges public keys in plaintext, and each side
-records the peer in ``network_api/.Flow/pub_key/pub_key.json``: the key is
-``(ip, port)`` (a Python tuple of the endpoint the peer is reachable at),
-the value is ``[<sha256 of the public key>, <public key PEM>]``.
+records the peer in ``network_api/.Flow/pub_key/pub_key.json``: the object
+key is the endpoint the peer is reachable at written as a string —
+``str((ip, port))``, e.g. ``"('127.0.0.1', 65432)"``, since JSON object keys
+are strings — the
+value is ``[<sha256 of the public key PEM>, <public key PEM>]``.
 
 - First connection from an endpoint: the key is recorded and trusted
   (trust on first use).
@@ -321,8 +386,11 @@ delete the ``pub_key.json`` entry (or the whole file).
 Handshake
 ^^^^^^^^^
 
-The client sends a plaintext ``/crypto_key_exchange <client-nonce>``
-greeting right after connecting; the server replies with
+Right after connecting, the client announces its encryption mode with a
+plaintext ``/crypto_mode <0|1>`` and waits up to 10 seconds for the server's
+answer; a mode mismatch closes the connection. It then sends a plaintext
+``/crypto_key_exchange <client-nonce>``
+greeting; the server replies with
 ``/crypto_key_exchange_ack <server-nonce> <need-client-pub> <force>``. Both
 sides then push their public key files over the file-transfer mechanism
 (plaintext) and TOFU-check the received key. Both sides switch to
@@ -382,13 +450,23 @@ programmatic control (when it is ``False``).
 Built-in client console commands (user-typed) include:
 
 - ``/quit``: sends a quit message to the server and closes the connection.
+- ``/send_msg <message...>``: sends the second token of the line as a chat
+  message (``send_message_to_server`` drops the command name and sends only
+  the next token).
 - ``/file <file_path>``: starts a file transfer from client to server.
 - ``/multiple_file <file1> <file2> ...``: sends multiple files from 
-  client to server (each in its own thread, respecting the semaphore limit).
+  client to server, one sender thread per file, at most ``max_thread_num``
+  of them at a time.
 - ``/file_folder <folder_path>``: sends an entire folder from 
   client to server, preserving the directory structure.
 - ``/multiple_file_folder <folder1> <folder2> ...``: sends multiple 
   folders from client to server.
+- ``/forward_file``, ``/forward_folder``, ``/forward_send_msg``: the
+  forwarding extension's console commands (client-only; the server refuses
+  them).
+
+Ctrl-C and EOF close the connection, send a final ``/quit`` and wait
+0.5 seconds before the process ends.
 
 *Note: Unlike the server, the client does not have built-in 
 ``/help``, ``/time``, or ``/clients`` commands because those 
@@ -396,23 +474,22 @@ are typically handled by the server. The client's ``/help``
 command is not implemented; users should refer to the server 
 documentation for available commands.*
 
-If a user types a command that is not built-in, the client 
-will check if it matches any registered custom commands 
-(see command extension API below). If it does, the client 
-will call the associated handler; otherwise the message 
-is sent as a normal chat message to the server.
+A user-typed line that is not built-in and not a registered custom command
+is sent to the server as a chat message, and the client logs
+``Unknown server command: <line>`` for it (so plain chat text is echoed
+with that wording too).
+
+*Note: a custom command is matched against the first token of the line, so a
+handler registered for ``/mycmd`` runs when the user types ``/mycmd ...``.*
 
 The command extension API for the client is defined as:
 
 .. code-block:: python
 
-    def register_command(
-        self: Self,
-        command_name: Any,
-        handler: Any,
-        where_to_run: Any,
-        run_in_thread: Any=False) -> bool:
-        ...
+    def register_command(self, command_name, handler, where_to_run, run_in_thread=False)
+    def submit_task(self, func, *args, **kwargs)
+    def create_temporary_server(self, handler, port=None, max_connections=1)
+    def create_temporary_client(self, server_host, server_port, bind_port=None, on_data=None)
 
 The arguments of the `register_command` function are the same 
 as on the server side:
@@ -426,6 +503,9 @@ as on the server side:
 - ``run_in_thread``: A boolean indicating whether to run the handler 
   in a separate thread from the thread pool.
 
+It returns ``False`` when ``where_to_run`` is neither ``"server"`` nor
+``"client"`` (nothing is registered then); on success it returns ``None``.
+
 *Note: The client stores registered commands in the same 
 structure as the server: ``self._custom_handlers = [{}, {}]``, 
 where index 0 is for commands coming from the server, and 
@@ -436,18 +516,11 @@ functions to its internal thread pool executor, and
 `_execute_custom_handler` to safely execute registered 
 handlers with error handling.
 
-.. code-block:: python
-
-    def submit_task(
-        self: Self,
-        func: Any,
-        *args: Any,
-        **kwargs: Any) -> None:
-        ...
-
 The `submit_task` method works identically to the server 
 version: it submits a callable to the client's thread pool, 
-using a semaphore to limit concurrency to ``max_custom_workers``.
+using a semaphore to limit concurrency to ``max_custom_workers``,
+and returns the ``concurrent.futures.Future`` for it (the worker
+slot is released when the call finishes).
 
 Temporary server and client creation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -467,7 +540,9 @@ but use `self.client_host` as the local binding address.
 
 `create_temporary_server` binds to ``(self.client_host, port)``. 
 If ``port`` is ``None``, it calls ``self.palloc()`` to obtain 
-a port (in manual mode) or returns ``0`` (OS-assigned). It 
+a port (``0`` in automatic mode, letting the OS choose, or a range
+port in manual mode) and raises ``RuntimeError`` when no port can be
+allocated. It 
 returns a tuple ``(port, server_thread, stop_event)``.
 
 .. code-block:: python
@@ -482,8 +557,8 @@ returns a tuple ``(port, server_thread, stop_event)``.
 
 `create_temporary_client` connects to the specified server. 
 If ``bind_port`` is given, it binds to ``(self.client_host, bind_port)``. 
-If ``bind_port`` is ``None``, it obtains a port via ``self.palloc()`` 
-and binds automatically. It returns a tuple 
+If ``bind_port`` is ``None``, the socket is left unbound before
+connecting and the OS picks the local port. It returns a tuple 
 ``(client_sock, recv_thread, stop_event)``.
 
 These methods allow the client to act as a temporary server 
@@ -501,24 +576,30 @@ This method reads lines from standard input and processes them.
 Supported console commands (user-typed) include:
 
 - ``/quit``: closes the connection and exits the client.
+- ``/send_msg <message...>``: sends the second token of the line to the server
+  as a chat message.
 - ``/file <file_path>``: sends a single file to the server.
-- ``/multiple_file <file1> <file2> ...``: sends multiple files to the server concurrently (limited by ``max_thread_num``).
+- ``/multiple_file <file1> <file2> ...``: sends multiple files to the server, one thread per file, limited to ``max_thread_num`` at a time.
 - ``/file_folder <folder_path>``: sends an entire folder to the server, recursively.
 - ``/multiple_file_folder <folder1> <folder2> ...``: sends multiple folders to the server.
-- Any other text not starting with ``/`` is sent as a normal chat message to the server.
+- ``/forward_file``, ``/forward_folder``, ``/forward_send_msg``: the
+  forwarding extension's console commands.
+- Any other non-empty line is sent as-is to the server — the same path chat
+  text takes.
 
 .. note::
    The client does not have a built-in ``/help`` command. 
    Please refer to the server's help for available commands 
    (e.g., by typing ``/help`` after connecting to the server).
 
-If a user types a custom command that has been registered with 
-``register_command(..., where_to_run="client")``, the client 
-will execute the associated handler (synchronously or in a 
-thread, as configured).
+A line registered with ``register_command(..., where_to_run="client")``
+runs when its first token matches a registered name; handlers registered with
+``where_to_run="server"`` match the first token of the lines the server
+sends.
 
-*Note: The client will print an error message for unknown 
-commands that start with ``/``.*
+*Note: The client logs ``Unknown server command: <line>`` for any line it
+did not recognise, including plain chat text, because those lines take the
+same fallback path.*
 
 Example interactive session::
 
@@ -549,48 +630,15 @@ The basic function for client-to-server file transfer is:
 
 .. code-block:: python
 
-    def file_transfer_client_recv_client_start(
-        self: Self,
-        message: Any,
-        file_folder_abspath: Any=None) -> None|False:
-        ...
+    def file_transfer_client_recv_client_start(self, message, file_folder_abspath)
+    def file_transfer_client_recv_client_start_thread(self, message, file_folder_abspath=None)
+    def folder_file_transfer_client_recv_client_start(self, message)
+    def multiple_file_transfer_client_recv_client_start(self, message)
+    def multiple_folder_file_transfer_client_recv_client_start(self, message)
 
-The thread-safe version (recommended for direct calls) is:
-
-.. code-block:: python
-
-    def file_transfer_client_recv_client_start_thread(
-        self: Self,
-        message: Any,
-        file_folder_abspath: Any=None) -> None:
-        ...
-
-The folder transfer function (client-to-server) is:
-
-.. code-block:: python
-
-    def folder_file_transfer_client_recv_client_start(
-        self: Self,
-        message: Any) -> None|False:
-        ...
-
-The multiple files transfer function (client-to-server) is:
-
-.. code-block:: python
-
-    def multiple_file_transfer_client_recv_client_start(
-        self: Self,
-        message: Any) -> None:
-        ...
-
-The multiple folders transfer function is:
-
-.. code-block:: python
-
-    def multiple_folder_file_transfer_client_recv_client_start(
-        self: Self,
-        message: Any) -> None:
-        ...
+The non-``_thread`` versions take the destination folder as a required
+argument (the ``_thread`` wrappers default it to ``None``, which means the
+default transfer folder).
 
 For server-initiated transfers (server-to-client), the client 
 provides these handlers:
@@ -598,54 +646,27 @@ provides these handlers:
 .. code-block:: python
 
     def file_transfer_client_recv_server_start(
-        self: Self,
-        client_id: Any,
-        client_socket: Any,
-        command: Any,
-        new_save_path: Any=None,
-        file_name: Any=None) -> None:
-        ...
-
-    def file_transfer_client_recv_server_start_thread(
-        self: Self,
-        client_id: Any,
-        client_socket: Any,
-        command: Any) -> None:
-        ...
-
-    def file_folder_transfer_client_recv_server_start_thread(
-        self: Self,
-        command: Any,
-        client_id: Any,
-        client_socket: Any) -> None:
-        ...
+        self, client_id, client_socket, command, new_save_path=None, file_name=None)
+    def file_transfer_client_recv_server_start_thread(self, client_id, client_socket, command)
+    def file_folder_transfer_client_recv_server_start_thread(self, command, client_id, client_socket)
 
 The low-level receive mode function is:
 
 .. code-block:: python
 
     def file_transfer_mode_recv(
-        self: Self,
-        server_file_address: Any,
-        server_file_port: Any,
-        client_socket: Any,
-        client_id: Any,
-        new_save_path: Any,
-        file_name: Any,
-        command: Any) -> None:
-        ...
+        self, server_file_address, server_file_port, client_socket,
+        client_id, new_save_path, file_name, command)
 
 And the low-level send mode function is:
 
 .. code-block:: python
 
     def file_transfer_mode(
-        self: Self,
-        filename: Any,
-        server_address: Any,
-        server_port: Any,
-        client_port: Any) -> True|False:
-        ...
+        self, filename, server_address, server_port, client_port, pause_fid=None)
+
+``pause_fid`` is the forwarding id used to pause/resume the transfer with
+``/pause_trans`` / ``/start_trans``.
 
 We recommend that for client-to-server file transfers, 
 you use the console commands (``/file``, ``/file_folder``, 
@@ -734,6 +755,12 @@ is as follows:
     - `receive_message`
     - `send_message`
     - `interactive_mode`
+    - `send_message_to_server`
+
+2.1. The inbound event listener APIs:
+    - `add_message_listener` / `remove_message_listener`
+    - `add_file_listener` / `remove_file_listener`
+    - `messages_dict` / `events_dict` stores
 
 3. The client encrypted channel APIs (see :ref:`tcp-client-encrypted-channel-api`):
     - `_crypto_exchange_thread`

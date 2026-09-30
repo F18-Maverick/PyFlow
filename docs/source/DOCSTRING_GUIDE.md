@@ -9,7 +9,7 @@
 
 ## 2. Style: Google docstrings
 
-PyFlow uses **Google style**: `sphinx.ext.napoleon` converts the Args / Returns / Raises sections into reST fields, and `docs/source/conf.py` enables `sphinx.ext.napoleon` + `sphinx.ext.autodoc` with `napoleon_numpy_docstring = False` (a NumPy-style docstring is rejected rather than silently accepted). No `.. automodule::` page exists yet, so docstrings only reach the built docs once API pages are added (section 11).
+PyFlow uses **Google style**: `sphinx.ext.napoleon` converts the Args / Returns / Raises sections into reST fields, and `docs/source/conf.py` enables `sphinx.ext.napoleon` + `sphinx.ext.autodoc` with `napoleon_numpy_docstring = False` (a NumPy-style docstring is rejected rather than silently accepted). The generated `.. automodule::` pages under `docs/source/api/` (entry point `docs/source/api/index.rst`) pull the docstrings into the built docs (section 11).
 
 > ✅ Correct: Google style (explicit Args / Returns / Raises sections)  
 > ❌ Forbidden: NumPy style, reST field lists (`:param:`), unstructured prose

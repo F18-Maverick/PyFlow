@@ -13,7 +13,8 @@ subdirectory appears only when the source gains the matching package.
 test/
 ├── unit/           no network I/O, no subprocesses
 │   ├── test_flow_setup.py   launcher logic with mocked Popen (PyFlow/flow_setup.py)
-│   └── network_api/         object construction, pure logic, real crypto without sockets
+│   ├── network_api/         object construction, pure logic, real crypto without sockets
+│   └── transfer_web/        web-tool backend logic (accounts, mail, FTP share)
 ├── integration/    real sockets, but server + client live in the test process
 │   ├── conftest.py          shared server/client/udp fixtures
 │   ├── helpers.py           wait_until / server_ready polling helpers

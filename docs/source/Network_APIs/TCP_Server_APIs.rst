@@ -45,12 +45,19 @@ The parameters of the ``__init__`` method are as follows:
 - ``is_hand_alloc_port``: A flag indicating whether to manually allocate the port.
 - ``is_input_command_in_console``: A flag indicating whether to input commands in the console.
 - ``max_custom_workers``: The maximum number of custom worker threads.
+- ``is_extend_command``: A flag for extension protocols. With ``False`` (the
+  default) the constructor starts the server itself by calling
+  ``start_TCP_Server()``; with ``True`` it does not, so an extension can
+  register its commands first and start the server later.
 - ``is_enable_encrypto``: A flag indicating whether the messages exchanged with
   clients are RSA-encrypted (see :ref:`tcp-server-encrypted-channel-api`).
 - ``is_custom_keys``: An optional ``[pub_key_path, pvt_key_path]`` pair of
   user-supplied RSA keys. Both files must exist, parse as PEM, and pair
   with each other; an invalid pair is silently ignored and the default
   key lookup is used instead (``None`` keeps the default lookup).
+- ``max_mem_buff``: The in-memory buffering ceiling of the forward pump,
+  given in MiB and stored as bytes (``self.max_mem_buff``); past it the
+  uploading peer is told to pause. The default is 2048.
 - ``is_asynic_clients_io``: A flag indicating whether clients are served by
   asyncio coroutines on one event loop instead of one thread per client. It
   lifts the ``max_clients`` limit, so a single server can hold thousands of
@@ -178,6 +185,13 @@ see the :ref:`tcp-server-port-allocation-api` section.*
 At the end of the operations, the TCP server closes all client sockets stored in the
 ``self.clients`` dictionary and also closes the server socket.
 
+Before closing the listening socket it shuts it down, which releases a thread
+that is blocked in ``accept()`` (closing alone would leave the port listening
+until that call returned). ``stop`` also wins against a start that has not
+finished binding: if it runs before ``start_TCP_Server`` reaches the accept
+loop, that call closes the socket it just bound and returns without starting,
+so a stopped server cannot come up behind the caller's back.
+
 *Note: The ``self.clients`` variable is a dictionary that 
 maps client address tuples to an info dictionary. The 
 key is the client address tuple (``(ip, port)``) and the 
@@ -293,8 +307,12 @@ It verifies the server is running and the socket is valid, then:
   RSA-OAEP encrypted with the peer's public key, base64 encoded and
   newline-terminated instead of being sent in cleartext
 - encodes string payloads as UTF-8
-- sends the complete message with ``client_socket.sendall(data)``
-- returns ``True`` on success, otherwise logs the error and returns ``False``
+- sends the message with ``client_socket.sendall(data)`` when the server
+  serves clients with one thread each, or through a non-blocking
+  ``send()`` loop when ``is_asynic_clients_io`` is ``True``
+- returns ``True`` on success; it returns ``False`` for an unsupported
+  payload type, and an invalid/closed connection raises ``RuntimeError``
+  (other socket failures are logged and re-raised)
 
 And there are also some other functions which are 
 used to send message in bulk to the clients, such 
@@ -313,11 +331,18 @@ message content is encrypted.
 Key material
 ^^^^^^^^^^^^
 
-- If a PEM private key exists at ``~/.ssh/id_rsa`` it is reused; otherwise a
-  fresh RSA-2048 keypair is generated into ``network_api/.Flow/pvt_key``
-  (``server_priv.pem`` / ``server_pub.pem``). The exchanged public key is
-  always derived from the private key, so a rotated ``~/.ssh`` pair is
-  picked up automatically.
+- If a parseable PEM private key exists at ``~/.ssh/id_rsa`` it is reused;
+  otherwise a fresh RSA-2048 keypair is generated into
+  ``network_api/.Flow/pvt_key``
+  (``server_priv.pem`` / ``server_pub.pem``). An ``~/.ssh/id_rsa`` that
+  cannot be parsed is skipped, not reported.
+- The public-key file next to the private key is re-derived from the private
+  key on every load: if it is missing or does not match the key in use (a
+  rotated ``~/.ssh/id_rsa``, a hand-edited pair) it is replaced, so the
+  exchanged public key always belongs to the private key that encrypts and
+  decrypts. An identical file is left untouched, which keeps a second instance
+  from replacing a file another process has open for reading (Windows rejects
+  ``os.replace`` with EACCES while a handle is open).
 - A user-supplied keypair can be forced with ``is_custom_keys =
   [pub_key_path, pvt_key_path]``: both files must exist, parse as PEM and
   pair with each other (a probe encrypted with the public key must decrypt
@@ -332,9 +357,11 @@ Anti-MITM identity check (TOFU)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Every connection re-exchanges public keys in plaintext, and each side
-records the peer in ``network_api/.Flow/pub_key/pub_key.json``: the key is
-``(ip, port)`` (a Python tuple of the endpoint the peer connected from), the
-value is ``[<sha256 of the public key>, <public key PEM>]``.
+records the peer in ``network_api/.Flow/pub_key/pub_key.json``: the object
+key is the endpoint the peer connected from written as a string —
+``str((ip, port))``, e.g. ``"('127.0.0.1', 3000)"``, since JSON object keys
+are strings — the
+value is ``[<sha256 of the public key PEM>, <public key PEM>]``.
 
 - First connection from an endpoint: the key is recorded and trusted
   (trust on first use).
@@ -423,12 +450,47 @@ when sending the message.
         ...
 
 The `send_msg_to_specific_client` function sends one or more messages to
-one or more specific clients by their client IDs. The ``message`` argument
+one or more specific clients, identified by their ``(ip, port)`` endpoint
+(not by client ID): each address literal in the ``message`` argument is
+followed by the text addressed to it. A listed address that is not
+connected is reported on the console and skipped. The ``message`` argument
 should contain a command message to send.
 
 These methods form the server's client I/O loop 
 and ensure reliable message exchange for connected 
 TCP clients.
+
+.. _tcp-server-event-listener-api:
+
+TCP Server inbound event listener API
+-------------------------------------
+
+External code can observe traffic without replacing the
+protocol loop:
+
+.. code-block:: python
+
+    def add_message_listener(self, listener)
+    def remove_message_listener(self, listener)
+    def add_file_listener(self, listener)
+    def remove_file_listener(self, listener)
+
+``add_message_listener`` registers ``listener(client_id, message)``
+for every inbound plain message (lines that do not start with ``/``;
+commands go to the command handlers instead). ``add_file_listener``
+registers ``listener(client_id, full_path, name, size, command)`` and
+fires after a file uploaded by a client has been fully written to the
+transfer directory (``command`` is the wire command that triggered it,
+so protocol pushes such as ``/crypto_pub_key`` can be recognised).
+Both listeners run on a protocol thread, so they must not block, and an
+exception inside a listener is logged and swallowed. The ``remove_*``
+counterparts unregister a listener and ignore unknown ones.
+
+In addition, received messages and events are stored per sender socket
+in ``messages_dict`` / ``events_dict`` (each entry a ``[content,
+timestamp]`` pair). When a store reaches ``max_dict_size`` (64 KiB) it
+is flushed to ``messages_log.json`` / ``events_log.json`` under
+``network_api/.Flow`` and cleared; ``stop`` flushes both stores.
 
 .. _tcp-server-command-api:
 
@@ -457,9 +519,18 @@ Built-in client commands include:
 - ``/help``: returns the available command list and usage hints.
 - ``/time``: returns the current server time.
 - ``/clients``: returns the list of connected client IDs.
-- ``/quit``: returns a goodbye message and disconnects the client.
-- ``/file <file_path> <client_id>``: starts a file transfer request from client to server.
-- ``/file_folder <folder_path> <client_id>``: starts a folder transfer request from client to server.
+- ``/quit``: writes a goodbye message (``Bye!``) and shuts the connection
+  down, so a client that stays after sending ``/quit`` is disconnected by the
+  server.
+- ``/file <file_path> [destination_file_path]``: starts a file transfer from
+  the client to the server. The trailing token of the wire line is the
+  sender's own transfer id, appended by the sending client.
+- ``/file_folder <folder_path> [destination_file_path]``: starts a folder
+  transfer from the client to the server (same trailing id).
+- ``/crypto_mode <0|1>``, ``/crypto_pub_key``, ``/crypto_pub_key_request``:
+  internal handshake messages of the encrypted channel.
+- ``/forward_item``, ``/forward_send_msg``, ``/pause_trans``, ``/start_trans``:
+  internal forwarding/transfer-control messages.
 - ``/server_file_transfer_port <port> <client_id>``: internal protocol message used to coordinate file transfer ports.
 
 In `handle_command`, the server will first 
@@ -525,7 +596,9 @@ according to the args ``run_in_thread``. If
 will be executed in a separate thread from the 
 server's thread pool. If ``run_in_thread`` is 
 ``False``, the command handler will be executed 
-synchronously in the main server thread.
+synchronously on the thread that received the 
+message (the per-client receive thread, or the 
+caller of ``handle_command``).
 
 *Note: We store the registered commands in a list variable
 with two dictionaries in its inner layer, and the list variable
@@ -534,12 +607,16 @@ the `__init__` method. The command and its handler will be
 stored in one of the dictionaries according to the value
 of ``where_to_run``. For ``"server"``, it will be stored in
 the first dictionary, otherwise in the second dictionary.
-And the keys of the dictionaries are the command names,
-and the value is another dictionary containing the handler
-function. And there is also another list variable defined as 
+The keys of those dictionaries are the command names, and
+each value is the handler function itself (not a nested
+dictionary). And there is also another list variable defined as 
 ``self._custom_handler_threaded`` which is initialized in the 
 `__init__` method, it contains all the commands that should 
 be run in a separate thread or not.*
+
+*Note: ``register_command`` returns ``False`` when
+``where_to_run`` is neither ``"server"`` nor ``"client"``
+(nothing is registered then); on success it returns ``None``.*
 
 .. code-block:: python
 
@@ -582,13 +659,16 @@ the `submit_task` method, which is defined as:
         self: Self,
         func: Any,
         *args: Any,
-        **kwargs: Any) -> None:
+        **kwargs: Any) -> Future:
         ...
 
 The `submit_task` method is a helper function that submits 
 a callable to the server's internal thread pool executor. 
 It accepts a function and its arguments, and schedules it 
-for execution in a separate thread. This allows long-running 
+for execution in a separate thread, returning the
+``concurrent.futures.Future`` for the submitted call. The
+worker slot is released when the call finishes. This allows
+long-running
 or blocking command handlers to run without blocking the 
 main server loop.
 
@@ -602,20 +682,17 @@ are defined as:
 
 .. code-block:: python
 
-    def create_temporary_server(
-        self: Self,
-        handler: Any,
-        port: Any=None,
-        max_connections: Any=1) -> Any:
-        ...
+    def create_temporary_server(self, handler, port=None, max_connections=1)
+    def create_temporary_client(self, server_host, server_port, bind_port=None, on_data=None)
 
-    def create_temporary_client(
-        self: Self,
-        server_host: Any,
-        server_port: Any,
-        bind_port: Any=None,
-        on_data: Any=None) -> Any:
-        ...
+``create_temporary_server`` returns ``(port, thread, stop_event)``: the bound
+port (``palloc()`` picks one when ``port`` is None), the accept-loop thread
+and an event whose ``set()`` stops the loop and frees the port. It raises
+``RuntimeError`` when ``port`` is None and no port can be allocated.
+
+``create_temporary_client`` returns ``(client_socket, thread, stop_event)``:
+the connected socket, the receiver thread and an event whose ``set()`` ends
+that thread.
 
 .. _tcp-server-console-commands:
 
@@ -629,12 +706,17 @@ Supported console commands include:
 - ``/stop``: stops the server and closes all active connections.
 - ``/status``: prints the current connection count and running state.
 - ``/clients``: prints the connected clients and their connection times.
-- ``/send_msg <message...> <client_id1> <client_id2> ...``: sends one or more messages to specific clients.
-- ``/file <file_path> <client_id>``: sends a file from the server to a specific client.
-- ``/file_folder <folder_path> <client_id>``: sends a folder from the server to a specific client.
-- ``/multiple_file_multiple_client <file1> <file2> ... <client1> <client2> ...``: sends multiple files to multiple clients.
-- ``/diff_multiple_file_diff_multiple_client <file1> <file2> ... <client1> <client2> ...``: sends different file lists to different clients.
+- ``/send_msg <message...> <(ip, port)> ...``: sends one or more messages to specific clients. Targets are literal ``(ip, port)`` tuples (its own help text says "client_id", but the parser only accepts the tuple form).
+- ``/file <file_path> <(ip, port)> [destination_file_path]``: sends a file from the server to a specific client.
+- ``/file_folder <folder_path> <(ip, port)> [destination_file_path]``: sends a folder from the server to a specific client.
+- ``/multiple_file_multiple_client <file1> <file2> ... <(ip, port)1> <(ip, port)2> ...``: sends multiple files to multiple clients. Tokens are classified as targets when they are wrapped in parentheses and as files otherwise, so files and targets may be interleaved.
+- ``/diff_multiple_file_diff_multiple_client <file1> <file2> ... <(ip, port)1> <(ip, port)2> ...``: sends the files that precede a group of targets to that group. A new group starts whenever a file token follows one or more target tuples; an optional trailing destination path (a token that is not a tuple) is accepted and passed on.
 - ``/help``: prints a help summary of console commands.
+
+The forward commands (``/forward_send_msg``, ``/forward_file``,
+``/forward_folder``) are client-only and are refused on the server console.
+Any other name is matched against the commands registered with
+``where_to_run="client"``.
 
 These console commands make it easy to manage the 
 active server and perform server-initiated file 
@@ -733,7 +815,9 @@ Client-to-server transfer flow:
 1. The client sends ``/file`` or ``/file_folder`` to 
    request a transfer.
 2. ``handle_command`` starts a dedicated file-server 
-   thread using ``file_transfer_server_recv_server_start_thread``.
+   thread: ``file_transfer_server_recv_server_start_thread`` for ``/file``
+   and ``file_folder_transfer_server_recv_server_start_thread`` for
+   ``/file_folder``.
 3. The server allocates an ephemeral transfer port 
    with ``palloc`` and sends 
    ``/server_file_transfer_port <port> <client_id>`` 
@@ -756,8 +840,9 @@ Server-to-client transfer flow:
 Common file transfer helper methods include:
 
 - ``file_transfer_server_recv_server_start``: receives file data from a client.
-- ``file_transfer_server_recv_client_start``: sends a file or folder to a client.
-- ``file_transfer_mode``: performs the low-level client-side transfer handshake.
+- ``file_transfer_server_recv_client_start``: sends a file to a client.
+- ``file_transfer_mode``: performs the low-level sender-side transfer handshake
+  (used by both classes; on the server it also pushes the public key to a client).
 - ``file_transfer_mode_recv``: performs the low-level receive-side transfer handshake.
 
 .. _tcp-server-port-allocation-api:
@@ -810,20 +895,26 @@ There are some relevant methods that can be used:
 
 .. code-block:: python
 
-    def palloc(self: Self) -> int:
-        ...
+    def palloc(self)
+    def pfree(self, port)
+    def file_palloc(self)
+    def file_pfree(self, port)
+    def spy_palloc(self)
+    def spy_pfree(self, port)
+    def alloc_port(self, port_add_step, port_range_num)
+    def free_port(self)
+    def hand_alloc_port(self, port_add_step, port_range_num)
+    def hand_free_port(self)
 
 The `palloc` method allows you to get a port. When
 using this function, you don't need to worry about
 the port allocation mode, because an allocation mode
 detector is already implemented in this method.
-
-.. code-block:: python
-
-    def pfree(
-        self: Self,
-        port: int) -> None|int:
-        ...
+`file_palloc`/`file_pfree` operate on the additive
+direction of the range, `spy_palloc`/`spy_pfree` on the
+subtractive one, and `alloc_port`/`free_port` reserve and
+release the instance's range in the persistent log
+(no-ops in automatic mode).
 
 The `pfree` method allows you to free a port. Like the
 `palloc` method, you don't need to worry about the
@@ -857,6 +948,12 @@ are as follows:
     - `send_message`
     - `broadcast`
     - `send_msg_to_specific_client`
+    - `console_input` (only started when ``is_input_command_in_console`` is ``True``)
+
+2.1. The inbound event listener APIs (see :ref:`tcp-server-event-listener-api`):
+    - `add_message_listener` / `remove_message_listener`
+    - `add_file_listener` / `remove_file_listener`
+    - `messages_dict` / `events_dict` stores
 
 3. The server encrypted channel APIs (see :ref:`tcp-server-encrypted-channel-api`):
     - `_crypto_on_client_hello`

@@ -11,7 +11,7 @@ broadcast, and simple request-response communication.
 .. code-block:: python
 
     class UDP:
-        def __init__(self, host="0.0.0.0", port=0) -> None:
+        def __init__(self, host="0.0.0.0", port=0):
             ...
 
 The UDP endpoint is defined in the ``UDP`` class. The socket is
@@ -32,6 +32,9 @@ Every parameter has a default value:
 
 *Note: The public API of the UDP endpoint is based on IPv4 form.*
 
+The module also exposes ``MAX_DATAGRAM`` (65535), the receive
+buffer size used by ``listen``.
+
 UDP endpoint API
 ----------------
 
@@ -39,13 +42,13 @@ The public methods available on a ``UDP`` instance are:
 
 .. code-block:: python
 
-    def send(self, data: bytes, addr: tuple) -> None:
+    def send(self, data, addr):
         ...
-    def broadcast(self, data: bytes, port: int) -> None:
+    def broadcast(self, data, port):
         ...
-    def listen(self, handler) -> None:
+    def listen(self, handler):
         ...
-    def close(self) -> None:
+    def close(self):
         ...
 
 ``send``
@@ -61,8 +64,12 @@ The public methods available on a ``UDP`` instance are:
 
 ``listen``
     Starts a daemon thread that receives incoming datagrams.
-    The ``handler`` is a callable ``handler(data, addr)`` that
-    is invoked for each datagram received. Handler exceptions
+    The handler is a callable ``handler(data, addr)`` that
+    is invoked for each datagram received. Datagrams are read
+    with a buffer of ``MAX_DATAGRAM`` (65535) bytes and a
+    0.1-second socket timeout, so an idle endpoint wakes up
+    ten times a second instead of blocking indefinitely.
+    Handler exceptions
     are logged via the ``logging`` module rather than propagated,
     so a faulty handler does not terminate the receive loop.
     This method is idempotent: calling it while the receive
@@ -71,8 +78,10 @@ The public methods available on a ``UDP`` instance are:
 ``close``
     Signals the receive loop to exit and closes the underlying
     socket. The ``_closed`` flag is set to ``True`` and the
-    socket's ``close()`` method is called to interrupt any
-    blocking ``recvfrom`` call. This method is idempotent:
+    socket's ``close()`` method is called; the receive loop
+    notices the closed socket on its next timeout tick (or
+    when ``recvfrom`` raises ``OSError``) and returns. This
+    method is idempotent:
     calling it multiple times does not raise an error.
 
 *Note: When ``listen`` is called after ``close``, a*
@@ -82,10 +91,10 @@ The public methods available on a ``UDP`` instance are:
 .. code-block:: python
 
     @property
-    def port(self) -> int:
+    def port(self):
         ...
     @property
-    def local_addr(self) -> tuple[str, int]:
+    def local_addr(self):
         ...
 
 ``port``
