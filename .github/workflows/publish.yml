@@ -22,7 +22,13 @@ jobs:
           pip install build
 
       - name: Build package
-        run: python -m build
+        # Source distribution only: the C library is compiled on the user's
+        # machine when pip builds the wheel from it (setup.py). A wheel built
+        # here would be a raw linux_x86_64 binary linked against this runner's
+        # glibc/OpenSSL, which is neither portable nor installable on
+        # Windows/macOS. Publishing prebuilt manylinux/macosx/win wheels needs a
+        # cibuildwheel matrix (with auditwheel/delvewheel) instead.
+        run: python -m build --sdist
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

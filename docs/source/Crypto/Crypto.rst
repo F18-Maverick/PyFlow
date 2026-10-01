@@ -34,7 +34,13 @@ On Debian or Ubuntu, install the build dependencies with:
     sudo apt-get update
     sudo apt-get install -y build-essential cmake libssl-dev
 
-Build it from the repository root:
+Installing the Python package builds it automatically: ``setup.py`` compiles
+the three sources and installs the result inside the package
+(``PyFlow/_crypto_api.cpython-3XX-<platform>.so``), so ``pip install
+pyflow-net`` needs only a C compiler and the OpenSSL development headers.
+
+Build it from the repository root with CMake when the C test suite or the
+C API itself is wanted:
 
 .. code-block:: bash
 

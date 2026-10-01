@@ -17,13 +17,16 @@ lifecycle required by the encrypted TCP channel:
   stale key (for example a rotated ``~/.ssh`` pair) is detected and the
   peers re-exchange their public keys.
 
-The C library must be built first (``cmake -S . -B build &&
-cmake --build build``); see ``load_library`` for the search paths.
+The C library is compiled into the installed package by ``setup.py`` (a C
+compiler and OpenSSL development headers are needed at install time); a
+manual CMake build (``cmake -S . -B build && cmake --build build``) is
+still supported. See ``load_library`` for the search paths.
 """
 
 import contextlib
 import ctypes
 import ctypes.util
+import glob
 import hashlib
 import json
 import os
@@ -213,28 +216,52 @@ def _configure(lib):
 
 
 def load_library():
-    """Locate and load the shared crypto_api library (cached)."""
+    """Locate and load the shared crypto_api library (cached).
+
+    Search order: the library ``setup.py`` compiles into the installed
+    package (``PyFlow/_crypto_api.*.so``/``.pyd``), the CMake build
+    directory of a source checkout, then whatever
+    ``ctypes.util.find_library`` resolves for a system-wide install. A
+    candidate that exists but cannot be loaded (a platform whose OpenSSL
+    runtime is missing, for example) is reported only if no other
+    candidate works.
+    """
     if _Library._instance is not None:
         return _Library._instance
     here = os.path.dirname(os.path.abspath(__file__))
-    repo_root = os.path.dirname(os.path.dirname(here))
+    package_dir = os.path.dirname(here)
+    repo_root = os.path.dirname(package_dir)
     candidates = []
-    found = ctypes.util.find_library("crypto_api")
-    if found:
-        candidates.append(found)
+    for pattern in ("_crypto_api*.so", "_crypto_api*.pyd"):
+        candidates.extend(sorted(glob.glob(os.path.join(package_dir, pattern))))
     candidates += [
         os.path.join(repo_root, "build", "libcrypto_api.so"),
         os.path.join(repo_root, "build", "libcrypto_api.dylib"),
         os.path.join(repo_root, "build", "libcrypto_api.dll"),
         os.path.join(repo_root, "build", "Release", "crypto_api.dll"),
     ]
+    found = ctypes.util.find_library("crypto_api")
+    if found:
+        candidates.append(found)
+    errors = []
     for candidate in candidates:
         if candidate and os.path.exists(candidate):
-            _Library._instance = _Library(candidate)
+            try:
+                _Library._instance = _Library(candidate)
+            except OSError as exc:
+                errors.append("{}: {}".format(candidate, exc))
+                continue
             return _Library._instance
+    if errors:
+        raise CryptoLibraryError(
+            "libcrypto_api was found but could not be loaded ({}); reinstall the "
+            "package or build it manually with 'cmake -S . -B build && cmake --build "
+            "build' (searched: {})".format("; ".join(errors), ", ".join(candidates))
+        )
     raise CryptoLibraryError(
-        "libcrypto_api not found; build it first with "
-        "'cmake -S . -B build && cmake --build build' "
+        "libcrypto_api not found; reinstall the package "
+        "('pip install --force-reinstall --no-binary pyflow-net pyflow-net') or "
+        "build it manually with 'cmake -S . -B build && cmake --build build' "
         "(searched: {})".format(", ".join(candidates))
     )
 

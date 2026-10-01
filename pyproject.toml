@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pyflow-net"
-version = "1.0.0"
-description = "PyFlow is a high-level network protocol with APIs for transferring messages, files, and folders, plus extensible interfaces etc.."
+version = "1.0.1"
+description = "PyFlow is a high-level network protocol offering APIs and web apps, both of which transfer messages, files, and folders, along with extensible interfaces and other features."
 requires-python = ">=3.10"
 dependencies = ["flask>=3.0"]
 authors = [
@@ -35,6 +35,19 @@ classifiers = [
 
 [tool.setuptools.packages.find]
 include = ["PyFlow*"]
+
+# Non-Python runtime resources. setuptools ships only ``.py`` modules by
+# default, so without this the wheel/sdist install but are unusable: the crypto
+# C sources that libcrypto_api is built from, the TCP command table, and every
+# Flask template/static asset would be missing.
+# ``**`` globs are recursive; glob never descends into dot-directories, so the
+# gitignored runtime state (``network_api/.Flow`` keys/logs) is never packaged.
+[tool.setuptools.package-data]
+PyFlow = ["crypto_api/**/*.c", "crypto_api/**/*.h"]
+"PyFlow.network_api" = ["**/*.json"]
+"PyFlow.transfer_web" = ["static/**/*"]
+"PyFlow.transfer_web.web_backend" = ["templates/**/*"]
+"PyFlow.transfer_web.web_front" = ["templates/**/*"]
 
 [dependency-groups]
 dev = [

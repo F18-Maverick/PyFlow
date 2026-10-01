@@ -55,6 +55,7 @@ PyFlow/network_api/.Flow
 *.o
 *.d
 *.so
+*.pyd
 *.a
 *.dll
 *.dylib

@@ -52,21 +52,35 @@ The Python layer runs on the standard library plus Flask (used only by the `tran
 
 - Python 3.10 or newer
 - Pip 25.1 or newer
-- CMake 3.16 or newer
-- OpenSSL 1.1.1 or newer (development headers, e.g. `libssl-dev` on Debian/Ubuntu)
 - A C compiler (gcc/clang on Linux/macOS, MSVC on Windows)
+- OpenSSL 1.1.1 or newer (development headers, e.g. `libssl-dev` on Debian/Ubuntu)
+- CMake 3.16 or newer (only for the C test suite and for C consumers)
 
 ## Build
 
-### 1. Build the C library (required for the encrypted channel)
+### 1. Compile the C library
+
+Installing the package compiles it: `setup.py` builds the `crypto_api` C library
+against OpenSSL and installs it as `PyFlow/_crypto_api.*.so` (`.pyd` on
+Windows), which is what `rsa_crypto.py` loads at runtime.
+
+```bash
+pip install pyflow-net
+```
+
+Working from a checkout, the same build runs as part of `uv sync` / `pip install
+-e .`. On Windows, point `OPENSSL_ROOT_DIR` at your OpenSSL installation if it
+is not in a standard location (`C:\Program Files\OpenSSL-Win64`, ...).
+
+Building the C library with CMake instead is only needed for the C test suite
+and for C consumers. It produces `build/libcrypto_api.so` (or `.dylib` /
+`.dll`), which `rsa_crypto.py` also locates automatically.
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ctest --test-dir build --output-on-failure   # optional: run the C test suite
 ```
-
-This produces `build/libcrypto_api.so` (or `.dylib` / `.dll`), which `rsa_crypto.py` locates automatically.
 
 ### 2. Set up the Python environment
 
