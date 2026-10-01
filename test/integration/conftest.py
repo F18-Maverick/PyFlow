@@ -1,13 +1,9 @@
 import pytest
+from helpers import free_port
 
 import PyFlow.command_control_extension_tcp as ctl
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
 from PyFlow.network_api.connect_udp import UDP
-
-SERVER_PORT = 65001
-CLIENT_PORT = 65000
-SERVER2_PORT = 65002
-CLIENT2_PORT = 65003
 
 
 @pytest.fixture
@@ -16,7 +12,7 @@ def server(monkeypatch):
 
     Use this fixture when a test only needs a server instance.
     """
-    s = TCP_Server_Base(host="127.0.0.1", port=SERVER_PORT, is_extend_command=True)
+    s = TCP_Server_Base(host="127.0.0.1", port=free_port(), is_extend_command=True)
     monkeypatch.setattr(ctl, "server_instance", s)
     try:
         yield s
@@ -31,7 +27,7 @@ def client(monkeypatch):
     Use this fixture when a test only needs a client instance.
     """
     c = TCP_Client_Base(
-        host="127.0.0.1", port=CLIENT_PORT, client_host="127.0.0.1", is_extend_command=True
+        host="127.0.0.1", port=free_port(), client_host="127.0.0.1", is_extend_command=True
     )
     monkeypatch.setattr(ctl, "client_instance", c)
     try:
@@ -46,9 +42,9 @@ def server_client(monkeypatch):
 
     Use this when a test requires both sides present.
     """
-    s = TCP_Server_Base(host="127.0.0.1", port=SERVER2_PORT, is_extend_command=True)
+    s = TCP_Server_Base(host="127.0.0.1", port=free_port(), is_extend_command=True)
     c = TCP_Client_Base(
-        host="127.0.0.1", port=CLIENT2_PORT, client_host="127.0.0.1", is_extend_command=True
+        host="127.0.0.1", port=free_port(), client_host="127.0.0.1", is_extend_command=True
     )
     monkeypatch.setattr(ctl, "server_instance", s)
     monkeypatch.setattr(ctl, "client_instance", c)

@@ -14,11 +14,10 @@ import threading
 import time
 
 import pytest
-from helpers import wait_until
+from helpers import free_port, wait_until
 
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
 
-_PORT_COUNTER = 64400
 PROCESS_LINES = (
     "new connection:",
     "connection count mount:",
@@ -32,12 +31,6 @@ RESULT_LINES = (
 )
 CLIENT_ONLY_LINES = ("connecting to", "connect success!", "[server]")
 SESSION_TOKENS = PROCESS_LINES + RESULT_LINES + CLIENT_ONLY_LINES + ("hello world",)
-
-
-def _next_port():
-    global _PORT_COUNTER
-    _PORT_COUNTER += 1
-    return _PORT_COUNTER
 
 
 def _run_session(port, server_log=True, server_debug=False, client_log=True, client_debug=False):
@@ -108,7 +101,7 @@ def _raw_connect(port, lines=3, timeout=10.0):
 
 def test_print_log_false_prints_nothing():
     """``is_print_log=False`` silences the server and the client completely."""
-    port = _next_port()
+    port = free_port()
     text = _run_session(port, server_log=False, client_log=False)
     # every line this session could print carries its port or one of the tokens
     # above, so a stray thread of another test cannot pass for this session
@@ -119,7 +112,7 @@ def test_print_log_false_prints_nothing():
 
 def test_default_logs_command_and_result_only():
     """``is_debug=False`` keeps the command/result lines and drops the process ones."""
-    text = _run_session(_next_port())
+    text = _run_session(free_port())
     for token in RESULT_LINES:
         assert token in text, token
     for token in PROCESS_LINES:
@@ -129,7 +122,7 @@ def test_default_logs_command_and_result_only():
 
 def test_debug_logs_the_execution_process():
     """``is_debug=True`` adds the execution-process lines and the raw dumps."""
-    text = _run_session(_next_port(), server_debug=True)
+    text = _run_session(free_port(), server_debug=True)
     for token in RESULT_LINES + PROCESS_LINES:
         assert token in text, token
     assert "b'" in text  # received bytes are dumped in debug mode
@@ -137,7 +130,7 @@ def test_debug_logs_the_execution_process():
 
 def test_log_flags_are_per_instance():
     """A silent client logs nothing even while its server logs everything."""
-    text = _run_session(_next_port(), server_log=True, client_log=False)
+    text = _run_session(free_port(), server_log=True, client_log=False)
     assert "TCP server deployed on" in text  # the server kept logging
     assert "hello world" in text  # the server logs the line it received
     for token in CLIENT_ONLY_LINES:
@@ -147,7 +140,7 @@ def test_log_flags_are_per_instance():
 @pytest.mark.parametrize("asynic", [False, True], ids=["threads", "asyncio"])
 def test_port_range_announcement_is_per_connection(asynic):
     """Every client is told the port range on connect, and nobody else is."""
-    port = _next_port()
+    port = free_port()
     server = TCP_Server_Base(
         host="127.0.0.1",
         port=port,

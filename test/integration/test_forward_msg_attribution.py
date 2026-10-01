@@ -26,7 +26,7 @@ import time
 
 import pytest
 
-from helpers import server_ready, wait_until
+from helpers import free_port, server_ready, wait_until
 
 from PyFlow.network_api.connect_tcp import (
     TCP_Client_Base,
@@ -35,19 +35,11 @@ from PyFlow.network_api.connect_tcp import (
     parse_forwarded_message,
 )
 
-_PORT_COUNTER = 65500
-
-
-def _next_port():
-    global _PORT_COUNTER
-    _PORT_COUNTER += 1
-    return _PORT_COUNTER
-
 
 @pytest.fixture
 def trio():
     """Server + two clients. Message forwarding is native, no extension setup."""
-    port = _next_port()
+    port = free_port()
     server = TCP_Server_Base(
         host="127.0.0.1",
         port=port,
@@ -127,7 +119,7 @@ def test_forward_commands_are_internal():
     ``/forward_send_msg`` is NOT registered in the extension handler registry
     on either side, and the deleted ``/send_msg_forward`` name is gone."""
     server = TCP_Server_Base(
-        host="127.0.0.1", port=_next_port(), is_extend_command=True, is_enable_encrypto=False
+        host="127.0.0.1", port=free_port(), is_extend_command=True, is_enable_encrypto=False
     )
     client = TCP_Client_Base(
         host="127.0.0.1",

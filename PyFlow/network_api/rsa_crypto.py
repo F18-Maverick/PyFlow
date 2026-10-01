@@ -137,6 +137,16 @@ PF_ERR_DECRYPT = 9
 
 DEFAULT_KEY_BITS = 2048  # generated keys (bits); pf_rsa_keygen accepts 2048..16384
 
+# Where CMake puts the library it builds at the repository root, in search
+# order: the Unix/macOS names, then the two Windows layouts (MinGW, Visual
+# Studio). ``load_library`` resolves them against the source tree.
+BUILD_LIBRARY_PATHS = (
+    ("build", "libcrypto_api.so"),
+    ("build", "libcrypto_api.dylib"),
+    ("build", "libcrypto_api.dll"),
+    ("build", "Release", "crypto_api.dll"),
+)
+
 
 class CryptoLibraryError(RuntimeError):
     """Raised when the shared libcrypto_api cannot be loaded."""
@@ -234,12 +244,7 @@ def load_library():
     candidates = []
     for pattern in ("_crypto_api*.so", "_crypto_api*.pyd"):
         candidates.extend(sorted(glob.glob(os.path.join(package_dir, pattern))))
-    candidates += [
-        os.path.join(repo_root, "build", "libcrypto_api.so"),
-        os.path.join(repo_root, "build", "libcrypto_api.dylib"),
-        os.path.join(repo_root, "build", "libcrypto_api.dll"),
-        os.path.join(repo_root, "build", "Release", "crypto_api.dll"),
-    ]
+    candidates += [os.path.join(repo_root, *parts) for parts in BUILD_LIBRARY_PATHS]
     found = ctypes.util.find_library("crypto_api")
     if found:
         candidates.append(found)

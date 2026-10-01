@@ -3,19 +3,18 @@
 import threading
 
 import pytest
-from helpers import server_ready, wait_until
+from helpers import free_port, server_ready, wait_until
 
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
-
-_PORT = 65200
 
 
 @pytest.fixture
 def pair(tmp_path):
     """Build a real server/client pair with the encrypted channel disabled."""
+    port = free_port()
     server = TCP_Server_Base(
         host="127.0.0.1",
-        port=_PORT,
+        port=port,
         is_extend_command=True,
         is_input_command_in_console=False,
         is_enable_encrypto=False,
@@ -27,7 +26,7 @@ def pair(tmp_path):
 
     client = TCP_Client_Base(
         host="127.0.0.1",
-        port=_PORT,
+        port=port,
         client_host="127.0.0.1",
         is_extend_command=True,
         is_input_command_in_console=False,

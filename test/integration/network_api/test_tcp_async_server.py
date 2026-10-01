@@ -13,7 +13,7 @@ import threading
 import time
 
 import pytest
-from helpers import server_ready, wait_until
+from helpers import free_port, server_ready, wait_until
 
 from PyFlow.network_api import rsa_crypto
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
@@ -23,14 +23,6 @@ try:
     HAVE_LIB = True
 except rsa_crypto.CryptoLibraryError:
     HAVE_LIB = False
-
-_PORT_COUNTER = 64100  # below the ephemeral range and clear of the other test files' bases
-
-
-def _next_port():
-    global _PORT_COUNTER
-    _PORT_COUNTER += 1
-    return _PORT_COUNTER
 
 
 def _redirect_crypto(crypto, tmp_path, ssh_dir, subdir="pub_key"):
@@ -96,7 +88,7 @@ def _start_server(**kwargs):
     kwargs.setdefault("is_enable_encrypto", False)
     server = TCP_Server_Base(
         host="127.0.0.1",
-        port=_next_port(),
+        port=free_port(),
         is_extend_command=True,
         is_input_command_in_console=False,
         **kwargs,

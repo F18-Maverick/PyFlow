@@ -30,6 +30,20 @@ def _fresh_crypto(tmp_path, role="client"):
     return rc.RsaCrypto(role, str(tmp_path), str(ssh_dir))
 
 
+def _cmake_built_library():
+    """Return the CMake-built library in the repo, or None when there is none.
+
+    The CMake target is a plain shared library, so its file name follows the
+    platform (``libcrypto_api.so``/``.dylib`` on Unix, ``Release/crypto_api.dll``
+    for the Visual Studio generator).
+    """
+    for parts in rc.BUILD_LIBRARY_PATHS:
+        path = os.path.join(PROJECT_ROOT, *parts)
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def test_load_library_raises_when_missing(monkeypatch):
     """No candidate library file exists -> CryptoLibraryError."""
     rc._Library._instance = None
@@ -40,29 +54,20 @@ def test_load_library_raises_when_missing(monkeypatch):
     rc._Library._instance = None
 
 
-def test_load_library_falls_back_to_build_dir(tmp_path, monkeypatch):
-    """find_library misses, but the repo build/ candidate exists."""
-    build_lib = tmp_path / "build" / "libcrypto_api.so"
-    build_lib.parent.mkdir(parents=True)
-    # point the repo-root search at tmp: patch os.path.join? simpler: patch
-    # exists to accept the real build dir while find_library returns None
-    import PyFlow.network_api.rsa_crypto as rcm
-
-    real_exists = os.path.exists
+def test_load_library_falls_back_to_build_dir(monkeypatch):
+    """find_library misses and the package holds no copy, but CMake's build/ does."""
+    built = _cmake_built_library()
+    if built is None:
+        pytest.skip("no CMake-built library in the repo's build/ directory")
     rc._Library._instance = None
     monkeypatch.setattr(rc.ctypes.util, "find_library", lambda _: None)
-    # find the actual built .so and simulate only it existing
-    import glob
-
-    real = glob.glob(os.path.join(PROJECT_ROOT, "build", "libcrypto_api.so"))
-    if not real:
-        pytest.skip("no built library in repo build/")
-    monkeypatch.setattr(
-        rc.os.path, "exists", lambda p: p == real[0] or p in real or real_exists(p)
-    )
-    lib = rc.load_library()
-    assert lib is not None
-    rc._Library._instance = None
+    # Pretend only the CMake artifact exists: the loader then has to reach it
+    # through the build/ search path instead of the packaged copy.
+    monkeypatch.setattr(rc.os.path, "exists", lambda path: path == built)
+    try:
+        assert rc.load_library() is not None
+    finally:
+        rc._Library._instance = None
 
 
 def test_rsa_key_del_handles_free_failure(monkeypatch, tmp_path):

@@ -15,7 +15,7 @@ import time
 import pytest
 
 
-from helpers import server_ready, wait_until
+from helpers import free_port, server_ready, wait_until
 
 from PyFlow.network_api import rsa_crypto
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
@@ -30,15 +30,6 @@ pytestmark = pytest.mark.skipif(
     not HAVE_LIB,
     reason="libcrypto_api not built (run cmake -S . -B build && cmake --build build first)",
 )
-
-_PORT_COUNTER = 65000  # per-test ports avoid cross-test interference
-
-
-
-def _next_port():
-    global _PORT_COUNTER
-    _PORT_COUNTER += 1
-    return _PORT_COUNTER
 
 
 def _new_keypair(paths, lib=None, bits=None):
@@ -64,7 +55,7 @@ def tcp_pair(tmp_path):
     """A running server plus a connected, handshaken client."""
     ssh_dir = tmp_path / "ssh"
     ssh_dir.mkdir()
-    port = _next_port()
+    port = free_port()
     server = TCP_Server_Base(
         host="127.0.0.1",
         port=port,
@@ -300,7 +291,6 @@ def test_rotated_client_key_rejected(tcp_pair, tmp_path):
     assert len(_registry_entries(server.crypto)) == 1  # the rejected key must not have been recorded
 
 
-
 def test_rotated_server_key_rejected(tcp_pair, tmp_path):
     """A server that rotates its keypair is rejected by the client: the
     known server endpoint now presents a different public key."""
@@ -322,7 +312,7 @@ def test_custom_keys_pair_used(tmp_path):
     pub_path = str(tmp_path / "custom_pub.pem")
     pvt_path = str(tmp_path / "custom_pvt.pem")
     _new_keypair((pub_path, pvt_path))
-    port = _next_port()
+    port = free_port()
     server = TCP_Server_Base(
         host="127.0.0.1",
         port=port,
@@ -358,7 +348,7 @@ def test_custom_keys_pair_used(tmp_path):
 def test_encryption_disabled_is_plaintext(tmp_path):
     ssh_dir = tmp_path / "ssh"
     ssh_dir.mkdir()
-    port = _next_port()
+    port = free_port()
     server = TCP_Server_Base(
         host="127.0.0.1",
         port=port,
@@ -431,7 +421,7 @@ def test_unauthenticated_pub_push_ignored(tmp_path, capsys):
     handshake is ignored: it cannot poison the TOFU registry."""
     ssh_dir = tmp_path / "ssh"
     ssh_dir.mkdir()
-    port = _next_port()
+    port = free_port()
     server = TCP_Server_Base(
         host="127.0.0.1",
         port=port,
@@ -487,7 +477,7 @@ def test_mode_negotiation_survives_server_announcement_race(tmp_path):
 
     The negotiation call is delayed to force the receive thread to
     process the server's announcement before the wait begins."""
-    port = _next_port()
+    port = free_port()
     server = TCP_Server_Base(
         host="127.0.0.1",
         port=port,
@@ -545,7 +535,7 @@ def test_concurrent_clients_share_key_exchange(tmp_path):
     FileNotFoundError under multi-client load)."""
     ssh_dir = tmp_path / "ssh"
     ssh_dir.mkdir()
-    port = _next_port()
+    port = free_port()
     server = TCP_Server_Base(
         host="127.0.0.1",
         port=port,
@@ -619,7 +609,7 @@ def test_crypto_mode_mismatch_disconnects(tmp_path):
     ssh_dir = tmp_path / "ssh"
     ssh_dir.mkdir()
 
-    port = _next_port()
+    port = free_port()
     server_on = TCP_Server_Base(
         host="127.0.0.1",
         port=port,
@@ -646,7 +636,7 @@ def test_crypto_mode_mismatch_disconnects(tmp_path):
         client_off.close()
         server_on.stop()
 
-    port = _next_port()
+    port = free_port()
     server_off = TCP_Server_Base(
         host="127.0.0.1",
         port=port,

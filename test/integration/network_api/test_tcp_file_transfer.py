@@ -8,7 +8,7 @@ import shlex
 import pytest
 
 
-from helpers import server_ready, wait_until
+from helpers import free_port, server_ready, wait_until
 
 from PyFlow.network_api.connect_tcp import (
     TCP_Client_Base,
@@ -17,18 +17,10 @@ from PyFlow.network_api.connect_tcp import (
 )
 from unittest.mock import MagicMock
 
-_PORT_COUNTER = 65420
-
-
-def _next_port():
-    global _PORT_COUNTER
-    _PORT_COUNTER += 1
-    return _PORT_COUNTER
-
 
 @pytest.fixture
 def pair(tmp_path):
-    port = _next_port()
+    port = free_port()
     server = TCP_Server_Base(
         host="127.0.0.1",
         port=port,

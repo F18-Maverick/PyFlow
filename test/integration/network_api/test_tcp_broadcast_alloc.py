@@ -9,15 +9,15 @@ from unittest.mock import MagicMock
 import pytest
 
 
-from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
+from helpers import free_port
 
-_PORT = 65410
+from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
 
 
 def _server():
     return TCP_Server_Base(
         host="127.0.0.1",
-        port=_PORT,
+        port=free_port(),
         is_extend_command=True,
         is_input_command_in_console=False,
     )
@@ -140,7 +140,7 @@ def test_send_msg_to_specific_client_bad_address(server, monkeypatch, capsys):
 def alloc_client():
     c = TCP_Client_Base(
         host="127.0.0.1",
-        port=_PORT,
+        port=free_port(),
         client_host="127.0.0.1",
         is_extend_command=True,
         is_input_command_in_console=False,
