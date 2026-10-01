@@ -56,6 +56,13 @@ Python 레이어는 표준 라이브러리와 Flask (`transfer_web` 웹 도구�
 - OpenSSL 1.1.1 이상 (개발 헤더, 예: 데비안/우분투의 `libssl-dev`)
 - CMake 3.16 이상 (C 테스트 제품군 및 C 소비자 전용)
 
+소스 배포판만 PyPI에 게시되므로 패키지를 설치하는 시스템에서 C 라이브러리가 컴파일됩니다. Windows에서는 `pip install`이전에 컴파일러와 OpenSSL 개발 파일이 있음을 의미합니다.
+
+- Visual Studio **빌드 도구** (C + + 워크로드, "MSVC v143" 및 Windows SDK):
+<https://visualstudio.microsoft.com/visual-cpp-build-tools/>. 컴파일러는 자동으로 조회됩니다. 컴파일러가 없으면 Microsoft의 자체 "Microsoft Visual C + + 14.0 이상이 필요합니다" 라는 메시지와 함께 핍 스톱됩니다.
+- Win64 설치 관리자의 OpenSSL
+<https://slproweb.com/products/Win32OpenSSL.html> — 기본 (비 "Light") 설치 관리자는 "Light" 가 포함하지 않는 개발 파일을 포함합니다. 빌드가 찾는 `C:\Program Files\OpenSSL`에 착륙합니다. `OPENSSL_ROOT_DIR` 다른 곳에 살 때 검색을 재정의합니다.
+
 ## 빌드
 
 ### 1. C 라이브러리 컴파일
@@ -66,7 +73,7 @@ Python 레이어는 표준 라이브러리와 Flask (`transfer_web` 웹 도구�
 pip install pyflow-net
 ```
 
-체크 아웃에서 작업하면 동일한 빌드가 `uv sync`/`pip install -e .`의 일부로 실행됩니다. Windows에서 표준 위치 (`C:\Program Files\OpenSSL-Win64`,...) 에 있지 않은 경우 OpenSSL 설치에서 `OPENSSL_ROOT_DIR` 을 (를) 가리키십시오.
+체크 아웃에서 작업하면 동일한 빌드가 `uv sync`/`pip install -e .`의 일부로 실행됩니다.
 
 대신 CMake로 C 라이브러리를 빌드하는 것은 C 테스트 제품군과 C 소비자에게만 필요합니다. `build/libcrypto_api.so` (또는 `.dylib`/`.dll`) 를 생성하며, `rsa_crypto.py` 또한 자동으로 위치를 찾습니다.
 
@@ -197,7 +204,7 @@ make -C docs html          # docs/Makefile; docs/make.bat html does the same on 
 uv run python -m sphinx -b html docs/source build/sphinx_doc   # equivalent, explicit paths
 ```
 
-Rebuild the translations (extract gettext, machine-translate new strings, compile `.mo`) with `docs/reBuild.sh`; it needs the documentation/translation dependencies from `pyproject.toml` (`sphinx`, `sphinx-intl`, `polib`, `deep-translator`) and a `python3.14` executable on `PATH`, because the script calls `source/batch_translate_po.py` with that interpreter. It writes one HTML tree per language under `docs/_build/html/<lang>`. Read the Docs runs `docs/readthedocs_build.sh` as its pre-build step, which only compiles the existing catalogues and builds the single HTML tree for the RTD output directory.
+`docs/reBuild.sh`을 (를) 사용하여 번역 (gettext 추출, 새 문자열 기계 번역, 컴파일 `.mo`) 을 다시 빌드합니다. 스크립트가 해당 인터프리터로 `source/batch_translate_po.py` 를 호출하기 때문에 `pyproject.toml` (`sphinx`, `sphinx-intl`, `polib`, `deep-translator`) 및 `PATH`에서 실행 가능한 `python3.14` 의 문서/번역 종속성이 필요합니다. `docs/_build/html/<lang>`에서 언어당 하나의 HTML 트리를 작성합니다. 문서도구는 기존 카탈로그만 컴파일하고 단일 HTML 트리를 빌드하는 사전 빌드 단계로 `docs/readthedocs_build.sh` 실행됩니다. rTD 출력 디렉터리.
 
 ## 면허증
 

@@ -56,6 +56,13 @@ Pythonレイヤーは、標準ライブラリとFlask （`transfer_web` Webツ�
 - OpenSSL 1.1.1以降（ Debian/Ubuntuの`libssl-dev`などの開発ヘッダー）
 - CMake 3.16以降（ CテストスイートとCコンシューマーのみ）
 
+ソース配布のみがPyPIに公開されるため、Cライブラリはパッケージをインストールするマシン上でコンパイルされます。Windowsでは、`pip install`の前にコンパイラとOpenSSL開発ファイルがあることを意味します。
+
+- Visual Studio **ビルドツール** (C ++ワークロード、"MSVC v 143"およびWindows SDK):
+<https://visualstudio.microsoft.com/visual-cpp-build-tools/>.コンパイラは自動的に検索されます。それがなければ、Microsoft独自の「Microsoft Visual C ++ 14.0以降が必要です」というメッセージでpipが停止します。
+- Win 64インストーラーからのOpenSSL
+<https://slproweb.com/products/Win32OpenSSL.html> —デフォルト（非「Light」）インストーラーには開発ファイルが含まれていますが、「Light」には含まれていません。ビルドが探している`C:\Program Files\OpenSSL`に着陸します。他の場所にある場合、`OPENSSL_ROOT_DIR`は検索を上書きします。
+
 ## 構築
 
 ### 1. Cライブラリをコンパイルする
@@ -66,7 +73,7 @@ Pythonレイヤーは、標準ライブラリとFlask （`transfer_web` Webツ�
 pip install pyflow-net
 ```
 
-チェックアウトから、同じビルドが`uv sync`/`pip install -e .`の一部として実行されます。Windowsの場合、標準の場所（`C:\Program Files\OpenSSL-Win64`、... ）にない場合は、OpenSSLインストールを`OPENSSL_ROOT_DIR`ポイントします。
+チェックアウトから、同じビルドが`uv sync`/`pip install -e .`の一部として実行されます。
 
 代わりにCMakeを使用してCライブラリを構築することは、CテストスイートとCコンシューマーにのみ必要です。`build/libcrypto_api.so`（または`.dylib`/`.dll`）を生成し、`rsa_crypto.py`も自動的に位置を特定します。
 

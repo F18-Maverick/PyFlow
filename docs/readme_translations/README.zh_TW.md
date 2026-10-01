@@ -56,6 +56,13 @@ Python圖層在標準庫和Flask上運行（僅由`transfer_web` Web工具使用
 - OpenSSL 1.1.1或更新版本（開發標題，例如Debian/Ubuntu上的`libssl-dev` ）
 - CMake 3.16或更新版本（僅適用於C測試套件和C消費者）
 
+只有來源發佈才會發佈到PyPI ，因此C程式庫會在安裝套件的電腦上進行編譯。在Windows上，這意味著在`pip install`之前有一個編譯器和OpenSSL開發文件：
+
+- Visual Studio **生成工具** （ C + +工作負載、"MSVC v143"和Windows SDK ） ：
+<https://visualstudio.microsoft.com/visual-cpp-build-tools/>。系統會自動查找編譯器；如果沒有編譯器，則會以Microsoft自己的「需要Microsoft Visual C + + 14.0或更高版本」訊息停止編譯。
+- 來自Win64安裝程式的OpenSSL ，網址為
+<https://slproweb.com/products/Win32OpenSSL.html> —預設（非「Light」）安裝程式包含開發檔案，而「Light」不包含開發檔案。它落在建築物尋找它的`C:\Program Files\OpenSSL`；當它位於其他地方時， `OPENSSL_ROOT_DIR`覆蓋搜索。
+
 ## 構造
 
 ### 1.編譯C函式庫
@@ -66,7 +73,7 @@ Python圖層在標準庫和Flask上運行（僅由`transfer_web` Web工具使用
 pip install pyflow-net
 ```
 
-從結帳開始，相同的構建作為`uv sync`/`pip install -e .`的一部分運行。在Windows上，如果OpenSSL安裝不在標準位置（`C:\Program Files\OpenSSL-Win64`，... ） ，請指向`OPENSSL_ROOT_DIR`。
+從結帳開始，相同的構建作為`uv sync`/`pip install -e .`的一部分運行。
 
 改為使用CMake構建C庫僅適用於C測試套件和C使用者。它會產生`build/libcrypto_api.so` （或`.dylib`/`.dll`） ， `rsa_crypto.py`也會自動定位。
 

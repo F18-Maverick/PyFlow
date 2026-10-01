@@ -56,6 +56,20 @@ The Python layer runs on the standard library plus Flask (used only by the `tran
 - OpenSSL 1.1.1 or newer (development headers, e.g. `libssl-dev` on Debian/Ubuntu)
 - CMake 3.16 or newer (only for the C test suite and for C consumers)
 
+Only source distributions are published to PyPI, so the C library is compiled
+on the machine that installs the package. On Windows that means having a
+compiler and the OpenSSL development files before `pip install`:
+
+- Visual Studio **Build Tools** (C++ workload, "MSVC v143" and a Windows SDK):
+  <https://visualstudio.microsoft.com/visual-cpp-build-tools/>. The compiler is
+  looked up automatically; without it pip stops with Microsoft's own "Microsoft
+  Visual C++ 14.0 or greater is required" message.
+- OpenSSL from the Win64 installer at
+  <https://slproweb.com/products/Win32OpenSSL.html> — the default (non-"Light")
+  installer includes the development files, which "Light" does not. It lands in
+  `C:\Program Files\OpenSSL`, where the build looks for it; `OPENSSL_ROOT_DIR`
+  overrides the search when it lives somewhere else.
+
 ## Build
 
 ### 1. Compile the C library
@@ -69,8 +83,7 @@ pip install pyflow-net
 ```
 
 Working from a checkout, the same build runs as part of `uv sync` / `pip install
--e .`. On Windows, point `OPENSSL_ROOT_DIR` at your OpenSSL installation if it
-is not in a standard location (`C:\Program Files\OpenSSL-Win64`, ...).
+-e .`.
 
 Building the C library with CMake instead is only needed for the C test suite
 and for C consumers. It produces `build/libcrypto_api.so` (or `.dylib` /

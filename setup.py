@@ -54,10 +54,11 @@ OPENSSL_LIB_SUBDIRS = (
 
 OPENSSL_MISSING = (
     "OpenSSL development files were not found; PyFlow compiles its crypto library "
-    "against them. Install OpenSSL 1.1.1 or newer (the Win64 installer from "
-    "https://slproweb.com/products/Win32OpenSSL.html includes the development "
-    "files), or point OPENSSL_ROOT_DIR at a directory containing "
-    "include/openssl/opensslv.h and libcrypto.lib. Searched: {}"
+    "against them. Install OpenSSL 1.1.1 or newer with the Win64 installer from "
+    "https://slproweb.com/products/Win32OpenSSL.html - the default installer "
+    'includes the development files, the "Light" one does not - or point '
+    "OPENSSL_ROOT_DIR at a directory containing include/openssl/opensslv.h and "
+    "libcrypto.lib. Searched: {}"
 )
 
 
@@ -99,7 +100,11 @@ class OpenSslBuildExt(build_ext):
     """Compile the crypto library, resolving OpenSSL for MSVC first."""
 
     def build_extension(self, extension: Extension) -> None:
-        """Locate OpenSSL on Windows, then build one extension.
+        """Select the C11 dialect and, on Windows, locate OpenSSL, then build.
+
+        distutils passes no C-standard flag and MSVC's default mode predates
+        C11, which the sources use (``_Static_assert``); the CMake build sets
+        the same standard through ``C_STANDARD 11``.
 
         Args:
             extension (Extension): The extension to compile.
@@ -107,15 +112,21 @@ class OpenSslBuildExt(build_ext):
         Raises:
             SystemExit: If Windows OpenSSL development files are not found.
         """
+        extension.extra_compile_args.append(
+            "/std:c11" if self.compiler.compiler_type == "msvc" else "-std=c11"
+        )
         if sys.platform == "win32":
-            found = _find_windows_openssl()
-            if found is None:
-                raise SystemExit(OPENSSL_MISSING.format(", ".join(_openssl_roots())))
-            include_dir, library_dir = found
-            extension.include_dirs.append(str(include_dir))
-            extension.library_dirs.append(str(library_dir))
             extension.define_macros.append(("PF_CRYPTO_SHARED", "1"))  # dllexport
-            extension.libraries = ["libcrypto"]
+            if self.compiler.compiler_type == "msvc":
+                # MinGW-style toolchains find their own OpenSSL through their
+                # own search paths; the layouts below are MSVC import libraries.
+                found = _find_windows_openssl()
+                if found is None:
+                    raise SystemExit(OPENSSL_MISSING.format(", ".join(_openssl_roots())))
+                include_dir, library_dir = found
+                extension.include_dirs.append(str(include_dir))
+                extension.library_dirs.append(str(library_dir))
+                extension.libraries = ["libcrypto"]
         super().build_extension(extension)
 
 
