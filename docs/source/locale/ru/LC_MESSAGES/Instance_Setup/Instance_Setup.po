@@ -6,9 +6,9 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: PyFlow\n"
+"Project-Id-Version:  PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-16 10:49+0800\n"
+"POT-Creation-Date: 2026-10-01 18:19+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,198 +17,464 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: ../../Instance_Setup/Instance_Setup.rst:3 552b0fbec3774a638b0029ce5fd72949
+#: ../../source/Instance_Setup/Instance_Setup.rst:3
+#: b4877074f48944ef95449bad6b451f04
 msgid "Flow Setup Launcher"
 msgstr "Панель запуска настройки потока"
 
-#: ../../Instance_Setup/Instance_Setup.rst:5 31952c3324264ea28368c7725796ff63
+#: ../../source/Instance_Setup/Instance_Setup.rst:5
+#: 745aff08935b4042b2885b7f10d524f1
+#, fuzzy
 msgid ""
 "The ``flow_setup.py`` script is a launcher for the TCP server/client "
-"framework defined in ``connect_tcp.py``. It allows you to quickly spawn a "
-"single server or client instance either interactively or via command‑line "
-"arguments. Each launched instance runs in a separate terminal window (or "
+"framework defined in ``connect_tcp.py``. It spawns one or more server and"
+" client instances, either interactively or from command-line arguments. "
+"Each launched instance runs in its own terminal window (or a detached "
 "background process on headless systems)."
 msgstr ""
-"Скрипт ``flow_setup.py`` представляет собой средство запуска TCP-"
-"сервера/клиентской среды, определенной в ``connect_tcp.py``. Он позволяет "
-"быстро создать один экземпляр сервера или клиента либо в интерактивном "
-"режиме, либо с помощью аргументов командной строки. Каждый запущенный "
-"экземпляр запускается в отдельном окне терминала (или в фоновом процессе в "
-"автономных системах)."
+"Скрипт ``flow_setup.py`` представляет собой средство запуска "
+"TCP-сервера/клиентской среды, определенной в ``connect_tcp.py``. Он "
+"позволяет быстро создать один экземпляр сервера или клиента либо в "
+"интерактивном режиме, либо с помощью аргументов командной строки. Каждый "
+"запущенный экземпляр запускается в отдельном окне терминала (или в "
+"фоновом процессе в автономных системах)."
 
-#: ../../Instance_Setup/Instance_Setup.rst:12 4f99dd7362fa4dcb8f83de37f327dbef
-msgid ""
-"**Note:** This launcher supports only **one server** and **one client** "
-"instance at a time. Adding a new server or client configuration will "
-"completely overwrite any previous configuration of the same type."
-msgstr ""
-"**Примечание.** Эта программа запуска одновременно поддерживает только "
-"**один сервер** и **один клиент**. Добавление новой конфигурации сервера или"
-" клиента полностью перезапишет любую предыдущую конфигурацию того же типа."
-
-#: ../../Instance_Setup/Instance_Setup.rst:18 c8f9652279de42bb983523a15048596e
+#: ../../source/Instance_Setup/Instance_Setup.rst:13
+#: 5cfe71ed904f4f24bef1210b411ee40d
 msgid "Features"
 msgstr "Функции"
 
-#: ../../Instance_Setup/Instance_Setup.rst:20 fba5b9ea870c44fabf69022a45cdaebc
+#: ../../source/Instance_Setup/Instance_Setup.rst:15
+#: d5544e89cd884c938e1bfed52fdaf35a
+#, fuzzy
 msgid ""
-"**Interactive mode** – step‑by‑step creation of a server or client instance."
+"**Interactive mode** – step-by-step creation of server and client "
+"instances, plus a vim-style editor for changing or deleting the instances"
+" already stored."
 msgstr ""
-"**Интерактивный режим** – пошаговое создание экземпляра сервера или клиента."
+"**Интерактивный режим** – пошаговое создание экземпляра сервера или "
+"клиента."
 
-#: ../../Instance_Setup/Instance_Setup.rst:22 df9cbf9e1d024f9386a4b6278c82249e
-msgid "**Command‑line mode** – launch with all parameters in one command."
+#: ../../source/Instance_Setup/Instance_Setup.rst:18
+#: a3239003782944f1aceb438c4b164657
+#, fuzzy
+msgid ""
+"**Command-line mode** – launch one server or one client with all "
+"parameters in one command."
+msgstr "**Режим командной строки** — запуск со всеми параметрами одной командой."
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:20
+#: 6c36fb284a4b4984bd220e047e26ed37
+msgid ""
+"**Web-tool mode** – ``--web_server`` / ``--web_client`` start the browser"
+" UI of the ``transfer_web`` web tool."
 msgstr ""
-"**Режим командной строки** — запуск со всеми параметрами одной командой."
 
-#: ../../Instance_Setup/Instance_Setup.rst:24 5f7cba6df26144e9840d140f94065b33
+#: ../../source/Instance_Setup/Instance_Setup.rst:22
+#: 1a357d61f62b41dd91e150d24c323a98
+msgid ""
+"**Extension registration** – ``--add`` / ``--delete`` register or "
+"unregister extension protocol files; the registered files are loaded on "
+"every launch."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:25
+#: 0deeeb0bc12644eaab437361d69dbe77
+#, fuzzy
 msgid ""
 "**Persistent configuration** – stores the latest instance definitions in "
-"``setup.json`` (same directory as the script). Each type (server/client) "
-"holds **only one** configuration, which is overwritten on each update."
+"``setup.json`` (same directory as the script). Every entry is completed "
+"with the full default parameter set of its type when it is saved."
 msgstr ""
-"**Постоянная конфигурация** — последние определения экземпляров сохраняются "
-"в ``setup.json`` (в том же каталоге, что и скрипт). Каждый тип "
-"(сервер/клиент) содержит **только одну** конфигурацию, которая "
+"**Постоянная конфигурация** — последние определения экземпляров "
+"сохраняются в ``setup.json`` (в том же каталоге, что и скрипт). Каждый "
+"тип (сервер/клиент) содержит **только одну** конфигурацию, которая "
 "перезаписывается при каждом обновлении."
 
-#: ../../Instance_Setup/Instance_Setup.rst:29 be9bc008af594306be21e731d6aefee3
+#: ../../source/Instance_Setup/Instance_Setup.rst:29
+#: 0b60fca4ab384444a03750dcb790150f
 msgid ""
-"**Cross‑platform** – supports Windows (cmd), Linux (gnome‑terminal, xterm, "
-"or background), and macOS (Terminal.app)."
+"**Multiple instances** – the ``servers`` and ``clients`` lists may hold "
+"any number of entries. Adding an entry identical to an existing one of "
+"the same type is skipped; different entries are appended."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:33
+#: af8b8bdd4c994728a0bf4a7b358976b7
+#, fuzzy
+msgid ""
+"**Cross-platform** – supports Windows (cmd), Linux (gnome-terminal, "
+"xterm, x-terminal-emulator, or a detached background process), and macOS "
+"(Terminal.app)."
 msgstr ""
 "**Кроссплатформенность** — поддерживает Windows (cmd), Linux (gnome-"
 "terminal, xterm или фоновый режим) и macOS (Terminal.app)."
 
-#: ../../Instance_Setup/Instance_Setup.rst:32 57005cb0d04f47b2a8f10ad0bc9c7b43
+#: ../../source/Instance_Setup/Instance_Setup.rst:36
+#: 4696d04613af4a1ea055df8be236adc3
+#, fuzzy
 msgid ""
 "**Complete parameter support** – all parameters accepted by "
-"``TCP_Server_Base`` and ``TCP_Client_Base`` can be stored in ``setup.json`` "
-"for fine‑tuning."
+"``TCP_Server_Base`` and ``TCP_Client_Base`` can be stored in "
+"``setup.json`` for fine-tuning."
 msgstr ""
 "**Полная поддержка параметров** — все параметры, принимаемые "
 "``TCP_Server_Base`` и ``TCP_Client_Base``, могут быть сохранены в "
 "``setup.json`` для точной настройки."
 
-#: ../../Instance_Setup/Instance_Setup.rst:37 2ff27919a6f64e8fb610158de5ffdf69
+#: ../../source/Instance_Setup/Instance_Setup.rst:41
+#: 343fcd49c74b4cfd9d351f93c60e59bc
 msgid "Usage"
 msgstr "Использование"
 
-#: ../../Instance_Setup/Instance_Setup.rst:40 dddde4f2d7084bc48efa1296cfd3f22c
+#: ../../source/Instance_Setup/Instance_Setup.rst:44
+#: 7e39ebc551894366b757ddfb5c406753
 msgid "Interactive Mode"
 msgstr "Интерактивный режим"
 
-#: ../../Instance_Setup/Instance_Setup.rst:42 f060e64959674f52b223bbc4b01d568c
+#: ../../source/Instance_Setup/Instance_Setup.rst:46
+#: 5f7b3715a9524fa2a0aed70bbefc5008
 msgid "Run the script without any arguments:"
 msgstr "Запустите скрипт без аргументов:"
 
-#: ../../Instance_Setup/Instance_Setup.rst:48 dd76918a5ffd44838c1b0c44595ae55b
-msgid "The script will ask you to:"
-msgstr "Скрипт попросит вас:"
+#: ../../source/Instance_Setup/Instance_Setup.rst:52
+#: a17a608e2ac24987b6c4a428acd770e9
+msgid ""
+"When ``setup.json`` already exists, the launcher first asks whether to "
+"overwrite it, and the interactive collection itself asks whether the "
+"stored instances should be edited:"
+msgstr ""
 
-#: ../../Instance_Setup/Instance_Setup.rst:50 80847dcc3e404a779b2e693cf8de50d5
-msgid "Choose the type (0 for Server, 1 for Client)."
+#: ../../source/Instance_Setup/Instance_Setup.rst:56
+#: 7fe4792645644307bf450194c2d98fa7
+msgid ""
+"``setup.json exists. Overwrite configuration data? (Y/N):`` – ``N`` "
+"launches every stored instance and exits; ``Y`` (or no existing file) "
+"continues to the collection below."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:59
+#: e60cbc55c5834e8ab8ce55e696159e9a
+msgid ""
+"``Delete or change existing instances or configs? (Y/N):`` – asked only "
+"when stored instances exist. ``Y`` opens the instance editor (see below);"
+" ``N`` keeps them and goes straight to the add flow."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:63
+#: eaf7134992f44c58aa4181664a3bc638
+#, fuzzy
+msgid "``Choose the type (0 for Server, 1 for Client)``."
 msgstr "Выберите тип (0 для сервера, 1 для клиента)."
 
-#: ../../Instance_Setup/Instance_Setup.rst:51 cebc8ba62d1a48a69d8019c3862dc18b
+#: ../../source/Instance_Setup/Instance_Setup.rst:64
+#: 6a5569dd541a4043802c5d85f125db64
 msgid "Enter the bind address and port (``host:port``)."
 msgstr "Введите адрес привязки и порт («хост:порт»)."
 
-#: ../../Instance_Setup/Instance_Setup.rst:52 4311b66e1b974b4596f2693908ba3109
+#: ../../source/Instance_Setup/Instance_Setup.rst:65
+#: e70e2b6322a04c748193e1cec4b0ee2c
 msgid "If Client, also enter the server address and port to connect to."
 msgstr "Если Клиент, также введите адрес сервера и порт для подключения."
 
-#: ../../Instance_Setup/Instance_Setup.rst:53 65c194c1b655417c921c1e03daf7a17c
+#: ../../source/Instance_Setup/Instance_Setup.rst:67
+#: df73da29736d4b878bef8427a95945aa
 msgid ""
-"Decide whether to add another instance (if you add the same type again, the "
-"previous configuration of that type is overwritten)."
+"Decide whether to add another instance. An entry that already exists in "
+"the list is not added again; a new one is appended, so several instances "
+"of the same type can be kept side by side."
 msgstr ""
-"Решите, добавлять ли еще один экземпляр (если вы снова добавите тот же тип, "
-"предыдущая конфигурация этого типа будет перезаписана)."
 
-#: ../../Instance_Setup/Instance_Setup.rst:55 6bb60d44328244d4ab20f3ae5ba2b827
+#: ../../source/Instance_Setup/Instance_Setup.rst:71
+#: 8e0df08f751f46deb43ba1006ed04b20
 msgid ""
-"If ``setup.json`` already exists, you will be prompted to either reuse the "
-"existing configuration (launch the stored instances) or overwrite it with "
-"new definitions."
+"After editing, the launcher asks ``Add new instances? (Y/N)`` before "
+"returning to the add flow."
 msgstr ""
-"Если ``setup.json`` уже существует, вам будет предложено либо повторно "
-"использовать существующую конфигурацию (запустить сохраненные экземпляры), "
-"либо перезаписать ее новыми определениями."
 
-#: ../../Instance_Setup/Instance_Setup.rst:60 9aeb2efa913341a89212e86cb7419e5a
+#: ../../source/Instance_Setup/Instance_Setup.rst:74
+#: 237874cb10d040cf86074695574daf32
 msgid ""
-"**Important:** When you choose to overwrite, the old server/client "
-"configuration is **completely replaced** by the new one. There is no "
-"merging."
+"When the editor is left with changes, ``setup.json`` is rewritten with "
+"every instance, and all stored instances (reused plus newly added) are "
+"launched."
 msgstr ""
-"**Важно!** При выборе перезаписи старая конфигурация сервера/клиента "
-"**полностью заменяется** новой. Никакого слияния нет."
 
-#: ../../Instance_Setup/Instance_Setup.rst:65 b5cd8be69a40420a89cf7ad69631cd45
+#: ../../source/Instance_Setup/Instance_Setup.rst:79
+#: c81a1dba5f224291a56257375f84a1a0
+msgid "Global commands"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:81
+#: 8247157dfc0b4a32aa9ae300813386c6
+msgid ""
+"The following words can be typed at **every** prompt, including field-"
+"value prompts:"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:85
+#: 720b396d65c547fa845910a437a48236
+msgid "Command"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:85
+#: c29ffb659bf3446490bc9eaac6f2e7ea
+msgid "Effect"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:87
+#: 7702fd6a612347919c73ec35852a4622
+msgid "``Help``"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:87
+#: 886877e3eb7d407fa62b16a4fc968f62
+msgid "Print the usage text of the current prompt."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:89
+#: c569666357334b05ba4189c122bbeaaf
+msgid "``Fix_Config``"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:89
+#: 0a5c8bdb9c1d4f7eb8a41fce85acf0b4
+msgid "Jump to the instance editor (or, inside it, save and return to the list)."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:92
+#: 7702fd6a612347919c73ec35852a4622
+#, fuzzy
+msgid "``Setup``"
+msgstr "``--setup_num``"
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:92
+#: afc6f0adaafd49009ee96e36393060cd
+msgid ""
+"Launch every instance configured in ``setup.json`` and exit the setup "
+"program."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:95
+#: cc2a8285cba3495db468d5f007f3ecfc
+msgid "``Add_Extension``"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:95
+#: a6c3fac6c8f44d75a7a266bae3c54729
+msgid "Prompt for extension file path(s) and register them."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:97
+#: 4febe01e668f4cc1aa1b92e328780ebe
+msgid "``Delete_Extension``"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:97
+#: 5e54a7238b604a5fbe930ff4c5fd05d5
+msgid "Prompt for registered extension path(s) to remove."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:99
+#: 88bb1def13564b809d980ac0d7f22832
+msgid "``Quit``"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:99
+#: 22644327258c472aab543baf2ee08784
+msgid "Exit the setup program immediately."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:103
+#: 34bd8aa59f064b5b9c6323a01278a409
+msgid "Instance editor"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:105
+#: 5832e770c51e4e61b0a372086616ad57
+msgid ""
+"The editor is reached by typing ``Fix_Config`` (at any prompt) or by "
+"answering ``Y`` to the \"Delete or change existing instances\" question. "
+"On an interactive terminal it reads real keys (and enables mouse "
+"tracking); on a pipe or in tests it falls back to line commands. "
+"``j``/``k`` or the arrow keys move the selection, a mouse click selects "
+"the clicked instance, ``Enter`` or a double click opens that instance's "
+"config editor, and ``Delete``/``Backspace`` or ``dd`` deletes the "
+"selected instance."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:115
+#: 36e871e8b76b4e6f8ab3d41c6e58e053
+msgid "Vim-style commands:"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:117
+#: bf18c8047500461486e3bc05c6154ecc
+msgid "``:w`` – write ``setup.json`` without leaving the editor."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:118
+#: e723d0258ef143079a508676b8d418db
+msgid "``:wq`` – write ``setup.json`` and leave the editor."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:119
+#: 8e54b99375e441308cd3dc8ec4cd5d3a
+msgid "``:q`` – leave; refused while there are unsaved changes."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:120
+#: 32cdc0d2f2f34602a77b692202f56b24
+msgid "``:q!`` – leave and discard all changes."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:121
+#: 7360415b19b04c13ab167e500f3437ac
+msgid "``Quit`` – exit the setup program immediately."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:123
+#: aea22c0686c64df8bc842a51fbd2d67e
+msgid ""
+"Inside the config editor, ``j``/``k`` move between fields, ``Esc`` or "
+"``back`` returns to the list, and a field index or ``Enter`` edits the "
+"selected field. An empty input keeps the current value; booleans accept "
+"``true``/``false``/``1``/``0``/ ``y``/``n``, integers are parsed with "
+"``int()``, and the word ``none`` resets a nullable field (``host``, "
+"``client_port``, ``timeout``, ``is_custom_keys``)."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:132
+#: 720b396d65c547fa845910a437a48236
 msgid "Command‑line Mode"
 msgstr "Режим командной строки"
 
-#: ../../Instance_Setup/Instance_Setup.rst:67 d798ec606de2454da5f10e9d0a7e677c
+#: ../../source/Instance_Setup/Instance_Setup.rst:134
+#: 19ffa2fc838a441786de354b2a574153
 msgid "Use the following options:"
 msgstr "Используйте следующие параметры:"
 
-#: ../../Instance_Setup/Instance_Setup.rst:70 4d5c1aebbede473c8598cbc45f8deb20
+#: ../../source/Instance_Setup/Instance_Setup.rst:137
+#: c6dc291839964e119fb50574caedfd9c
 msgid "Option"
 msgstr "Вариант"
 
-#: ../../Instance_Setup/Instance_Setup.rst:70 a50ba126b168482997fae00497252fd4
+#: ../../source/Instance_Setup/Instance_Setup.rst:137
+#: 4a498223c2cb4e45914dcd53bb7f2f12
 msgid "Description"
 msgstr "Описание"
 
-#: ../../Instance_Setup/Instance_Setup.rst:72 7755904907ee46f6a34144360ed876f7
+#: ../../source/Instance_Setup/Instance_Setup.rst:139
+#: 649f1c33bb9d4afa89d1796bef081ddf
 #, python-brace-format
 msgid "``--type {0,1}``"
 msgstr "``--type {0,1}``"
 
-#: ../../Instance_Setup/Instance_Setup.rst:72 e0533cce8d9f4586aa838073b1ed3e2a
-msgid "**Required.** 0 = Server, 1 = Client."
-msgstr "**Обязательно.** 0 = Сервер, 1 = Клиент."
+#: ../../source/Instance_Setup/Instance_Setup.rst:139
+#: f0793c0f15584b42bc66b82e672854b5
+msgid ""
+"0 = Server, 1 = Client. Required for a plain command-line launch; without"
+" it the launcher runs interactively."
+msgstr ""
 
-#: ../../Instance_Setup/Instance_Setup.rst:74 7cc185b424ee489282d9d85571d54fae
+#: ../../source/Instance_Setup/Instance_Setup.rst:143
+#: 984f0a2d64024749ae1cfb521b9866d2
 msgid "``--setup_addr_port``"
 msgstr "``--setup_addr_port``"
 
-#: ../../Instance_Setup/Instance_Setup.rst:74 37df8730dce9408a87ba48b775eb2b0a
+#: ../../source/Instance_Setup/Instance_Setup.rst:143
+#: 58e47d807455460fb6e76d76b836bc30
 #, fuzzy
-msgid "**Required.** Bind address and port (e.g. ``127.0.0.1:8000``)."
+msgid "Bind address and port (e.g. ``127.0.0.1:8000``). Required with ``--type``."
 msgstr "Введите адрес привязки и порт («хост:порт»)."
 
-#: ../../Instance_Setup/Instance_Setup.rst:77 388a3dd952ac47a78598792ef7d587bc
+#: ../../source/Instance_Setup/Instance_Setup.rst:147
+#: 31efc70f958b4608b07bc24eb1ec633b
 msgid "``--connect_addr_port``"
 msgstr "``--connect_ADDR_Port``"
 
-#: ../../Instance_Setup/Instance_Setup.rst:77 b4f319ec304e4a26a09ac62b90db0a07
-#, fuzzy
-msgid "Required for Client only. Server address and port to connect to."
-msgstr "Если Клиент, также введите адрес сервера и порт для подключения."
+#: ../../source/Instance_Setup/Instance_Setup.rst:147
+#: 041b4144717b4f54ad1b24d06726293b
+msgid ""
+"Server address and port to connect to. Required for Client; rejected in "
+"Server mode."
+msgstr ""
 
-#: ../../Instance_Setup/Instance_Setup.rst:80 7bb925846a36488d945c3442889d83c0
+#: ../../source/Instance_Setup/Instance_Setup.rst:150
+#: 7702fd6a612347919c73ec35852a4622
 msgid "``--setup_num``"
 msgstr "``--setup_num``"
 
-#: ../../Instance_Setup/Instance_Setup.rst:80 7f3e0b1925924583acf7acb25ec6e183
+#: ../../source/Instance_Setup/Instance_Setup.rst:150
+#: 139258adce2844a28d57733bb973ec1e
 msgid ""
-"*Ignored.* The script always launches a single instance. This flag is "
-"accepted for compatibility but has no effect."
+"Number of instances to launch. Only 1 is allowed; a larger value is "
+"accepted but ignored with a warning."
 msgstr ""
-"*Игнорируется.* Скрипт всегда запускает один экземпляр. Этот флаг принят для"
-" совместимости, но не имеет эффекта."
 
-#: ../../Instance_Setup/Instance_Setup.rst:86 99952fa68b694654b82a309a26419152
+#: ../../source/Instance_Setup/Instance_Setup.rst:154
+#: 984f0a2d64024749ae1cfb521b9866d2
+msgid "``--web_server``"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:154
+#: 108977e4c89b442488c39cad5378e8e5
+msgid ""
+"Launch the ``transfer_web`` server tool (browser UI) instead of a TCP "
+"instance."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:157
+#: 984f0a2d64024749ae1cfb521b9866d2
+msgid "``--web_client``"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:157
+#: 99410d7adbc749e2bee7ff014945d19b
+msgid ""
+"Launch the ``transfer_web`` client tool (browser UI) instead of a TCP "
+"instance."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:160
+#: 5de4064738ce4d529c9df9d1da98a556
+msgid "``--add PATH [PATH ...]``"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:160
+#: be6adb7451d84f9f934044d2891cc4db
+msgid "Register extension protocol file(s), then exit."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:163
+#: 58e2f444f8394dd5a5c41b400675c736
+msgid "``--delete PATH [PATH ...]``"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:163
+#: 638774f6e42549ad88f930e50a2c3cad
+msgid "Unregister extension protocol file(s), then exit."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:167
+#: e9b3cc31339a4f318337e8c68cc61fd5
+msgid ""
+"A command-line launch replaces ``setup.json`` with the single launching "
+"instance, so any other stored instance is dropped."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:171
+#: 327a63e83b8f4df9af4a5e6a32e2ce6e
 msgid "Examples"
 msgstr "Примеры"
 
-#: ../../Instance_Setup/Instance_Setup.rst:88 9c77e76f40a940e99e754d27e3bc1b05
+#: ../../source/Instance_Setup/Instance_Setup.rst:173
+#: c03b73272d554d1a885a04e6470d43c9
 msgid "**Launch a single server** on ``127.0.0.1:8000``:"
 msgstr "**Запустите один сервер** на ``127.0.0.1:8000``:"
 
-#: ../../Instance_Setup/Instance_Setup.rst:94 37df8730dce9408a87ba48b775eb2b0a
+#: ../../source/Instance_Setup/Instance_Setup.rst:179
+#: 69edc9f7ea534c00bdaab2a4c84ef2cf
 msgid ""
 "**Launch a client** bound to port ``9000``, connecting to a server at "
 "``127.0.0.1:8000``:"
@@ -216,20 +482,30 @@ msgstr ""
 "**Запустите клиент**, привязанный к порту ``9000`` и подключающийся к "
 "серверу по адресу ``127.0.0.1:8000``:"
 
-#: ../../Instance_Setup/Instance_Setup.rst:101
-#: 0bdae3cd584e464ab526840aa032e3a4
-msgid ""
-"**Launch from an existing configuration** (if ``setup.json`` is present):"
+#: ../../source/Instance_Setup/Instance_Setup.rst:186
+#: afc6f0adaafd49009ee96e36393060cd
+msgid "**Launch from an existing configuration** (if ``setup.json`` is present):"
 msgstr ""
-"**Запуск из существующей конфигурации** (если присутствует ``setup.json``):"
+"**Запуск из существующей конфигурации** (если присутствует "
+"``setup.json``):"
 
-#: ../../Instance_Setup/Instance_Setup.rst:109
-#: ff45af42eb7d4d3faa8640a18bfd61f6
+#: ../../source/Instance_Setup/Instance_Setup.rst:193
+#: f2fd3c19413a4e6abb4b18037a347443
+msgid "**Launch the web tool** instead of a TCP instance:"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:200
+#: 71feceacd5b94bd98ce1973f45c16df1
+msgid "**Register an extension protocol file**:"
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:207
+#: 00dff5a17f42419585f498c51f7fcc97
 msgid "Configuration File"
 msgstr "Файл конфигурации"
 
-#: ../../Instance_Setup/Instance_Setup.rst:111
-#: 39e34a4760354d78b87a8e050029e197
+#: ../../source/Instance_Setup/Instance_Setup.rst:209
+#: e723d0258ef143079a508676b8d418db
 msgid ""
 "The script writes a file named ``setup.json`` in the same directory. Its "
 "structure is:"
@@ -237,74 +513,76 @@ msgstr ""
 "Скрипт записывает файл с именем ``setup.json`` в тот же каталог. Его "
 "структура:"
 
-#: ../../Instance_Setup/Instance_Setup.rst:135
-#: 9e72e7ecd43c498299e24f5598b6f2b8
+#: ../../source/Instance_Setup/Instance_Setup.rst:233
+#: 82c31bcb59fc481eaa532d1a0696ed8d
 msgid ""
-"**Each list contains at most one object.** When a new server or client "
-"configuration is added, the entire list for that type is replaced."
+"**Both lists may contain any number of objects.** Every entry is "
+"completed with the default value of each parameter that the entry does "
+"not set. The stored server entry therefore carries ``host``, ``port``, "
+"``max_clients``, ``port_add_step``, ``port_range_num``, "
+"``max_file_transfer_thread_num``, ``is_hand_alloc_port``, "
+"``is_input_command_in_console``, ``max_custom_workers``, "
+"``is_extend_command``, ``is_enable_encrypto``, ``is_custom_keys``, "
+"``max_mem_buff``, ``is_asynic_clients_io``, ``is_debug`` and "
+"``is_print_log``; the client entry carries ``host``, ``client_host``, "
+"``port``, ``client_port``, ``timeout``, ``port_add_step``, "
+"``max_thread_num``, ``is_input_command_in_console``, ``is_wait_server``, "
+"``max_custom_workers``, ``is_extend_command``, ``is_enable_encrypto``, "
+"``is_custom_keys``, ``max_mem_buff``, ``is_debug`` and ``is_print_log``."
 msgstr ""
-"**Каждый список содержит не более одного объекта.** При добавлении новой "
-"конфигурации сервера или клиента заменяется весь список для этого типа."
 
-#: ../../Instance_Setup/Instance_Setup.rst:140
-#: 8731a083a201487bb579beb4a238a0db
+#: ../../source/Instance_Setup/Instance_Setup.rst:251
+#: 8ffd3b4e6719464cbd48a2b20d5764f2
 msgid "Custom Parameters"
 msgstr "Пользовательские параметры"
 
-#: ../../Instance_Setup/Instance_Setup.rst:142
-#: 1568543fd757484da86f12a72ccb58b5
+#: ../../source/Instance_Setup/Instance_Setup.rst:253
+#: 284b4f1899d94269a530dec33958d0c8
 msgid ""
-"You can manually edit ``setup.json`` to include any parameter accepted by "
-"``TCP_Server_Base`` or ``TCP_Client_Base`` (see the source code for the full"
-" list). These custom values are retained when the launcher overwrites the "
-"configuration (since the script reads the existing config and updates it "
-"with user‑provided values, but if you choose to overwrite, the old config is"
-" discarded and only the new fields are saved – so if you want custom "
-"parameters, you should add them after the first launch or edit the file "
-"manually)."
+"You may edit ``setup.json`` by hand (or change the same fields in the "
+"instance editor) to give any parameter accepted by ``TCP_Server_Base`` or"
+" ``TCP_Client_Base`` a non-default value. Custom values of an existing "
+"entry survive later interactive runs, because the launcher loads the "
+"existing entries and merges the defaults underneath them. A **command-"
+"line** launch does not: it builds the new instance from ``host``/``port``"
+" (and, for a client, the connect address) only and rewrites "
+"``setup.json`` from that, so hand-written extra keys are lost."
 msgstr ""
-"Вы можете вручную отредактировать ``setup.json``, включив в него любой "
-"параметр, принимаемый ``TCP_Server_Base`` или ``TCP_Client_Base`` (полный "
-"список см. в исходном коде). Эти пользовательские значения сохраняются, "
-"когда средство запуска перезаписывает конфигурацию (поскольку сценарий "
-"считывает существующую конфигурацию и обновляет ее значениями, "
-"предоставленными пользователем, но если вы решите перезаписать, старая "
-"конфигурация удаляется и сохраняются только новые поля — поэтому, если вам "
-"нужны пользовательские параметры, вам следует добавить их после первого "
-"запуска или отредактировать файл вручную)."
 
-#: ../../Instance_Setup/Instance_Setup.rst:154
-#: c62b1bfe8ceb40f8865a34ac87b4ba18
+#: ../../source/Instance_Setup/Instance_Setup.rst:264
+#: 3746b90215c84dc38c8ca2bb20d396f6
 msgid "Extension Protocols and Startup Mode"
 msgstr "Протоколы расширения и режим запуска"
 
-#: ../../Instance_Setup/Instance_Setup.rst:156
-#: e6a7dcb4ea184e828e6667ae6505d872
+#: ../../source/Instance_Setup/Instance_Setup.rst:266
+#: 4c6e6cc80e9c4ce3afe79fad55a2815a
 msgid ""
-"Two extension protocols ship with the launcher and are loaded automatically "
-"for every instance whose ``setup.json`` entry sets "
+"Two extension protocols ship with the launcher and are loaded "
+"automatically for every instance whose ``setup.json`` entry sets "
 "``is_extend_command=True``:"
 msgstr ""
 "Два протокола расширения поставляются вместе с программой запуска и "
-"загружаются автоматически для каждого экземпляра, запись в ``setup.json`` "
-"которого устанавливает ``is_extend_command=True``:"
+"загружаются автоматически для каждого экземпляра, запись в ``setup.json``"
+" которого устанавливает ``is_extend_command=True``:"
 
-#: ../../Instance_Setup/Instance_Setup.rst:160
-#: 7159f768fc9a4ac199bfe0a4d8478fba
+#: ../../source/Instance_Setup/Instance_Setup.rst:270
+#: 2d05270538524347899b403011286dcc
 #, fuzzy
 msgid ""
 "``command_control_extension_tcp.py`` – remote command execution with per-"
-"client log collection (``/command``)."
+"client log collection (``/command``, with the ``/command_done`` "
+"completion report)."
 msgstr "``command_control_extension_tcp.py`` – удаленная команда"
 
-#: ../../Instance_Setup/Instance_Setup.rst:162
-#: d2d277053c74470abc949b891493a5f0
+#: ../../source/Instance_Setup/Instance_Setup.rst:273
+#: 1540ce3848be4d519034dd90e1d27fdd
 #, fuzzy
 msgid ""
-"``forward_extension_tcp.py`` – forwarding files, multiple files, folders and"
-" multiple folders to any number of destination clients (``/file_forward``, "
-"``/multiple_file_forward``, ``/folder_forward``, "
-"``/multiple_folder_forward``)."
+"``forward_extension_tcp.py`` – forwarding messages, files, multiple "
+"files, folders and multiple folders to any number of destination clients "
+"(``/file_forward``, ``/multiple_file_forward``, ``/folder_forward``, "
+"``/multiple_folder_forward`` on the client, and the ``/forward_file`` / "
+"``/forward_folder`` relays on the server)."
 msgstr ""
 "выполнение со сбором журналов для каждого клиента (``/command``). - "
 "``forward_extension_tcp.py`` – пересылка сообщений, файлов, нескольких "
@@ -312,126 +590,134 @@ msgstr ""
 "(``/send_msg_forward``, ``/file_forward``, ``/multiple_file_forward``, "
 "``/folder_forward``, ``/multiple_folder_forward``)."
 
-#: ../../Instance_Setup/Instance_Setup.rst:168
-#: a8194174e5fd4dcf87ede716eaada9a4
+#: ../../source/Instance_Setup/Instance_Setup.rst:281
+#: 92e914da56f1402e85ef75819caf5b3f
 msgid ""
 "Plain-message forwarding is native to the TCP protocol (no extension "
-"needed): the client-only command ``/forward_send_msg`` relays messages to "
-"the listed destination clients through the server."
+"needed): the client-only command ``/forward_send_msg`` relays messages to"
+" the listed destination clients through the server."
 msgstr ""
 "Простая переадресация сообщений является родной для протокола TCP "
-"(расширение не требуется): только клиентская команда ``/forward_send_msg`` "
-"ретранслирует сообщения перечисленным целевым клиентам через сервер."
+"(расширение не требуется): только клиентская команда "
+"``/forward_send_msg`` ретранслирует сообщения перечисленным целевым "
+"клиентам через сервер."
 
-#: ../../Instance_Setup/Instance_Setup.rst:173
-#: 98297b76f3404736b92b6c507726a50a
+#: ../../source/Instance_Setup/Instance_Setup.rst:286
+#: 836d703843ed4940a42f3b7a0c36b78e
+#, fuzzy
 msgid ""
-"With ``is_extend_command=False`` (the default) only the raw TCP protocol is "
-"started."
+"With ``is_extend_command=False`` (the default) the raw TCP protocol is "
+"started without these two built-in extensions."
 msgstr ""
 "При значении is_extend_command=False (по умолчанию) запускается только "
 "необработанный протокол TCP."
 
-#: ../../Instance_Setup/Instance_Setup.rst:176
-#: 9b5ab0319a9843f1b39721d3a96d1777
+#: ../../source/Instance_Setup/Instance_Setup.rst:289
+#: 3849c157ba79441e8406bcf9a4fc7695
+msgid ""
+"Independently of ``is_extend_command``, every launch also loads the "
+"extension protocol files registered in ``PyFlow/added_extensions.json`` "
+"(see ``--add`` / ``Add_Extension`` above) via "
+"``add_extension.load_registered_extensions``."
+msgstr ""
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:295
+#: fef96f9c96c64f6690b54175c7e7830d
 msgid ""
 "The ``is_input_command_in_console`` flag selects how the instance is "
 "started:"
-msgstr ""
-"Флаг ``is_input_command_in_console`` выбирает способ запуска экземпляра:"
+msgstr "Флаг ``is_input_command_in_console`` выбирает способ запуска экземпляра:"
 
-#: ../../Instance_Setup/Instance_Setup.rst:179
-#: 1ec730c995b1454da1b208331d9ca8fe
-msgid ""
-"``True`` (default) – ``start_TCP_Server()`` / ``start_TCP_client()`` is "
-"called directly and the console input loop runs in its own thread."
-msgstr ""
-"``True`` (по умолчанию) – ``START_TCP_Server()`` /``START_TCP_Client()`` "
-"вызывается напрямую, и входной цикл консоли запускается в своем собственном "
-"потоке."
-
-#: ../../Instance_Setup/Instance_Setup.rst:182
-#: 3cfb2eba312943cea85388f4e9faf40d
+#: ../../source/Instance_Setup/Instance_Setup.rst:298
+#: 407ae406135b42b3a6efd4ba5242b296
 #, fuzzy
 msgid ""
-"``False`` – the instance runs in a background thread and the launcher keeps "
-"the process alive until the instance stops (useful for headless "
-"deployments)."
+"``True`` (default) – the instance's own start method "
+"(``start_TCP_Server()`` / ``start_TCP_client()``) runs and keeps its "
+"console input loop in the foreground."
 msgstr ""
-"``start_TCP_client()`` вызывается напрямую, и цикл ввода консоли выполняется"
-" в своем собственном потоке. - ``False`` — экземпляр работает в фоновом "
-"потоке, и средство запуска поддерживает процесс до тех пор, пока экземпляр "
-"не остановится (полезно для автономного развертывания)."
+"``True`` (по умолчанию) – ``START_TCP_Server()`` /``START_TCP_Client()`` "
+"вызывается напрямую, и входной цикл консоли запускается в своем "
+"собственном потоке."
 
-#: ../../Instance_Setup/Instance_Setup.rst:186
-#: 3b3482fa903f4afd81234e588a229c1f
+#: ../../source/Instance_Setup/Instance_Setup.rst:301
+#: 1e10d27ee5c04d69ac9de20031a68b31
+#, fuzzy
+msgid ""
+"``False`` – the instance is started in a background thread and the "
+"launcher keeps the process alive until the instance stops (useful for "
+"headless deployments)."
+msgstr ""
+"``start_TCP_client()`` вызывается напрямую, и цикл ввода консоли "
+"выполняется в своем собственном потоке. - ``False`` — экземпляр работает "
+"в фоновом потоке, и средство запуска поддерживает процесс до тех пор, "
+"пока экземпляр не остановится (полезно для автономного развертывания)."
+
+#: ../../source/Instance_Setup/Instance_Setup.rst:305
+#: 3743e0549b4449008324f68e282a0d81
+#, fuzzy
 msgid ""
 "Both extensions also expose injectable registration "
-"(``setup_server_commands(instance)`` / ``setup_client_commands(instance)``) "
+"(``setup_server_commands(server)`` / ``setup_client_commands(client)``) "
 "and a convenience ``client_setup(instance=None, "
 "is_input_command_in_console=True)`` / ``server_setup(instance=None, "
-"is_input_command_in_console=True)`` that accepts an existing instance, so "
-"several extensions can be loaded onto the same instance from code."
+"is_input_command_in_console=True)`` that accepts an existing instance, so"
+" several extensions can be loaded onto the same instance from code."
 msgstr ""
 "Оба расширения также предоставляют внедряемую регистрацию "
-"(``setup_server_commands(instance)`` / ``setup_client_commands(instance)``) "
-"и удобные ``client_setup(instance=None, is_input_command_in_console=True)`` "
-"/ ``server_setup(instance=None, is_input_command_in_console=True)``, который"
-" принимает существующий экземпляр, поэтому несколько расширений можно "
-"загрузить в один и тот же экземпляр из кода."
+"(``setup_server_commands(instance)`` / "
+"``setup_client_commands(instance)``) и удобные "
+"``client_setup(instance=None, is_input_command_in_console=True)`` / "
+"``server_setup(instance=None, is_input_command_in_console=True)``, "
+"который принимает существующий экземпляр, поэтому несколько расширений "
+"можно загрузить в один и тот же экземпляр из кода."
 
-#: ../../Instance_Setup/Instance_Setup.rst:195
-#: 1dc7b46c0e3047d2885573cc4f55e7c6
+#: ../../source/Instance_Setup/Instance_Setup.rst:314
+#: 34bd8aa59f064b5b9c6323a01278a409
 msgid "Internal Operation"
 msgstr "Внутренняя операция"
 
-#: ../../Instance_Setup/Instance_Setup.rst:197
-#: 8870bc6b731d40a095a40faed0c8f16d
+#: ../../source/Instance_Setup/Instance_Setup.rst:316
+#: 4ca266ef495b4a61bce44251b65f8c91
 #, fuzzy
 msgid ""
-"Each instance is launched in a new terminal window (or background process)."
+"Each instance is launched in a new terminal window (or background "
+"process)."
 msgstr "Каждый экземпляр запускается в новом окне терминала."
 
-#: ../../Instance_Setup/Instance_Setup.rst:199
-#: 13c720a93ba54e8ca330fce3a078bb5b
+#: ../../source/Instance_Setup/Instance_Setup.rst:318
+#: 2b6246012ce84ec0945a9245b208ae95
 #, fuzzy
 msgid ""
 "The configuration is passed via a temporary JSON file to avoid shell "
 "escaping issues."
 msgstr "Конфигурация передается через временный JSON."
 
-#: ../../Instance_Setup/Instance_Setup.rst:201
-#: 9566eb3cb70e4b77bcbdb584f7e0b6fc
+#: ../../source/Instance_Setup/Instance_Setup.rst:320
+#: e40392b9adef407ca3ade4bf2d252190
 #, fuzzy
 msgid ""
-"If an instance fails to start, the error is displayed and the window pauses "
-"for inspection."
+"If an instance fails to start, the error is displayed and the window "
+"pauses for inspection."
 msgstr "отображается, и окно приостанавливается для проверки."
 
-#: ../../Instance_Setup/Instance_Setup.rst:205
-#: 5f0f0f6a41384356986a1182f14a0a4c
+#: ../../source/Instance_Setup/Instance_Setup.rst:324
+#: 2d7f7f35978a449995958b44730759d3
 msgid "Requirements"
 msgstr "Требования"
 
-#: ../../Instance_Setup/Instance_Setup.rst:207
-#: 49ceb74e41104b00971cd9edecef08ae
-msgid "Python 3.6+"
+#: ../../source/Instance_Setup/Instance_Setup.rst:326
+#: ddf48eb8fc2d48f9adbc38a39965ec22
+#, fuzzy
+msgid "Python 3.10+"
 msgstr "Питон 3.6+"
 
-#: ../../Instance_Setup/Instance_Setup.rst:208
-#: 541cd1be44c044f3880eb220a87c06b7
-msgid "The ``network_api.connect_tcp`` module must be"
-msgstr "Модуль ``network_api.connect_tcp`` должен быть"
-
-#: ../../Instance_Setup/Instance_Setup.rst:209
-#: 427fef8d7c5047fc934681026969639a
-msgid "importable (the script imports ``TCP_Server_Base``"
-msgstr "импортируемый (скрипт импортирует ``TCP_Server_Base``"
-
-#: ../../Instance_Setup/Instance_Setup.rst:210
-#: fb35af261d664664bdb3c1b3aaac3e83
-msgid "and ``TCP_Client_Base`` from there)."
-msgstr "и ``TCP_Client_Base`` оттуда)."
+#: ../../source/Instance_Setup/Instance_Setup.rst:327
+#: 9bc8a330f1384ade97e4ee55efa58e6b
+msgid ""
+"The ``PyFlow.network_api.connect_tcp`` module must be importable (the "
+"script imports ``TCP_Server_Base`` and ``TCP_Client_Base`` from there)."
+msgstr ""
 
 #~ msgid "``True`` (default) – ``start_TCP_Server()`` /"
 #~ msgstr "``True`` (по умолчанию) – ``start_TCP_Server()`` /"
@@ -444,3 +730,127 @@ msgstr "и ``TCP_Client_Base`` оттуда)."
 
 #~ msgid "If an instance fails to start, the error is"
 #~ msgstr "Если экземпляр не запускается, возникает ошибка"
+
+#~ msgid ""
+#~ "**Note:** This launcher supports only "
+#~ "**one server** and **one client** "
+#~ "instance at a time. Adding a new"
+#~ " server or client configuration will "
+#~ "completely overwrite any previous "
+#~ "configuration of the same type."
+#~ msgstr ""
+#~ "**Примечание.** Эта программа запуска "
+#~ "одновременно поддерживает только **один "
+#~ "сервер** и **один клиент**. Добавление "
+#~ "новой конфигурации сервера или клиента "
+#~ "полностью перезапишет любую предыдущую "
+#~ "конфигурацию того же типа."
+
+#~ msgid "The script will ask you to:"
+#~ msgstr "Скрипт попросит вас:"
+
+#~ msgid ""
+#~ "Decide whether to add another instance"
+#~ " (if you add the same type "
+#~ "again, the previous configuration of "
+#~ "that type is overwritten)."
+#~ msgstr ""
+#~ "Решите, добавлять ли еще один экземпляр"
+#~ " (если вы снова добавите тот же "
+#~ "тип, предыдущая конфигурация этого типа "
+#~ "будет перезаписана)."
+
+#~ msgid ""
+#~ "If ``setup.json`` already exists, you "
+#~ "will be prompted to either reuse "
+#~ "the existing configuration (launch the "
+#~ "stored instances) or overwrite it with"
+#~ " new definitions."
+#~ msgstr ""
+#~ "Если ``setup.json`` уже существует, вам "
+#~ "будет предложено либо повторно использовать"
+#~ " существующую конфигурацию (запустить сохраненные"
+#~ " экземпляры), либо перезаписать ее новыми"
+#~ " определениями."
+
+#~ msgid ""
+#~ "**Important:** When you choose to "
+#~ "overwrite, the old server/client configuration"
+#~ " is **completely replaced** by the "
+#~ "new one. There is no merging."
+#~ msgstr ""
+#~ "**Важно!** При выборе перезаписи старая "
+#~ "конфигурация сервера/клиента **полностью "
+#~ "заменяется** новой. Никакого слияния нет."
+
+#~ msgid "**Required.** 0 = Server, 1 = Client."
+#~ msgstr "**Обязательно.** 0 = Сервер, 1 = Клиент."
+
+#~ msgid "Required for Client only. Server address and port to connect to."
+#~ msgstr "Если Клиент, также введите адрес сервера и порт для подключения."
+
+#~ msgid ""
+#~ "*Ignored.* The script always launches a"
+#~ " single instance. This flag is "
+#~ "accepted for compatibility but has no"
+#~ " effect."
+#~ msgstr ""
+#~ "*Игнорируется.* Скрипт всегда запускает один"
+#~ " экземпляр. Этот флаг принят для "
+#~ "совместимости, но не имеет эффекта."
+
+#~ msgid ""
+#~ "**Each list contains at most one "
+#~ "object.** When a new server or "
+#~ "client configuration is added, the "
+#~ "entire list for that type is "
+#~ "replaced."
+#~ msgstr ""
+#~ "**Каждый список содержит не более одного"
+#~ " объекта.** При добавлении новой "
+#~ "конфигурации сервера или клиента заменяется"
+#~ " весь список для этого типа."
+
+#~ msgid ""
+#~ "You can manually edit ``setup.json`` to"
+#~ " include any parameter accepted by "
+#~ "``TCP_Server_Base`` or ``TCP_Client_Base`` (see "
+#~ "the source code for the full "
+#~ "list). These custom values are retained"
+#~ " when the launcher overwrites the "
+#~ "configuration (since the script reads "
+#~ "the existing config and updates it "
+#~ "with user‑provided values, but if you"
+#~ " choose to overwrite, the old config"
+#~ " is discarded and only the new "
+#~ "fields are saved – so if you "
+#~ "want custom parameters, you should add"
+#~ " them after the first launch or "
+#~ "edit the file manually)."
+#~ msgstr ""
+#~ "Вы можете вручную отредактировать "
+#~ "``setup.json``, включив в него любой "
+#~ "параметр, принимаемый ``TCP_Server_Base`` или "
+#~ "``TCP_Client_Base`` (полный список см. в "
+#~ "исходном коде). Эти пользовательские значения"
+#~ " сохраняются, когда средство запуска "
+#~ "перезаписывает конфигурацию (поскольку сценарий "
+#~ "считывает существующую конфигурацию и "
+#~ "обновляет ее значениями, предоставленными "
+#~ "пользователем, но если вы решите "
+#~ "перезаписать, старая конфигурация удаляется и"
+#~ " сохраняются только новые поля — "
+#~ "поэтому, если вам нужны пользовательские "
+#~ "параметры, вам следует добавить их после"
+#~ " первого запуска или отредактировать файл"
+#~ " вручную)."
+
+#~ msgid "The ``network_api.connect_tcp`` module must be"
+#~ msgstr "Модуль ``network_api.connect_tcp`` должен быть"
+
+#~ msgid "importable (the script imports ``TCP_Server_Base``"
+#~ msgstr "импортируемый (скрипт импортирует ``TCP_Server_Base``"
+
+#~ msgid "and ``TCP_Client_Base`` from there)."
+#~ msgstr "и ``TCP_Client_Base`` оттуда)."
+

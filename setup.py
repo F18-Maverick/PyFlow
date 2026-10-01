@@ -12,9 +12,10 @@ Installing the source distribution (or the repository) therefore produces the
 library automatically; building the repository with CMake is only needed for
 the C test suite and for C consumers (see ``CMakeLists.txt``).
 
-Requirements: a C compiler plus OpenSSL 1.1.1 development headers. On Windows
-OpenSSL has no default location, so ``OPENSSL_ROOT_DIR`` is honoured there, as
-in the CMake build, with the usual installer directories as fallbacks.
+Requirements: a C compiler plus OpenSSL 1.1.1 development headers. MSVC has no
+default location for OpenSSL, so ``build_ext`` locates it on Windows (see
+``_find_windows_openssl``) - only when compiling, never while metadata or
+requirement lists are generated.
 """
 
 import os
@@ -22,6 +23,7 @@ import sys
 from pathlib import Path
 
 from setuptools import Extension, setup
+from setuptools.command.build_ext import build_ext
 
 # setuptools rejects absolute paths in setup() arguments: everything below is
 # relative to this file's directory.
@@ -29,54 +31,99 @@ CRYPTO_API_DIR = "PyFlow/crypto_api"
 CRYPTO_API_INCLUDE = CRYPTO_API_DIR + "/include"
 SOURCES = sorted(str(path) for path in Path(CRYPTO_API_DIR).glob("*.c"))
 
-# Installer default locations of the OpenSSL development files on Windows.
-_WINDOWS_OPENSSL_ROOTS = (
-    r"C:\Program Files\OpenSSL-Win64",
+# Windows: where the OpenSSL installers put their development files. The
+# entries with ``lib/VC`` are the layout of Shining Light's (slproweb) full
+# installer, which GitHub's windows runners install into Program Files;
+# the bare ``lib``/``lib64`` entries cover vcpkg and source builds.
+OPENSSL_ROOTS = (
     r"C:\Program Files\OpenSSL",
+    r"C:\Program Files\OpenSSL-Win64",
     r"C:\Program Files (x86)\OpenSSL-Win32",
+    r"C:\OpenSSL-Win64",
+    r"C:\OpenSSL",
+)
+OPENSSL_LIB_SUBDIRS = (
+    ("lib", "VC", "x64", "MD"),  # /MD matches the CPython runtime
+    ("lib", "VC", "x64", "MT"),
+    ("lib", "VC", "x64"),
+    ("lib", "VC"),
+    ("lib", "x64"),
+    ("lib64",),
+    ("lib",),
 )
 
 OPENSSL_MISSING = (
     "OpenSSL development files were not found; PyFlow compiles its crypto library "
-    "against them. Install OpenSSL 1.1.1 or newer, or point OPENSSL_ROOT_DIR at a "
-    "directory containing include/openssl/ and lib/libcrypto.lib."
+    "against them. Install OpenSSL 1.1.1 or newer (the Win64 installer from "
+    "https://slproweb.com/products/Win32OpenSSL.html includes the development "
+    "files), or point OPENSSL_ROOT_DIR at a directory containing "
+    "include/openssl/opensslv.h and libcrypto.lib. Searched: {}"
 )
 
 
-def _windows_openssl_root():
-    """Return the first Windows OpenSSL root that has headers and an import library."""
+def _openssl_roots():
+    """Return the Windows OpenSSL roots to search, ``OPENSSL_ROOT_DIR`` first."""
     env_root = os.environ.get("OPENSSL_ROOT_DIR")
-    roots = [env_root, *_WINDOWS_OPENSSL_ROOTS] if env_root else list(_WINDOWS_OPENSSL_ROOTS)
-    for root in roots:
+    roots = [env_root] if env_root else []
+    roots.extend(root for root in OPENSSL_ROOTS if root != env_root)
+    return roots
+
+
+def _find_windows_openssl(roots=None) -> tuple[Path, Path] | None:
+    """Return ``(include_dir, library_dir)`` of a usable OpenSSL, or ``None``.
+
+    Args:
+        roots (Iterable | None): Candidate installation roots; the environment
+            and the built-in list are used when omitted.
+
+    Returns:
+        tuple[Path, Path] | None: Include directory and the directory holding
+        ``libcrypto.lib``, or ``None`` when no root is usable.
+    """
+    for root in _openssl_roots() if roots is None else roots:
         path = Path(root)
-        if (path / "include" / "openssl" / "opensslv.h").is_file() and (
-            path / "lib" / "libcrypto.lib"
-        ).is_file():
-            return path
+        include_dir = path / "include"
+        if not (include_dir / "openssl" / "opensslv.h").is_file():
+            continue
+        for parts in OPENSSL_LIB_SUBDIRS:
+            library_dir = path.joinpath(*parts)
+            if (library_dir / "libcrypto.lib").is_file():
+                return include_dir, library_dir
+        # Unknown layout: the import library is small and the trees are shallow.
+        for found in sorted(path.rglob("libcrypto.lib")):
+            return include_dir, found.parent
     return None
 
 
-include_dirs = [CRYPTO_API_INCLUDE]
-library_dirs = []
-define_macros = []
-libraries = ["crypto"]
+class OpenSslBuildExt(build_ext):
+    """Compile the crypto library, resolving OpenSSL for MSVC first."""
 
-if sys.platform == "win32":
-    define_macros.append(("PF_CRYPTO_SHARED", "1"))  # __declspec(dllexport)
-    openssl_root = _windows_openssl_root()
-    if openssl_root is None:
-        raise SystemExit(OPENSSL_MISSING)
-    include_dirs.append((openssl_root / "include").as_posix())
-    library_dirs.append((openssl_root / "lib").as_posix())
-    libraries = ["libcrypto"]
+    def build_extension(self, extension: Extension) -> None:
+        """Locate OpenSSL on Windows, then build one extension.
+
+        Args:
+            extension (Extension): The extension to compile.
+
+        Raises:
+            SystemExit: If Windows OpenSSL development files are not found.
+        """
+        if sys.platform == "win32":
+            found = _find_windows_openssl()
+            if found is None:
+                raise SystemExit(OPENSSL_MISSING.format(", ".join(_openssl_roots())))
+            include_dir, library_dir = found
+            extension.include_dirs.append(str(include_dir))
+            extension.library_dirs.append(str(library_dir))
+            extension.define_macros.append(("PF_CRYPTO_SHARED", "1"))  # dllexport
+            extension.libraries = ["libcrypto"]
+        super().build_extension(extension)
+
 
 crypto_api = Extension(
     "PyFlow._crypto_api",
     sources=SOURCES,
-    include_dirs=include_dirs,
-    library_dirs=library_dirs,
-    libraries=libraries,
-    define_macros=define_macros,
+    include_dirs=[CRYPTO_API_INCLUDE],
+    libraries=["crypto"],
 )
 
-setup(ext_modules=[crypto_api])
+setup(ext_modules=[crypto_api], cmdclass={"build_ext": OpenSslBuildExt})

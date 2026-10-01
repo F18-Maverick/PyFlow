@@ -6,238 +6,310 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: PyFlow\n"
+"Project-Id-Version:  PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-16 10:49+0800\n"
+"POT-Creation-Date: 2026-10-01 18:19+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
-"Language-Team: zh_CN <LL@li.org>\n"
 "Language: zh_CN\n"
+"Language-Team: zh_CN <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=1; plural=0;\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: ../../File_Transfer/File_Transfer.rst:2 d9c92006bc3e49c9a5d184d74f2e7824
+#: ../../source/File_Transfer/File_Transfer.rst:2
+#: 2d215e70ec1e43988343e3d32392d8aa
 msgid "TCP File Transfer Mechanism"
 msgstr "TCP文件传输机制"
 
-#: ../../File_Transfer/File_Transfer.rst:4 b32ed3356f814a369d9d4bc153c017fa
+#: ../../source/File_Transfer/File_Transfer.rst:4
+#: f603ff252cb64bea9b7c9034d2d46221
 msgid ""
-"This document describes the file transfer subsystem implemented in both the "
-"``TCP_Server_Base`` and ``TCP_Client_Base`` classes. The file transfer "
-"mechanism allows sending and receiving single files, folders, multiple "
-"files, and multiple folders between a server and its connected clients. It "
-"also supports server-initiated transfers from the server console."
-msgstr ""
-"本文档描述了在“TCP_Server_Base”和“TCP_Client_Base”类中实现的文件传输子系统。文件传输机制允许在服务器及其连接的客户端之间发送和接收单个文件、文件夹、多个文件和多个文件夹。它还支持从服务器控制台由服务器发起的传输。"
+"This document describes the file transfer subsystem implemented in both "
+"the ``TCP_Server_Base`` and ``TCP_Client_Base`` classes. The file "
+"transfer mechanism allows sending and receiving single files, folders, "
+"multiple files, and multiple folders between a server and its connected "
+"clients. It also supports server-initiated transfers from the server "
+"console."
+msgstr "本文档描述了在“TCP_Server_Base”和“TCP_Client_Base”类中实现的文件传输子系统。文件传输机制允许在服务器及其连接的客户端之间发送和接收单个文件、文件夹、多个文件和多个文件夹。它还支持从服务器控制台由服务器发起的传输。"
 
-#: ../../File_Transfer/File_Transfer.rst:14 ad6d3cd551694899ba6998e43167bb10
+#: ../../source/File_Transfer/File_Transfer.rst:14
+#: f28ca12001c24b1c954e10fdb63aa493
 msgid "The design follows a **two-phase handshake** pattern:"
 msgstr "该设计遵循**两阶段握手**模式："
 
-#: ../../File_Transfer/File_Transfer.rst:16 f67e58b5ae8b4e2a8f9a9021efba0b5c
+#: ../../source/File_Transfer/File_Transfer.rst:16
+#: b348421cfc6d4267a58231db041e7d67
 msgid "A transfer command is exchanged over the main control connection."
 msgstr "传输命令通过主控制连接进行交换。"
 
-#: ../../File_Transfer/File_Transfer.rst:18 4d267488a6cf4911bc2c3cb7801dce8d
+#: ../../source/File_Transfer/File_Transfer.rst:18
+#: 0483543fb8f0497a9ee256fee509e4fc
 msgid ""
-"A separate TCP connection is established on a dynamically allocated port to "
-"transfer the actual file data (metadata + payload)."
+"A separate TCP connection is established on a dynamically allocated port "
+"to transfer the actual file data (metadata + payload)."
 msgstr "在动态分配的端口上建立单独的 TCP 连接以传输实际文件数据（元数据 + 有效负载）。"
 
-#: ../../File_Transfer/File_Transfer.rst:22 a0490aac6cc74a8f9de5e9872378b87c
+#: ../../source/File_Transfer/File_Transfer.rst:22
+#: 0e13d1b8b6ef46ce855c8949ef36f219
+#, fuzzy
 msgid ""
-"All file transfers use **stream-oriented reading/writing** with fixed-size "
-"chunks (by default 64 KiB) to avoid blocking and to handle large files "
-"efficiently."
+"All file transfers use **stream-oriented reading/writing** with fixed-"
+"size chunks (65536 bytes, hardcoded in both directions) to avoid blocking"
+" and to handle large files efficiently."
 msgstr "所有文件传输都使用**面向流的读/写**和固定大小的块（默认为 64 KiB），以避免阻塞并有效处理大文件。"
 
-#: ../../File_Transfer/File_Transfer.rst:27 9ad33f3c1a2e4164b384a71388b895f5
+#: ../../source/File_Transfer/File_Transfer.rst:28
+#: a8c11b500a31468aa10fc4d6537c691c
 msgid ""
-"*Note: For a high-level overview of the server and client classes, please "
-"refer to :doc:`TCP_Server_APIs` and :doc:`TCP_Client_APIs`.*"
+"*Note: For a high-level overview of the server and client classes, please"
+" refer to :doc:`TCP_Server_APIs` and :doc:`TCP_Client_APIs`.*"
 msgstr "*注意：有关服务器和客户端类的高级概述，请参阅 TCP_Server_APIs 和 TCP_Client_APIs。*"
 
-#: ../../File_Transfer/File_Transfer.rst:34 2c31714fc81743fa9fbb8701d87347ac
+#: ../../source/File_Transfer/File_Transfer.rst:35
+#: aeba1deb576440f29ab1d507d38fb22d
 msgid "File Transfer Protocol"
 msgstr "文件传输协议"
 
-#: ../../File_Transfer/File_Transfer.rst:36 61af0fc38ea74fcfae8b2a1316d2e6ea
+#: ../../source/File_Transfer/File_Transfer.rst:37
+#: a97e5fe0762d4d2d8ffef8527985c9e7
 msgid ""
-"The protocol is symmetric: the same low-level exchange is used regardless of"
-" whether the server sends to a client or the client sends to the server. The"
-" **initiator** of the transfer (the side that sends the command) also acts "
-"as the **sender** of the file data; the other side acts as the **receiver**."
+"The protocol is symmetric: the same low-level exchange is used regardless"
+" of whether the server sends to a client or the client sends to the "
+"server. The **initiator** of the transfer (the side that sends the "
+"command) also acts as the **sender** of the file data; the other side "
+"acts as the **receiver**."
+msgstr "该协议是对称的：无论服务器发送到客户端还是客户端发送到服务器，都使用相同的低级交换。传输的**发起者**（发送命令的一方）同时也是文件数据的**发送者**；另一方充当**接收者**。"
+
+#: ../../source/File_Transfer/File_Transfer.rst:46
+#: 1a2e27611ea0452d99cd3e8ac299683c
+msgid ""
+"The low-level wire markers are stored in "
+"``PyFlow/network_api/decode_command_table.json``, which each instance "
+"reads in its constructor and exposes both as ``command_decode_table`` and"
+" as individual attributes. The attributes used by the transfer loop are:"
 msgstr ""
-"该协议是对称的：无论服务器发送到客户端还是客户端发送到服务器，都使用相同的低级交换。传输的**发起者**（发送命令的一方）同时也是文件数据的**发送者**；另一方充当**接收者**。"
 
-#: ../../File_Transfer/File_Transfer.rst:45 4d8e8c2542ff4559975e412dd2977061
+#: ../../source/File_Transfer/File_Transfer.rst:52
+#: ebc9fc6492964c47b4744d8e2faf6ffd
+#, fuzzy
 msgid ""
-"The protocol uses a set of predefined string constants, loaded from "
-"``decode_command_table.json``:"
-msgstr "该协议使用一组预定义的字符串常量，从“decode_command_table.json”加载："
-
-#: ../../File_Transfer/File_Transfer.rst:49 c108474c9cb84951af9f471c2d63c395
-msgid ""
-"``server_start_file_transfer_sign`` - sent by the receiver to the sender, "
-"indicating that the receiver is ready."
+"``server_start_file_transfer_sign`` — from "
+"``file_send_server_start_file_transfer`` "
+"(``/FILE_SEND_SERVER_START_FILE_TRANSFER``), sent by the receiver to the "
+"sender, indicating that the receiver is ready."
 msgstr "``server_start_file_transfer_sign`` - 由接收方发送给发送方，表明接收方已准备就绪。"
 
-#: ../../File_Transfer/File_Transfer.rst:52 c3a6d818c4d74484ae1fcf398cb77e65
+#: ../../source/File_Transfer/File_Transfer.rst:57
+#: d23e35d928494417918b1e9e1810d2e9
 msgid ""
-"``server_received_file_header_sign`` - sent by the receiver after it has "
-"successfully read the filename and file size."
-msgstr "``server_reeived_file_header_sign`` - 由接收方在成功读取文件名和文件大小后发送。"
+"``send_file_header_sign`` / ``send_file_data_sign`` — from "
+"``file_send_server_header`` / ``file_send_server_data``; both attributes "
+"are set but not referenced by the transfer loop."
+msgstr ""
 
-#: ../../File_Transfer/File_Transfer.rst:55 3d7385155fea45049c349603a29b5cf8
+#: ../../source/File_Transfer/File_Transfer.rst:60
+#: 07ce10ba9a534d2db23cb3505f3d9ad7
 msgid ""
-"``server_received_file_data_sign`` - sent by the receiver after the complete"
-" file has been written to disk."
-msgstr "``server_reeived_file_data_sign`` - 在完整文件写入磁盘后由接收方发送。"
+"``server_received_file_header_sign`` / ``server_received_file_data_sign``"
+" — from ``file_receive_client_header`` / ``file_receive_client_data``; "
+"the header one is sent by the receiver after it has successfully read the"
+" filename and file size, the data one after the complete file has been "
+"written to disk."
+msgstr ""
 
-#: ../../File_Transfer/File_Transfer.rst:58 0fc372ae19be49029aa105a95e480640
+#: ../../source/File_Transfer/File_Transfer.rst:67
+#: a2c795d996c4491e9c90f46871d655b0
+#, fuzzy
 msgid ""
-"``error_sign`` - sent by either side when an error occurs, causing the "
-"transfer socket to be closed."
+"``error_sign`` — from ``file_send_receive_error`` (``/FER``), sent by "
+"either side when an error occurs, causing the transfer socket to be "
+"closed."
 msgstr "``error_sign`` - 当发生错误时由任何一方发送，导致传输套接字关闭。"
 
-#: ../../File_Transfer/File_Transfer.rst:62 45a36aa9239d4caba8752e4dc4fd551b
+#: ../../source/File_Transfer/File_Transfer.rst:72
+#: b95751f788c044d69f86a067e221a340
+msgid ""
+"The remaining keys of the table cover the other three direction/phase "
+"combinations. Protocol control lines that are not part of this table "
+"(``/server_file_transfer_port``, ``/client_alloc_port_range``, "
+"``/pause_trans``, ``/start_trans``, ``/forward_item``, "
+"``/forward_upload``, ``/forward_error``, ``/crypto_*``) are hardcoded in "
+"``connect_tcp.py``."
+msgstr ""
+
+#: ../../source/File_Transfer/File_Transfer.rst:80
+#: c481ce301cdc4dddba6f392dc6de4e6a
 msgid "### Metadata Exchange"
 msgstr "### 元数据交换"
 
-#: ../../File_Transfer/File_Transfer.rst:64 d4ace80bc05f4bafb8144e1de31060dc
+#: ../../source/File_Transfer/File_Transfer.rst:82
+#: a6fea134d58a457ab825ec59930e0c48
 msgid ""
-"The sender performs the following steps after the dedicated file-transfer "
-"socket is connected:"
+"The sender performs the following steps after the dedicated file-transfer"
+" socket is connected:"
 msgstr "连接专用文件传输套接字后，发送方执行以下步骤："
 
-#: ../../File_Transfer/File_Transfer.rst:68 5df80a71cd274a92975e8d010f564872
+#: ../../source/File_Transfer/File_Transfer.rst:86
+#: e18ac26158444f719667794153f422d8
 msgid ""
-"Wait for the receiver's start signal (``server_start_file_transfer_sign``) "
-"with a 10-second timeout."
+"Wait for the receiver's start signal "
+"(``server_start_file_transfer_sign``) with a 10-second timeout."
 msgstr "等待接收器的启动信号（``server_start_file_transfer_sign``），超时时间为 10 秒。"
 
-#: ../../File_Transfer/File_Transfer.rst:71 d68741e000fe48d3857ec0b0363d4182
+#: ../../source/File_Transfer/File_Transfer.rst:89
+#: fb269796ce6d45cbb73b0201dce1cec9
 msgid "Send the filename length as a 4-byte unsigned integer (big-endian)."
 msgstr "以 4 字节无符号整数（大端）形式发送文件名长度。"
 
-#: ../../File_Transfer/File_Transfer.rst:73 95260b76f4524ddb8700ca05352f294d
+#: ../../source/File_Transfer/File_Transfer.rst:91
+#: c48725bc3ac54f16bef68243c780831d
 msgid "Send the filename encoded in UTF-8."
 msgstr "发送以 UTF-8 编码的文件名。"
 
-#: ../../File_Transfer/File_Transfer.rst:74 7efa294dbe7e4921974628e8fb08cc00
+#: ../../source/File_Transfer/File_Transfer.rst:92
+#: 951751cbb7ab400dbfd8ac2e574d2bf0
 msgid "Send the file size as an 8-byte unsigned integer (big-endian)."
 msgstr "以 8 字节无符号整数（大端）形式发送文件大小。"
 
-#: ../../File_Transfer/File_Transfer.rst:76 2a3c86e2dbea42c4b37016380a4c9004
-msgid "Send the file content in 64 KiB chunks until EOF."
+#: ../../source/File_Transfer/File_Transfer.rst:94
+#: db806fd98e8b48dabcd3fa755f1d6567
+#, fuzzy
+msgid "Send the file content in 65536-byte chunks until EOF."
 msgstr "以 64 KiB 块的形式发送文件内容，直到 EOF。"
 
-#: ../../File_Transfer/File_Transfer.rst:77 aeec7f8ff0ab424cbc5b7c1a32ff9433
+#: ../../source/File_Transfer/File_Transfer.rst:95
+#: 265efb19bd5c46569983bb4156bc195c
 msgid ""
-"Wait for the completion acknowledgement (``server_received_file_data_sign``)"
-" with a dynamic timeout (base 30 seconds plus 10 seconds per 100 MiB)."
+"Wait for the completion acknowledgement "
+"(``server_received_file_data_sign``) with a dynamic timeout (base 30 "
+"seconds plus 10 seconds per 100 MiB)."
 msgstr ""
-"等待动态超时（基本 30 秒加上每 100 MiB 10 秒）的完成确认 (``s​​erver_reeived_file_data_sign``)。"
+"等待动态超时（基本 30 秒加上每 100 MiB 10 秒）的完成确认 "
+"(``s​​erver_reeived_file_data_sign``)。"
 
-#: ../../File_Transfer/File_Transfer.rst:82 b80094b922a24c409f10eb9c8b05373b
+#: ../../source/File_Transfer/File_Transfer.rst:100
+#: b2944c94e7a9468daf924f021a5f0bab
 msgid "The receiver performs the complementary steps:"
 msgstr "接收器执行补充步骤："
 
-#: ../../File_Transfer/File_Transfer.rst:84 5f71fc707ffe4b06a275b3db9f77178d
+#: ../../source/File_Transfer/File_Transfer.rst:102
+#: 1353e95158fc496db86676f544168584
 msgid "Send the start signal."
 msgstr "发送启动信号。"
 
-#: ../../File_Transfer/File_Transfer.rst:85 7132d6fe15ce42a3bef64e0073e9baff
+#: ../../source/File_Transfer/File_Transfer.rst:103
+#: e32e19b7ac2e4a20a76a7c5640212835
 msgid "Read the 4-byte length, then the filename, then the 8-byte size."
 msgstr "读取 4 字节长度，然后读取文件名，然后读取 8 字节大小。"
 
-#: ../../File_Transfer/File_Transfer.rst:87 7e0fcaec6d704455b94fc9f7defbef55
+#: ../../source/File_Transfer/File_Transfer.rst:105
+#: 1bbea38ba8ec4f84970f408827ba1be4
 msgid "Acknowledge the header with ``server_received_file_header_sign``."
 msgstr "使用“server_reeived_file_header_sign”确认标头。"
 
-#: ../../File_Transfer/File_Transfer.rst:89 d6a854d18d404082bdec0e2cf355ea62
+#: ../../source/File_Transfer/File_Transfer.rst:107
+#: ef7144f2c0c94c9fa25c2a5bad6ed5e8
 msgid "Receive the file data in chunks and write to disk."
 msgstr "以块的形式接收文件数据并写入磁盘。"
 
-#: ../../File_Transfer/File_Transfer.rst:90 69981b7e399e4de89858906b286aaf06
+#: ../../source/File_Transfer/File_Transfer.rst:108
+#: bb81c955e5024b6d9b6042fa3eb4c13f
 msgid "Acknowledge completion with ``server_received_file_data_sign``."
 msgstr "使用“server_reeived_file_data_sign”确认完成。"
 
-#: ../../File_Transfer/File_Transfer.rst:93 b98957309caf49eba2657154bffbaf90
+#: ../../source/File_Transfer/File_Transfer.rst:111
+#: cd24d3a3f8704419889c764cf5812a99
 msgid ""
 "Any error during the exchange causes the failing side to send "
-"``error_sign``, and both sides close the transfer socket. The main control "
-"connection remains unaffected."
+"``error_sign``, and both sides close the transfer socket. The main "
+"control connection remains unaffected."
 msgstr "交换期间的任何错误都会导致失败的一方发送“error_sign”，并且双方都会关闭传输套接字。主控制连接不受影响。"
 
-#: ../../File_Transfer/File_Transfer.rst:102 f289e3c6e5b445f48eda6ed3434c9de8
+#: ../../source/File_Transfer/File_Transfer.rst:120
+#: 0313763b7bc6427cb80da39d09a94be1
 msgid "Client-Initiated Transfer (Client → Server)"
 msgstr "客户端发起的传输（客户端 → 服务器）"
 
-#: ../../File_Transfer/File_Transfer.rst:104 17e1ddd91efe4690ad00f85f54875eda
+#: ../../source/File_Transfer/File_Transfer.rst:122
+#: 155d9f3383cf42fe8fa0e4fe095fbae7
 msgid ""
 "When the user types a file-related command in the client's interactive "
 "console, the call chain proceeds as follows."
 msgstr "当用户在客户端的交互式控制台中键入与文件相关的命令时，调用链将按如下方式进行。"
 
-#: ../../File_Transfer/File_Transfer.rst:108 9cacd6ea79a14ff6ae602d7ed47926c8
+#: ../../source/File_Transfer/File_Transfer.rst:126
+#: ab7df52a36c742a0be4924b613ddebd4
 msgid "### Console Input Handling"
 msgstr "### 控制台输入处理"
 
-#: ../../File_Transfer/File_Transfer.rst:110 07a7b69b45d04950877f071f25ad7c2c
+#: ../../source/File_Transfer/File_Transfer.rst:128
+#: 42cde8d25ccd4424b5c871c7adf3af91
+#, fuzzy
 msgid ""
-"In ``TCP_Client_Base.interactive_mode()``, user input is read line by line. "
-"Commands starting with ``/file``, ``/multiple_file``, ``/file_folder``, or "
-"``/multiple_file_folder`` are recognised. For each such command, the client "
-"calls the corresponding thread-safe entry point (the methods ending with "
-"``_thread``)."
-msgstr ""
-"在“TCP_Client_Base.interactive_mode()”中，用户输入被逐行读取。可以识别以“/file”、“/multiple_file”、“/file_folder”或“/multiple_file_folder”开头的命令。对于每个这样的命令，客户端调用相应的线程安全入口点（以“_thread”结尾的方法）。"
+"In ``TCP_Client_Base.interactive_mode()``, user input is read line by "
+"line. Commands starting with ``/file``, ``/multiple_file``, "
+"``/file_folder``, or ``/multiple_file_folder`` are recognised. For each "
+"such command, the client calls the corresponding entry point described "
+"below."
+msgstr "在“TCP_Client_Base.interactive_mode()”中，用户输入被逐行读取。可以识别以“/file”、“/multiple_file”、“/file_folder”或“/multiple_file_folder”开头的命令。对于每个这样的命令，客户端调用相应的线程安全入口点（以“_thread”结尾的方法）。"
 
-#: ../../File_Transfer/File_Transfer.rst:120 250bb94df2a14d339b150a70e8fed215
-msgid "### Thread-Safe Entry Points"
+#: ../../source/File_Transfer/File_Transfer.rst:136
+#: 08d0c910eba54d3cb8447d3cea15064f
+#, fuzzy
+msgid "### Entry Points"
 msgstr "### 线程安全入口点"
 
-#: ../../File_Transfer/File_Transfer.rst:122 b68a1268c9ff4a66af1319323af766ae
-msgid ""
-"The client provides the following thread-safe methods for initiating "
-"transfers:"
-msgstr "客户端提供以下线程安全方法来启动传输："
+#: ../../source/File_Transfer/File_Transfer.rst:138
+#: 9d80a0419f274373acc89686e909b71d
+msgid "The console dispatches to these methods:"
+msgstr ""
 
-#: ../../File_Transfer/File_Transfer.rst:125 d4c40b89eb6245f8bfdf2f69e37861da
+#: ../../source/File_Transfer/File_Transfer.rst:140
+#: 3ddbfd1b9e454342aa47f388d5bc7263
+#, fuzzy
 msgid ""
 "``file_transfer_client_recv_client_start_thread(message, "
-"file_folder_abspath=None)``"
+"file_folder_abspath=None)`` for ``/file`` — this one does spawn a daemon "
+"thread that runs the worker function."
 msgstr ""
-"``file_transfer_client_recv_client_start_thread（消息，file_folder_abspath =无）``"
+"``file_transfer_client_recv_client_start_thread（消息，file_folder_abspath "
+"=无）``"
 
-#: ../../File_Transfer/File_Transfer.rst:127 9d60213404014fbe8bee542f67d80398
+#: ../../source/File_Transfer/File_Transfer.rst:143
+#: 4db440e1419b4ce895c7e03b85b070c1
 msgid "``folder_file_transfer_client_recv_client_start(message)``"
 msgstr "``folder_file_transfer_client_recv_client_start（消息）``"
 
-#: ../../File_Transfer/File_Transfer.rst:128 2e6c7b2b820349ebac90f27d835477d0
+#: ../../source/File_Transfer/File_Transfer.rst:144
+#: 936c7a26041045da8e4e20ec45d3959d
 msgid "``multiple_file_transfer_client_recv_client_start(message)``"
 msgstr "``multiple_file_transfer_client_recv_client_start（消息）``"
 
-#: ../../File_Transfer/File_Transfer.rst:129 bdee0e9084194b45b5fad3a44e9aaf85
+#: ../../source/File_Transfer/File_Transfer.rst:145
+#: 972ecc6300354468b126961a483ecf2c
 msgid "``multiple_folder_file_transfer_client_recv_client_start(message)``"
 msgstr "``multiple_folder_file_transfer_client_recv_client_start（消息）``"
 
-#: ../../File_Transfer/File_Transfer.rst:131 0ea3256bc8944b1b97265f488b71bd90
+#: ../../source/File_Transfer/File_Transfer.rst:147
+#: fef1e1b2a2024f89abd300268004380d
 msgid ""
-"Each of these methods creates a new daemon thread that executes the actual "
-"worker function (the non-``_thread`` version). This prevents the console "
-"thread from being blocked."
-msgstr "这些方法中的每一个都会创建一个新的守护线程来执行实际的工作函数（非“_thread”版本）。这可以防止控制台线程被阻塞。"
+"The last three run synchronously on the console thread; they walk the "
+"tree or the file list and spawn one worker thread per file themselves, so"
+" the console keeps reading input while the transfers run. Every worker "
+"holds ``file_semaphore`` for the whole transfer, so at most "
+"``max_thread_num`` of them run at once."
+msgstr ""
 
-#: ../../File_Transfer/File_Transfer.rst:137 8e945e4bdc124e749ee0a5976249a787
+#: ../../source/File_Transfer/File_Transfer.rst:153
+#: f5919b72c7ec40e2a1b1d49cf57c9021
 msgid "### Worker Function (Client Side)"
 msgstr "### 工作函数（客户端）"
 
-#: ../../File_Transfer/File_Transfer.rst:139 cc8b9fc35bfb4cf395a2114786c01718
+#: ../../source/File_Transfer/File_Transfer.rst:155
+#: 70bed6a3ccbd47e89653ab1b2d62fb9d
 msgid ""
 "The core worker function for a single file is "
 "``file_transfer_client_recv_client_start(message, "
@@ -246,26 +318,30 @@ msgstr ""
 "单个文件的核心工作函数是“file_transfer_client_recv_client_start(message, "
 "file_folder_abspath=None)”。其逻辑如下："
 
-#: ../../File_Transfer/File_Transfer.rst:144 e3d81c4f4e724d81b426fdbfedb9c062
+#: ../../source/File_Transfer/File_Transfer.rst:160
+#: f7103ca89460442ba018095bf48ae23c
 msgid "Allocate a unique client ID using the lock ``file_client_id_lock``."
 msgstr "使用锁“file_client_id_lock”分配唯一的客户端 ID。"
 
-#: ../../File_Transfer/File_Transfer.rst:146 81b9ac67e27341c0a17468f3b6787d14
+#: ../../source/File_Transfer/File_Transfer.rst:162
+#: ea5fe1051d864a3caccc15bf2373b03e
 msgid ""
 "Extend the original command string with the client ID (e.g., ``/file "
-"mydoc.txt`` becomes ``/file mydoc.txt 42``) and send it to the server over "
-"the main control connection using ``send_message()``."
+"mydoc.txt`` becomes ``/file mydoc.txt 42``) and send it to the server "
+"over the main control connection using ``send_message()``."
 msgstr ""
 "使用客户端 ID 扩展原始命令字符串（例如，``/file mydoc.txt`` 变为``/file mydoc.txt "
 "42``），并使用``send_message()`` 通过主控制连接将其发送到服务器。"
 
-#: ../../File_Transfer/File_Transfer.rst:152 af07c5ef546a4102bbb836b65b2fd3be
+#: ../../source/File_Transfer/File_Transfer.rst:168
+#: b56d7f67a1844b0cb893a3939ed8ed70
 msgid ""
 "Obtain a local port for the outgoing file transfer socket by calling "
 "``palloc()``."
 msgstr "通过调用“palloc()”获取传出文件传输套接字的本地端口。"
 
-#: ../../File_Transfer/File_Transfer.rst:155 37226a4f2e1e4a878ba325fca05df9bf
+#: ../../source/File_Transfer/File_Transfer.rst:171
+#: 83314b464667496cb415f119beb0dc31
 msgid ""
 "Wait (up to 20 seconds) for the server to reply with a port number. The "
 "server's reply (``/server_file_transfer_port <port> <client_id>``) is "
@@ -275,93 +351,115 @@ msgstr ""
 "等待（最多 20 秒）服务器回复端口号。服务器的回复（``/server_file_transfer_port <port> "
 "<client_id>``）由主连接接收并存储在``file_server_port_list``中。当找到匹配的条目时，将提取端口。"
 
-#: ../../File_Transfer/File_Transfer.rst:163 e9cd68239fe3498597f07ccfa774ae22
+#: ../../source/File_Transfer/File_Transfer.rst:179
+#: bd938c291cbe44aa913d35413fc76a6b
 msgid ""
-"Call the low-level send function ``file_transfer_mode(filename, server_host,"
-" server_port, client_port)``."
+"Call the low-level send function ``file_transfer_mode(filename, "
+"server_host, server_port, client_port)``."
 msgstr ""
 "调用低级发送函数“file_transfer_mode(filename, server_host, server_port, "
 "client_port)”。"
 
-#: ../../File_Transfer/File_Transfer.rst:167 145c524c53654e84a0bb45d3a065733e
+#: ../../source/File_Transfer/File_Transfer.rst:183
+#: 75779fa321754e05adc2ee87ac490f07
+#, fuzzy
 msgid ""
 "For folder transfers, the worker function "
-"``folder_file_transfer_client_recv_client_start(message)`` recursively walks"
-" the directory tree. For each subdirectory (except the top level), it sends "
-"a ``/file_folder <relative_path>`` command over the main connection to "
-"create the corresponding directory on the server. For each file, it calls "
-"``file_transfer_client_recv_client_start_thread`` with a command of the form"
-" ``/file_folder <relative_path> <file_name>``. A semaphore "
-"(``file_semaphore``) limits the number of concurrent file transfers to "
-"``max_thread_num``."
+"``folder_file_transfer_client_recv_client_start(message)`` walks the "
+"directory tree on the console thread. It first sends a ``/file_folder "
+"<relative_path>`` command for the top-level folder itself to create the "
+"corresponding directory on the server, then sends the same command for "
+"every subdirectory it walks into. For each file, it starts a daemon "
+"thread that holds ``file_semaphore`` around the actual transfer, with a "
+"command of the form ``/file_folder <relative_path> <file_name>``, so the "
+"number of concurrent file transfers is limited to ``max_thread_num``."
 msgstr ""
 "对于文件夹传输，工作函数“folder_file_transfer_client_recv_client_start(message)”递归地遍历目录树。对于每个子目录（顶层除外），它通过主连接发送“/file_folder"
 " <relative_path>”命令以在服务器上创建相应的目录。对于每个文件，它使用“/file_folder <relative_path> "
 "<file_name>”形式的命令调用“file_transfer_client_recv_client_start_thread”。信号量（``file_semaphore``）将并发文件传输的数量限制为``max_thread_num``。"
 
-#: ../../File_Transfer/File_Transfer.rst:183 4ae4777e086a48558cbe3dda0ecdb3fb
+#: ../../source/File_Transfer/File_Transfer.rst:198
+#: bbb76713d93e4920a87d1551cbdf9999
+msgid ""
+"``multiple_file_transfer_client_recv_client_start`` loops over the given "
+"files and starts one worker thread per file, each holding "
+"``file_semaphore`` around its own transfer, so the concurrent transfers "
+"are capped by ``max_thread_num`` on that path too."
+msgstr ""
+
+#: ../../source/File_Transfer/File_Transfer.rst:203
+#: d9634b910f4f4509a717a6e7cb8445e2
 msgid "### Server-Side Handler (Receiving)"
 msgstr "### 服务器端处理程序（接收）"
 
-#: ../../File_Transfer/File_Transfer.rst:185 66a812ac1ac84ad2b912deb843f3c059
+#: ../../source/File_Transfer/File_Transfer.rst:205
+#: ecf51220b2924da78e59cd7118a5d976
 msgid ""
-"When the server receives an extended command like ``/file mydoc.txt 42`` on "
-"the main control connection, ``handle_command`` detects it and calls:"
+"When the server receives an extended command like ``/file mydoc.txt 42`` "
+"on the main control connection, ``handle_command`` detects it and calls:"
 msgstr "当服务器在主控制连接上收到诸如“/file mydoc.txt 42”之类的扩展命令时，“handle_command”会检测到它并调用："
 
-#: ../../File_Transfer/File_Transfer.rst:190 081e020d3e674d01bfde15c0922aa25c
+#: ../../source/File_Transfer/File_Transfer.rst:210
+#: 7437faffb1f7433faaea35c296c7ab96
 msgid ""
-"``file_transfer_server_recv_server_start_thread(client_id, client_socket, "
-"command)``"
-msgstr ""
-"``file_transfer_server_recv_server_start_thread（client_id，client_socket，命令）``"
+"``file_transfer_server_recv_server_start_thread(client_id, client_socket,"
+" command)``"
+msgstr "``file_transfer_server_recv_server_start_thread（client_id，client_socket，命令）``"
 
-#: ../../File_Transfer/File_Transfer.rst:193 4b5b5057002a457db83aed00c6148a7f
+#: ../../source/File_Transfer/File_Transfer.rst:213
+#: 1ff4d8b0423b490db4a9b179d745dcb7
 msgid "The server then:"
 msgstr "服务器然后："
 
-#: ../../File_Transfer/File_Transfer.rst:195 e2ad0e97b7854be4a3dded6cf7d602b7
+#: ../../source/File_Transfer/File_Transfer.rst:215
+#: 988de890b2fc4ebfbe68944b368ce5b8
 msgid ""
-"Creates a new thread via ``file_transfer_server_recv_server_start(client_id,"
-" client_socket, command, new_save_path=None, file_name=None)``."
+"Creates a new thread via "
+"``file_transfer_server_recv_server_start(client_id, client_socket, "
+"command, new_save_path=None, file_name=None)``."
 msgstr ""
-"通过 file_transfer_server_recv_server_start(client_id, client_socket, command,"
-" new_save_path=None, file_name=None) 创建一个新线程。"
+"通过 file_transfer_server_recv_server_start(client_id, client_socket, "
+"command, new_save_path=None, file_name=None) 创建一个新线程。"
 
-#: ../../File_Transfer/File_Transfer.rst:199 ee8cdc9ae93c4579a05e37b32c86f705
+#: ../../source/File_Transfer/File_Transfer.rst:219
+#: 47e1493ecf784674924778f581e6a71a
 msgid "Allocates a transfer port with ``palloc()``."
 msgstr "使用 palloc() 分配传输端口。"
 
-#: ../../File_Transfer/File_Transfer.rst:200 ac8a87e1e481417284d90ba8cb843415
+#: ../../source/File_Transfer/File_Transfer.rst:220
+#: b19bd45b30ee42178dab7b9aafa79e5e
 msgid ""
 "Calls ``file_transfer_mode_recv(host, port, client_socket, client_id, "
 "new_save_path, file_name, command)``."
-msgstr ""
-"调用“file_transfer_mode_recv(主机、端口、client_socket、client_id、new_save_path、file_name、command)”。"
+msgstr "调用“file_transfer_mode_recv(主机、端口、client_socket、client_id、new_save_path、file_name、command)”。"
 
-#: ../../File_Transfer/File_Transfer.rst:203 2f6675b7698c41938542b09cbfb482e8
+#: ../../source/File_Transfer/File_Transfer.rst:223
+#: a2f55cc995c14ec1ac34545e458dccb2
 msgid ""
-"This low-level receive function sets up a listening socket on the allocated "
-"port, sends the port number back to the client (as "
+"This low-level receive function sets up a listening socket on the "
+"allocated port, sends the port number back to the client (as "
 "``/server_file_transfer_port <port> <client_id>``), accepts the client's "
 "connection, and performs the protocol steps described in :ref:`file-"
-"transfer-protocol`. The received file is saved under ``received_files/`` (or"
-" a subdirectory if a folder transfer was requested)."
+"transfer-protocol`. The received file is saved under ``received_files/`` "
+"(or a subdirectory if a folder transfer was requested)."
 msgstr ""
 "这个低级接收函数在分配的端口上设置一个监听套接字，将端口号发送回客户端（如“/server_file_transfer_port <port> "
 "<client_id>”），接受客户端的连接，并执行文件传输协议中描述的协议步骤。接收到的文件保存在“received_files/”下（如果请求文件夹传输，则保存在子目录下）。"
 
-#: ../../File_Transfer/File_Transfer.rst:213 9fe861572b8746aeaa8266d8d30f963f
+#: ../../source/File_Transfer/File_Transfer.rst:233
+#: da7e5a1f96b3422bbfd8f056eb28dae3
 msgid ""
 "After the transfer completes (or fails), the port is released with "
 "``pfree()``."
 msgstr "传输完成（或失败）后，使用“pfree()”释放端口。"
 
-#: ../../File_Transfer/File_Transfer.rst:220 3e4e81fa8cea4ef5ab2a39602eb29355
+#: ../../source/File_Transfer/File_Transfer.rst:240
+#: e9956de8dffe4d898caed46c0e78c93b
 msgid "Server-Initiated Transfer (Server → Client)"
 msgstr "服务器发起的传输（服务器 → 客户端）"
 
-#: ../../File_Transfer/File_Transfer.rst:222 3ab21d4beefb41be83651eec10fd3899
+#: ../../source/File_Transfer/File_Transfer.rst:242
+#: 5e8dbd4b351d467cb809c3182feac0a2
 msgid ""
 "When the server administrator types a command in the server console, for "
 "example ``/file /path/to/file.txt (127.0.0.1,54321)``, the console input "
@@ -371,11 +469,13 @@ msgstr ""
 "当服务器管理员在服务器控制台中键入命令时，例如“/file /path/to/file.txt "
 "(127.0.0.1,54321)”，控制台输入线程（“console_input”）会解析该命令并调用相应的服务器端文件传输 API。"
 
-#: ../../File_Transfer/File_Transfer.rst:230 fa019410dca84c04b24bf9334131aa8d
+#: ../../source/File_Transfer/File_Transfer.rst:250
+#: 3bec81e76a2c4bf3b37386e180cc4fc1
 msgid "The recommended entry points for server-to-client transfers are:"
 msgstr "服务器到客户端传输的推荐入口点是："
 
-#: ../../File_Transfer/File_Transfer.rst:233 99103b4e1f234e2dac2ffc955ab5b23e
+#: ../../source/File_Transfer/File_Transfer.rst:253
+#: 585d149b4b3f47f09176b4b61d3baeaa
 msgid ""
 "``file_transfer_server_recv_client_start_thread(message, "
 "file_folder_abspath=None)`` for a single file."
@@ -383,12 +483,13 @@ msgstr ""
 "``file_transfer_server_recv_client_start_thread(message, "
 "file_folder_abspath=None)`` 对于单个文件。"
 
-#: ../../File_Transfer/File_Transfer.rst:236 a1560a9b45c043618778f38beb1c3cb2
-msgid ""
-"``folder_file_transfer_server_recv_client_start(message)`` for a folder."
+#: ../../source/File_Transfer/File_Transfer.rst:256
+#: 81935504645c451b844d109037b46ae0
+msgid "``folder_file_transfer_server_recv_client_start(message)`` for a folder."
 msgstr "文件夹的``folder_file_transfer_server_recv_client_start(message)``。"
 
-#: ../../File_Transfer/File_Transfer.rst:238 c18cb827a52f48d6b2883b708e2c871e
+#: ../../source/File_Transfer/File_Transfer.rst:258
+#: 4ca3cac907c04414925f5219b700d0e5
 msgid ""
 "``multiple_file_multiple_client_transfer_server_recv_client_start(message)``"
 " for multiple files to multiple clients."
@@ -396,7 +497,8 @@ msgstr ""
 "``multiple_file_multiple_client_transfer_server_recv_client_start(message)``"
 " 用于将多个文件传输到多个客户端。"
 
-#: ../../File_Transfer/File_Transfer.rst:240 1b9fd8eea75e46899f68c6ca1312e896
+#: ../../source/File_Transfer/File_Transfer.rst:260
+#: 536f30cc03f84b218a5ca9b84deb9f88
 msgid ""
 "``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(message)``"
 " for different file lists to different clients."
@@ -404,7 +506,8 @@ msgstr ""
 "``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(message)``"
 " 用于不同客户端的不同文件列表。"
 
-#: ../../File_Transfer/File_Transfer.rst:243 d34ac75777c74fe4bc63e1a100fd2aa3
+#: ../../source/File_Transfer/File_Transfer.rst:263
+#: 92500d9fd7124d9ca7b648f03df90141
 msgid ""
 "The worker function ``file_transfer_server_recv_client_start(message, "
 "file_folder_abspath=None)`` performs the following steps:"
@@ -412,103 +515,117 @@ msgstr ""
 "辅助函数 file_transfer_server_recv_client_start(message, "
 "file_folder_abspath=None) 执行以下步骤："
 
-#: ../../File_Transfer/File_Transfer.rst:248 29d03e172fd346e2a7928b55510df4f1
+#: ../../source/File_Transfer/File_Transfer.rst:268
+#: 583e8c89824f46ae839d233ab9e70e1a
 msgid ""
-"Extract the target client address from the last part of the command (e.g., "
-"``(127.0.0.1,54321)``) using ``ast.literal_eval()``. Obtain the client's "
-"socket from ``self.clients``."
-msgstr ""
-"使用“ast.literal_eval()”从命令的最后部分提取目标客户端地址（例如“(127.0.0.1,54321)”）。从“self.clients”获取客户端的套接字。"
+"Extract the target client address from the last part of the command "
+"(e.g., ``(127.0.0.1,54321)``) using ``ast.literal_eval()``. Obtain the "
+"client's socket from ``self.clients``."
+msgstr "使用“ast.literal_eval()”从命令的最后部分提取目标客户端地址（例如“(127.0.0.1,54321)”）。从“self.clients”获取客户端的套接字。"
 
-#: ../../File_Transfer/File_Transfer.rst:253 7a8d8ed423524d6e91a311a3aa3d5a9a
+#: ../../source/File_Transfer/File_Transfer.rst:273
+#: fd63ce90d3794b2181cdaa927e1a7a38
 msgid ""
-"Allocate a unique client ID and extend the command with it, then send the "
-"extended command to the client over the main connection."
+"Allocate a unique client ID and extend the command with it, then send the"
+" extended command to the client over the main connection."
 msgstr "分配唯一的客户端 ID 并用它扩展命令，然后通过主连接将扩展命令发送到客户端。"
 
-#: ../../File_Transfer/File_Transfer.rst:257 94b6c1f8a6a240e4ba4be8cf20f87c7f
+#: ../../source/File_Transfer/File_Transfer.rst:277
+#: 6138738f134b48b2a98d05d3569172c7
 msgid "Allocate a local port with ``palloc()``."
 msgstr "使用 palloc() 分配本地端口。"
 
-#: ../../File_Transfer/File_Transfer.rst:258 723a05b6c3974b65a539af723f1e0872
+#: ../../source/File_Transfer/File_Transfer.rst:278
+#: 26fa94f94e1841f6845765f4fd65949d
 msgid ""
 "Wait for the client to reply with its own port number (via "
 "``/server_file_transfer_port``), which is stored in "
 "``file_server_port_list`` by the main connection's message handler."
-msgstr ""
-"等待客户端回复其自己的端口号（通过“/server_file_transfer_port”），该端口号由主连接的消息处理程序存储在“file_server_port_list”中。"
+msgstr "等待客户端回复其自己的端口号（通过“/server_file_transfer_port”），该端口号由主连接的消息处理程序存储在“file_server_port_list”中。"
 
-#: ../../File_Transfer/File_Transfer.rst:263 878572ca3d2948a9acbb6741f00ddd62
+#: ../../source/File_Transfer/File_Transfer.rst:283
+#: 4bd913210d8945ffb7312070e070f252
 msgid ""
-"Call ``file_transfer_mode(filename, client_host, client_port, local_port)`` "
-"to send the file."
+"Call ``file_transfer_mode(filename, client_host, client_port, "
+"local_port)`` to send the file."
 msgstr ""
-"调用“file_transfer_mode(filename, client_host, client_port, local_port)”发送文件。"
+"调用“file_transfer_mode(filename, client_host, client_port, "
+"local_port)”发送文件。"
 
-#: ../../File_Transfer/File_Transfer.rst:267 ca517571b2d34c0497fcf5d5b12c93a1
+#: ../../source/File_Transfer/File_Transfer.rst:287
+#: 39d0bdae658241a0a8205977cccd0395
 msgid ""
 "On the client side, when it receives a command like ``/file "
-"/path/to/file.txt (127.0.0.1,54321) 42``, ``handle_server_command`` calls "
-"``file_transfer_client_recv_server_start_thread(client_id, client_socket, "
-"command)``. This starts a receiver thread analogous to the server's receiver"
-" for client-initiated transfers: it allocates a port, replies with "
-"``/server_file_transfer_port``, and calls ``file_transfer_mode_recv`` to "
-"receive and save the file."
+"/path/to/file.txt (127.0.0.1,54321) 42``, ``handle_server_command`` calls"
+" ``file_transfer_client_recv_server_start_thread(client_id, "
+"client_socket, command)``. This starts a receiver thread analogous to the"
+" server's receiver for client-initiated transfers: it allocates a port, "
+"replies with ``/server_file_transfer_port``, and calls "
+"``file_transfer_mode_recv`` to receive and save the file."
 msgstr ""
 "在客户端，当它收到类似“/file /path/to/file.txt (127.0.0.1,54321) "
 "42”的命令时，“handle_server_command”会调用“file_transfer_client_recv_server_start_thread(client_id,"
 " client_socket, "
 "command)”。这将启动一个接收器线程，类似于用于客户端启动的传输的服务器接收器：它分配一个端口，用“/server_file_transfer_port”回复，并调用“file_transfer_mode_recv”来接收和保存文件。"
 
-#: ../../File_Transfer/File_Transfer.rst:283 cb7bdf5091e54e039de9d5578c273b93
+#: ../../source/File_Transfer/File_Transfer.rst:303
+#: 014166967bb14b20a2782598b535575a
 msgid "Folder Transfer Mechanism (Detailed)"
 msgstr "文件夹传输机制（详细）"
 
-#: ../../File_Transfer/File_Transfer.rst:285 b282df0b45bd4bb087ae10816fd3f06d
+#: ../../source/File_Transfer/File_Transfer.rst:305
+#: 38eff5e62e844c0e94d587ba7132d26c
 msgid ""
 "Transferring a folder is implemented as a **recursive walk** that sends "
-"separate commands for subdirectories and files. The logic is symmetric on "
-"both client and server."
+"separate commands for subdirectories and files. The logic is symmetric on"
+" both client and server."
 msgstr "传输文件夹是通过“递归遍历”来实现的，它为子目录和文件发送单独的命令。客户端和服务器上的逻辑是对称的。"
 
-#: ../../File_Transfer/File_Transfer.rst:291 fb34b1f5d8a4488b9aef8b71dcb764ec
+#: ../../source/File_Transfer/File_Transfer.rst:311
+#: 7319cca2fbef48679002d3bf0469d842
 msgid "### Creating Directories"
 msgstr "### 创建目录"
 
-#: ../../File_Transfer/File_Transfer.rst:293 6b67f2390d914745a253523cef9a2e0b
+#: ../../source/File_Transfer/File_Transfer.rst:313
+#: ad592f4510c34ecca1cba340caa2710e
 msgid ""
-"For a directory that needs to be created on the receiver side, the sender "
-"sends a command of the form:"
+"For a directory that needs to be created on the receiver side, the sender"
+" sends a command of the form:"
 msgstr "对于需要在接收方创建的目录，发送方发送以下形式的命令："
 
-#: ../../File_Transfer/File_Transfer.rst:297 7aaf85bf38fa4621a760dc56b6f99ad6
+#: ../../source/File_Transfer/File_Transfer.rst:317
+#: 114e36ce42e940cc8f0ec8c64c1db031
 msgid "``/file_folder <relative_path>``"
 msgstr "``/file_folder <相对路径>``"
 
-#: ../../File_Transfer/File_Transfer.rst:299 046f125a1f6e41e4808a9cd703e34ee4
+#: ../../source/File_Transfer/File_Transfer.rst:319
+#: a120552b93294a059a34132ab935068a
 msgid ""
 "The receiver's handler for this command (in either "
 "``file_folder_transfer_server_recv_server_start_thread`` or "
 "``file_folder_transfer_client_recv_server_start_thread``) creates the "
 "corresponding directory under the base receive directory "
-"(``received_files/`` for the server, the same directory for the client). The"
-" relative path uses forward slashes to be platform-independent."
-msgstr ""
-"该命令的接收器处理程序（在“file_folder_transfer_server_recv_server_start_thread”或“file_folder_transfer_client_recv_server_start_thread”中）在基本接收目录下创建相应的目录（对于服务器来说是“received_files/”，对于客户端来说是相同的目录）。相对路径使用正斜杠与平台无关。"
+"(``received_files/`` for the server, the same directory for the client). "
+"The relative path uses forward slashes to be platform-independent."
+msgstr "该命令的接收器处理程序（在“file_folder_transfer_server_recv_server_start_thread”或“file_folder_transfer_client_recv_server_start_thread”中）在基本接收目录下创建相应的目录（对于服务器来说是“received_files/”，对于客户端来说是相同的目录）。相对路径使用正斜杠与平台无关。"
 
-#: ../../File_Transfer/File_Transfer.rst:310 3fb5d6322ccd47f79e601e38684fe234
+#: ../../source/File_Transfer/File_Transfer.rst:330
+#: 2743fec0a2434e2b96ea3c49fecf268c
 msgid "### Sending Files Inside a Folder"
 msgstr "### 发送文件夹内的文件"
 
-#: ../../File_Transfer/File_Transfer.rst:312 c9f77546ed49407fa57c57f0b0a76acf
+#: ../../source/File_Transfer/File_Transfer.rst:332
+#: fb31b657a05547109dea51165844a632
 msgid "For each file, the sender sends a command of the form:"
 msgstr "对于每个文件，发送者发送以下形式的命令："
 
-#: ../../File_Transfer/File_Transfer.rst:314 f5a164466b0d4d4382b7d880bd320e3d
+#: ../../source/File_Transfer/File_Transfer.rst:334
+#: 2da676ce8dd649169ba224f6d29cbbc9
 msgid "``/file_folder <relative_path> <file_name>``"
 msgstr "``/file_folder <相对路径> <文件名>``"
 
-#: ../../File_Transfer/File_Transfer.rst:316 c507cca92d1c463ea9f4d429a38a9b6a
+#: ../../source/File_Transfer/File_Transfer.rst:336
+#: 8972f356722148e3b34cbaa95390d700
 msgid ""
 "The receiver treats this as a file transfer request. The second argument "
 "(``file_name``) is used as the final filename, and the relative path "
@@ -516,239 +633,277 @@ msgid ""
 "file data is transferred using the same single-file protocol (via "
 "``file_transfer_client_recv_client_start`` or "
 "``file_transfer_server_recv_client_start``, depending on direction)."
-msgstr ""
-"接收方将此视为文件传输请求。第二个参数（``file_name``）用作最终文件名，相对路径确定基本接收目录下的子目录。实际文件数据使用相同的单文件协议传输（通过“file_transfer_client_recv_client_start”或“file_transfer_server_recv_client_start”，具体取决于方向）。"
+msgstr "接收方将此视为文件传输请求。第二个参数（``file_name``）用作最终文件名，相对路径确定基本接收目录下的子目录。实际文件数据使用相同的单文件协议传输（通过“file_transfer_client_recv_client_start”或“file_transfer_server_recv_client_start”，具体取决于方向）。"
 
-#: ../../File_Transfer/File_Transfer.rst:327 e1e2b8dd57524ecfabd47c2c8386dfea
+#: ../../source/File_Transfer/File_Transfer.rst:347
+#: a0ded05fd7f2406abb0ee41fcc33b53b
 msgid "### Concurrency Control for Folders"
 msgstr "### 文件夹的并发控制"
 
-#: ../../File_Transfer/File_Transfer.rst:329 32b26f72bba4482490f38968dcee5837
+#: ../../source/File_Transfer/File_Transfer.rst:349
+#: 14b0ec4d109c448198db41c196df8a70
 msgid ""
 "Because a folder can contain many files, the sender uses a semaphore "
 "(``file_semaphore``) to limit the number of concurrently active file "
-"transfers. The semaphore is acquired before starting each file transfer and "
-"released in a ``finally`` block. The maximum concurrency is set by "
-"``max_thread_num`` on the client and ``max_file_transfer_thread_num`` on the"
-" server."
-msgstr ""
-"由于一个文件夹可以包含许多文件，因此发送方使用信号量（“file_semaphore”）来限制并发活动文件传输的数量。在开始每个文件传输之前获取信号量并在“finally”块中释放。最大并发数由客户端上的“max_thread_num”和服务器上的“max_file_transfer_thread_num”设置。"
+"transfers. The semaphore is acquired before starting each file transfer "
+"and released in a ``finally`` block. The maximum concurrency is set by "
+"``max_thread_num`` on the client and ``max_file_transfer_thread_num`` on "
+"the server."
+msgstr "由于一个文件夹可以包含许多文件，因此发送方使用信号量（“file_semaphore”）来限制并发活动文件传输的数量。在开始每个文件传输之前获取信号量并在“finally”块中释放。最大并发数由客户端上的“max_thread_num”和服务器上的“max_file_transfer_thread_num”设置。"
 
-#: ../../File_Transfer/File_Transfer.rst:342 8ce424a7f1de4933b3113a0e3ab98155
+#: ../../source/File_Transfer/File_Transfer.rst:362
+#: 2c7d84b855df4587bfb110f525299e39
 msgid "Custom Destination Directory"
 msgstr "自定义目标目录"
 
-#: ../../File_Transfer/File_Transfer.rst:344 6ca8ee9f021842939f446e999c067dfb
+#: ../../source/File_Transfer/File_Transfer.rst:364
+#: b972e019f10143a99af9de9b7a8e371a
 msgid ""
-"Every transfer family accepts an optional trailing ``destination_file_path``"
-" argument that replaces the receiver's default save directory "
-"(``received_files/`` or the configured ``file_transfer_dir``). When it is "
-"omitted, the transfer goes to the default location exactly as before."
-msgstr ""
-"每个传输系列都接受一个可选的尾随“destination_file_path”参数，该参数替换接收者的默认保存目录（“received_files/”或配置的“file_transfer_dir”）。当省略它时，传输将像以前一样转到默认位置。"
+"Every transfer family accepts an optional trailing "
+"``destination_file_path`` argument that replaces the receiver's default "
+"save directory (``received_files/`` or the configured "
+"``file_transfer_dir``). When it is omitted, the transfer goes to the "
+"default location exactly as before."
+msgstr "每个传输系列都接受一个可选的尾随“destination_file_path”参数，该参数替换接收者的默认保存目录（“received_files/”或配置的“file_transfer_dir”）。当省略它时，传输将像以前一样转到默认位置。"
 
-#: ../../File_Transfer/File_Transfer.rst:352 6291da89ffa542dfbd94f599a9321216
+#: ../../source/File_Transfer/File_Transfer.rst:372
+#: 1e801c2a599e4595b5f883ada1a63fc6
 msgid ""
-"The destination is **always the last argument** of the command and names a "
-"*directory* on the receiving machine: the received file keeps its own name "
-"(``<destination>/<filename>``), and a transferred folder keeps its structure"
-" under the destination (``<destination>/<folder_name>/...`` ). An absolute "
-"path is used as-is; a relative path is resolved under the default save "
-"directory. Missing directories are created."
-msgstr ""
-"目标**始终是命令的最后一个参数**，并在接收计算机上命名一个*目录*：接收到的文件保留其自己的名称（``<destination>/<filename>``），传输的文件夹在目标下保留其结构（``<destination>/<folder_name>/...``）。绝对路径按原样使用；相对路径在默认保存目录下解析。创建丢失的目录。"
+"The destination is **always the last argument** of the command and names "
+"a *directory* on the receiving machine: the received file keeps its own "
+"name (``<destination>/<filename>``), and a transferred folder keeps its "
+"structure under the destination (``<destination>/<folder_name>/...`` ). "
+"An absolute path is used as-is; a relative path is resolved under the "
+"default save directory. Missing directories are created."
+msgstr "目标**始终是命令的最后一个参数**，并在接收计算机上命名一个*目录*：接收到的文件保留其自己的名称（``<destination>/<filename>``），传输的文件夹在目标下保留其结构（``<destination>/<folder_name>/...``）。绝对路径按原样使用；相对路径在默认保存目录下解析。创建丢失的目录。"
 
-#: ../../File_Transfer/File_Transfer.rst:364 76243e0349c1474bbdf14e1ef2a8e52b
+#: ../../source/File_Transfer/File_Transfer.rst:384
+#: 6b85151737b64a3e90154ba763b205d2
 msgid "Command syntax:"
 msgstr "命令语法："
 
-#: ../../File_Transfer/File_Transfer.rst:366 0c055bfc5ba4465a98a3555f8aa124c3
+#: ../../source/File_Transfer/File_Transfer.rst:386
+#: 9d80a0419f274373acc89686e909b71d
 msgid "Client console (the receiver is the server):"
 msgstr "客户端控制台（接收者是服务器）："
 
-#: ../../File_Transfer/File_Transfer.rst:368 c9fa612895bc4f92839d2de77b6cbc7f
+#: ../../source/File_Transfer/File_Transfer.rst:388
+#: bac62d5b11c84f96b2b3841af7fc7a85
 msgid "``/file <file_path> [destination_file_path]``"
 msgstr "``/file <文件路径> [目标文件路径]``"
 
-#: ../../File_Transfer/File_Transfer.rst:370 2d34a030a1804d299a0b56c14984b1b5
+#: ../../source/File_Transfer/File_Transfer.rst:390
+#: aa07623d0b4048be944b30c6fc07cc1b
 msgid "``/multiple_file <file1> <file2> ... [destination_file_path]``"
 msgstr "``/multiple_file <文件1> <文件2> ... [目标文件路径]``"
 
-#: ../../File_Transfer/File_Transfer.rst:372 a7dd1e241a4346d4b873072c5948f187
+#: ../../source/File_Transfer/File_Transfer.rst:392
+#: 1a9cfb266bb24df6ac2ddeb286a212d0
 #, fuzzy
 msgid "``/file_folder <folder_path> [destination_file_path]``"
 msgstr "``/file_folder <相对路径>``"
 
-#: ../../File_Transfer/File_Transfer.rst:374 953993d920eb4959987d98423440ce61
-msgid ""
-"``/multiple_file_folder <folder1> <folder2> ... [destination_file_path]``"
+#: ../../source/File_Transfer/File_Transfer.rst:394
+#: 46f89a56ef594dec945f21425306e2de
+msgid "``/multiple_file_folder <folder1> <folder2> ... [destination_file_path]``"
 msgstr "``/multiple_file_folder <文件夹1> <文件夹2> ... [目标文件路径]``"
 
-#: ../../File_Transfer/File_Transfer.rst:376 886c8b7d760044cabe48ce044412ca64
+#: ../../source/File_Transfer/File_Transfer.rst:396
+#: 085ba670e149450a8b385d68c8f9d366
+#, fuzzy
 msgid ""
-"Server console (the receiver is the target client, given as a quoted address"
-" tuple):"
+"Server console (the receiver is the target client, given as a quoted "
+"``(ip, port)`` address tuple, not as a client id):"
 msgstr "服务器控制台（接收者是目标客户端，以带引号的地址元组形式给出）："
 
-#: ../../File_Transfer/File_Transfer.rst:379 48d3bf6084224062867313a9597044d7
-msgid "``/file <file_path> <client_id> [destination_file_path]``"
-msgstr "``/file <文件路径> <客户端 ID> [目标文件路径]``"
-
-#: ../../File_Transfer/File_Transfer.rst:381 684fa9b22136418b94cbb4202f702cd2
+#: ../../source/File_Transfer/File_Transfer.rst:400
+#: abc0fb96992e4b09aaa9714ba73a094b
 #, fuzzy
-msgid "``/file_folder <folder_path> <client_id> [destination_file_path]``"
-msgstr "``/file_folder <相对路径> <文件名>``"
+msgid "``/file <file_path> <(ip, port)> [destination_file_path]``"
+msgstr "``/file <文件路径> [目标文件路径]``"
 
-#: ../../File_Transfer/File_Transfer.rst:383 9380dc31685947e3a835107f435deed2
+#: ../../source/File_Transfer/File_Transfer.rst:402
+#: d9329c72161247bf8d5f0a609178c488
+#, fuzzy
+msgid "``/file_folder <folder_path> <(ip, port)> [destination_file_path]``"
+msgstr "``/file_folder <相对路径>``"
+
+#: ../../source/File_Transfer/File_Transfer.rst:404
+#: af78c6ec2f3e4072aaac19d2d131cf5d
+#, fuzzy
 msgid ""
-"``/multiple_file_multiple_client <file1> <file2> ... <client_id1> "
-"<client_id2> ... [destination_file_path]``"
+"``/multiple_file_multiple_client <file1> <file2> ... <(ip, port)1> <(ip, "
+"port)2> ... [destination_file_path]``"
 msgstr ""
 "``/multiple_file_multiple_client <文件1> <文件2> ... <客户端ID1> <客户端ID2> ... "
 "[目标文件路径]``"
 
-#: ../../File_Transfer/File_Transfer.rst:385 62488b8bb4e149be86c1d655bd80b6a8
+#: ../../source/File_Transfer/File_Transfer.rst:406
+#: 2fdbf92caa6a46df9dae793592be802d
 #, fuzzy
 msgid ""
-"``/diff_multiple_file_diff_multiple_client <file1> ... <client_id1> ... "
+"``/diff_multiple_file_diff_multiple_client <file1> ... <(ip, port)1> ... "
 "[destination_file_path]``"
-msgstr ""
-"``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``"
+msgstr "``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:387 f2dd27e5697a4b1284def2f67c3fc44b
+#: ../../source/File_Transfer/File_Transfer.rst:408
+#: abc1dac22b594c54a22b03d59e1a8338
 msgid ""
-"For the multiple-item commands the destination is the last argument; when "
-"the last argument is an existing local file/folder it is treated as another "
-"item to transfer instead."
-msgstr "对于多项目命令，目标是最后一个参数；当最后一个参数是现有的本地文件/文件夹时，它将被视为另一个要传输的项目。"
+"For the multiple-item commands the destination is the last argument; when"
+" the last argument is not a ``(ip, port)`` tuple it is treated as the "
+"destination path (for the ``/multiple_file_multiple_client`` form, items "
+"are classified per token, so files and addresses may be interleaved and a"
+" last argument that is not an existing local file/folder is the "
+"destination)."
+msgstr ""
 
-#: ../../File_Transfer/File_Transfer.rst:396 373c2a5a23334df7a25d23f8d94abd66
+#: ../../source/File_Transfer/File_Transfer.rst:418
+#: 0c7fa56659f543ed93adacd874dd2e8b
 msgid "Native In-Memory Forwarding"
 msgstr "本机内存转发"
 
-#: ../../File_Transfer/File_Transfer.rst:398 dd57639b3e0e4068bd9533fc039597cd
+#: ../../source/File_Transfer/File_Transfer.rst:420
+#: 133205c62a0846318b30f5f5fe0dc296
+#, fuzzy
 msgid ""
 "The main protocol also provides a native, client-side forwarding feature "
-"that relays data from one client to several other clients through the server"
-" **without any disk I/O on the server**. Unlike the forward extension (which"
-" uploads to disk and then downloads from disk), the server only holds the "
-"data in memory and streams it straight to the target clients. This avoids "
-"the double transfer time and the disk read/write overhead."
+"that relays data from one client to several other clients through the "
+"server **without any disk I/O on the server**. Unlike the forward "
+"extension (which uploads the data to the server's transfer directory "
+"first and then has the server push the stored copies), the server only "
+"holds the data in memory and streams it straight to the target clients. "
+"This avoids the double transfer time and the disk read/write overhead."
 msgstr ""
 "主协议还提供了一种本机客户端转发功能，可通过服务器将数据从一个客户端中继到多个其他客户端**，而无需在服务器上进行任何磁盘 "
 "I/O**。与前向扩展（上传到磁盘然后从磁盘下载）不同，服务器仅将数据保存在内存中并将其直接流式传输到目标客户端。这避免了双倍传输时间和磁盘读/写开销。"
 
-#: ../../File_Transfer/File_Transfer.rst:410 982c4c9538914821a07887fb8ab9b95d
+#: ../../source/File_Transfer/File_Transfer.rst:432
+#: b177ec0385be4e9da692646b88cd3ed8
 #, fuzzy
 msgid "Commands (client console only; rejected on the server console):"
 msgstr "客户端控制台（接收者是服务器）："
 
-#: ../../File_Transfer/File_Transfer.rst:413 14406316555743359a854540ab6937c8
+#: ../../source/File_Transfer/File_Transfer.rst:435
+#: 789bd7878891443fa43ec5111b3a028b
 #, fuzzy
 msgid ""
 "``/forward_file <file1> <file2> ... <addr1> <addr2> ... "
 "[destination_file_path]``"
 msgstr "``/forward_file <文件1> <文件2> ... <地址1> <地址2> ...``"
 
-#: ../../File_Transfer/File_Transfer.rst:414 4dc576898177404da124649f7ce9ac28
+#: ../../source/File_Transfer/File_Transfer.rst:436
+#: 04d9ece635c94b8c9257e0cb41bd5b81
 #, fuzzy
 msgid ""
 "``/forward_folder <folder1> <folder2> ... <addr1> <addr2> ... "
 "[destination_file_path]``"
 msgstr "``/forward_folder <文件夹1> <文件夹2> ... <地址1> <地址2> ...``"
 
-#: ../../File_Transfer/File_Transfer.rst:416 220dfbf0a0d84559a8befb4eee500ba0
+#: ../../source/File_Transfer/File_Transfer.rst:438
+#: 2f7b628a4e0246e385e9e8817b8d7a87
 msgid ""
 "The number of files/folders and the number of target clients (written as "
-"quoted address tuples) is unlimited. Target addresses that are unreachable "
-"(not connected to the server) or equal to the server itself are skipped and "
-"the remaining targets are still served."
-msgstr ""
-"文件/文件夹的数量和目标客户端的数量（写为带引号的地址元组）是无限的。无法到达（未连接到服务器）或等于服务器本身的目标地址将被跳过，而其余目标仍将得到服务。"
+"quoted address tuples) is unlimited. Target addresses that are "
+"unreachable (not connected to the server) or equal to the server itself "
+"are skipped and the remaining targets are still served."
+msgstr "文件/文件夹的数量和目标客户端的数量（写为带引号的地址元组）是无限的。无法到达（未连接到服务器）或等于服务器本身的目标地址将被跳过，而其余目标仍将得到服务。"
 
-#: ../../File_Transfer/File_Transfer.rst:424 6137bf9406784c6f82d9f41560a52566
+#: ../../source/File_Transfer/File_Transfer.rst:446
+#: 84f3e0acf89e4767bbb572cc6edc81aa
 msgid ""
 "Like every transfer family, both commands accept an optional trailing "
-"``destination_file_path`` that replaces the default save directory on every "
-"receiving client: a forwarded file lands at ``<destination>/<filename>`` and"
-" a forwarded folder keeps its structure under "
-"``<destination>/<folder_name>/...``. When the argument is omitted the "
-"targets write to their default ``file_transfer_dir``."
+"``destination_file_path`` that replaces the default save directory on "
+"every receiving client: a forwarded file lands at "
+"``<destination>/<filename>`` and a forwarded folder keeps its structure "
+"under ``<destination>/<folder_name>/...``. When the argument is omitted "
+"the targets write to their default ``file_transfer_dir``."
 msgstr ""
 "像每个传输家族一样，这两个命令都接受一个可选的后缀`` destination_file_path '' "
 "，替换每个接收客户端上的默认保存目录：转发文件位于`<destination><filename>`/`` "
 "，转发文件夹将其结构保留在``<destination>/<folder_name>/... ``下。当参数被省略时，目标写入其默认`` "
 "file_transfer_dir ``。"
 
-#: ../../File_Transfer/File_Transfer.rst:435 f6697695e9ef4e3694fa9046e41578e0
+#: ../../source/File_Transfer/File_Transfer.rst:457
+#: 6b31e93335824fe1bfdb83b84f42f08c
 msgid "The data path reuses the protocol's own transfer machinery:"
 msgstr "数据路径重用协议自己的传输机制："
 
-#: ../../File_Transfer/File_Transfer.rst:438 6ee037f0e4024d2988fcb2ccf3deef70
+#: ../../source/File_Transfer/File_Transfer.rst:460
+#: 469812eff1874189a000989c9260cf1b
+#, fuzzy
 msgid ""
-"The forwarding client streams the file with the standard file-transfer byte "
-"stream (metadata header + 64 KiB chunks) to a transfer socket on the server."
+"The forwarding client streams the file with the standard file-transfer "
+"byte stream (metadata header + 65536-byte chunks) to a transfer socket on"
+" the server."
 msgstr "转发客户端将带有标准文件传输字节流（元数据标头 + 64 KiB 块）的文件流式传输到服务器上的传输套接字。"
 
-#: ../../File_Transfer/File_Transfer.rst:443 43c94e746a5c46748846d0dc18a4e0ff
+#: ../../source/File_Transfer/File_Transfer.rst:465
+#: 42efd096a6744f489dc623a6ee503666
 msgid ""
-"The server acts as a pure relay: it reads the stream into per-target memory "
-"queues and writes each chunk to every target's transfer socket. The server "
-"never parses the file contents beyond the size header and never writes to "
-"disk."
-msgstr ""
-"服务器充当纯粹的中继：它将流读取到每个目标的内存队列中，并将每个块写入每个目标的传输套接字。服务器从不解析超出大小标头的文件内容，也从不写入磁盘。"
+"The server acts as a pure relay: it reads the stream into per-target "
+"memory queues and writes each chunk to every target's transfer socket. "
+"The server never parses the file contents beyond the size header and "
+"never writes to disk."
+msgstr "服务器充当纯粹的中继：它将流读取到每个目标的内存队列中，并将每个块写入每个目标的传输套接字。服务器从不解析超出大小标头的文件内容，也从不写入磁盘。"
 
-#: ../../File_Transfer/File_Transfer.rst:450 9dec57916af34e109bee7ce1e0bae2d4
+#: ../../source/File_Transfer/File_Transfer.rst:472
+#: f43cb20c7bc648018f6f77ea09c8d538
 msgid ""
 "Every target client receives the stream with the ordinary receive path "
-"(``file_transfer_mode_recv``) and writes it to its own local disk, exactly "
-"as if the server had pushed the file directly."
-msgstr ""
-"每个目标客户端都使用普通接收路径（“file_transfer_mode_recv”）接收流并将其写入自己的本地磁盘，就像服务器直接推送文件一样。"
+"(``file_transfer_mode_recv``) and writes it to its own local disk, "
+"exactly as if the server had pushed the file directly."
+msgstr "每个目标客户端都使用普通接收路径（“file_transfer_mode_recv”）接收流并将其写入自己的本地磁盘，就像服务器直接推送文件一样。"
 
-#: ../../File_Transfer/File_Transfer.rst:456 a095abaf821e41a6a66adbb776bc35ef
+#: ../../source/File_Transfer/File_Transfer.rst:478
+#: 3885df70422e4306ac80be623aa9581f
 msgid "### Memory Bounding and Flow Control"
 msgstr "### 内存限制和流量控制"
 
-#: ../../File_Transfer/File_Transfer.rst:458 244214dd675345f8a72b1088ad99fea0
+#: ../../source/File_Transfer/File_Transfer.rst:480
+#: e371e5b793824e3386b43cb07a4222fd
+#, fuzzy
 msgid ""
-"Because uploader, server and targets may have different bandwidths, data can"
-" pile up in the server's memory. Both ``TCP_Server_Base`` and "
-"``TCP_Client_Base`` take a ``max_mem_buff`` parameter (in MB, default 2048, "
-"i.e. 2 GB) that bounds the memory the forwarding machinery may hold in that "
-"process. When the server's buffered bytes exceed ``max_mem_buff`` it sends "
-"``/pause_trans`` to the forwarding client, which stops reading the source "
-"file; once the writers drain the buffers below the low-water mark (half the "
-"limit) the server sends ``/start_trans`` and the upload resumes. Receiving "
-"clients drain each chunk to disk synchronously, so their buffered memory "
-"stays bounded by a single chunk; the ``/pause_trans``/``/start_trans`` "
-"handlers exist on both sides so any side can throttle a transfer when it "
-"buffers data."
+"Because uploader, server and targets may have different bandwidths, data "
+"can pile up in the server's memory. ``TCP_Server_Base`` takes a "
+"``max_mem_buff`` parameter (in MiB, default 2048, i.e. 2 GB) that bounds "
+"the memory the forwarding machinery may hold in that process. When the "
+"server's buffered bytes exceed ``max_mem_buff`` it sends ``/pause_trans``"
+" to the forwarding client, which stops reading the source file; once the "
+"writers drain the buffers below the low-water mark (half the limit) the "
+"server sends ``/start_trans`` and the upload resumes. Receiving clients "
+"drain each chunk to disk synchronously, so their buffered memory stays "
+"bounded by a single chunk; the ``/pause_trans``/``/start_trans`` handlers"
+" exist on both sides so any side can throttle a transfer when it buffers "
+"data."
 msgstr ""
-"由于上传者、服务器和目标可能具有不同的带宽，因此数据可能会堆积在服务器的内存中。 TCP_Server_Base 和 TCP_Client_Base "
-"都采用 max_mem_buff 参数（以 MB 为单位，默认 2048，即 2 "
+"由于上传者、服务器和目标可能具有不同的带宽，因此数据可能会堆积在服务器的内存中。 TCP_Server_Base 和 "
+"TCP_Client_Base 都采用 max_mem_buff 参数（以 MB 为单位，默认 2048，即 2 "
 "GB），该参数限制了转发机制在该进程中可以保留的内存。当服务器的缓冲字节超过“max_mem_buff”时，它会向转发客户端发送“/pause_trans”，从而停止读取源文件；一旦作者将缓冲区排空到低水位线（限制的一半）以下，服务器就会发送“/start_trans”并恢复上传。接收客户端将每个块同步排出到磁盘，因此它们的缓冲内存保持受单个块的限制；两侧都存在“/pause_trans”/“/start_trans”处理程序，因此任何一侧都可以在缓冲数据时限制传输。"
 
-#: ../../File_Transfer/File_Transfer.rst:483 0aa14deaf6474437b421a65e21fce7d8
+#: ../../source/File_Transfer/File_Transfer.rst:504
+#: b737bf957d354491b30903bfb0f89a3b
 msgid "Concurrency and Threading"
 msgstr "并发和线程"
 
-#: ../../File_Transfer/File_Transfer.rst:485 825c5e1a8b9b405c967ca49a1861e258
+#: ../../source/File_Transfer/File_Transfer.rst:506
+#: 505576a3522748318a95cd3937a96834
 msgid ""
-"Both the server and the client use multiple levels of concurrency control to"
-" ensure stability during file transfers."
+"Both the server and the client use multiple levels of concurrency control"
+" to ensure stability during file transfers."
 msgstr "服务器和客户端均采用多级并发控制来保证文件传输过程中的稳定性。"
 
-#: ../../File_Transfer/File_Transfer.rst:489 0d48b1245cd54597928cfc28d5b3c248
+#: ../../source/File_Transfer/File_Transfer.rst:510
+#: 1d1a7b2ee1434530ae6abb411b0175cc
 msgid "### File Transfer Semaphore"
 msgstr "### 文件传输信号量"
 
-#: ../../File_Transfer/File_Transfer.rst:491 e2674ee9e0584513bc53aa815603fd24
+#: ../../source/File_Transfer/File_Transfer.rst:512
+#: 078680d22b10410db9f7f21fe0e1a91d
 msgid "Client: ``self.file_semaphore = threading.Semaphore(max_thread_num)``"
 msgstr "客户端：``self.file_semaphore = threading.Semaphore(max_thread_num)``"
 
-#: ../../File_Transfer/File_Transfer.rst:493 1c0d27d13ad844159d29c6e662d51d09
+#: ../../source/File_Transfer/File_Transfer.rst:514
+#: 777a1dcc1258459d89dacbbb7b946c11
 msgid ""
 "Server: ``self.file_semaphore = "
 "threading.Semaphore(max_file_transfer_thread_num)``"
@@ -756,69 +911,79 @@ msgstr ""
 "服务器：``self.file_semaphore = "
 "threading.Semaphore(max_file_transfer_thread_num)``"
 
-#: ../../File_Transfer/File_Transfer.rst:496 5b0c8289b2c9460cb7305101226b66a7
+#: ../../source/File_Transfer/File_Transfer.rst:517
+#: 315a82a6dd1a420bbe819a806f3b8292
+#, fuzzy
 msgid ""
 "This semaphore limits the number of simultaneous file transfers (used "
-"primarily when sending folders or multiple files). Each transfer runs in its"
-" own thread, and the semaphore is acquired before the thread is started."
+"primarily when sending folders or multiple files). Each transfer runs in "
+"its own thread and the worker acquires the semaphore for the whole "
+"transfer, so both the folder and the ``/multiple_file`` path are capped "
+"at ``max_thread_num`` (``max_file_transfer_thread_num`` on the server)."
 msgstr "此信号量限制同时文件传输的数量（主要在发送文件夹或多个文件时使用）。每个传输都在自己的线程中运行，并且在线程启动之前获取信号量。"
 
-#: ../../File_Transfer/File_Transfer.rst:503 6d93783b298e4ce98b999ff890d4a5f4
+#: ../../source/File_Transfer/File_Transfer.rst:524
+#: b39cfe74f74b4b568221d23addc55da3
 msgid "### Threading Model"
 msgstr "### 线程模型"
 
-#: ../../File_Transfer/File_Transfer.rst:505 036a972600e645119d8a523fa08a52db
+#: ../../source/File_Transfer/File_Transfer.rst:526
+#: 5586d5cc13a940bb92877b1fed3d03fd
 msgid ""
 "Each file transfer runs in a dedicated daemon thread, created by the "
 "``_thread`` wrapper functions (e.g., "
 "``file_transfer_client_recv_client_start_thread``). This prevents a slow "
 "transfer from blocking the main control loop."
-msgstr ""
-"每个文件传输都在一个专用的守护线程中运行，该守护线程由“_thread”包装函数创建（例如“file_transfer_client_recv_client_start_thread”）。这可以防止缓慢的传输阻塞主控制循环。"
+msgstr "每个文件传输都在一个专用的守护线程中运行，该守护线程由“_thread”包装函数创建（例如“file_transfer_client_recv_client_start_thread”）。这可以防止缓慢的传输阻塞主控制循环。"
 
-#: ../../File_Transfer/File_Transfer.rst:511 a84aaf5f9fb64d92b97c32185a1e7cb5
+#: ../../source/File_Transfer/File_Transfer.rst:532
+#: 7b1cceca816c426b865265e0c302c425
 msgid ""
 "The thread that receives the transfer command (e.g., the server's "
-"``handle_command`` thread) does not wait for the transfer to complete; it "
-"returns immediately after spawning the worker thread."
+"``handle_command`` thread) does not wait for the transfer to complete; it"
+" returns immediately after spawning the worker thread."
 msgstr "接收传输命令的线程（例如服务器的“handle_command”线程）不会等待传输完成；它在产生工作线程后立即返回。"
 
-#: ../../File_Transfer/File_Transfer.rst:516 669fb6da8e7444dd829a6e14295648b1
+#: ../../source/File_Transfer/File_Transfer.rst:537
+#: 2d25f2be19fb467bb222d3780e2be853
 msgid ""
-"The low-level receive function (``file_transfer_mode_recv``) blocks while "
-"reading from the transfer socket, but because it runs in a dedicated thread,"
-" the main connection remains responsive."
-msgstr ""
-"低级接收函数（“file_transfer_mode_recv”）在从传输套接字读取时会阻塞，但由于它在专用线程中运行，因此主连接仍保持响应。"
+"The low-level receive function (``file_transfer_mode_recv``) blocks while"
+" reading from the transfer socket, but because it runs in a dedicated "
+"thread, the main connection remains responsive."
+msgstr "低级接收函数（“file_transfer_mode_recv”）在从传输套接字读取时会阻塞，但由于它在专用线程中运行，因此主连接仍保持响应。"
 
-#: ../../File_Transfer/File_Transfer.rst:522 e39f8ae06ae84a6b84de8a3008ca17cb
+#: ../../source/File_Transfer/File_Transfer.rst:543
+#: 641bce0854274c369c0b915a1c3d964a
 msgid "### Thread Pool for Custom Commands"
 msgstr "### 自定义命令的线程池"
 
-#: ../../File_Transfer/File_Transfer.rst:524 3ad49853529d4563bacdfb4ca6eee115
+#: ../../source/File_Transfer/File_Transfer.rst:545
+#: c41d6414ad5542aa8bbeaa67d28730d5
 msgid ""
 "Both classes also provide a ``ThreadPoolExecutor`` "
-"(``self._custom_executor``) for custom command handlers. When a handler is "
-"registered with ``run_in_thread=True``, it is submitted to this pool via "
-"``submit_task``, which also uses a semaphore to limit concurrency to "
+"(``self._custom_executor``) for custom command handlers. When a handler "
+"is registered with ``run_in_thread=True``, it is submitted to this pool "
+"via ``submit_task``, which also uses a semaphore to limit concurrency to "
 "``max_custom_workers``. This mechanism is **independent** of the file "
-"transfer semaphore and is intended for general-purpose command processing."
-msgstr ""
-"这两个类还为自定义命令处理程序提供了“ThreadPoolExecutor”（“self._custom_executor”）。当使用“run_in_thread=True”注册处理程序时，它会通过“submit_task”提交到该池，该池还使用信号量将并发限制为“max_custom_workers”。此机制独立于文件传输信号量，旨在用于通用命令处理。"
+"transfer semaphore and is intended for general-purpose command "
+"processing."
+msgstr "这两个类还为自定义命令处理程序提供了“ThreadPoolExecutor”（“self._custom_executor”）。当使用“run_in_thread=True”注册处理程序时，它会通过“submit_task”提交到该池，该池还使用信号量将并发限制为“max_custom_workers”。此机制独立于文件传输信号量，旨在用于通用命令处理。"
 
-#: ../../File_Transfer/File_Transfer.rst:539 1862d74da28a40219f82cfd7af89c126
+#: ../../source/File_Transfer/File_Transfer.rst:560
+#: adfe7eb4ec4942e9979652f98b3beed9
 msgid "Port Allocation and Management"
 msgstr "端口分配与管理"
 
-#: ../../File_Transfer/File_Transfer.rst:541 bd53ec8aa4ef498aa0815db16ed03140
+#: ../../source/File_Transfer/File_Transfer.rst:562
+#: 845beb63ef9c47ba8379637a1b0662fb
 msgid ""
-"File transfers require ephemeral ports for the secondary data connections. "
-"The ``palloc()`` and ``pfree()`` methods are used to obtain and release "
-"these ports. Two modes are available:"
-msgstr ""
-"文件传输需要临时端口来进行辅助数据连接。 ``palloc()`` 和 ``pfree()`` 方法用于获取和释放这些端口。有两种模式可供选择："
+"File transfers require ephemeral ports for the secondary data "
+"connections. The ``palloc()`` and ``pfree()`` methods are used to obtain "
+"and release these ports. Two modes are available:"
+msgstr "文件传输需要临时端口来进行辅助数据连接。 ``palloc()`` 和 ``pfree()`` 方法用于获取和释放这些端口。有两种模式可供选择："
 
-#: ../../File_Transfer/File_Transfer.rst:547 eeaa9379d7d941159ac34f30ff6bb5f9
+#: ../../source/File_Transfer/File_Transfer.rst:568
+#: 8195ea505bdf43a2a0f68b78d958c709
 msgid ""
 "**Automatic mode** (``is_hand_alloc_port=False``): ``palloc()`` returns "
 "``0``, and the operating system assigns a free port when the socket is "
@@ -827,96 +992,117 @@ msgstr ""
 "**自动模式**（``is_hand_alloc_port=False``）：``palloc()`` "
 "返回``0``，操作系统在套接字绑定时分配一个空闲端口。这是大多数用例的推荐模式。"
 
-#: ../../File_Transfer/File_Transfer.rst:552 80e08ac6614b4dcd88cd0e4d31a3da64
+#: ../../source/File_Transfer/File_Transfer.rst:573
+#: 9a796b6e464d4d9e8e131401d5022e1f
+#, fuzzy
 msgid ""
-"**Manual mode** (``is_hand_alloc_port=True``): Ports are drawn from a "
+"**Manual mode** (``is_hand_alloc_port=True`` on the server constructor; "
+"on the client the flag is set by the server's "
+"``/client_alloc_port_range`` message): Ports are drawn from a "
 "configurable range ``[self.min_port, self.max_port]`` with a step size "
-"``port_add_step``. The server broadcasts the allowed range to clients via "
-"``/client_alloc_port_range``, and clients then use the same manual "
-"allocation logic."
+"``port_add_step``. The server sends the allowed range to each client that"
+" connects via ``/client_alloc_port_range``, and clients then use the same"
+" manual allocation logic. See :doc:`../Port_Allocation/Port_Allocation` "
+"for the range record and the retry behaviour."
 msgstr ""
 "**手动模式** (``is_hand_alloc_port=True``)：从可配置范围``[self.min_port, "
 "self.max_port]`` "
 "中提取端口，步长为``port_add_step``。服务器通过“/client_alloc_port_range”向客户端广播允许的范围，然后客户端使用相同的手动分配逻辑。"
 
-#: ../../File_Transfer/File_Transfer.rst:562 29cfdab183eb4f9f83de41ef62a60785
+#: ../../source/File_Transfer/File_Transfer.rst:588
+#: 7d275701519c4d60ba94cf086010e92d
 msgid ""
 "*Note: For more details about port allocation, please visit the Port "
 "Allocation API sections in :doc:`TCP_Server_APIs` and "
 ":doc:`TCP_Client_APIs`.*"
-msgstr ""
-"*注意：有关端口分配的更多详细信息，请访问 TCP_Server_APIs 和 TCP_Client_APIs 中的端口分配 API 部分。*"
+msgstr "*注意：有关端口分配的更多详细信息，请访问 TCP_Server_APIs 和 TCP_Client_APIs 中的端口分配 API 部分。*"
 
-#: ../../File_Transfer/File_Transfer.rst:570 189736d8d1f8464b8d301f219700fda4
+#: ../../source/File_Transfer/File_Transfer.rst:596
+#: e92794553f6f4189978c5486f4d09fce
 msgid "Error Handling and Timeouts"
 msgstr "错误处理和超时"
 
-#: ../../File_Transfer/File_Transfer.rst:572 bcc373777989436f9df3657446d1a7f2
+#: ../../source/File_Transfer/File_Transfer.rst:598
+#: 6ef0c4c7a91a42d0acc6b0a387247432
 msgid "### Timeout Values"
 msgstr "### 超时值"
 
-#: ../../File_Transfer/File_Transfer.rst:574 27d75d097a804ec28ebec5c67469c9c6
+#: ../../source/File_Transfer/File_Transfer.rst:600
+#: 2b8dea32ffe04d4988e44fca72384271
 msgid ""
 "**Start signal timeout**: 10 seconds. If the receiver does not send "
 "``server_start_file_transfer_sign`` within this time, the sender aborts."
-msgstr ""
-"**启动信号超时**：10 秒。如果接收方在此时间内未发送“server_start_file_transfer_sign”，则发送方将中止。"
+msgstr "**启动信号超时**：10 秒。如果接收方在此时间内未发送“server_start_file_transfer_sign”，则发送方将中止。"
 
-#: ../../File_Transfer/File_Transfer.rst:578 93e877c411eb4c96bd7861ff61f35e7a
+#: ../../source/File_Transfer/File_Transfer.rst:604
+#: 2d19f71ef52b4f3097bf0c2f3e64be7b
 msgid ""
-"**Port negotiation timeout**: 20 seconds. The initiator waits for the peer's"
-" ``/server_file_transfer_port`` response."
+"**Port negotiation timeout**: 20 seconds. The initiator waits for the "
+"peer's ``/server_file_transfer_port`` response."
 msgstr "**端口协商超时**：20 秒。发起者等待对等方的“/server_file_transfer_port”响应。"
 
-#: ../../File_Transfer/File_Transfer.rst:581 9e1d395bb59540a49393bebe6630e5eb
+#: ../../source/File_Transfer/File_Transfer.rst:607
+#: 67dba14dcd534ae484df410cb48c8e53
 msgid ""
-"**Completion acknowledgement timeout**: ``30 + (file_size // (100 * 1024 * "
-"1024)) * 10`` seconds. Larger files get proportionally more time."
+"**Completion acknowledgement timeout**: ``30 + (file_size // (100 * 1024 "
+"* 1024)) * 10`` seconds. Larger files get proportionally more time."
 msgstr ""
-"**完成确认超时**：``30 + (file_size // (100 * 1024 * 1024)) * 10`` 秒。文件越大，相应的时间就越长。"
+"**完成确认超时**：``30 + (file_size // (100 * 1024 * 1024)) * 10`` "
+"秒。文件越大，相应的时间就越长。"
 
-#: ../../File_Transfer/File_Transfer.rst:585 6b4e6135669b41178fdbb47ea5975381
+#: ../../source/File_Transfer/File_Transfer.rst:611
+#: f175db3ace1448068c029d1527feb065
 msgid "### Error Signalling"
 msgstr "### 错误信号"
 
-#: ../../File_Transfer/File_Transfer.rst:587 448fdc6ba3dd4d9eae925e7e241f8cb8
+#: ../../source/File_Transfer/File_Transfer.rst:613
+#: 988d9d4636944c0abc8d186178d2a4f7
 msgid ""
-"Any error during the handshake or data transfer causes the failing side to "
-"send ``error_sign`` over the transfer socket."
+"Any error during the handshake or data transfer causes the failing side "
+"to send ``error_sign`` over the transfer socket."
 msgstr "握手或数据传输期间的任何错误都会导致失败方通过传输套接字发送“error_sign”。"
 
-#: ../../File_Transfer/File_Transfer.rst:590 5b4c23a93e984ce0af2e43cf4752225b
+#: ../../source/File_Transfer/File_Transfer.rst:616
+#: d171618e798b46d0a6ac7473b4a787ba
 msgid ""
-"The other side, upon receiving the error sign, closes the transfer socket "
-"and aborts the transfer."
+"The other side, upon receiving the error sign, closes the transfer socket"
+" and aborts the transfer."
 msgstr "另一端收到错误标志后，关闭传输套接字并中止传输。"
 
-#: ../../File_Transfer/File_Transfer.rst:593 b337a2726ded4d619c5e8026bef3f6ea
+#: ../../source/File_Transfer/File_Transfer.rst:619
+#: c712f2f5e1794c528d4816a761030029
 msgid ""
-"The main control connection remains unaffected; only the transfer socket is "
-"closed."
+"The main control connection remains unaffected; only the transfer socket "
+"is closed."
 msgstr "主控连接不受影响；仅关闭传输套接字。"
 
-#: ../../File_Transfer/File_Transfer.rst:597 68be52c8e5ce447a9c5ec51a661229cf
+#: ../../source/File_Transfer/File_Transfer.rst:623
+#: 9d55f6049713415794e53bd6a476e11f
 msgid "### Exception Handling"
 msgstr "### 异常处理"
 
-#: ../../File_Transfer/File_Transfer.rst:599 036db9bc1858417ca589816028b83f80
+#: ../../source/File_Transfer/File_Transfer.rst:625
+#: a45a6eaec53b4699a7e61d4e422ace85
+#, fuzzy
 msgid ""
-"All socket operations are wrapped in try-except blocks. When an exception "
-"occurs (e.g., connection reset, file not found), the error is logged with "
-"``traceback.print_exc()`` and the transfer is aborted gracefully. The "
-"``error_sign`` is sent if possible, and the transfer socket is closed."
+"All socket operations are wrapped in try-except blocks. When an exception"
+" occurs (e.g., connection reset, file not found), the error is logged "
+"through the instance's ``_log_exc`` helper, which prints the traceback "
+"only when both ``is_print_log`` and ``is_debug`` are true, and the "
+"transfer is aborted gracefully. The ``error_sign`` is sent if possible, "
+"and the transfer socket is closed."
 msgstr ""
 "所有套接字操作都包含在 try- except "
 "块中。当发生异常时（例如，连接重置、未找到文件），错误将用``traceback.print_exc()`` "
 "记录，并且传输会正常中止。如果可能，将发送“error_sign”，并关闭传输套接字。"
 
-#: ../../File_Transfer/File_Transfer.rst:611 fe9377db9cf04b9da0dbe4d07c730adf
+#: ../../source/File_Transfer/File_Transfer.rst:638
+#: 00af57a759ec4845b5810bb85ac1f485
 msgid "Related API Definitions"
 msgstr "相关API定义"
 
-#: ../../File_Transfer/File_Transfer.rst:613 cc71cb9b1d6642a2acc89d45a49022cc
+#: ../../source/File_Transfer/File_Transfer.rst:640
+#: 92c3b5d713cb49cfb144026af574a0b4
 msgid ""
 "This section lists all public file-transfer related methods in "
 "``TCP_Server_Base`` and ``TCP_Client_Base``. For a complete list of all "
@@ -925,219 +1111,346 @@ msgstr ""
 "本节列出了“TCP_Server_Base”和“TCP_Client_Base”中所有与公共文件传输相关的方法。有关所有公共 API "
 "的完整列表，请参阅本文档末尾的表格。"
 
-#: ../../File_Transfer/File_Transfer.rst:619 d6683e415f794c5bb693f8c24370e7f9
+#: ../../source/File_Transfer/File_Transfer.rst:646
+#: bbc49149589d43719bc774a99b84ce6e
 msgid "### Server-Side File Transfer APIs"
 msgstr "### 服务器端文件传输 API"
 
-#: ../../File_Transfer/File_Transfer.rst:629 9123c69197c34d93bb68d088897ebeca
+#: ../../source/File_Transfer/File_Transfer.rst:652
+#: 59386d051c734452801f4bd00d5dd654
 msgid ""
 "Initiates a server-to-client file transfer. ``message`` is the command "
 "string (e.g., ``/file /path/to/file.txt (127.0.0.1,54321)``). If "
-"``file_folder_abspath`` is provided (for folder transfers), it specifies the"
-" absolute path of the parent folder."
+"``file_folder_abspath`` is provided (for folder transfers), it specifies "
+"the absolute path of the parent folder."
 msgstr ""
 "启动服务器到客户端的文件传输。 ``message`` 是命令字符串（例如，``/file /path/to/file.txt "
 "(127.0.0.1,54321)``）。如果提供了“file_folder_abspath”（用于文件夹传输），则它指定父文件夹的绝对路径。"
 
-#: ../../File_Transfer/File_Transfer.rst:644 367dfd82c95c413d963a15152469fc44
+#: ../../source/File_Transfer/File_Transfer.rst:663
+#: 431a043a77bc4d82a206650afde47b86
 msgid "Thread-safe version that starts a new thread for the transfer."
 msgstr "线程安全版本，启动新线程进行传输。"
 
-#: ../../File_Transfer/File_Transfer.rst:653 d4aa76b7eb2c46c29adee0120a939b66
+#: ../../source/File_Transfer/File_Transfer.rst:669
+#: e17536344cb444b699c7465d8bcbdded
+#, fuzzy
 msgid ""
-"Sends an entire folder from server to client. ``message`` should be of the "
-"form ``/file_folder <folder_path> <client_address>``."
+"Sends an entire folder from server to client. ``message`` should be of "
+"the form ``/file_folder <folder_path> <(ip, port)> "
+"[destination_file_path]``."
 msgstr ""
 "将整个文件夹从服务器发送到客户端。 “message” 的格式应为“/file_folder <folder_path> "
 "<client_address>”。"
 
-#: ../../File_Transfer/File_Transfer.rst:663 fcb785ff144746fab81e95ec2ab056e1
+#: ../../source/File_Transfer/File_Transfer.rst:676
+#: 88f9df0240054009a6957b13ee08f2ef
 msgid ""
-"Sends multiple files to multiple clients. The message format is "
-"``/multiple_file_multiple_client <file1> <file2> ... <client_addr1> "
-"<client_addr2> ...``. Files must appear before clients."
+"Sends multiple items to multiple clients. The message format is "
+"``/multiple_file_multiple_client <item1> <item2> ... <(ip, port)1> <(ip, "
+"port)2> ... [destination]``; every token is classified on its own (a "
+"``(ip, port)`` literal is a target, anything else is an item), so items "
+"and targets may be interleaved. Each item is dispatched as a file or as a"
+" folder depending on what it is on disk, and an optional trailing "
+"destination path is accepted."
 msgstr ""
-"将多个文件发送给多个客户端。消息格式为``/multiple_file_multiple_client <file1> <file2> ... "
-"<client_addr1> <client_addr2> ...``。文件必须出现在客户面前。"
 
-#: ../../File_Transfer/File_Transfer.rst:675 9c6f024528f344e399b62023c7f8c858
+#: ../../source/File_Transfer/File_Transfer.rst:688
+#: 39b67f1d0e6b438386eb04c6d44da6b8
 msgid ""
-"Sends different file lists to different clients. The message alternates "
-"between groups: a list of files, then a list of client addresses, then the "
-"next list of files, etc. Example: ``/diff_multiple_file_diff_multiple_client"
-" a.txt b.txt (ip1,port1) (ip2,port2) c.txt (ip3,port3)``"
+"Sends different file lists to different clients. Files that appear before"
+" a group of client addresses are sent to that group; a new group starts "
+"as soon as a file token follows one or more addresses. Example: "
+"``/diff_multiple_file_diff_multiple_client a.txt b.txt (ip1,port1) "
+"(ip2,port2) c.txt (ip3,port3)`` — ``a.txt`` and ``b.txt`` go to "
+"``(ip1,port1)`` and ``(ip2,port2)``, ``c.txt`` to ``(ip3,port3)``. An "
+"optional trailing destination path is accepted."
 msgstr ""
-"向不同的客户端发送不同的文件列表。消息在组之间交替：文件列表，然后是客户端地址列表，然后是下一个文件列表，等等。示例：``/diff_multiple_file_diff_multiple_client"
-" a.txt b.txt (ip1,port1) (ip2,port2) c.txt (ip3,port3)``"
 
-#: ../../File_Transfer/File_Transfer.rst:693 f8a880287b7b49d4bdc2239ecf4a0577
+#: ../../source/File_Transfer/File_Transfer.rst:701
+#: 37108379b0b9495584bb135d5860ea4a
 msgid ""
-"Receives a file from a client. Called internally when the server receives a "
-"``/file`` command from a client."
+"Receives a file from a client. Called internally when the server receives"
+" a ``/file`` command from a client."
 msgstr "从客户端接收文件。当服务器从客户端接收到“/file”命令时在内部调用。"
 
-#: ../../File_Transfer/File_Transfer.rst:709 97bfaa9c24ae47c39328707b8f17a91a
+#: ../../source/File_Transfer/File_Transfer.rst:710
+#: adeb784cb6b24d6cbf143a7a50eba80a
 msgid ""
 "Low-level receive function that performs the handshake and writes the "
 "incoming file to disk."
 msgstr "执行握手并将传入文件写入磁盘的低级接收函数。"
 
-#: ../../File_Transfer/File_Transfer.rst:722 db6a97ca42ba43e59d5c20695039d4ee
+#: ../../source/File_Transfer/File_Transfer.rst:718
+#: 0bb492f5335d426d8dc715847665b3f4
 msgid ""
 "Low-level send function that connects to the receiver and transmits the "
 "file."
 msgstr "连接到接收器并传输文件的低级发送函数。"
 
-#: ../../File_Transfer/File_Transfer.rst:724 3e7b689215e840bebd368b4d29104ebc
+#: ../../source/File_Transfer/File_Transfer.rst:720
+#: 29189fe72c61456ba2d5aa1ece75145e
 msgid "### Client-Side File Transfer APIs"
 msgstr "### 客户端文件传输 API"
 
-#: ../../File_Transfer/File_Transfer.rst:734 1e97e492d6504579a9a265eb1242395e
+#: ../../source/File_Transfer/File_Transfer.rst:726
+#: 6c2f54ee2660441291a3fbbcaa95262c
 msgid ""
-"Initiates a client-to-server file transfer. ``message`` is the user command "
-"(e.g., ``/file mydoc.txt``). Used internally by the interactive console."
+"Initiates a client-to-server file transfer. ``message`` is the user "
+"command (e.g., ``/file mydoc.txt``). Used internally by the interactive "
+"console."
 msgstr "启动客户端到服务器的文件传输。 “message” 是用户命令（例如“/file mydoc.txt”）。由交互式控制台内部使用。"
 
-#: ../../File_Transfer/File_Transfer.rst:746
-#: ../../File_Transfer/File_Transfer.rst:797 0cd2695763114a0b831df0bfa80a3d56
+#: ../../source/File_Transfer/File_Transfer.rst:734
+#: ../../source/File_Transfer/File_Transfer.rst:765
+#: 07c4ae801fb54cbcb508af4b208f75dd
 msgid "Thread-safe version."
 msgstr "线程安全版本。"
 
-#: ../../File_Transfer/File_Transfer.rst:755 261399ca508d463eafa7f03a00bfc658
+#: ../../source/File_Transfer/File_Transfer.rst:740
+#: 0d66d4aac681414fb7b8a46117571fe9
 msgid "Sends a folder from client to server."
 msgstr "将文件夹从客户端发送到服务器。"
 
-#: ../../File_Transfer/File_Transfer.rst:764 ef5e3b92b11c4530960c1c344a51c73b
+#: ../../source/File_Transfer/File_Transfer.rst:746
+#: 2818655cecfc49f7ab1c9800b9418018
 msgid "Sends multiple files from client to server."
 msgstr "将多个文件从客户端发送到服务器。"
 
-#: ../../File_Transfer/File_Transfer.rst:773 f2c90ee949d7484480cbb2cd5310bf26
+#: ../../source/File_Transfer/File_Transfer.rst:752
+#: 6ee08a69dbc5486a94fe2f616f0899e2
 msgid "Sends multiple folders from client to server."
 msgstr "将多个文件夹从客户端发送到服务器。"
 
-#: ../../File_Transfer/File_Transfer.rst:786 0b13d26a40174243a15698b4bfcbb69f
+#: ../../source/File_Transfer/File_Transfer.rst:759
+#: 5a88c3508e074cff9ae445d00193f212
 msgid ""
 "Receives a file from the server (called when the server initiates a "
 "transfer)."
 msgstr "从服务器接收文件（在服务器启动传输时调用）。"
 
-#: ../../File_Transfer/File_Transfer.rst:808 3b78a4355d7f4ee2bbbe6bf934a962c0
+#: ../../source/File_Transfer/File_Transfer.rst:771
+#: 42db9f7f09c044c8a58243854644adfb
 msgid "Receives a folder from the server."
 msgstr "从服务器接收文件夹。"
 
-#: ../../File_Transfer/File_Transfer.rst:823 3d044e0754b94d1289b491502ce83610
+#: ../../source/File_Transfer/File_Transfer.rst:779
+#: 0a051d591bb54e529c771345409ec7df
 msgid "Low-level receive function on the client side."
 msgstr "客户端的低级接收函数。"
 
-#: ../../File_Transfer/File_Transfer.rst:835 7311023a7fa644ed9b57a2873cd3bca8
+#: ../../source/File_Transfer/File_Transfer.rst:786
+#: e0149bdd716249289f6ba260e3c3f053
 msgid ""
-"Low‑level send function on the client side (identical to server's version)."
+"Low‑level send function on the client side (identical to server's "
+"version)."
 msgstr "客户端的低级发送功能（与服务器版本相同）。"
 
-#: ../../File_Transfer/File_Transfer.rst:840 7e74e9a09a8a4cf2a8a372a50b1ee51b
+#: ../../source/File_Transfer/File_Transfer.rst:791
+#: e612d36affc0456b9314f39816bf62f3
 msgid "Public API Summary"
 msgstr "公共API摘要"
 
-#: ../../File_Transfer/File_Transfer.rst:842 87aaf0a5d3b44f41a419d97b6567f6d0
+#: ../../source/File_Transfer/File_Transfer.rst:793
+#: 8347c97393fe47ea83c13f6777faa36c
 msgid ""
-"All public APIs (including non-file-transfer methods) are listed below for "
-"reference."
+"All public APIs (including non-file-transfer methods) are listed below "
+"for reference."
 msgstr "下面列出了所有公共 API（包括非文件传输方法）以供参考。"
 
-#: ../../File_Transfer/File_Transfer.rst:846 a195ee393f2a442c810e59811a6ae126
+#: ../../source/File_Transfer/File_Transfer.rst:797
+#: 5ac025a5e948425a9a430c7c75b045f9
 msgid "### TCP_Server_Base Public APIs"
 msgstr "### TCP_Server_Base 公共 API"
 
-#: ../../File_Transfer/File_Transfer.rst:848 0408d74a9140472e9a774143a60e5749
+#: ../../source/File_Transfer/File_Transfer.rst:799
+#: ddf4d1d8e04e40659404ebb55c843c41
 msgid "``file_transfer_server_recv_client_start``"
 msgstr "``file_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:849 24a33cb212844e04a8a271ada32412f0
+#: ../../source/File_Transfer/File_Transfer.rst:800
+#: 052d49abc8514ed19346f7b023783fa9
 msgid "``file_transfer_server_recv_client_start_thread``"
 msgstr "``file_transfer_server_recv_client_start_thread``"
 
-#: ../../File_Transfer/File_Transfer.rst:850 7e286d1ece6940868bea6b937486e617
+#: ../../source/File_Transfer/File_Transfer.rst:801
+#: 6db2d78cc0b94b4b93d6080164897079
 msgid "``folder_file_transfer_server_recv_client_start``"
 msgstr "``folder_file_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:851 37fc5bd346c84415bb15138a42508fbe
+#: ../../source/File_Transfer/File_Transfer.rst:802
+#: ec1b13e6e07449ec820d5cdc7a983048
 msgid "``multiple_file_multiple_client_transfer_server_recv_client_start``"
 msgstr "``multiple_file_multiple_client_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:852 38a2b16e3ab648688cf7e8d1cae8be72
-msgid ""
-"``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``"
-msgstr ""
-"``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``"
+#: ../../source/File_Transfer/File_Transfer.rst:803
+#: 7d780de964e543a8b703dd413d331c43
+msgid "``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``"
+msgstr "``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:854 11476e0eaa3b4a4286612812e4e2c004
+#: ../../source/File_Transfer/File_Transfer.rst:804
+#: bb9c5d31d258469d885127a592d6b1ed
+#, fuzzy
+msgid ""
+"``file_folder_transfer_server_recv_server_start_thread`` (folder "
+"receiving)"
+msgstr "``file_folder_transfer_client_recv_server_start_thread``"
+
+#: ../../source/File_Transfer/File_Transfer.rst:806
+#: 02e685a79bc64a32ad888008a9dde074
 msgid ""
 "(The low-level helpers ``file_transfer_server_recv_server_start``, "
-"``file_transfer_mode_recv``, and ``file_transfer_mode`` are not considered "
-"public but are documented for completeness.)"
-msgstr ""
-"（低级助手“file_transfer_server_recv_server_start”、“file_transfer_mode_recv”和“file_transfer_mode”不被认为是公共的，但为了完整性而被记录下来。）"
+"``file_transfer_mode_recv``, and ``file_transfer_mode`` are not "
+"considered public but are documented for completeness.)"
+msgstr "（低级助手“file_transfer_server_recv_server_start”、“file_transfer_mode_recv”和“file_transfer_mode”不被认为是公共的，但为了完整性而被记录下来。）"
 
-#: ../../File_Transfer/File_Transfer.rst:860 907e861cebe648fbacb799bae8bb15e0
+#: ../../source/File_Transfer/File_Transfer.rst:812
+#: 5193d200c3f245caae4095ab4114a467
 msgid "### TCP_Client_Base Public APIs"
 msgstr "### TCP_Client_Base 公共 API"
 
-#: ../../File_Transfer/File_Transfer.rst:862 88bd80083f754caeb026f9ce1b8c6b55
+#: ../../source/File_Transfer/File_Transfer.rst:814
+#: df25f04d660046669347072182ca0bde
 msgid "``file_transfer_client_recv_client_start``"
 msgstr "``file_transfer_client_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:863 3b21ff73da694465906482412b4fb4e3
+#: ../../source/File_Transfer/File_Transfer.rst:815
+#: 2a43c7e5134b4a64af241547e798bdf3
 msgid "``file_transfer_client_recv_client_start_thread``"
 msgstr "``file_transfer_client_recv_client_start_thread``"
 
-#: ../../File_Transfer/File_Transfer.rst:864 c8af43896a2443a5b14bd29863731c2c
+#: ../../source/File_Transfer/File_Transfer.rst:816
+#: 6a88ac28f634410ab54d999291b5b309
 msgid "``folder_file_transfer_client_recv_client_start``"
 msgstr "``folder_file_transfer_client_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:865 7a3d3e4a52334b169a62d3b30d7a3190
+#: ../../source/File_Transfer/File_Transfer.rst:817
+#: 6d47f6da5f54475989d93fca0c141f2d
 msgid "``multiple_file_transfer_client_recv_client_start``"
 msgstr "``multiple_file_transfer_client_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:866 19e18754c4674842ad5116f709588e03
+#: ../../source/File_Transfer/File_Transfer.rst:818
+#: 06e20b477a9744de9f2d2efcf0fbf57f
 msgid "``multiple_folder_file_transfer_client_recv_client_start``"
 msgstr "``multiple_folder_file_transfer_client_recv_client_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:867 4cf80f9f34e045c59a680d0450c9103a
+#: ../../source/File_Transfer/File_Transfer.rst:819
+#: a8dd89a54e0f498b88185761dc4c0f46
 msgid "``file_transfer_client_recv_server_start``"
 msgstr "``file_transfer_client_recv_server_start``"
 
-#: ../../File_Transfer/File_Transfer.rst:868 c09f5fcba03f461f89238dd31abf6e88
+#: ../../source/File_Transfer/File_Transfer.rst:820
+#: 0811953096e94bd887990bb58d2de56a
 msgid "``file_transfer_client_recv_server_start_thread``"
 msgstr "``file_transfer_client_recv_server_start_thread``"
 
-#: ../../File_Transfer/File_Transfer.rst:869 ad39bc6b71f048b09bca3b895e9d32f8
+#: ../../source/File_Transfer/File_Transfer.rst:821
+#: bb9c5d31d258469d885127a592d6b1ed
 msgid "``file_folder_transfer_client_recv_server_start_thread``"
 msgstr "``file_folder_transfer_client_recv_server_start_thread``"
 
-#: ../../File_Transfer/File_Transfer.rst:871 99140d0be72649199911a57a26e2f2cf
+#: ../../source/File_Transfer/File_Transfer.rst:823
+#: bbbea73553dd4dfd98e0ee4076c1d42b
 msgid "(The low-level helpers are documented but not part of the public API.)"
 msgstr "（低级帮助程序已记录，但不属于公共 API 的一部分。）"
 
-#: ../../File_Transfer/File_Transfer.rst:875 60355543ac904504af8529431ce2c1fa
+#: ../../source/File_Transfer/File_Transfer.rst:827
+#: 56f1214838224007ade30eb34009810c
 msgid "See Also"
 msgstr "参见"
 
-#: ../../File_Transfer/File_Transfer.rst:877 7a5902ad3de64bf79d54d7f2f83ecbfb
+#: ../../source/File_Transfer/File_Transfer.rst:829
+#: d513a2ce6fdf40eca5746ea840b4314f
 msgid ""
-"For more information about the TCP server and client base classes, please "
-"refer to:"
+"For more information about the TCP server and client base classes, please"
+" refer to:"
 msgstr "关于TCP服务器和客户端基类的更多信息，请参考："
 
-#: ../../File_Transfer/File_Transfer.rst:881 f10c29f467b849e8b4254998b44f99ba
+#: ../../source/File_Transfer/File_Transfer.rst:833
+#: 66b9f83c47d848779de9019a6f33c9a4
 msgid ":doc:`../Network_APIs/TCP_Server_APIs`"
 msgstr ":doc:`../Network_APIs/TCP_Server_APIs`"
 
-#: ../../File_Transfer/File_Transfer.rst:882 335ba244d28342449db065c252d7e14c
+#: ../../source/File_Transfer/File_Transfer.rst:834
+#: 5cfe4f734d2043c2afe489c53c4ce963
 msgid ":doc:`../Network_APIs/TCP_Client_APIs`"
 msgstr ":doc:`../Network_APIs/TCP_Client_APIs`"
 
-#: ../../File_Transfer/File_Transfer.rst:884 92d0227c356447a098cba072d5b43c98
+#: ../../source/File_Transfer/File_Transfer.rst:836
+#: 47b4292bf8754c389fccf965d9b417d8
 msgid ""
 "For details on port allocation, see the Port Allocation API sections in "
 "those documents."
 msgstr "有关端口分配的详细信息，请参阅这些文档中的端口分配 API 部分。"
+
+#~ msgid ""
+#~ "The protocol uses a set of "
+#~ "predefined string constants, loaded from "
+#~ "``decode_command_table.json``:"
+#~ msgstr "该协议使用一组预定义的字符串常量，从“decode_command_table.json”加载："
+
+#~ msgid ""
+#~ "``server_received_file_header_sign`` - sent by "
+#~ "the receiver after it has successfully"
+#~ " read the filename and file size."
+#~ msgstr "``server_reeived_file_header_sign`` - 由接收方在成功读取文件名和文件大小后发送。"
+
+#~ msgid ""
+#~ "``server_received_file_data_sign`` - sent by "
+#~ "the receiver after the complete file "
+#~ "has been written to disk."
+#~ msgstr "``server_reeived_file_data_sign`` - 在完整文件写入磁盘后由接收方发送。"
+
+#~ msgid ""
+#~ "The client provides the following "
+#~ "thread-safe methods for initiating "
+#~ "transfers:"
+#~ msgstr "客户端提供以下线程安全方法来启动传输："
+
+#~ msgid ""
+#~ "Each of these methods creates a "
+#~ "new daemon thread that executes the "
+#~ "actual worker function (the non-``_thread``"
+#~ " version). This prevents the console "
+#~ "thread from being blocked."
+#~ msgstr "这些方法中的每一个都会创建一个新的守护线程来执行实际的工作函数（非“_thread”版本）。这可以防止控制台线程被阻塞。"
+
+#~ msgid "``/file <file_path> <client_id> [destination_file_path]``"
+#~ msgstr "``/file <文件路径> <客户端 ID> [目标文件路径]``"
+
+#~ msgid "``/file_folder <folder_path> <client_id> [destination_file_path]``"
+#~ msgstr "``/file_folder <相对路径> <文件名>``"
+
+#~ msgid ""
+#~ "For the multiple-item commands the "
+#~ "destination is the last argument; when"
+#~ " the last argument is an existing "
+#~ "local file/folder it is treated as "
+#~ "another item to transfer instead."
+#~ msgstr "对于多项目命令，目标是最后一个参数；当最后一个参数是现有的本地文件/文件夹时，它将被视为另一个要传输的项目。"
+
+#~ msgid ""
+#~ "Sends multiple files to multiple "
+#~ "clients. The message format is "
+#~ "``/multiple_file_multiple_client <file1> <file2> ..."
+#~ " <client_addr1> <client_addr2> ...``. Files "
+#~ "must appear before clients."
+#~ msgstr ""
+#~ "将多个文件发送给多个客户端。消息格式为``/multiple_file_multiple_client <file1> "
+#~ "<file2> ... <client_addr1> <client_addr2> "
+#~ "...``。文件必须出现在客户面前。"
+
+#~ msgid ""
+#~ "Sends different file lists to different"
+#~ " clients. The message alternates between"
+#~ " groups: a list of files, then "
+#~ "a list of client addresses, then "
+#~ "the next list of files, etc. "
+#~ "Example: ``/diff_multiple_file_diff_multiple_client a.txt"
+#~ " b.txt (ip1,port1) (ip2,port2) c.txt "
+#~ "(ip3,port3)``"
+#~ msgstr ""
+#~ "向不同的客户端发送不同的文件列表。消息在组之间交替：文件列表，然后是客户端地址列表，然后是下一个文件列表，等等。示例：``/diff_multiple_file_diff_multiple_client"
+#~ " a.txt b.txt (ip1,port1) (ip2,port2) c.txt"
+#~ " (ip3,port3)``"
+

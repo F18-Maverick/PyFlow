@@ -6,196 +6,215 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: PyFlow\n"
+"Project-Id-Version:  PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-06-16 19:17+0800\n"
+"POT-Creation-Date: 2026-10-01 18:19+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
-"Language-Team: ja <LL@li.org>\n"
 "Language: ja\n"
+"Language-Team: ja <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=1; plural=0;\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: ../../Port_Allocation/Port_Allocation.rst:2
-#: ad59f49685664ccb9d502f0a4a375d7e
+#: ../../source/Port_Allocation/Port_Allocation.rst:2
+#: 42566734ea144d4e874da951da12a88f
 msgid "TCP Port Allocation Mechanism"
 msgstr "TCP ポート割り当てメカニズム"
 
-#: ../../Port_Allocation/Port_Allocation.rst:4
-#: 65e9d6bc01074c69bf89f2e91d650848
+#: ../../source/Port_Allocation/Port_Allocation.rst:4
+#: 20216d8363d34c588ee8716b491478ec
 msgid ""
-"This document describes the port allocation subsystem implemented in both "
-"the ``TCP_Server_Base`` and ``TCP_Client_Base`` classes. The port allocation"
-" mechanism provides a unified interface for obtaining ephemeral ports, "
-"supporting both **automatic** (OS‑assigned) and **manual** (range‑based) "
-"allocation modes."
+"This document describes the port allocation subsystem implemented in both"
+" the ``TCP_Server_Base`` and ``TCP_Client_Base`` classes. The port "
+"allocation mechanism provides a unified interface for obtaining ephemeral"
+" ports, supporting both **automatic** (OS‑assigned) and **manual** "
+"(range‑based) allocation modes."
 msgstr ""
 "この文書では、 ``TCP_Server_Base`` クラスと ``TCP_Client_Base`` "
 "クラスの両方に実装されるポート割り当てサブシステムについて説明します。ポート割り当てメカニズムは、一時ポートを取得するための統合インターフェイスを提供し、**自動**"
 " (OS 割り当て) と **手動** (範囲ベース) 割り当てモードの両方をサポートします。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:13
-#: 8cbc9424907c42128a8f44ac1dce8da3
+#: ../../source/Port_Allocation/Port_Allocation.rst:13
+#: 23e4f96fe33b412c8e8ae544d1249128
 msgid ""
-"Port allocation is used primarily for file transfer secondary connections, "
-"temporary servers, and temporary clients. The design ensures that ports are "
-"allocated and released without conflicts, even when multiple server or "
-"client instances run on the same host."
+"Port allocation is used primarily for file transfer secondary "
+"connections, temporary servers, and temporary clients. The design ensures"
+" that ports are allocated and released without conflicts, even when "
+"multiple server or client instances run on the same host."
 msgstr ""
 "ポート割り当ては、主にファイル転送のセカンダリ接続、一時サーバー、および一時クライアントに使用されます。この設計により、複数のサーバーまたはクライアント"
 " インスタンスが同じホスト上で実行されている場合でも、競合することなくポートが割り当てられ、解放されることが保証されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:21
-#: c72dd0dd42ba4409b94712a6cc90b3d3
+#: ../../source/Port_Allocation/Port_Allocation.rst:21
+#: da06e2a87fba4e8b967fdcfbd9d8cec1
 msgid ""
-"For a high‑level overview of the server and client classes, please refer to "
-":doc:`../Network_APIs/TCP_Server_APIs` and "
+"For a high‑level overview of the server and client classes, please refer "
+"to :doc:`../Network_APIs/TCP_Server_APIs` and "
 ":doc:`../Network_APIs/TCP_Client_APIs`."
 msgstr ""
-"サーバー クラスとクライアント クラスの高レベルの概要については、:doc:`../Network_APIs/TCP_Server_APIs` および "
-":doc:`../Network_APIs/TCP_Client_APIs` を参照してください。"
+"サーバー クラスとクライアント クラスの高レベルの概要については、:doc:`../Network_APIs/TCP_Server_APIs` "
+"および :doc:`../Network_APIs/TCP_Client_APIs` を参照してください。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:28
-#: b7fdf5a6bb254d5f8b2db741a1be4e19
+#: ../../source/Port_Allocation/Port_Allocation.rst:28
+#: e0264a33db0a48749182ad53791274b1
 msgid "Overview"
 msgstr "概要"
 
-#: ../../Port_Allocation/Port_Allocation.rst:30
-#: 309184d907a14ad2b46ac4c8843c4ef0
+#: ../../source/Port_Allocation/Port_Allocation.rst:30
+#: f425aec188814265b0a5462d107862d1
 msgid "The port allocation API consists of two core methods:"
 msgstr "ポート割り当て API は、次の 2 つのコア メソッドで構成されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:32
-#: cf55e0f2bd6e49fea945e987d10b534d
+#: ../../source/Port_Allocation/Port_Allocation.rst:32
+#: 1d729f637c2441b691e0919c06da43d9
 msgid "``palloc()`` – obtain an available port."
 msgstr "``palloc()`` – 利用可能なポートを取得します。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:33
-#: 63170bcaa5344e86a6232264cbec8ab8
+#: ../../source/Port_Allocation/Port_Allocation.rst:33
+#: 10a5bb75390c426c8c79bfae6e8f3026
 msgid "``pfree(port)`` – release a previously allocated port."
 msgstr "``pfree(port)`` – 以前に割り当てられたポートを解放します。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:35
-#: 72a0dc9d1b1a434da527a7bfe8da5c4f
+#: ../../source/Port_Allocation/Port_Allocation.rst:35
+#: 1379d3ef16344375945da210ff12cd71
+#, fuzzy
 msgid ""
 "The behaviour of these methods depends on the value of the "
-"``is_hand_alloc_port`` flag passed to the class constructor:"
+"``is_hand_alloc_port`` flag:"
 msgstr "これらのメソッドの動作は、クラス コンストラクターに渡される ``is_hand_alloc_port`` フラグの値によって異なります。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:39
-#: 136e8ea008d9437fb18b464f90c0f534
+#: ../../source/Port_Allocation/Port_Allocation.rst:38
+#: c6cc3da610f34e988488d1d78d8ad7da
+#, fuzzy
 msgid ""
-"**Automatic mode** (``is_hand_alloc_port=False``, default): ``palloc()`` "
-"returns ``0``. When used in a socket ``bind()`` call, the operating system "
-"automatically assigns a free ephemeral port. ``pfree()`` does nothing."
+"**Automatic mode** (``is_hand_alloc_port`` false, the default): "
+"``palloc()`` returns ``0``. When used in a socket ``bind()`` call, the "
+"operating system automatically assigns a free ephemeral port. ``pfree()``"
+" does nothing."
 msgstr ""
 "**自動モード** (``is_hand_alloc_port=False``、デフォルト): ``palloc()`` は ``0`` "
 "を返します。ソケットの ``bind()`` 呼び出しで使用すると、オペレーティング システムは空きの一時ポートを自動的に割り当てます。 "
 "``pfree()`` は何もしません。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:45
-#: 45d292c35d0b40ff893ac2453b41e05b
+#: ../../source/Port_Allocation/Port_Allocation.rst:44
+#: 058ebbb980074e17a8f66b57d699cd1d
+#, fuzzy
 msgid ""
-"**Manual mode** (``is_hand_alloc_port=True``): Ports are drawn from a "
+"**Manual mode** (``is_hand_alloc_port`` true): Ports are drawn from a "
 "configurable numeric range. The caller must eventually release each "
 "allocated port with ``pfree()``."
 msgstr ""
 "**手動モード** (``is_hand_alloc_port=True``): "
 "ポートは構成可能な数値範囲から描画されます。呼び出し元は最終的に、割り当てられた各ポートを ``pfree()`` で解放する必要があります。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:51
-#: 712955281ffd4575864bf7681fa51226
+#: ../../source/Port_Allocation/Port_Allocation.rst:50
+#: 1500bc26391144ed902757b2fc645b6b
+msgid ""
+"``TCP_Server_Base`` takes the flag as a constructor argument "
+"(``is_hand_alloc_port=False`` by default). ``TCP_Client_Base`` has no "
+"such argument: its ``is_hand_alloc_port`` attribute starts as ``None`` "
+"(automatic mode) and is set by the server's port-range announcement, see "
+":ref:`client-range-configuration`."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:57
+#: 1a96e4b3bc454329a823d0476aab30c5
 msgid ""
 "Automatic mode is strongly recommended for most applications because it "
 "avoids port conflicts and simplifies code. Manual mode is provided for "
-"environments where port ranges must be strictly controlled (e.g., firewalls,"
-" testing, or multiple processes sharing the same host)."
+"environments where port ranges must be strictly controlled (e.g., "
+"firewalls, testing, or multiple processes sharing the same host)."
 msgstr ""
 "自動モードはポートの競合を回避し、コードを簡素化するため、ほとんどのアプリケーションで強く推奨されます。手動モードは、ポート範囲を厳密に制御する必要がある環境"
 " (ファイアウォール、テスト、同じホストを共有する複数のプロセスなど) のために提供されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:62
-#: 04ff70a01f5e4299b100e09cf1ac1dc7
+#: ../../source/Port_Allocation/Port_Allocation.rst:68
+#: 28760753c67f46b1ac24f2987d3cfd2f
 msgid "Manual Allocation Range"
 msgstr "手動割り当て範囲"
 
-#: ../../Port_Allocation/Port_Allocation.rst:64
-#: f004764a38fd42c59578269e09cf9f93
+#: ../../source/Port_Allocation/Port_Allocation.rst:70
+#: bf9a14b1d6364d838cb6eeb9089d983f
 msgid ""
 "When manual mode is enabled, the allocatable port range is determined by "
 "three parameters set during class initialisation:"
 msgstr "手動モードが有効な場合、割り当て可能なポート範囲は、クラスの初期化中に設定された 3 つのパラメータによって決まります。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:68
-#: d1250edb29b34acab53641864f7265dc
+#: ../../source/Port_Allocation/Port_Allocation.rst:74
+#: 1eea38a014ee48549787b80935268fe3
 msgid "``port`` – the main server or client port (e.g., 65432)."
 msgstr "``port`` – メインサーバーまたはクライアントポート (例: 65432)。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:70
-#: f39861b9ce1442c6bea10edaaf642ce5
+#: ../../source/Port_Allocation/Port_Allocation.rst:76
+#: 76a13dc396fd4ab0ad1635f8ed94a49b
 msgid "``port_add_step`` – the step size for incrementing/decrementing ports."
 msgstr "``port_add_step`` – ポートを増減するステップ サイズ。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:72
-#: 0a2640ff8b814cd8ad4cbb5d918ad26f
-msgid ""
-"``port_range_num`` – the total number of steps to scan in each direction."
+#: ../../source/Port_Allocation/Port_Allocation.rst:78
+#: ee9570503709450f85b70fdbdca96f81
+msgid "``port_range_num`` – the total number of steps to scan in each direction."
 msgstr "``port_range_num`` – 各方向にスキャンするステップの合計数。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:75
-#: 933da7468e8c484a9d66485cec0273eb
-msgid ""
-"From these, the minimum and maximum allocatable ports are calculated as:"
+#: ../../source/Port_Allocation/Port_Allocation.rst:81
+#: 4089ec5487744da0995eb5c888fc36a1
+msgid "From these, the minimum and maximum allocatable ports are calculated as:"
 msgstr "これらから、割り当て可能な最小ポートと最大ポートは次のように計算されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:78
-#: a4265571caf14e70808f0c16b83bd7a2
+#: ../../source/Port_Allocation/Port_Allocation.rst:84
+#: 97ec69a6a9be4e27af1ff8c7cb652262
 msgid "``min_port = port - port_add_step * port_range_num``"
 msgstr "``min_port = port - port_add_step * port_range_num``"
 
-#: ../../Port_Allocation/Port_Allocation.rst:79
-#: 60c81dfd85c040519b241e686679881c
+#: ../../source/Port_Allocation/Port_Allocation.rst:85
+#: e946c6f765af4ce7b220a1a93c05e9fe
 msgid "``max_port = port + 1 + port_add_step * port_range_num``"
 msgstr "``max_port = port + 1 + port_add_step * port_range_num``"
 
-#: ../../Port_Allocation/Port_Allocation.rst:82
-#: 053694548cde4787bf573d5245129c14
+#: ../../source/Port_Allocation/Port_Allocation.rst:88
+#: 1e86e22608874feebf30636a41a64a64
+#, fuzzy
 msgid ""
 "For example, with ``port=65432``, ``port_add_step=1``, "
 "``port_range_num=100``, the allocatable ports range from ``65432 - 100 = "
-"64332`` up to ``65432 + 1 + 100 = 65533``."
+"65332`` up to ``65432 + 1 + 100 = 65533``."
 msgstr ""
 "たとえば、「port=65432」、「port_add_step=1」、「port_range_num=100」の場合、割り当て可能なポートの範囲は「65432"
 " - 100 = 64332」から「65432 + 1 + 100 = 65533」までとなります。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:88
-#: 356f6f51faed48c7959fef3848d8acac
+#: ../../source/Port_Allocation/Port_Allocation.rst:94
+#: 43175c1b2b0a4703bd597864d633f7af
 msgid "Two independent allocation “directions” are maintained:"
 msgstr "2 つの独立した割り当て「方向」が維持されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:90
-#: 31b5c97c5de24c11ae6d601acfa7571c
+#: ../../source/Port_Allocation/Port_Allocation.rst:96
+#: e367c4432a7344a8874bddb1dff42918
 msgid ""
-"**Additive allocation** – starts from ``port+1`` and moves upward by "
-"``port_add_step`` each time, up to (but not including) ``max_port``."
+"**Additive allocation** – the cursor starts at ``port+1`` and is advanced"
+" by ``port_add_step`` *before* the port is handed out, so the first "
+"additive port actually returned is ``port + 1 + port_add_step`` "
+"(``port+2`` with the default step). When the cursor would pass "
+"``max_port``, a fallback scan walks ``port+1`` upward by "
+"``port_add_step`` (up to but not including ``max_port``) and returns the "
+"first port that is not in the global allocated list."
 msgstr ""
-"**追加的な割り当て** – ``port+1`` から開始し、毎回 ``port_add_step`` ずつ上に移動し、最大 "
-"(ただしこれは含まれません) ``max_port`` まで移動します。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:94
-#: e81bd92e0a8749cb982b15ad7c87e50c
+#: ../../source/Port_Allocation/Port_Allocation.rst:105
+#: 912831a09b8b42aeb0c92e236f001311
+#, fuzzy
 msgid ""
 "**Subtractive allocation** – starts from ``port`` and moves downward by "
-"``port_add_step`` each time, down to (but not including) ``min_port``."
+"``port_add_step`` each time (first returned port: ``port - "
+"port_add_step``), down to (but not including) ``min_port``. Its fallback "
+"scan starts at ``port`` itself."
 msgstr ""
-"**減算割り当て** – ``port`` から開始され、毎回 ``port_add_step`` ずつ下方向に移動し、``min_port`` まで "
-"(ただしこれは含まれません)。"
+"**減算割り当て** – ``port`` から開始され、毎回 ``port_add_step`` ずつ下方向に移動し、``min_port`` "
+"まで (ただしこれは含まれません)。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:99
-#: de313668a0934560a613ce8a854c47c1
+#: ../../source/Port_Allocation/Port_Allocation.rst:112
+#: 482e28c2958041a9a6cb5dd05277cfcb
 msgid ""
 "The two directions use separate locks and separate current position "
 "pointers, allowing two concurrent allocations to proceed in opposite "
@@ -204,303 +223,364 @@ msgstr ""
 "2 つの方向では個別のロックと個別の現在位置ポインタが使用されるため、2 "
 "つの同時割り当てが衝突することなく反対方向に進むことができるため、競合が軽減されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:108
-#: 5a447e63cd4e4544ae8b29597e84b425
+#: ../../source/Port_Allocation/Port_Allocation.rst:121
+#: 8a8ed8db655a456189c142b0a4b3b688
 msgid "palloc() Behaviour in Manual Mode"
 msgstr "手動モードでの palloc() の動作"
 
-#: ../../Port_Allocation/Port_Allocation.rst:110
-#: e273d1ce18424f739b7feec6a27c0840
+#: ../../source/Port_Allocation/Port_Allocation.rst:123
+#: 7fb7fe9ef1ea43cda57cd92740073123
+#, fuzzy
 msgid ""
 "When ``palloc()`` is called in manual mode, it first tries additive "
 "allocation. If additive allocation returns a port, that port is returned "
 "immediately. Otherwise, it tries subtractive allocation. If subtractive "
-"allocation also fails (meaning no ports are available in either direction), "
-"the method sleeps for 0.1 seconds and then retries from the beginning. This "
-"loop continues indefinitely until a port becomes free."
+"allocation also fails (meaning no ports are available in either "
+"direction), the loop waits 0.1 seconds for a port to come back and "
+"retries. Only the exhausted round pays that wait; a successful "
+"``palloc()`` returns straight away."
 msgstr ""
 "``palloc()`` "
 "が手動モードで呼び出される場合、最初に追加的な割り当てが試行されます。追加の割り当てがポートを返す場合、そのポートはすぐに返されます。それ以外の場合は、減算的な割り当てが試行されます。減算的割り当ても失敗した場合"
 " (どちらの方向でも使用可能なポートがないことを意味します)、メソッドは 0.1 "
 "秒間スリープし、最初から再試行します。このループは、ポートが空くまで無限に続きます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:122
-#: 64bd9b9eef6d42118e9ce9787966945d
+#: ../../source/Port_Allocation/Port_Allocation.rst:134
+#: 47e6cf5b293b4a8aab26a2fa5ca5aad4
+msgid ""
+"In automatic mode ``file_palloc()`` returns ``0`` (which is not "
+"``None``), so ``palloc()`` returns ``0`` on the first iteration without "
+"waiting."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:138
+#: 0b3e188a5112468ab645f0f9fa1ecaab
 msgid "Additive allocation works as follows:"
 msgstr "追加的な割り当ては次のように機能します。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:124
-#: 9c924cec8fd4455fad8bfaa09f247606
+#: ../../source/Port_Allocation/Port_Allocation.rst:140
+#: d74d552dbf254d2980abf9e3558a87d1
 msgid ""
 "If the next additive step would exceed the maximum allowed value, the "
-"allocator scans all remaining ports in the additive direction (starting from"
-" ``port+1``, stepping by ``port_add_step``, up to but not including "
-"``max_port``). The first port that is not already in the global allocated "
-"list is returned. If none is found, additive allocation fails."
+"allocator scans all remaining ports in the additive direction (starting "
+"from ``port+1``, stepping by ``port_add_step``, up to but not including "
+"``max_port``). The first port that is not already in the global allocated"
+" list is returned. If none is found, additive allocation fails."
 msgstr ""
 "次の追加ステップが最大許容値を超える場合、アロケータは残りのすべてのポートを追加方向にスキャンします (``port+1`` から開始して "
 "``port_add_step`` ずつ、``max_port`` まで) "
 "までスキャンします。グローバル割り当てリストにまだ存在しない最初のポートが返されます。何も見つからない場合、追加の割り当ては失敗します。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:134
-#: b9ba29d714b84d198662c862b1dbf690
+#: ../../source/Port_Allocation/Port_Allocation.rst:150
+#: 0d2dc5cd653c4c41a95e836579c86292
 msgid ""
-"Otherwise, the additive pointer is advanced by ``port_add_step``, the new "
-"port is added to the global allocated list, and the port is returned."
+"Otherwise, the additive pointer is advanced by ``port_add_step``, the new"
+" port is added to the global allocated list, and the port is returned."
 msgstr ""
 "それ以外の場合、追加ポインタは ``port_add_step`` "
 "によって進められ、新しいポートがグローバル割り当てリストに追加され、そのポートが返されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:139
-#: 55fe37b754be4eaab992693ce9d65167
+#: ../../source/Port_Allocation/Port_Allocation.rst:155
+#: 7cdfd537ebd64acf9d36ed78a2eda535
 msgid ""
-"Subtractive allocation works symmetrically, scanning downward from ``port`` "
-"to (but not including) ``min_port``."
+"Subtractive allocation works symmetrically, scanning downward from "
+"``port`` to (but not including) ``min_port``."
 msgstr "減算割り当ては対称的に機能し、「port」から「min_port」まで（ただし、「min_port」は含まない）下方向にスキャンします。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:146
-#: d61960a69381463cbae715135f26a4ba
+#: ../../source/Port_Allocation/Port_Allocation.rst:162
+#: 46d4bcb6738d412eaaaee4bc27a82298
 msgid "pfree() Behaviour in Manual Mode"
 msgstr "手動モードでの pfree() の動作"
 
-#: ../../Port_Allocation/Port_Allocation.rst:148
-#: 9bee159b94984da084a840c33fff37bb
+#: ../../source/Port_Allocation/Port_Allocation.rst:164
+#: 5a1b72c53cf04498b390d0fa753ee4eb
 msgid "When a port is released via ``pfree(port)``:"
 msgstr "``pfree(port)`` 経由でポートが解放される場合:"
 
-#: ../../Port_Allocation/Port_Allocation.rst:150
-#: a99b67dea472406aa57da75467bc733d
+#: ../../source/Port_Allocation/Port_Allocation.rst:166
+#: d7d4b8f8d0834eafba0eb115daa6c86b
 msgid "The port is removed from the global allocated list (if present)."
 msgstr "ポートは、グローバル割り当てリスト (存在する場合) から削除されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:152
-#: 3ecf77c0d3c343cc91f753438d647caa
+#: ../../source/Port_Allocation/Port_Allocation.rst:168
+#: c8594530f4f4455d8b730969725309ae
 msgid "The additive pointer is **decremented** by ``port_add_step``."
 msgstr "加算ポインタは ``port_add_step`` によって **デクリメント**されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:154
-#: a0c7408fbb574209b0dfa2d3ac465a9a
+#: ../../source/Port_Allocation/Port_Allocation.rst:170
+#: 03d7b1fa5b554c4a8acaab3420a02d56
 msgid "The subtractive pointer is **incremented** by ``port_add_step``."
 msgstr "減算ポインタは ``port_add_step`` によって **インクリメント**されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:157
-#: f66211ffdc77499ba8b58f281c863f94
+#: ../../source/Port_Allocation/Port_Allocation.rst:173
+#: 9b7a37f1b5a34127aa1fd879f1643b99
 msgid ""
 "These pointer adjustments occur regardless of which direction originally "
 "allocated the port. This allows freed ports to be reused in future "
 "allocations."
-msgstr ""
-"これらのポインタ調整は、最初にポートが割り当てられた方向に関係なく発生します。これにより、解放されたポートを将来の割り当てで再利用できるようになります。"
+msgstr "これらのポインタ調整は、最初にポートが割り当てられた方向に関係なく発生します。これにより、解放されたポートを将来の割り当てで再利用できるようになります。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:165
-#: b701a4ec86a240ee88c3ff37627a3c0e
+#: ../../source/Port_Allocation/Port_Allocation.rst:181
+#: 55451ba5c5694748a161851c3916aa93
 msgid "Persistence and File Locks (Manual Mode Only)"
 msgstr "永続化とファイルのロック (手動モードのみ)"
 
-#: ../../Port_Allocation/Port_Allocation.rst:167
-#: 261dd8297d484005aa5e376e75f71818
+#: ../../source/Port_Allocation/Port_Allocation.rst:183
+#: 22958b8982da45fbb25fb7cb53b93891
 msgid ""
-"When manual mode is enabled, the server or client must remember allocated "
-"port ranges across multiple instances to avoid conflicts. This is achieved "
-"through persistent log files stored in the ``.Flow/temp_info/`` directory."
+"When manual mode is enabled, the server or client must remember allocated"
+" port ranges across multiple instances to avoid conflicts. This is "
+"achieved through persistent log files stored in the ``.Flow/temp_info/`` "
+"directory."
 msgstr ""
 "手動モードが有効な場合、サーバーまたはクライアントは競合を避けるために、複数のインスタンスにわたって割り当てられたポート範囲を記憶する必要があります。これは、``.Flow/temp_info/``"
 " ディレクトリに保存された永続的なログ ファイルによって実現されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:174
-#: 6686458391b24ae1a403ab51323f9b05
+#: ../../source/Port_Allocation/Port_Allocation.rst:190
+#: 57c2385777fa4b2d853f52667f953028
+#, fuzzy
 msgid ""
 "**Server**: ``server_port_info.log`` stores a list of dictionaries, each "
 "describing a server instance (server_id, host, port, min_port, max_port, "
-"is_running)."
+"is_running, pid) plus the ``started_at`` timestamp of the entry."
 msgstr ""
 "**サーバー**: ``server_port_info.log`` には、サーバー インスタンス "
 "(server_id、host、port、min_port、max_port、is_running) を説明する辞書のリストが保存されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:179
-#: 150a944d55534f1698eaa2eb9f870301
+#: ../../source/Port_Allocation/Port_Allocation.rst:196
+#: ba7ec0de083a41098f1ac65342ab6bba
 msgid ""
-"**Client**: ``clients_port_info.log`` stores similar information for client "
-"instances."
-msgstr ""
-"**クライアント**: ``clients_port_info.log`` には、クライアント インスタンスに関する同様の情報が保存されます。"
+"**Client**: ``clients_port_info.log`` stores similar information for "
+"client instances."
+msgstr "**クライアント**: ``clients_port_info.log`` には、クライアント インスタンスに関する同様の情報が保存されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:183
-#: 692c9f98eaac48c89ee00a82ec1438fb
+#: ../../source/Port_Allocation/Port_Allocation.rst:200
+#: ce435481499b4fb5b52bf1f9820df1ab
+msgid ""
+"``is_running`` is written once, when the entry is created; ``pid`` is the"
+" process that owns the range and is what the sweep actually checks: the "
+"next instance drops every entry whose process no longer exists (a killed "
+"instance never reaches ``free_port``, so this is what reclaims its "
+"range). A record written before ``pid`` existed falls back to the old "
+"rule (``is_running=False`` is removed). Windows uses "
+"``OpenProcess``/``WaitForSingleObject`` for the check; on POSIX it is "
+"``os.kill(pid, 0)``. When the state cannot be determined the entry is "
+"kept — a stale range costs a few ports, dropping a live one causes a "
+"conflict."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:212
+#: 5fa5e8da529145e693790c24ff90240d
+#, fuzzy
 msgid ""
 "Before reading or writing these files, a lock file "
-"(``server_port_lock.lock`` or ``client_port_lock.lock``) is used to prevent "
-"concurrent access. The lock is implemented by simply creating the file; the "
-"existence of the file indicates that another process is currently modifying "
-"the port information."
+"(``server_port_lock.lock`` or ``client_port_lock.lock``) is used to "
+"prevent concurrent access. The lock is implemented by simply creating the"
+" file; the existence of the file indicates that another process is "
+"currently modifying the port information, and the allocator waits for it "
+"to disappear."
 msgstr ""
 "これらのファイルを読み書きする前に、ロックファイル (``s​​erver_port_lock.lock`` または "
 "``client_port_lock.lock``) "
 "が同時アクセスを防ぐために使用されます。ロックはファイルを作成するだけで実装されます。ファイルの存在は、別のプロセスが現在ポート情報を変更していることを示します。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:192
-#: 8dd06df723054127a85bf2e64f6fef70
+#: ../../source/Port_Allocation/Port_Allocation.rst:221
+#: d6012d3033384d6691cf88f7fb6ffc99
+msgid ""
+"The file carries no owner and no timestamp: an instance that is killed "
+"while it holds the lock leaves it behind, and every later manual-mode "
+"instance waits for it indefinitely. The allocator releases the lock in a "
+"``finally`` block, so a failed allocation does not leak it; only a hard "
+"kill between the lock and the unlock does. Deleting the file (or calling "
+"``server_port_temp_info_file_unlock`` / "
+"``client_port_temp_info_file_unlock``) clears it."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:230
+#: d92ac547d4f2423b8ae166d295fbb390
 msgid ""
 "When a new server or client instance is created with manual allocation "
 "enabled, its range is initialised using the persistent log:"
 msgstr "手動割り当てを有効にして新しいサーバーまたはクライアント インスタンスを作成すると、その範囲は永続ログを使用して初期化されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:196
-#: 7d8301b78ca04dec80458b837d78e855
+#: ../../source/Port_Allocation/Port_Allocation.rst:234
+#: 69185ca9ac754b7086581d332e040370
 msgid ""
 "If the log file does not exist, a new list is created with the current "
 "instance as the first entry."
 msgstr "ログ ファイルが存在しない場合は、現在のインスタンスを最初のエントリとして新しいリストが作成されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:199
-#: 6432e95a09c749ab9243f61700863dcf
+#: ../../source/Port_Allocation/Port_Allocation.rst:237
+#: 2f3e634582054c9bade4b10623961fb7
 msgid ""
 "If the log file exists, the list of previous instances is read. The next "
 "instance ID is the previous ID + 1."
 msgstr "ログ ファイルが存在する場合は、以前のインスタンスのリストが読み取られます。次のインスタンス ID は、前の ID + 1 になります。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:202
-#: e6cf92040b1f42c09af74b7294064874
+#: ../../source/Port_Allocation/Port_Allocation.rst:240
+#: d960399ac2d34c23b9c9c5a43f44e1e3
 msgid ""
-"If the user‑supplied port falls inside the range of the last recorded "
-"instance, it is automatically advanced to the next available value to "
-"prevent overlap."
-msgstr "ユーザーが指定したポートが最後に記録されたインスタンスの範囲内にある場合は、重複を防ぐために、次に利用可能な値に自動的に進められます。"
-
-#: ../../Port_Allocation/Port_Allocation.rst:207
-#: ed9c93eb4fa742d7bc9bceebe58778e5
-msgid ""
-"The new instance’s information is appended to the list, stale entries "
-"(``is_running=False``) are removed, and the list is written back."
+"If the user‑supplied port falls into a band one full range around the "
+"last recorded instance — that is, between ``last.min_port - port_add_step"
+" * port_range_num - 1`` and ``last.max_port + port_add_step * "
+"port_range_num + 1`` — it is moved to the fixed value ``last.max_port + "
+"port_add_step * port_range_num + 1`` to prevent overlap."
 msgstr ""
-"新しいインスタンスの情報がリストに追加され、古いエントリ (``is_running=False``) が削除され、リストが書き戻されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:212
-#: 2fc9ab2d851c4d43bd086d1a99656043
+#: ../../source/Port_Allocation/Port_Allocation.rst:247
+#: 706c902c60294d9cae3c7930ab6d6f0d
 msgid ""
-"When the server or client stops, its own entry is removed from the log file."
-" If the list becomes empty, the log file is deleted."
+"Entries whose owning process is gone are removed first, so a range held "
+"by a killed instance is reclaimed here. The new instance’s information is"
+" then appended to the list and the list is written back. Its entry "
+"survives because its own process is alive, and ``hand_free_port`` removes"
+" it on a clean stop; an entry from a killed instance is only kept if its "
+"pid was reused by an unrelated process before the next allocation."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:256
+#: 962ce3cbf93c479e899e95dc2d02d3be
+msgid ""
+"When the server or client stops, its own entry is removed from the log "
+"file. If the list becomes empty, the log file is deleted."
 msgstr ""
 "サーバーまたはクライアントが停止すると、サーバーまたはクライアント自体のエントリがログ ファイルから削除されます。リストが空になると、ログ "
 "ファイルは削除されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:219
-#: adad1929426c4ebebe1e8657b133585e
+#: ../../source/Port_Allocation/Port_Allocation.rst:263
+#: d64edc81fd7c4985a6ef345463835cb4
 msgid "Client‑Side Range Configuration"
 msgstr "クライアント側の範囲構成"
 
-#: ../../Port_Allocation/Port_Allocation.rst:221
-#: a97d3540a0024f4eb0e047279b16da77
+#: ../../source/Port_Allocation/Port_Allocation.rst:265
+#: f43678b9186b4c8593a59687331af19f
+#, fuzzy
 msgid ""
-"The client’s manual allocation mode is enabled not by a constructor argument"
-" directly, but by a **broadcast from the server**. When the server starts "
-"with ``is_hand_alloc_port=True``, it sends a command to all clients:"
-msgstr ""
-"クライアントの手動割り当てモードは、コンストラクター引数によって直接有効になるのではなく、**サーバーからのブロードキャスト**によって有効になります。サーバーが「is_hand_alloc_port=True」で起動すると、すべてのクライアントにコマンドを送信します。"
+"The client’s manual allocation mode is enabled not by a constructor "
+"argument directly, but by a **message from the server**. Each accepted "
+"connection is greeted with a command:"
+msgstr "クライアントの手動割り当てモードは、コンストラクター引数によって直接有効になるのではなく、**サーバーからのブロードキャスト**によって有効になります。サーバーが「is_hand_alloc_port=True」で起動すると、すべてのクライアントにコマンドを送信します。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:228
-#: 9bd212a5bb3c4d68934cc420881672e0
+#: ../../source/Port_Allocation/Port_Allocation.rst:270
+#: 90478af93d744e30a347bdcbd3e09631
 msgid "``/client_alloc_port_range <each_client_port_range>``"
 msgstr "``/client_alloc_port_range <各クライアントポート範囲>``"
 
-#: ../../Port_Allocation/Port_Allocation.rst:230
-#: 6f25281bac68477db87047b1ad574e14
-msgid "where ``each_client_port_range = port_range_num // max_clients``."
-msgstr "ここで、「each_client_port_range = port_range_num // max_clients」です。"
+#: ../../source/Port_Allocation/Port_Allocation.rst:272
+#: 434346a9d88e497fad69a2077a0e49e7
+msgid ""
+"where ``each_client_port_range = port_range_num // max_clients``, and "
+"``/client_alloc_port_range NO_LIMIT`` is sent instead when the server "
+"runs with ``is_hand_alloc_port=False``. The message goes only to the "
+"connection that just joined; the range is fixed for the server's "
+"lifetime."
+msgstr ""
 
-#: ../../Port_Allocation/Port_Allocation.rst:233
-#: da313b544ac84c3986803fe0f15bf637
+#: ../../source/Port_Allocation/Port_Allocation.rst:279
+#: 8f88b2c52a4540b584c6ceaabdb22fa7
 msgid "The client’s ``handle_server_command`` processes this:"
 msgstr "クライアントの ``handle_server_command`` はこれを処理します。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:235
-#: 8264d8701b6c4596b5fe96153a83a3ae
+#: ../../source/Port_Allocation/Port_Allocation.rst:281
+#: b3bdcca180104e3b91646072ab80e808
 msgid ""
 "If the value is ``\"NO_LIMIT\"``, the client sets "
 "``is_hand_alloc_port=False`` (automatic mode)."
 msgstr ""
-"値が ``\"NO_LIMIT\"`` の場合、クライアントは ``is_hand_alloc_port=False`` (自動モード) を設定します。"
+"値が ``\"NO_LIMIT\"`` の場合、クライアントは ``is_hand_alloc_port=False`` (自動モード) "
+"を設定します。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:238
-#: 6afe48afdc96475e85a797a2c03477e0
+#: ../../source/Port_Allocation/Port_Allocation.rst:284
+#: 099ebd41e8584f39b5fd7c8efcaa60cd
+#, fuzzy
 msgid ""
-"Otherwise, it sets ``is_hand_alloc_port=True`` and calls its internal "
-"initialisation routine with the received range, using its own ``port`` (the "
-"server port it connected to) as the base."
+"Otherwise, it sets ``is_hand_alloc_port=True``, keeps the value in "
+"``each_client_port_range`` and calls its internal initialisation routine "
+"with the received range, using its own ``port`` (the server port it "
+"connected to) as the base."
 msgstr ""
 "それ以外の場合は、 ``is_hand_alloc_port=True`` を設定し、独自の ``port`` (接続先のサーバーポート) "
 "をベースとして使用し、受信した範囲で内部初期化ルーチンを呼び出します。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:244
-#: 7d07da528aa1453b8e1e8ab2f028f15e
+#: ../../source/Port_Allocation/Port_Allocation.rst:291
+#: cbbc07453d904756a1413117654e4b40
+#, fuzzy
 msgid ""
 "This allows the server to control the port‑allocation policy for all "
-"connected clients uniformly."
+"connected clients uniformly. Until that message arrives (and whenever the"
+" server runs in automatic mode) the client stays in automatic mode."
 msgstr "これにより、サーバーは、接続されているすべてのクライアントのポート割り当てポリシーを均一に制御できるようになります。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:251
-#: cc5894c825d54e3598a223c277a91922
+#: ../../source/Port_Allocation/Port_Allocation.rst:300
+#: a7bf6026926b48a987794179e4af30ae
 msgid "Public API Definitions"
 msgstr "パブリック API 定義"
 
-#: ../../Port_Allocation/Port_Allocation.rst:253
-#: 46ceaf5776074ff2af00caf34b66d5a3
+#: ../../source/Port_Allocation/Port_Allocation.rst:302
+#: 6f0c86e04e41479393d1e1f72a1d41c2
 msgid "### Server‑Side Port Allocation APIs"
 msgstr "### サーバー側のポート割り当て API"
 
-#: ../../Port_Allocation/Port_Allocation.rst:259
-#: 05be78c4ce624ec98cc1c8e6f66510d7
+#: ../../source/Port_Allocation/Port_Allocation.rst:309
+#: 85ec983f49b54b78bf1c33036c7e03d8
+#, fuzzy
 msgid ""
-"Returns an available port number. In automatic mode, returns ``0``. In "
-"manual mode, it returns a concrete port from the configured range, retrying "
-"indefinitely until a port becomes available."
-msgstr ""
-"使用可能なポート番号を返します。自動モードでは、「0」を返します。手動モードでは、構成された範囲から具体的なポートが返され、ポートが使用可能になるまで無期限に再試行されます。"
+"``palloc()`` returns an available port number. In automatic mode it "
+"returns ``0``. In manual mode it returns a concrete port from the "
+"configured range and waits 0.1 seconds per retry while the range is "
+"exhausted."
+msgstr "使用可能なポート番号を返します。自動モードでは、「0」を返します。手動モードでは、構成された範囲から具体的なポートが返され、ポートが使用可能になるまで無期限に再試行されます。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:268
-#: 201788faa82d4da9853c343248e563f7
+#: ../../source/Port_Allocation/Port_Allocation.rst:314
+#: 92e1710e18ba42b2aa24dcf324ac2fad
+#, fuzzy
 msgid ""
-"Releases a port previously obtained by ``palloc()``. In automatic mode, this"
-" does nothing. In manual mode, it removes the port from the internal "
-"allocated list and adjusts the allocation pointers."
+"``pfree(port)`` releases a port previously obtained by ``palloc()``. In "
+"automatic mode it does nothing. In manual mode it removes the port from "
+"the internal allocated list and adjusts the allocation pointers."
 msgstr ""
 "以前に ``palloc()`` "
 "によって取得されたポートを解放します。自動モードでは何も起こりません。手動モードでは、内部割り当てリストからポートを削除し、割り当てポインタを調整します。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:273
-#: 1111e89e27d74a3e8923164e8c11015d
+#: ../../source/Port_Allocation/Port_Allocation.rst:320
+#: 094548cf71d043048e35c771006188ee
+msgid ""
+"Both are thin wrappers around the direction-specific helpers, which are "
+"public as well: ``file_palloc()`` / ``file_pfree(port)`` for the additive"
+" direction and ``spy_palloc()`` / ``spy_pfree(port)`` for the subtractive"
+" one. ``alloc_port(port_add_step, port_range_num)`` and ``free_port()`` "
+"reserve and release the instance's range in the persistent log (both no-"
+"ops in automatic mode), and ``hand_alloc_port`` / ``hand_free_port`` "
+"implement the on-disk bookkeeping."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:330
+#: 9e98c6a7108b4a1aad0a8a8b42fe1b0c
 msgid "### Client‑Side Port Allocation APIs"
 msgstr "### クライアント側のポート割り当て API"
 
-#: ../../Port_Allocation/Port_Allocation.rst:275
-#: 5ed73a55d9e64699981b9876e0a22a97
-msgid "The client provides the identical set of methods:"
-msgstr "クライアントは、同一のメソッドのセットを提供します。"
+#: ../../source/Port_Allocation/Port_Allocation.rst:332
+#: cd0bf797df1f40d8b85ab9b38616a51d
+msgid ""
+"The client provides the same method set (``palloc``, ``pfree``, "
+"``file_palloc``, ``file_pfree``, ``spy_palloc``, ``spy_pfree``, "
+"``alloc_port``, ``free_port``, ``hand_alloc_port``, ``hand_free_port``)."
+msgstr ""
 
-#: ../../Port_Allocation/Port_Allocation.rst:277
-#: 1ee9c63df441404cb0fb77c1604a71bb
-msgid "``palloc()``"
-msgstr "``palloc()``"
-
-#: ../../Port_Allocation/Port_Allocation.rst:278
-#: c9f034cacf8b44b7a0884ee2aa593b88
-msgid "``pfree(port)``"
-msgstr "``pfree(ポート)``"
-
-#: ../../Port_Allocation/Port_Allocation.rst:280
-#: 88ba63acfb0e4efda8a3ce914efba8ea
+#: ../../source/Port_Allocation/Port_Allocation.rst:337
+#: c34013fe94994cdda602c9e8632c4b1c
 msgid ""
 "Additionally, the client receives the range from the server via the "
 "``/client_alloc_port_range`` command."
 msgstr "さらに、クライアントは ``/client_alloc_port_range`` コマンドを介してサーバから範囲を受け取ります。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:287
-#: 5fe116507216417d8733d59c196eed02
+#: ../../source/Port_Allocation/Port_Allocation.rst:344
+#: dbda4baed75f4b359a93b4ecaff10622
 msgid "Public API Summary"
 msgstr "パブリック API の概要"
 
-#: ../../Port_Allocation/Port_Allocation.rst:289
-#: 901516f18c1d4e3bbcadbd7e647ca02a
+#: ../../source/Port_Allocation/Port_Allocation.rst:346
+#: 5d6524d669274eae870289ae36064ec6
 msgid ""
 "All public port‑allocation related APIs are listed below. For a complete "
 "list of all public APIs, please see the respective server and client "
@@ -509,55 +589,125 @@ msgstr ""
 "すべてのパブリック ポート割り当て関連 API を以下に示します。すべてのパブリック API "
 "の完全なリストについては、サーバーとクライアントのそれぞれのドキュメントを参照してください。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:294
-#: 03a1e0db9a3541e0bf9f85dd919ec573
+#: ../../source/Port_Allocation/Port_Allocation.rst:351
+#: 770f4db499354ca9ab1916de3887fb5f
 msgid "### TCP_Server_Base"
 msgstr "### TCP_サーバー_ベース"
 
-#: ../../Port_Allocation/Port_Allocation.rst:296
-#: ../../Port_Allocation/Port_Allocation.rst:301
-#: 3ca51b147151429fa7d45d3bb034bb64 7cfd5220254948abafb4022552837bde
-msgid "``palloc``"
+#: ../../source/Port_Allocation/Port_Allocation.rst:353
+#: ../../source/Port_Allocation/Port_Allocation.rst:361
+#: 35a2a7b0cc894d978be96f148304fbdf 7a3625bf96c744379dc9220688227874
+#, fuzzy
+msgid "``palloc`` / ``pfree``"
 msgstr "「パロック」"
 
-#: ../../Port_Allocation/Port_Allocation.rst:297
-#: ../../Port_Allocation/Port_Allocation.rst:302
-#: 92cc6c5c9d8b4741a78b96ba47b5f538 dbafe19d56d24119af62a7eb7532ddbf
-msgid "``pfree``"
-msgstr "「プフリー」"
+#: ../../source/Port_Allocation/Port_Allocation.rst:354
+#: ../../source/Port_Allocation/Port_Allocation.rst:362
+#: 3934d649f4d64119ba08f9f8a05e8e9a c836bf8f7cdd4583b8db2610306a7654
+msgid "``file_palloc`` / ``file_pfree``"
+msgstr ""
 
-#: ../../Port_Allocation/Port_Allocation.rst:299
-#: 7e4e29b58a714351a8e8e540a7877350
+#: ../../source/Port_Allocation/Port_Allocation.rst:355
+#: ../../source/Port_Allocation/Port_Allocation.rst:363
+#: 56869fb46d404c5890fde0c0fc2625b8 56d58587e99440c1a7bdc624ee7df0d8
+msgid "``spy_palloc`` / ``spy_pfree``"
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:356
+#: ../../source/Port_Allocation/Port_Allocation.rst:364
+#: 90478af93d744e30a347bdcbd3e09631
+msgid "``alloc_port`` / ``free_port``"
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:357
+#: ../../source/Port_Allocation/Port_Allocation.rst:365
+#: 90478af93d744e30a347bdcbd3e09631
+msgid "``hand_alloc_port`` / ``hand_free_port``"
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:359
+#: a01786b23a2244a3a507a66346fd5613
 msgid "### TCP_Client_Base"
 msgstr "### TCP_クライアント_ベース"
 
-#: ../../Port_Allocation/Port_Allocation.rst:305
-#: 116139c968464f90a5da9b8684940433
+#: ../../source/Port_Allocation/Port_Allocation.rst:367
+#: e50f0a0e75734c58b62ab503b995742f
+msgid ""
+"Note that the port counters differ between the two classes: the server "
+"seeds ``all_allocated_ports_list`` with its own port (``[self.port]``), "
+"the client starts from an empty list. The subtractive fallback scan "
+"includes the base port itself, so an exhausted client range can hand out "
+"the port the server never allocates for itself."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:375
+#: e2a8530d2d13454f87c21cd020432e57
 msgid "See Also"
 msgstr "関連項目"
 
-#: ../../Port_Allocation/Port_Allocation.rst:307
-#: f750c04e494449de995acc730747de10
+#: ../../source/Port_Allocation/Port_Allocation.rst:377
+#: a294484a7e2f4f7eb6bc2a77d67b7280
 msgid ""
-"For more information about the TCP server and client base classes, please "
-"refer to:"
+"For more information about the TCP server and client base classes, please"
+" refer to:"
 msgstr "TCP サーバーおよびクライアントの基本クラスの詳細については、以下を参照してください。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:311
-#: c94397d1d2754aedaad151a08373dbdc
+#: ../../source/Port_Allocation/Port_Allocation.rst:381
+#: 8d9e94197d864861a09c33a09c939969
 msgid ":doc:`../Network_APIs/TCP_Server_APIs`"
 msgstr ":doc:`../Network_APIs/TCP_Server_APIs`"
 
-#: ../../Port_Allocation/Port_Allocation.rst:312
-#: 5a58e0e9f8564fa9adf42c2ddc909c69
+#: ../../source/Port_Allocation/Port_Allocation.rst:382
+#: 0c2407bc00ba458f8bb97b623b17d8ad
 msgid ":doc:`../Network_APIs/TCP_Client_APIs`"
 msgstr ":doc:`../Network_APIs/TCP_Client_APIs`"
 
-#: ../../Port_Allocation/Port_Allocation.rst:314
-#: ded2d25ff45a45e5a332670bdd6c8ef1
+#: ../../source/Port_Allocation/Port_Allocation.rst:384
+#: fe4ae98aa1704d72bf7ce189dc959c26
 msgid ""
-"For details on the file transfer mechanism that uses these port allocation "
-"APIs, see :doc:`../File_Transfer/File_Transfer`."
+"For details on the file transfer mechanism that uses these port "
+"allocation APIs, see :doc:`../File_Transfer/File_Transfer`."
 msgstr ""
 "これらのポート割り当て API "
 "を使用したファイル転送メカニズムの詳細については、:doc:`../File_Transfer/File_Transfer` を参照してください。"
+
+#~ msgid ""
+#~ "**Additive allocation** – starts from "
+#~ "``port+1`` and moves upward by "
+#~ "``port_add_step`` each time, up to (but"
+#~ " not including) ``max_port``."
+#~ msgstr ""
+#~ "**追加的な割り当て** – ``port+1`` から開始し、毎回 "
+#~ "``port_add_step`` ずつ上に移動し、最大 (ただしこれは含まれません) "
+#~ "``max_port`` まで移動します。"
+
+#~ msgid ""
+#~ "If the user‑supplied port falls inside"
+#~ " the range of the last recorded "
+#~ "instance, it is automatically advanced "
+#~ "to the next available value to "
+#~ "prevent overlap."
+#~ msgstr "ユーザーが指定したポートが最後に記録されたインスタンスの範囲内にある場合は、重複を防ぐために、次に利用可能な値に自動的に進められます。"
+
+#~ msgid ""
+#~ "The new instance’s information is "
+#~ "appended to the list, stale entries "
+#~ "(``is_running=False``) are removed, and the"
+#~ " list is written back."
+#~ msgstr "新しいインスタンスの情報がリストに追加され、古いエントリ (``is_running=False``) が削除され、リストが書き戻されます。"
+
+#~ msgid "where ``each_client_port_range = port_range_num // max_clients``."
+#~ msgstr "ここで、「each_client_port_range = port_range_num // max_clients」です。"
+
+#~ msgid "The client provides the identical set of methods:"
+#~ msgstr "クライアントは、同一のメソッドのセットを提供します。"
+
+#~ msgid "``palloc()``"
+#~ msgstr "``palloc()``"
+
+#~ msgid "``pfree(port)``"
+#~ msgstr "``pfree(ポート)``"
+
+#~ msgid "``pfree``"
+#~ msgstr "「プフリー」"
+

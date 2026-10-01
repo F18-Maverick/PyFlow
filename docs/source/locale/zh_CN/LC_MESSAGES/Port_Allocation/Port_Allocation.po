@@ -6,527 +6,674 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: PyFlow\n"
+"Project-Id-Version:  PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-06-16 19:17+0800\n"
+"POT-Creation-Date: 2026-10-01 18:19+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
-"Language-Team: zh_CN <LL@li.org>\n"
 "Language: zh_CN\n"
+"Language-Team: zh_CN <LL@li.org>\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=1; plural=0;\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: ../../Port_Allocation/Port_Allocation.rst:2
-#: ad59f49685664ccb9d502f0a4a375d7e
+#: ../../source/Port_Allocation/Port_Allocation.rst:2
+#: 42566734ea144d4e874da951da12a88f
 msgid "TCP Port Allocation Mechanism"
 msgstr "TCP端口分配机制"
 
-#: ../../Port_Allocation/Port_Allocation.rst:4
-#: 65e9d6bc01074c69bf89f2e91d650848
+#: ../../source/Port_Allocation/Port_Allocation.rst:4
+#: 20216d8363d34c588ee8716b491478ec
 msgid ""
-"This document describes the port allocation subsystem implemented in both "
-"the ``TCP_Server_Base`` and ``TCP_Client_Base`` classes. The port allocation"
-" mechanism provides a unified interface for obtaining ephemeral ports, "
-"supporting both **automatic** (OS‑assigned) and **manual** (range‑based) "
-"allocation modes."
-msgstr ""
-"本文档描述了在“TCP_Server_Base”和“TCP_Client_Base”类中实现的端口分配子系统。端口分配机制提供了用于获取临时端口的统一接口，支持**自动**（操作系统分配）和**手动**（基于范围）分配模式。"
+"This document describes the port allocation subsystem implemented in both"
+" the ``TCP_Server_Base`` and ``TCP_Client_Base`` classes. The port "
+"allocation mechanism provides a unified interface for obtaining ephemeral"
+" ports, supporting both **automatic** (OS‑assigned) and **manual** "
+"(range‑based) allocation modes."
+msgstr "本文档描述了在“TCP_Server_Base”和“TCP_Client_Base”类中实现的端口分配子系统。端口分配机制提供了用于获取临时端口的统一接口，支持**自动**（操作系统分配）和**手动**（基于范围）分配模式。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:13
-#: 8cbc9424907c42128a8f44ac1dce8da3
+#: ../../source/Port_Allocation/Port_Allocation.rst:13
+#: 23e4f96fe33b412c8e8ae544d1249128
 msgid ""
-"Port allocation is used primarily for file transfer secondary connections, "
-"temporary servers, and temporary clients. The design ensures that ports are "
-"allocated and released without conflicts, even when multiple server or "
-"client instances run on the same host."
-msgstr ""
-"端口分配主要用于文件传输辅助连接、临时服务器和临时客户端。即使多个服务器或客户端实例在同一主机上运行，​​该设计也可确保端口的分配和释放不会发生冲突。"
+"Port allocation is used primarily for file transfer secondary "
+"connections, temporary servers, and temporary clients. The design ensures"
+" that ports are allocated and released without conflicts, even when "
+"multiple server or client instances run on the same host."
+msgstr "端口分配主要用于文件传输辅助连接、临时服务器和临时客户端。即使多个服务器或客户端实例在同一主机上运行，​​该设计也可确保端口的分配和释放不会发生冲突。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:21
-#: c72dd0dd42ba4409b94712a6cc90b3d3
+#: ../../source/Port_Allocation/Port_Allocation.rst:21
+#: da06e2a87fba4e8b967fdcfbd9d8cec1
 msgid ""
-"For a high‑level overview of the server and client classes, please refer to "
-":doc:`../Network_APIs/TCP_Server_APIs` and "
+"For a high‑level overview of the server and client classes, please refer "
+"to :doc:`../Network_APIs/TCP_Server_APIs` and "
 ":doc:`../Network_APIs/TCP_Client_APIs`."
 msgstr ""
 "有关服务器和客户端类的高级概述，请参阅 :doc:`../Network_APIs/TCP_Server_APIs` 和 "
 ":doc:`../Network_APIs/TCP_Client_APIs`。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:28
-#: b7fdf5a6bb254d5f8b2db741a1be4e19
+#: ../../source/Port_Allocation/Port_Allocation.rst:28
+#: e0264a33db0a48749182ad53791274b1
 msgid "Overview"
 msgstr "概述"
 
-#: ../../Port_Allocation/Port_Allocation.rst:30
-#: 309184d907a14ad2b46ac4c8843c4ef0
+#: ../../source/Port_Allocation/Port_Allocation.rst:30
+#: f425aec188814265b0a5462d107862d1
 msgid "The port allocation API consists of two core methods:"
 msgstr "端口分配API由两个核心方法组成："
 
-#: ../../Port_Allocation/Port_Allocation.rst:32
-#: cf55e0f2bd6e49fea945e987d10b534d
+#: ../../source/Port_Allocation/Port_Allocation.rst:32
+#: 1d729f637c2441b691e0919c06da43d9
 msgid "``palloc()`` – obtain an available port."
 msgstr "``palloc()`` – 获取可用端口。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:33
-#: 63170bcaa5344e86a6232264cbec8ab8
+#: ../../source/Port_Allocation/Port_Allocation.rst:33
+#: 10a5bb75390c426c8c79bfae6e8f3026
 msgid "``pfree(port)`` – release a previously allocated port."
 msgstr "``pfree(port)`` – 释放先前分配的端口。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:35
-#: 72a0dc9d1b1a434da527a7bfe8da5c4f
+#: ../../source/Port_Allocation/Port_Allocation.rst:35
+#: 1379d3ef16344375945da210ff12cd71
+#, fuzzy
 msgid ""
 "The behaviour of these methods depends on the value of the "
-"``is_hand_alloc_port`` flag passed to the class constructor:"
+"``is_hand_alloc_port`` flag:"
 msgstr "这些方法的行为取决于传递给类构造函数的“is_hand_alloc_port”标志的值："
 
-#: ../../Port_Allocation/Port_Allocation.rst:39
-#: 136e8ea008d9437fb18b464f90c0f534
+#: ../../source/Port_Allocation/Port_Allocation.rst:38
+#: c6cc3da610f34e988488d1d78d8ad7da
+#, fuzzy
 msgid ""
-"**Automatic mode** (``is_hand_alloc_port=False``, default): ``palloc()`` "
-"returns ``0``. When used in a socket ``bind()`` call, the operating system "
-"automatically assigns a free ephemeral port. ``pfree()`` does nothing."
+"**Automatic mode** (``is_hand_alloc_port`` false, the default): "
+"``palloc()`` returns ``0``. When used in a socket ``bind()`` call, the "
+"operating system automatically assigns a free ephemeral port. ``pfree()``"
+" does nothing."
 msgstr ""
 "**自动模式**（``is_hand_alloc_port=False``，默认）：``palloc()`` "
 "返回``0``。当在套接字“bind()”调用中使用时，操作系统会自动分配一个空闲的临时端口。 ``pfree()`` 什么也不做。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:45
-#: 45d292c35d0b40ff893ac2453b41e05b
+#: ../../source/Port_Allocation/Port_Allocation.rst:44
+#: 058ebbb980074e17a8f66b57d699cd1d
+#, fuzzy
 msgid ""
-"**Manual mode** (``is_hand_alloc_port=True``): Ports are drawn from a "
+"**Manual mode** (``is_hand_alloc_port`` true): Ports are drawn from a "
 "configurable numeric range. The caller must eventually release each "
 "allocated port with ``pfree()``."
 msgstr ""
 "**手动模式** "
 "(``is_hand_alloc_port=True``)：端口是从可配置的数字范围中提取的。调用者最终必须使用“pfree()”释放每个分配的端口。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:51
-#: 712955281ffd4575864bf7681fa51226
+#: ../../source/Port_Allocation/Port_Allocation.rst:50
+#: 1500bc26391144ed902757b2fc645b6b
+msgid ""
+"``TCP_Server_Base`` takes the flag as a constructor argument "
+"(``is_hand_alloc_port=False`` by default). ``TCP_Client_Base`` has no "
+"such argument: its ``is_hand_alloc_port`` attribute starts as ``None`` "
+"(automatic mode) and is set by the server's port-range announcement, see "
+":ref:`client-range-configuration`."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:57
+#: 1a96e4b3bc454329a823d0476aab30c5
 msgid ""
 "Automatic mode is strongly recommended for most applications because it "
 "avoids port conflicts and simplifies code. Manual mode is provided for "
-"environments where port ranges must be strictly controlled (e.g., firewalls,"
-" testing, or multiple processes sharing the same host)."
-msgstr ""
-"强烈建议大多数应用程序使用自动模式，因为它可以避免端口冲突并简化代码。手动模式适用于必须严格控制端口范围的环境（例如防火墙、测试或共享同一主机的多个进程）。"
+"environments where port ranges must be strictly controlled (e.g., "
+"firewalls, testing, or multiple processes sharing the same host)."
+msgstr "强烈建议大多数应用程序使用自动模式，因为它可以避免端口冲突并简化代码。手动模式适用于必须严格控制端口范围的环境（例如防火墙、测试或共享同一主机的多个进程）。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:62
-#: 04ff70a01f5e4299b100e09cf1ac1dc7
+#: ../../source/Port_Allocation/Port_Allocation.rst:68
+#: 28760753c67f46b1ac24f2987d3cfd2f
 msgid "Manual Allocation Range"
 msgstr "手动分配范围"
 
-#: ../../Port_Allocation/Port_Allocation.rst:64
-#: f004764a38fd42c59578269e09cf9f93
+#: ../../source/Port_Allocation/Port_Allocation.rst:70
+#: bf9a14b1d6364d838cb6eeb9089d983f
 msgid ""
 "When manual mode is enabled, the allocatable port range is determined by "
 "three parameters set during class initialisation:"
 msgstr "启用手动模式时，可分配的端口范围由类初始化期间设置的三个参数确定："
 
-#: ../../Port_Allocation/Port_Allocation.rst:68
-#: d1250edb29b34acab53641864f7265dc
+#: ../../source/Port_Allocation/Port_Allocation.rst:74
+#: 1eea38a014ee48549787b80935268fe3
 msgid "``port`` – the main server or client port (e.g., 65432)."
 msgstr "``port`` – 主服务器或客户端端口（例如 65432）。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:70
-#: f39861b9ce1442c6bea10edaaf642ce5
+#: ../../source/Port_Allocation/Port_Allocation.rst:76
+#: 76a13dc396fd4ab0ad1635f8ed94a49b
 msgid "``port_add_step`` – the step size for incrementing/decrementing ports."
 msgstr "``port_add_step`` – 递增/递减端口的步长。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:72
-#: 0a2640ff8b814cd8ad4cbb5d918ad26f
-msgid ""
-"``port_range_num`` – the total number of steps to scan in each direction."
+#: ../../source/Port_Allocation/Port_Allocation.rst:78
+#: ee9570503709450f85b70fdbdca96f81
+msgid "``port_range_num`` – the total number of steps to scan in each direction."
 msgstr "``port_range_num`` – 每个方向扫描的总步数。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:75
-#: 933da7468e8c484a9d66485cec0273eb
-msgid ""
-"From these, the minimum and maximum allocatable ports are calculated as:"
+#: ../../source/Port_Allocation/Port_Allocation.rst:81
+#: 4089ec5487744da0995eb5c888fc36a1
+msgid "From these, the minimum and maximum allocatable ports are calculated as:"
 msgstr "由此，可分配的最小和最大端口计算如下："
 
-#: ../../Port_Allocation/Port_Allocation.rst:78
-#: a4265571caf14e70808f0c16b83bd7a2
+#: ../../source/Port_Allocation/Port_Allocation.rst:84
+#: 97ec69a6a9be4e27af1ff8c7cb652262
 msgid "``min_port = port - port_add_step * port_range_num``"
 msgstr "``min_port = 端口 - port_add_step * port_range_num``"
 
-#: ../../Port_Allocation/Port_Allocation.rst:79
-#: 60c81dfd85c040519b241e686679881c
+#: ../../source/Port_Allocation/Port_Allocation.rst:85
+#: e946c6f765af4ce7b220a1a93c05e9fe
 msgid "``max_port = port + 1 + port_add_step * port_range_num``"
 msgstr "``max_port = 端口 + 1 + port_add_step * port_range_num``"
 
-#: ../../Port_Allocation/Port_Allocation.rst:82
-#: 053694548cde4787bf573d5245129c14
+#: ../../source/Port_Allocation/Port_Allocation.rst:88
+#: 1e86e22608874feebf30636a41a64a64
+#, fuzzy
 msgid ""
 "For example, with ``port=65432``, ``port_add_step=1``, "
 "``port_range_num=100``, the allocatable ports range from ``65432 - 100 = "
-"64332`` up to ``65432 + 1 + 100 = 65533``."
+"65332`` up to ``65432 + 1 + 100 = 65533``."
 msgstr ""
-"例如，使用“port=65432”、“port_add_step=1”、“port_range_num=100”，可分配端口范围为“65432 - "
-"100 = 64332”到“65432 + 1 + 100 = 65533”。"
+"例如，使用“port=65432”、“port_add_step=1”、“port_range_num=100”，可分配端口范围为“65432 -"
+" 100 = 64332”到“65432 + 1 + 100 = 65533”。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:88
-#: 356f6f51faed48c7959fef3848d8acac
+#: ../../source/Port_Allocation/Port_Allocation.rst:94
+#: 43175c1b2b0a4703bd597864d633f7af
 msgid "Two independent allocation “directions” are maintained:"
 msgstr "维护两个独立的分配“方向”："
 
-#: ../../Port_Allocation/Port_Allocation.rst:90
-#: 31b5c97c5de24c11ae6d601acfa7571c
+#: ../../source/Port_Allocation/Port_Allocation.rst:96
+#: e367c4432a7344a8874bddb1dff42918
 msgid ""
-"**Additive allocation** – starts from ``port+1`` and moves upward by "
-"``port_add_step`` each time, up to (but not including) ``max_port``."
-msgstr "**附加分配** – 从“port+1”开始，每次向上移动“port_add_step”，直到（但不包括）“max_port”。"
+"**Additive allocation** – the cursor starts at ``port+1`` and is advanced"
+" by ``port_add_step`` *before* the port is handed out, so the first "
+"additive port actually returned is ``port + 1 + port_add_step`` "
+"(``port+2`` with the default step). When the cursor would pass "
+"``max_port``, a fallback scan walks ``port+1`` upward by "
+"``port_add_step`` (up to but not including ``max_port``) and returns the "
+"first port that is not in the global allocated list."
+msgstr ""
 
-#: ../../Port_Allocation/Port_Allocation.rst:94
-#: e81bd92e0a8749cb982b15ad7c87e50c
+#: ../../source/Port_Allocation/Port_Allocation.rst:105
+#: 912831a09b8b42aeb0c92e236f001311
+#, fuzzy
 msgid ""
 "**Subtractive allocation** – starts from ``port`` and moves downward by "
-"``port_add_step`` each time, down to (but not including) ``min_port``."
+"``port_add_step`` each time (first returned port: ``port - "
+"port_add_step``), down to (but not including) ``min_port``. Its fallback "
+"scan starts at ``port`` itself."
 msgstr "**减法分配** – 从“port”开始，每次向下移动“port_add_step”，直至（但不包括）“min_port”。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:99
-#: de313668a0934560a613ce8a854c47c1
+#: ../../source/Port_Allocation/Port_Allocation.rst:112
+#: 482e28c2958041a9a6cb5dd05277cfcb
 msgid ""
 "The two directions use separate locks and separate current position "
 "pointers, allowing two concurrent allocations to proceed in opposite "
 "directions without colliding, thereby reducing contention."
 msgstr "这两个方向使用单独的锁和单独的当前位置指针，允许两个并发分配以相反的方向进行而不发生冲突，从而减少争用。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:108
-#: 5a447e63cd4e4544ae8b29597e84b425
+#: ../../source/Port_Allocation/Port_Allocation.rst:121
+#: 8a8ed8db655a456189c142b0a4b3b688
 msgid "palloc() Behaviour in Manual Mode"
 msgstr "手动模式下的 palloc() 行为"
 
-#: ../../Port_Allocation/Port_Allocation.rst:110
-#: e273d1ce18424f739b7feec6a27c0840
+#: ../../source/Port_Allocation/Port_Allocation.rst:123
+#: 7fb7fe9ef1ea43cda57cd92740073123
+#, fuzzy
 msgid ""
 "When ``palloc()`` is called in manual mode, it first tries additive "
 "allocation. If additive allocation returns a port, that port is returned "
 "immediately. Otherwise, it tries subtractive allocation. If subtractive "
-"allocation also fails (meaning no ports are available in either direction), "
-"the method sleeps for 0.1 seconds and then retries from the beginning. This "
-"loop continues indefinitely until a port becomes free."
+"allocation also fails (meaning no ports are available in either "
+"direction), the loop waits 0.1 seconds for a port to come back and "
+"retries. Only the exhausted round pays that wait; a successful "
+"``palloc()`` returns straight away."
 msgstr ""
 "当在手动模式下调用 palloc() "
 "时，它首先尝试附加分配。如果附加分配返回一个端口，则立即返回该端口。否则，它会尝试减法分配。如果减法分配也失败（意味着两个方向都没有可用的端口），则该方法将休眠"
 " 0.1 秒，然后从头开始重试。此循环无限期地继续下去，直到端口空闲。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:122
-#: 64bd9b9eef6d42118e9ce9787966945d
+#: ../../source/Port_Allocation/Port_Allocation.rst:134
+#: 47e6cf5b293b4a8aab26a2fa5ca5aad4
+msgid ""
+"In automatic mode ``file_palloc()`` returns ``0`` (which is not "
+"``None``), so ``palloc()`` returns ``0`` on the first iteration without "
+"waiting."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:138
+#: 0b3e188a5112468ab645f0f9fa1ecaab
 msgid "Additive allocation works as follows:"
 msgstr "附加分配的工作原理如下："
 
-#: ../../Port_Allocation/Port_Allocation.rst:124
-#: 9c924cec8fd4455fad8bfaa09f247606
+#: ../../source/Port_Allocation/Port_Allocation.rst:140
+#: d74d552dbf254d2980abf9e3558a87d1
 msgid ""
 "If the next additive step would exceed the maximum allowed value, the "
-"allocator scans all remaining ports in the additive direction (starting from"
-" ``port+1``, stepping by ``port_add_step``, up to but not including "
-"``max_port``). The first port that is not already in the global allocated "
-"list is returned. If none is found, additive allocation fails."
-msgstr ""
-"如果下一个附加步骤将超过最大允许值，分配器将扫描附加方向上的所有剩余端口（从“port+1”开始，按“port_add_step”步进，直到但不包括“max_port”）。返回尚未在全局分配列表中的第一个端口。如果没有找到，附加分配将失败。"
+"allocator scans all remaining ports in the additive direction (starting "
+"from ``port+1``, stepping by ``port_add_step``, up to but not including "
+"``max_port``). The first port that is not already in the global allocated"
+" list is returned. If none is found, additive allocation fails."
+msgstr "如果下一个附加步骤将超过最大允许值，分配器将扫描附加方向上的所有剩余端口（从“port+1”开始，按“port_add_step”步进，直到但不包括“max_port”）。返回尚未在全局分配列表中的第一个端口。如果没有找到，附加分配将失败。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:134
-#: b9ba29d714b84d198662c862b1dbf690
+#: ../../source/Port_Allocation/Port_Allocation.rst:150
+#: 0d2dc5cd653c4c41a95e836579c86292
 msgid ""
-"Otherwise, the additive pointer is advanced by ``port_add_step``, the new "
-"port is added to the global allocated list, and the port is returned."
+"Otherwise, the additive pointer is advanced by ``port_add_step``, the new"
+" port is added to the global allocated list, and the port is returned."
 msgstr "否则，附加指针前进“port_add_step”，将新端口添加到全局分配列表中，并返回该端口。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:139
-#: 55fe37b754be4eaab992693ce9d65167
+#: ../../source/Port_Allocation/Port_Allocation.rst:155
+#: 7cdfd537ebd64acf9d36ed78a2eda535
 msgid ""
-"Subtractive allocation works symmetrically, scanning downward from ``port`` "
-"to (but not including) ``min_port``."
+"Subtractive allocation works symmetrically, scanning downward from "
+"``port`` to (but not including) ``min_port``."
 msgstr "减法分配对称地工作，从“port”向下扫描到（但不包括）“min_port”。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:146
-#: d61960a69381463cbae715135f26a4ba
+#: ../../source/Port_Allocation/Port_Allocation.rst:162
+#: 46d4bcb6738d412eaaaee4bc27a82298
 msgid "pfree() Behaviour in Manual Mode"
 msgstr "手动模式下的 pfree() 行为"
 
-#: ../../Port_Allocation/Port_Allocation.rst:148
-#: 9bee159b94984da084a840c33fff37bb
+#: ../../source/Port_Allocation/Port_Allocation.rst:164
+#: 5a1b72c53cf04498b390d0fa753ee4eb
 msgid "When a port is released via ``pfree(port)``:"
 msgstr "当通过“pfree(port)”释放端口时："
 
-#: ../../Port_Allocation/Port_Allocation.rst:150
-#: a99b67dea472406aa57da75467bc733d
+#: ../../source/Port_Allocation/Port_Allocation.rst:166
+#: d7d4b8f8d0834eafba0eb115daa6c86b
 msgid "The port is removed from the global allocated list (if present)."
 msgstr "该端口将从全局分配列表（如果存在）中删除。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:152
-#: 3ecf77c0d3c343cc91f753438d647caa
+#: ../../source/Port_Allocation/Port_Allocation.rst:168
+#: c8594530f4f4455d8b730969725309ae
 msgid "The additive pointer is **decremented** by ``port_add_step``."
 msgstr "附加指针通过“port_add_step”**递减**。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:154
-#: a0c7408fbb574209b0dfa2d3ac465a9a
+#: ../../source/Port_Allocation/Port_Allocation.rst:170
+#: 03d7b1fa5b554c4a8acaab3420a02d56
 msgid "The subtractive pointer is **incremented** by ``port_add_step``."
 msgstr "减法指针通过“port_add_step”**增加**。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:157
-#: f66211ffdc77499ba8b58f281c863f94
+#: ../../source/Port_Allocation/Port_Allocation.rst:173
+#: 9b7a37f1b5a34127aa1fd879f1643b99
 msgid ""
 "These pointer adjustments occur regardless of which direction originally "
 "allocated the port. This allows freed ports to be reused in future "
 "allocations."
 msgstr "无论最初分配端口的方向如何，都会发生这些指针调整。这允许在将来的分配中重用释放的端口。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:165
-#: b701a4ec86a240ee88c3ff37627a3c0e
+#: ../../source/Port_Allocation/Port_Allocation.rst:181
+#: 55451ba5c5694748a161851c3916aa93
 msgid "Persistence and File Locks (Manual Mode Only)"
 msgstr "持久性和文件锁定（仅限手动模式）"
 
-#: ../../Port_Allocation/Port_Allocation.rst:167
-#: 261dd8297d484005aa5e376e75f71818
+#: ../../source/Port_Allocation/Port_Allocation.rst:183
+#: 22958b8982da45fbb25fb7cb53b93891
 msgid ""
-"When manual mode is enabled, the server or client must remember allocated "
-"port ranges across multiple instances to avoid conflicts. This is achieved "
-"through persistent log files stored in the ``.Flow/temp_info/`` directory."
+"When manual mode is enabled, the server or client must remember allocated"
+" port ranges across multiple instances to avoid conflicts. This is "
+"achieved through persistent log files stored in the ``.Flow/temp_info/`` "
+"directory."
 msgstr ""
 "启用手动模式时，服务器或客户端必须记住跨多个实例分配的端口范围以避免冲突。这是通过存储在``.Flow/temp_info/`` "
 "目录中的持久日志文件来实现的。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:174
-#: 6686458391b24ae1a403ab51323f9b05
+#: ../../source/Port_Allocation/Port_Allocation.rst:190
+#: 57c2385777fa4b2d853f52667f953028
+#, fuzzy
 msgid ""
 "**Server**: ``server_port_info.log`` stores a list of dictionaries, each "
 "describing a server instance (server_id, host, port, min_port, max_port, "
-"is_running)."
+"is_running, pid) plus the ``started_at`` timestamp of the entry."
 msgstr ""
 "**服务器**：``server_port_info.log`` "
 "存储字典列表，每个字典都描述一个服务器实例（server_id、host、port、min_port、max_port、is_running）。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:179
-#: 150a944d55534f1698eaa2eb9f870301
+#: ../../source/Port_Allocation/Port_Allocation.rst:196
+#: ba7ec0de083a41098f1ac65342ab6bba
 msgid ""
-"**Client**: ``clients_port_info.log`` stores similar information for client "
-"instances."
+"**Client**: ``clients_port_info.log`` stores similar information for "
+"client instances."
 msgstr "**客户端**：``clients_port_info.log`` 存储客户端实例的类似信息。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:183
-#: 692c9f98eaac48c89ee00a82ec1438fb
+#: ../../source/Port_Allocation/Port_Allocation.rst:200
+#: ce435481499b4fb5b52bf1f9820df1ab
+msgid ""
+"``is_running`` is written once, when the entry is created; ``pid`` is the"
+" process that owns the range and is what the sweep actually checks: the "
+"next instance drops every entry whose process no longer exists (a killed "
+"instance never reaches ``free_port``, so this is what reclaims its "
+"range). A record written before ``pid`` existed falls back to the old "
+"rule (``is_running=False`` is removed). Windows uses "
+"``OpenProcess``/``WaitForSingleObject`` for the check; on POSIX it is "
+"``os.kill(pid, 0)``. When the state cannot be determined the entry is "
+"kept — a stale range costs a few ports, dropping a live one causes a "
+"conflict."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:212
+#: 5fa5e8da529145e693790c24ff90240d
+#, fuzzy
 msgid ""
 "Before reading or writing these files, a lock file "
-"(``server_port_lock.lock`` or ``client_port_lock.lock``) is used to prevent "
-"concurrent access. The lock is implemented by simply creating the file; the "
-"existence of the file indicates that another process is currently modifying "
-"the port information."
+"(``server_port_lock.lock`` or ``client_port_lock.lock``) is used to "
+"prevent concurrent access. The lock is implemented by simply creating the"
+" file; the existence of the file indicates that another process is "
+"currently modifying the port information, and the allocator waits for it "
+"to disappear."
 msgstr ""
 "在读取或写入这些文件之前，会使用锁定文件（``server_port_lock.lock`` "
 "或``client_port_lock.lock``）来防止并发访问。只需创建文件即可实现锁；该文件的存在表明另一个进程当前正在修改端口信息。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:192
-#: 8dd06df723054127a85bf2e64f6fef70
+#: ../../source/Port_Allocation/Port_Allocation.rst:221
+#: d6012d3033384d6691cf88f7fb6ffc99
+msgid ""
+"The file carries no owner and no timestamp: an instance that is killed "
+"while it holds the lock leaves it behind, and every later manual-mode "
+"instance waits for it indefinitely. The allocator releases the lock in a "
+"``finally`` block, so a failed allocation does not leak it; only a hard "
+"kill between the lock and the unlock does. Deleting the file (or calling "
+"``server_port_temp_info_file_unlock`` / "
+"``client_port_temp_info_file_unlock``) clears it."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:230
+#: d92ac547d4f2423b8ae166d295fbb390
 msgid ""
 "When a new server or client instance is created with manual allocation "
 "enabled, its range is initialised using the persistent log:"
 msgstr "当创建新的服务器或客户端实例并启用手动分配时，其范围将使用持久日志进行初始化："
 
-#: ../../Port_Allocation/Port_Allocation.rst:196
-#: 7d8301b78ca04dec80458b837d78e855
+#: ../../source/Port_Allocation/Port_Allocation.rst:234
+#: 69185ca9ac754b7086581d332e040370
 msgid ""
 "If the log file does not exist, a new list is created with the current "
 "instance as the first entry."
 msgstr "如果日志文件不存在，则会创建一个新列表，并将当前实例作为第一个条目。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:199
-#: 6432e95a09c749ab9243f61700863dcf
+#: ../../source/Port_Allocation/Port_Allocation.rst:237
+#: 2f3e634582054c9bade4b10623961fb7
 msgid ""
 "If the log file exists, the list of previous instances is read. The next "
 "instance ID is the previous ID + 1."
 msgstr "如果日志文件存在，则读取先前实例的列表。下一个实例 ID 是前一个 ID + 1。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:202
-#: e6cf92040b1f42c09af74b7294064874
+#: ../../source/Port_Allocation/Port_Allocation.rst:240
+#: d960399ac2d34c23b9c9c5a43f44e1e3
 msgid ""
-"If the user‑supplied port falls inside the range of the last recorded "
-"instance, it is automatically advanced to the next available value to "
-"prevent overlap."
-msgstr "如果用户提供的端口落在最后记录实例的范围内，则会自动前进到下一个可用值以防止重叠。"
+"If the user‑supplied port falls into a band one full range around the "
+"last recorded instance — that is, between ``last.min_port - port_add_step"
+" * port_range_num - 1`` and ``last.max_port + port_add_step * "
+"port_range_num + 1`` — it is moved to the fixed value ``last.max_port + "
+"port_add_step * port_range_num + 1`` to prevent overlap."
+msgstr ""
 
-#: ../../Port_Allocation/Port_Allocation.rst:207
-#: ed9c93eb4fa742d7bc9bceebe58778e5
+#: ../../source/Port_Allocation/Port_Allocation.rst:247
+#: 706c902c60294d9cae3c7930ab6d6f0d
 msgid ""
-"The new instance’s information is appended to the list, stale entries "
-"(``is_running=False``) are removed, and the list is written back."
-msgstr "新实例的信息被附加到列表中，陈旧的条目（``is_running=False``）被删除，并且列表被写回。"
+"Entries whose owning process is gone are removed first, so a range held "
+"by a killed instance is reclaimed here. The new instance’s information is"
+" then appended to the list and the list is written back. Its entry "
+"survives because its own process is alive, and ``hand_free_port`` removes"
+" it on a clean stop; an entry from a killed instance is only kept if its "
+"pid was reused by an unrelated process before the next allocation."
+msgstr ""
 
-#: ../../Port_Allocation/Port_Allocation.rst:212
-#: 2fc9ab2d851c4d43bd086d1a99656043
+#: ../../source/Port_Allocation/Port_Allocation.rst:256
+#: 962ce3cbf93c479e899e95dc2d02d3be
 msgid ""
-"When the server or client stops, its own entry is removed from the log file."
-" If the list becomes empty, the log file is deleted."
+"When the server or client stops, its own entry is removed from the log "
+"file. If the list becomes empty, the log file is deleted."
 msgstr "当服务器或客户端停止时，其自己的条目将从日志文件中删除。如果列表变空，则删除日志文件。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:219
-#: adad1929426c4ebebe1e8657b133585e
+#: ../../source/Port_Allocation/Port_Allocation.rst:263
+#: d64edc81fd7c4985a6ef345463835cb4
 msgid "Client‑Side Range Configuration"
 msgstr "客户端范围配置"
 
-#: ../../Port_Allocation/Port_Allocation.rst:221
-#: a97d3540a0024f4eb0e047279b16da77
+#: ../../source/Port_Allocation/Port_Allocation.rst:265
+#: f43678b9186b4c8593a59687331af19f
+#, fuzzy
 msgid ""
-"The client’s manual allocation mode is enabled not by a constructor argument"
-" directly, but by a **broadcast from the server**. When the server starts "
-"with ``is_hand_alloc_port=True``, it sends a command to all clients:"
-msgstr ""
-"客户端的手动分配模式不是直接通过构造函数参数启用，而是通过来自服务器的**广播**启用。当服务器以“is_hand_alloc_port=True”启动时，它会向所有客户端发送一条命令："
+"The client’s manual allocation mode is enabled not by a constructor "
+"argument directly, but by a **message from the server**. Each accepted "
+"connection is greeted with a command:"
+msgstr "客户端的手动分配模式不是直接通过构造函数参数启用，而是通过来自服务器的**广播**启用。当服务器以“is_hand_alloc_port=True”启动时，它会向所有客户端发送一条命令："
 
-#: ../../Port_Allocation/Port_Allocation.rst:228
-#: 9bd212a5bb3c4d68934cc420881672e0
+#: ../../source/Port_Allocation/Port_Allocation.rst:270
+#: 90478af93d744e30a347bdcbd3e09631
 msgid "``/client_alloc_port_range <each_client_port_range>``"
 msgstr "``/client_alloc_port_range <each_client_port_range>``"
 
-#: ../../Port_Allocation/Port_Allocation.rst:230
-#: 6f25281bac68477db87047b1ad574e14
-msgid "where ``each_client_port_range = port_range_num // max_clients``."
-msgstr "其中``each_client_port_range = port_range_num // max_clients``。"
+#: ../../source/Port_Allocation/Port_Allocation.rst:272
+#: 434346a9d88e497fad69a2077a0e49e7
+msgid ""
+"where ``each_client_port_range = port_range_num // max_clients``, and "
+"``/client_alloc_port_range NO_LIMIT`` is sent instead when the server "
+"runs with ``is_hand_alloc_port=False``. The message goes only to the "
+"connection that just joined; the range is fixed for the server's "
+"lifetime."
+msgstr ""
 
-#: ../../Port_Allocation/Port_Allocation.rst:233
-#: da313b544ac84c3986803fe0f15bf637
+#: ../../source/Port_Allocation/Port_Allocation.rst:279
+#: 8f88b2c52a4540b584c6ceaabdb22fa7
 msgid "The client’s ``handle_server_command`` processes this:"
 msgstr "客户端的“handle_server_command”处理这个："
 
-#: ../../Port_Allocation/Port_Allocation.rst:235
-#: 8264d8701b6c4596b5fe96153a83a3ae
+#: ../../source/Port_Allocation/Port_Allocation.rst:281
+#: b3bdcca180104e3b91646072ab80e808
 msgid ""
 "If the value is ``\"NO_LIMIT\"``, the client sets "
 "``is_hand_alloc_port=False`` (automatic mode)."
 msgstr "如果值为“NO_LIMIT”，则客户端设置“is_hand_alloc_port=False”（自动模式）。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:238
-#: 6afe48afdc96475e85a797a2c03477e0
+#: ../../source/Port_Allocation/Port_Allocation.rst:284
+#: 099ebd41e8584f39b5fd7c8efcaa60cd
+#, fuzzy
 msgid ""
-"Otherwise, it sets ``is_hand_alloc_port=True`` and calls its internal "
-"initialisation routine with the received range, using its own ``port`` (the "
-"server port it connected to) as the base."
-msgstr ""
-"否则，它设置“is_hand_alloc_port=True”并使用接收到的范围调用其内部初始化例程，使用自己的“port”（它连接到的服务器端口）作为基础。"
+"Otherwise, it sets ``is_hand_alloc_port=True``, keeps the value in "
+"``each_client_port_range`` and calls its internal initialisation routine "
+"with the received range, using its own ``port`` (the server port it "
+"connected to) as the base."
+msgstr "否则，它设置“is_hand_alloc_port=True”并使用接收到的范围调用其内部初始化例程，使用自己的“port”（它连接到的服务器端口）作为基础。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:244
-#: 7d07da528aa1453b8e1e8ab2f028f15e
+#: ../../source/Port_Allocation/Port_Allocation.rst:291
+#: cbbc07453d904756a1413117654e4b40
+#, fuzzy
 msgid ""
 "This allows the server to control the port‑allocation policy for all "
-"connected clients uniformly."
+"connected clients uniformly. Until that message arrives (and whenever the"
+" server runs in automatic mode) the client stays in automatic mode."
 msgstr "这允许服务器统一控制所有连接的客户端的端口分配策略。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:251
-#: cc5894c825d54e3598a223c277a91922
+#: ../../source/Port_Allocation/Port_Allocation.rst:300
+#: a7bf6026926b48a987794179e4af30ae
 msgid "Public API Definitions"
 msgstr "公共API定义"
 
-#: ../../Port_Allocation/Port_Allocation.rst:253
-#: 46ceaf5776074ff2af00caf34b66d5a3
+#: ../../source/Port_Allocation/Port_Allocation.rst:302
+#: 6f0c86e04e41479393d1e1f72a1d41c2
 msgid "### Server‑Side Port Allocation APIs"
 msgstr "### 服务器端端口分配 API"
 
-#: ../../Port_Allocation/Port_Allocation.rst:259
-#: 05be78c4ce624ec98cc1c8e6f66510d7
+#: ../../source/Port_Allocation/Port_Allocation.rst:309
+#: 85ec983f49b54b78bf1c33036c7e03d8
+#, fuzzy
 msgid ""
-"Returns an available port number. In automatic mode, returns ``0``. In "
-"manual mode, it returns a concrete port from the configured range, retrying "
-"indefinitely until a port becomes available."
+"``palloc()`` returns an available port number. In automatic mode it "
+"returns ``0``. In manual mode it returns a concrete port from the "
+"configured range and waits 0.1 seconds per retry while the range is "
+"exhausted."
 msgstr "返回可用的端口号。在自动模式下，返回``0``。在手动模式下，它从配置的范围返回一个具体端口，无限期地重试，直到端口可用。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:268
-#: 201788faa82d4da9853c343248e563f7
+#: ../../source/Port_Allocation/Port_Allocation.rst:314
+#: 92e1710e18ba42b2aa24dcf324ac2fad
+#, fuzzy
 msgid ""
-"Releases a port previously obtained by ``palloc()``. In automatic mode, this"
-" does nothing. In manual mode, it removes the port from the internal "
-"allocated list and adjusts the allocation pointers."
+"``pfree(port)`` releases a port previously obtained by ``palloc()``. In "
+"automatic mode it does nothing. In manual mode it removes the port from "
+"the internal allocated list and adjusts the allocation pointers."
 msgstr "释放先前通过 palloc() 获得的端口。在自动模式下，这不会执行任何操作。在手动模式下，它将端口从内部分配列表中删除并调整分配指针。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:273
-#: 1111e89e27d74a3e8923164e8c11015d
+#: ../../source/Port_Allocation/Port_Allocation.rst:320
+#: 094548cf71d043048e35c771006188ee
+msgid ""
+"Both are thin wrappers around the direction-specific helpers, which are "
+"public as well: ``file_palloc()`` / ``file_pfree(port)`` for the additive"
+" direction and ``spy_palloc()`` / ``spy_pfree(port)`` for the subtractive"
+" one. ``alloc_port(port_add_step, port_range_num)`` and ``free_port()`` "
+"reserve and release the instance's range in the persistent log (both no-"
+"ops in automatic mode), and ``hand_alloc_port`` / ``hand_free_port`` "
+"implement the on-disk bookkeeping."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:330
+#: 9e98c6a7108b4a1aad0a8a8b42fe1b0c
 msgid "### Client‑Side Port Allocation APIs"
 msgstr "### 客户端端口分配 API"
 
-#: ../../Port_Allocation/Port_Allocation.rst:275
-#: 5ed73a55d9e64699981b9876e0a22a97
-msgid "The client provides the identical set of methods:"
-msgstr "客户端提供了一组相同的方法："
+#: ../../source/Port_Allocation/Port_Allocation.rst:332
+#: cd0bf797df1f40d8b85ab9b38616a51d
+msgid ""
+"The client provides the same method set (``palloc``, ``pfree``, "
+"``file_palloc``, ``file_pfree``, ``spy_palloc``, ``spy_pfree``, "
+"``alloc_port``, ``free_port``, ``hand_alloc_port``, ``hand_free_port``)."
+msgstr ""
 
-#: ../../Port_Allocation/Port_Allocation.rst:277
-#: 1ee9c63df441404cb0fb77c1604a71bb
-msgid "``palloc()``"
-msgstr "``palloc()``"
-
-#: ../../Port_Allocation/Port_Allocation.rst:278
-#: c9f034cacf8b44b7a0884ee2aa593b88
-msgid "``pfree(port)``"
-msgstr "``pfree（端口）``"
-
-#: ../../Port_Allocation/Port_Allocation.rst:280
-#: 88ba63acfb0e4efda8a3ce914efba8ea
+#: ../../source/Port_Allocation/Port_Allocation.rst:337
+#: c34013fe94994cdda602c9e8632c4b1c
 msgid ""
 "Additionally, the client receives the range from the server via the "
 "``/client_alloc_port_range`` command."
 msgstr "此外，客户端通过“/client_alloc_port_range”命令从服务器接收范围。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:287
-#: 5fe116507216417d8733d59c196eed02
+#: ../../source/Port_Allocation/Port_Allocation.rst:344
+#: dbda4baed75f4b359a93b4ecaff10622
 msgid "Public API Summary"
 msgstr "公共API摘要"
 
-#: ../../Port_Allocation/Port_Allocation.rst:289
-#: 901516f18c1d4e3bbcadbd7e647ca02a
+#: ../../source/Port_Allocation/Port_Allocation.rst:346
+#: 5d6524d669274eae870289ae36064ec6
 msgid ""
 "All public port‑allocation related APIs are listed below. For a complete "
 "list of all public APIs, please see the respective server and client "
 "documentation."
 msgstr "下面列出了所有与公共端口分配相关的 API。有关所有公共 API 的完整列表，请参阅相应的服务器和客户端文档。"
 
-#: ../../Port_Allocation/Port_Allocation.rst:294
-#: 03a1e0db9a3541e0bf9f85dd919ec573
+#: ../../source/Port_Allocation/Port_Allocation.rst:351
+#: 770f4db499354ca9ab1916de3887fb5f
 msgid "### TCP_Server_Base"
 msgstr "### TCP_服务器_基础"
 
-#: ../../Port_Allocation/Port_Allocation.rst:296
-#: ../../Port_Allocation/Port_Allocation.rst:301
-#: 3ca51b147151429fa7d45d3bb034bb64 7cfd5220254948abafb4022552837bde
-msgid "``palloc``"
+#: ../../source/Port_Allocation/Port_Allocation.rst:353
+#: ../../source/Port_Allocation/Port_Allocation.rst:361
+#: 35a2a7b0cc894d978be96f148304fbdf 7a3625bf96c744379dc9220688227874
+#, fuzzy
+msgid "``palloc`` / ``pfree``"
 msgstr "``帕洛克``"
 
-#: ../../Port_Allocation/Port_Allocation.rst:297
-#: ../../Port_Allocation/Port_Allocation.rst:302
-#: 92cc6c5c9d8b4741a78b96ba47b5f538 dbafe19d56d24119af62a7eb7532ddbf
-msgid "``pfree``"
-msgstr "``自由``"
+#: ../../source/Port_Allocation/Port_Allocation.rst:354
+#: ../../source/Port_Allocation/Port_Allocation.rst:362
+#: 3934d649f4d64119ba08f9f8a05e8e9a c836bf8f7cdd4583b8db2610306a7654
+msgid "``file_palloc`` / ``file_pfree``"
+msgstr ""
 
-#: ../../Port_Allocation/Port_Allocation.rst:299
-#: 7e4e29b58a714351a8e8e540a7877350
+#: ../../source/Port_Allocation/Port_Allocation.rst:355
+#: ../../source/Port_Allocation/Port_Allocation.rst:363
+#: 56869fb46d404c5890fde0c0fc2625b8 56d58587e99440c1a7bdc624ee7df0d8
+msgid "``spy_palloc`` / ``spy_pfree``"
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:356
+#: ../../source/Port_Allocation/Port_Allocation.rst:364
+#: 90478af93d744e30a347bdcbd3e09631
+msgid "``alloc_port`` / ``free_port``"
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:357
+#: ../../source/Port_Allocation/Port_Allocation.rst:365
+#: 90478af93d744e30a347bdcbd3e09631
+msgid "``hand_alloc_port`` / ``hand_free_port``"
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:359
+#: a01786b23a2244a3a507a66346fd5613
 msgid "### TCP_Client_Base"
 msgstr "### TCP_Client_Base"
 
-#: ../../Port_Allocation/Port_Allocation.rst:305
-#: 116139c968464f90a5da9b8684940433
+#: ../../source/Port_Allocation/Port_Allocation.rst:367
+#: e50f0a0e75734c58b62ab503b995742f
+msgid ""
+"Note that the port counters differ between the two classes: the server "
+"seeds ``all_allocated_ports_list`` with its own port (``[self.port]``), "
+"the client starts from an empty list. The subtractive fallback scan "
+"includes the base port itself, so an exhausted client range can hand out "
+"the port the server never allocates for itself."
+msgstr ""
+
+#: ../../source/Port_Allocation/Port_Allocation.rst:375
+#: e2a8530d2d13454f87c21cd020432e57
 msgid "See Also"
 msgstr "参见"
 
-#: ../../Port_Allocation/Port_Allocation.rst:307
-#: f750c04e494449de995acc730747de10
+#: ../../source/Port_Allocation/Port_Allocation.rst:377
+#: a294484a7e2f4f7eb6bc2a77d67b7280
 msgid ""
-"For more information about the TCP server and client base classes, please "
-"refer to:"
+"For more information about the TCP server and client base classes, please"
+" refer to:"
 msgstr "关于TCP服务器和客户端基类的更多信息，请参考："
 
-#: ../../Port_Allocation/Port_Allocation.rst:311
-#: c94397d1d2754aedaad151a08373dbdc
+#: ../../source/Port_Allocation/Port_Allocation.rst:381
+#: 8d9e94197d864861a09c33a09c939969
 msgid ":doc:`../Network_APIs/TCP_Server_APIs`"
 msgstr ":doc:`../Network_APIs/TCP_Server_APIs`"
 
-#: ../../Port_Allocation/Port_Allocation.rst:312
-#: 5a58e0e9f8564fa9adf42c2ddc909c69
+#: ../../source/Port_Allocation/Port_Allocation.rst:382
+#: 0c2407bc00ba458f8bb97b623b17d8ad
 msgid ":doc:`../Network_APIs/TCP_Client_APIs`"
 msgstr ":doc:`../Network_APIs/TCP_Client_APIs`"
 
-#: ../../Port_Allocation/Port_Allocation.rst:314
-#: ded2d25ff45a45e5a332670bdd6c8ef1
+#: ../../source/Port_Allocation/Port_Allocation.rst:384
+#: fe4ae98aa1704d72bf7ce189dc959c26
 msgid ""
-"For details on the file transfer mechanism that uses these port allocation "
-"APIs, see :doc:`../File_Transfer/File_Transfer`."
+"For details on the file transfer mechanism that uses these port "
+"allocation APIs, see :doc:`../File_Transfer/File_Transfer`."
 msgstr "有关使用这些端口分配 API 的文件传输机制的详细信息，请参阅:doc:`../File_Transfer/File_Transfer`。"
+
+#~ msgid ""
+#~ "**Additive allocation** – starts from "
+#~ "``port+1`` and moves upward by "
+#~ "``port_add_step`` each time, up to (but"
+#~ " not including) ``max_port``."
+#~ msgstr "**附加分配** – 从“port+1”开始，每次向上移动“port_add_step”，直到（但不包括）“max_port”。"
+
+#~ msgid ""
+#~ "If the user‑supplied port falls inside"
+#~ " the range of the last recorded "
+#~ "instance, it is automatically advanced "
+#~ "to the next available value to "
+#~ "prevent overlap."
+#~ msgstr "如果用户提供的端口落在最后记录实例的范围内，则会自动前进到下一个可用值以防止重叠。"
+
+#~ msgid ""
+#~ "The new instance’s information is "
+#~ "appended to the list, stale entries "
+#~ "(``is_running=False``) are removed, and the"
+#~ " list is written back."
+#~ msgstr "新实例的信息被附加到列表中，陈旧的条目（``is_running=False``）被删除，并且列表被写回。"
+
+#~ msgid "where ``each_client_port_range = port_range_num // max_clients``."
+#~ msgstr "其中``each_client_port_range = port_range_num // max_clients``。"
+
+#~ msgid "The client provides the identical set of methods:"
+#~ msgstr "客户端提供了一组相同的方法："
+
+#~ msgid "``palloc()``"
+#~ msgstr "``palloc()``"
+
+#~ msgid "``pfree(port)``"
+#~ msgstr "``pfree（端口）``"
+
+#~ msgid "``pfree``"
+#~ msgstr "``自由``"
+
