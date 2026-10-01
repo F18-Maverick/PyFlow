@@ -129,6 +129,26 @@ class OpenSslBuildExt(build_ext):
                 extension.libraries = ["libcrypto"]
         super().build_extension(extension)
 
+    def get_export_symbols(self, extension: Extension) -> list[str]:
+        """Export no ``PyInit_*`` symbol when MSVC links the library.
+
+        MSVC links every extension with ``/EXPORT:PyInit_<name>``, but the
+        crypto library is loaded through ``ctypes`` and never defines that
+        symbol, so the link fails with LNK2001. The ``pf_*`` entry points it
+        does need to export are marked by ``PF_CRYPTO_SHARED`` instead.
+
+        Args:
+            extension (Extension): The extension being linked.
+
+        Returns:
+            list[str]: The symbols MSVC is told to export (none for MSVC).
+        """
+        symbols = super().get_export_symbols(extension)
+        compiler = getattr(self, "compiler", None)
+        if compiler is not None and compiler.compiler_type == "msvc":
+            return []
+        return symbols
+
 
 crypto_api = Extension(
     "PyFlow._crypto_api",
