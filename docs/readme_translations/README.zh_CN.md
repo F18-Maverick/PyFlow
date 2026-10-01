@@ -10,7 +10,7 @@ PyFlow是一种高级网络协议，提供API和Web应用程序，两者都传�
 
 ## 特点
 
-- **TCP服务器/客户端** —通过单个控制通道（`PyFlow/network_api/connect_tcp.py`）进行消息交换、自定义命令、文件传输和端口分配。
+- **TCP服务器/客户端** —通过单个控制通道（`PyFlow/network_api/connect_tcp.py`）进行消息交换、自定义命令、文件传输、命令扩展API和端口分配。
 - **UDP通信** —无连接消息传递(`PyFlow/network_api/connect_udp.py`)。
 - **加密TCP通道** — RSA-OAEP消息加密，具有TOFU （首次使用信任）对等密钥注册表、会话随机数和重播的序列号，以及防止重新交换风暴的断路器。请参阅[docs/Crypto](docs/source/Crypto/Crypto.rst)和TCP API文档的加密通道部分。
 - **C/OpenSSL加密库** — `libcrypto_api`提供RSA-OAEP、ECDH （ P-256/384/521 ）、HKDF-SHA256和AES-256-GCM ，以及可从C、CMake或pkg-config使用的稳定C API （`pf_*`前缀）。

@@ -10,7 +10,7 @@ PyFlow는 확장 가능한 인터페이스 및 기타 기능과 함께 메시지
 
 ## 기능
 
-- **TCP 서버/클라이언트** — 단일 제어 채널 (`PyFlow/network_api/connect_tcp.py`) 을 통한 메시지 교환, 사용자 지정 명령, 파일 전송 및 포트 할당.
+- **TCP 서버/클라이언트** — 메시지 교환, 사용자 지정 명령, 파일 전송, 확장 API 명령 및 단일 제어 채널을 통한 포트 할당 (`PyFlow/network_api/connect_tcp.py`).
 - **UDP 통신** — 연결 없는 메시징 (`PyFlow/network_api/connect_udp.py`).
 - **암호화된 TCP 채널** — RSA-OAEP 메시지 암호화, TOFU (trust-on-first-use) 피어 키 레지스트리, 재생에 대한 세션 넌세스 및 시퀀스 번호, 재교환 폭풍에 대한 회로 차단기. [docs/Crypto](docs/source/Crypto/Crypto.rst) 및 TCP API 문서의 암호화된 채널 섹션을 참조하십시오.
 - **C/OpenSSL 암호화 라이브러리** — `libcrypto_api` 는 C, CMake 또는 pkg-config에서 사용할 수 있는 안정적인 C API (`pf_*` 접두사) 를 갖춘 RSA-OAEP, ECDH (P-256/384/521), HKDF-SHA256 및 AES-256-GCM을 제공합니다.

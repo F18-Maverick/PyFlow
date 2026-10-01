@@ -10,7 +10,7 @@ PyFlowは、拡張可能なインターフェースやその他の機能とと�
 
 ## 特長
 
-- **TCPサーバー/クライアント** —単一の制御チャネル（`PyFlow/network_api/connect_tcp.py`）を介したメッセージ交換、カスタムコマンド、ファイル転送、およびポート割り当て。
+- **TCPサーバー/クライアント** —単一の制御チャネル（`PyFlow/network_api/connect_tcp.py`）を介したメッセージ交換、カスタムコマンド、ファイル転送、コマンド拡張API、およびポート割り当て。
 - **UDP通信** —コネクションレスメッセージング（`PyFlow/network_api/connect_udp.py`）。
 - **暗号化されたTCPチャネル** — TOFU （ trust - on - first - use ）ピアキーレジストリ、セッションナンス、リプレイに対するシーケンス番号、再交換ストームに対するサーキットブレーカーを使用したRSA - OAEPメッセージ暗号化。[docs/Crypto](docs/source/Crypto/Crypto.rst)およびTCP APIドキュメントの暗号化されたチャネルセクションを参照してください。
 - **C/OpenSSL暗号ライブラリ** — `libcrypto_api`は、RSA - OAEP、ECDH （ P -256/384/521 ）、HKDF - SHA 256、およびAES -256 - GCMに、C、CMake、またはpkg - configから使用できる安定したC API （`pf_*`プレフィックス）を提供します。

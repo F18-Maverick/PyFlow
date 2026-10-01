@@ -120,6 +120,9 @@ msgid ""
 "``file_send_server_header`` / ``file_send_server_data``; both attributes are"
 " set but not referenced by the transfer loop."
 msgstr ""
+"'' send_file_header_sign ''/'' send_file_data_sign '' — '' "
+"file_send_server_header ''/'' file_send_server_data "
+"''から。両方の属性は設定されていますが、転送ループによって参照されていません。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:60
 #: 07ce10ba9a534d2db23cb3505f3d9ad7
@@ -130,6 +133,9 @@ msgid ""
 "filename and file size, the data one after the complete file has been "
 "written to disk."
 msgstr ""
+"'' SERVER_RECEIVED_FILE_HEADER_SIGN ''/'' SERVER_RECEIVED_FILE_DATA_SIGN '' "
+"— FILE_RECEIVED_CLIENT_HEADER ''/' FILE_RECEIVE_CLIENT_DATA "
+"''から。ヘッダー1は、ファイル名とファイルサイズの読み取りに成功した後にレシーバーによって送信され、データは完全なファイルがディスクに書き込まれた後に送信されます。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:67
 #: a2c795d996c4491e9c90f46871d655b0
@@ -148,6 +154,10 @@ msgid ""
 "``/pause_trans``, ``/start_trans``, ``/forward_item``, ``/forward_upload``, "
 "``/forward_error``, ``/crypto_*``) are hardcoded in ``connect_tcp.py``."
 msgstr ""
+"表の残りのキーは、他の3つの方向/位相の組み合わせをカバーしています。このテーブルの一部ではないプロトコル制御ライン（''/ "
+"server_file_transfer_port ''、''/ client_alloc_port_range ''、''/ pause_trans "
+"''、''/ start_trans ''、''/ forward_item ''、''/ forward_upload ''、''/ "
+"forward_error ''、''/ crypto _*''）は、'' connect_tcp.py ''にハードコードされています。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:80
 #: c481ce301cdc4dddba6f392dc6de4e6a
@@ -277,7 +287,7 @@ msgstr "### スレッドセーフなエントリ ポイント"
 #: ../../source/File_Transfer/File_Transfer.rst:138
 #: 9d80a0419f274373acc89686e909b71d
 msgid "The console dispatches to these methods:"
-msgstr ""
+msgstr "コンソールは、次のメソッドにディスパッチします。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:140
 #: 3ddbfd1b9e454342aa47f388d5bc7263
@@ -314,6 +324,8 @@ msgid ""
 "``file_semaphore`` for the whole transfer, so at most ``max_thread_num`` of "
 "them run at once."
 msgstr ""
+"最後の3つはコンソールスレッドで同期して実行されます。ツリーまたはファイルリストを移動し、ファイルごとに1つのワーカースレッドを生成するため、転送が実行されている間、コンソールは入力を読み続けます。すべてのワーカーは、転送全体に対して''"
+" file_semaphore ''を保持しているため、最大'' max_thread_num ''が一度に実行されます。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:153
 #: f5919b72c7ec40e2a1b1d49cf57c9021
@@ -401,6 +413,9 @@ msgid ""
 " around its own transfer, so the concurrent transfers are capped by "
 "``max_thread_num`` on that path too."
 msgstr ""
+"'' multiple_file_transfer_client_recv_client_start "
+"''は、指定されたファイルをループし、ファイルごとに1つのワーカースレッドを開始します。各ワーカースレッドは、独自の転送の周りに'' "
+"file_semaphore ''を保持しているため、同時転送もそのパスの'' max_thread_num ''で制限されます。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:203
 #: d9634b910f4f4509a717a6e7cb8445e2
@@ -800,6 +815,9 @@ msgid ""
 " classified per token, so files and addresses may be interleaved and a last "
 "argument that is not an existing local file/folder is the destination)."
 msgstr ""
+"Multiple - itemコマンドの場合、destinationは最後の引数です。最後の引数が''( ip, port "
+")''タプルでない場合、それは宛先パスとして扱われます（''/ multiple_file_multiple_client "
+"''フォームの場合、アイテムはトークンごとに分類されるため、ファイルとアドレスがインターリーブされ、既存のローカルファイル/フォルダではない最後の引数が宛先になります）。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:418
 #: 0c7fa56659f543ed93adacd874dd2e8b
@@ -1236,6 +1254,10 @@ msgid ""
 "depending on what it is on disk, and an optional trailing destination path "
 "is accepted."
 msgstr ""
+"複数のアイテムを複数のクライアントに送信します。メッセージフォーマットは''/ multiple_file_multiple_client<item1>"
+" <item2>... &lt;( ip, port) 1 &gt; &lt;( ip, port) 2 &gt;... [destination "
+"]''です。すべてのトークンはそれ自体で分類されます（''( ip, port "
+")''リテラルはターゲットであり、それ以外はアイテムです）。したがって、アイテムとターゲットはインターリーブされる可能性があります。各アイテムは、ディスク上にあるものに応じてファイルまたはフォルダとしてディスパッチされ、オプションの末尾の宛先パスが受け入れられます。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:688
 #: 39b67f1d0e6b438386eb04c6d44da6b8
@@ -1248,6 +1270,11 @@ msgid ""
 "``(ip1,port1)`` and ``(ip2,port2)``, ``c.txt`` to ``(ip3,port3)``. An "
 "optional trailing destination path is accepted."
 msgstr ""
+"異なるファイルリストを異なるクライアントに送信します。クライアントアドレスのグループの前に表示されるファイルがそのグループに送信されます。ファイルトークンが1つ以上のアドレスに従うとすぐに新しいグループが開始されます。例："
+" ''/ diff_multiple_file_diff_multiple_client a.txt b.txt (ip 1, port 1) (ip "
+"2, port 2) c.txt (ip 3, port 3 )''-'' a.txt '' and '' b.txt '' go to ''( ip "
+"1, port 1 )'' and ''( ip 2, port 2 )'', '' c.txt '' to ''''( ip 3, port 3 "
+")'''.オプションの末尾の宛先パスは次のとおりです。 されています。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:701
 #: 37108379b0b9495584bb135d5860ea4a

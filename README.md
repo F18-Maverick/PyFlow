@@ -10,7 +10,7 @@ PyFlow is a high-level network protocol offering APIs and web apps, both of whic
 
 ## Features
 
-- **TCP server / client** — message exchange, custom commands, file transfer, and port allocation over a single control channel (`PyFlow/network_api/connect_tcp.py`).
+- **TCP server / client** — message exchange, custom commands, file transfer, commands extension API and port allocation over a single control channel (`PyFlow/network_api/connect_tcp.py`).
 - **UDP communication** — connectionless messaging (`PyFlow/network_api/connect_udp.py`).
 - **Encrypted TCP channel** — RSA-OAEP message encryption with a TOFU (trust-on-first-use) peer-key registry, session nonces and sequence numbers against replay, and a circuit breaker against re-exchange storms. See [docs/Crypto](docs/source/Crypto/Crypto.rst) and the encrypted-channel sections of the TCP API docs.
 - **C/OpenSSL cryptography library** — `libcrypto_api` provides RSA-OAEP, ECDH (P-256/384/521), HKDF-SHA256 and AES-256-GCM with a stable C API (`pf_*` prefix) usable from C, CMake or pkg-config.

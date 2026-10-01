@@ -6,7 +6,7 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version:  PyFlow\n"
+"Project-Id-Version: PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2026-10-01 18:19+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
@@ -27,15 +27,15 @@ msgstr "フローセットアップランチャー"
 #, fuzzy
 msgid ""
 "The ``flow_setup.py`` script is a launcher for the TCP server/client "
-"framework defined in ``connect_tcp.py``. It spawns one or more server and"
-" client instances, either interactively or from command-line arguments. "
-"Each launched instance runs in its own terminal window (or a detached "
-"background process on headless systems)."
+"framework defined in ``connect_tcp.py``. It spawns one or more server and "
+"client instances, either interactively or from command-line arguments. Each "
+"launched instance runs in its own terminal window (or a detached background "
+"process on headless systems)."
 msgstr ""
 "`flow_setup.py` スクリプトは、`connect_tcp.py` で定義された TCP サーバー/クライアント "
 "フレームワークのランチャーです。これにより、対話形式またはコマンドライン引数を介して、単一のサーバーまたはクライアント "
-"インスタンスを迅速に生成できます。起動された各インスタンスは、個別のターミナル ウィンドウ (またはヘッドレス システムのバックグラウンド "
-"プロセス) で実行されます。"
+"インスタンスを迅速に生成できます。起動された各インスタンスは、個別のターミナル ウィンドウ (またはヘッドレス システムのバックグラウンド プロセス) "
+"で実行されます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:13
 #: 5cfe71ed904f4f24bef1210b411ee40d
@@ -46,41 +46,44 @@ msgstr "特徴"
 #: d5544e89cd884c938e1bfed52fdaf35a
 #, fuzzy
 msgid ""
-"**Interactive mode** – step-by-step creation of server and client "
-"instances, plus a vim-style editor for changing or deleting the instances"
-" already stored."
+"**Interactive mode** – step-by-step creation of server and client instances,"
+" plus a vim-style editor for changing or deleting the instances already "
+"stored."
 msgstr "**対話型モード** – サーバーまたはクライアント インスタンスを段階的に作成します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:18
 #: a3239003782944f1aceb438c4b164657
 #, fuzzy
 msgid ""
-"**Command-line mode** – launch one server or one client with all "
-"parameters in one command."
+"**Command-line mode** – launch one server or one client with all parameters "
+"in one command."
 msgstr "**コマンドライン モード** – 1 つのコマンドですべてのパラメータを指定して起動します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:20
 #: 6c36fb284a4b4984bd220e047e26ed37
 msgid ""
-"**Web-tool mode** – ``--web_server`` / ``--web_client`` start the browser"
-" UI of the ``transfer_web`` web tool."
+"**Web-tool mode** – ``--web_server`` / ``--web_client`` start the browser UI"
+" of the ``transfer_web`` web tool."
 msgstr ""
+"**ウェブツールモード** – ''-- web_server ''/''-- web_client ''は、'' transfer_web "
+"''ウェブツールのブラウザUIを起動します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:22
 #: 1a357d61f62b41dd91e150d24c323a98
 msgid ""
-"**Extension registration** – ``--add`` / ``--delete`` register or "
-"unregister extension protocol files; the registered files are loaded on "
-"every launch."
+"**Extension registration** – ``--add`` / ``--delete`` register or unregister"
+" extension protocol files; the registered files are loaded on every launch."
 msgstr ""
+"**拡張子登録** – ''-- add ''/''-- delete "
+"''拡張子プロトコルファイルの登録または登録解除。登録されたファイルはすべての起動時に読み込まれます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:25
 #: 0deeeb0bc12644eaab437361d69dbe77
 #, fuzzy
 msgid ""
 "**Persistent configuration** – stores the latest instance definitions in "
-"``setup.json`` (same directory as the script). Every entry is completed "
-"with the full default parameter set of its type when it is saved."
+"``setup.json`` (same directory as the script). Every entry is completed with"
+" the full default parameter set of its type when it is saved."
 msgstr ""
 "**永続的な構成** – 最新のインスタンス定義を「setup.json」(スクリプトと同じディレクトリ) に保存します。各タイプ "
 "(サーバー/クライアント) は **1 つのみ** 構成を保持し、更新のたびに上書きされます。"
@@ -88,17 +91,19 @@ msgstr ""
 #: ../../source/Instance_Setup/Instance_Setup.rst:29
 #: 0b60fca4ab384444a03750dcb790150f
 msgid ""
-"**Multiple instances** – the ``servers`` and ``clients`` lists may hold "
-"any number of entries. Adding an entry identical to an existing one of "
-"the same type is skipped; different entries are appended."
+"**Multiple instances** – the ``servers`` and ``clients`` lists may hold any "
+"number of entries. Adding an entry identical to an existing one of the same "
+"type is skipped; different entries are appended."
 msgstr ""
+"**複数のインスタンス** "
+"–「サーバー」および「クライアント」リストには、任意の数のエントリを保持できます。同じタイプの既存のエントリと同じエントリを追加することはスキップされ、異なるエントリが追加されます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:33
 #: af8b8bdd4c994728a0bf4a7b358976b7
 #, fuzzy
 msgid ""
-"**Cross-platform** – supports Windows (cmd), Linux (gnome-terminal, "
-"xterm, x-terminal-emulator, or a detached background process), and macOS "
+"**Cross-platform** – supports Windows (cmd), Linux (gnome-terminal, xterm, "
+"x-terminal-emulator, or a detached background process), and macOS "
 "(Terminal.app)."
 msgstr ""
 "**クロスプラットフォーム** – Windows (cmd)、Linux (gnome-"
@@ -109,8 +114,8 @@ msgstr ""
 #, fuzzy
 msgid ""
 "**Complete parameter support** – all parameters accepted by "
-"``TCP_Server_Base`` and ``TCP_Client_Base`` can be stored in "
-"``setup.json`` for fine-tuning."
+"``TCP_Server_Base`` and ``TCP_Client_Base`` can be stored in ``setup.json`` "
+"for fine-tuning."
 msgstr ""
 "**完全なパラメータのサポート** – ``TCP_Server_Base`` および ``TCP_Client_Base`` "
 "によって受け入れられるすべてのパラメータは、微調整のために ``setup.json`` に保存できます。"
@@ -134,25 +139,31 @@ msgstr "引数なしでスクリプトを実行します。"
 #: a17a608e2ac24987b6c4a428acd770e9
 msgid ""
 "When ``setup.json`` already exists, the launcher first asks whether to "
-"overwrite it, and the interactive collection itself asks whether the "
-"stored instances should be edited:"
+"overwrite it, and the interactive collection itself asks whether the stored "
+"instances should be edited:"
 msgstr ""
+"'' setup.json "
+"''が既に存在する場合、ランチャーは最初にそれを上書きするかどうかを尋ね、インタラクティブコレクション自体は保存されたインスタンスを編集するかどうかを尋ねます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:56
 #: 7fe4792645644307bf450194c2d98fa7
 msgid ""
-"``setup.json exists. Overwrite configuration data? (Y/N):`` – ``N`` "
-"launches every stored instance and exits; ``Y`` (or no existing file) "
-"continues to the collection below."
+"``setup.json exists. Overwrite configuration data? (Y/N):`` – ``N`` launches"
+" every stored instance and exits; ``Y`` (or no existing file) continues to "
+"the collection below."
 msgstr ""
+"'' setup.jsonが存在します。構成データを上書きしますか？ （ Y/N ） ：''-'' N "
+"''は、保存されているすべてのインスタンスを起動して終了します。'' Y ''（または既存のファイルなし）は、以下のコレクションに続きます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:59
 #: e60cbc55c5834e8ab8ce55e696159e9a
 msgid ""
-"``Delete or change existing instances or configs? (Y/N):`` – asked only "
-"when stored instances exist. ``Y`` opens the instance editor (see below);"
-" ``N`` keeps them and goes straight to the add flow."
+"``Delete or change existing instances or configs? (Y/N):`` – asked only when"
+" stored instances exist. ``Y`` opens the instance editor (see below); ``N`` "
+"keeps them and goes straight to the add flow."
 msgstr ""
+"''既存のインスタンスまたは設定を削除または変更しますか？ (Y/N): '' –格納されているインスタンスが存在する場合にのみ尋ねられます。'' Y "
+"''はインスタンスエディターを開きます（下記参照）。'' N ''はそれらを保持し、直接追加フローに進みます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:63
 #: eaf7134992f44c58aa4181664a3bc638
@@ -173,67 +184,70 @@ msgstr "クライアントの場合は、接続するサーバーのアドレス
 #: ../../source/Instance_Setup/Instance_Setup.rst:67
 #: df73da29736d4b878bef8427a95945aa
 msgid ""
-"Decide whether to add another instance. An entry that already exists in "
-"the list is not added again; a new one is appended, so several instances "
-"of the same type can be kept side by side."
+"Decide whether to add another instance. An entry that already exists in the "
+"list is not added again; a new one is appended, so several instances of the "
+"same type can be kept side by side."
 msgstr ""
+"別のインスタンスを追加するかどうかを決定します。既にリストに存在するエントリは再度追加されません。新しいエントリが追加されるため、同じタイプの複数のインスタンスを並べて保持できます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:71
 #: 8e0df08f751f46deb43ba1006ed04b20
 msgid ""
 "After editing, the launcher asks ``Add new instances? (Y/N)`` before "
 "returning to the add flow."
-msgstr ""
+msgstr "編集後、ランチャーは「新しいインスタンスを追加しますか？」と尋ねます。(Y/N )''から追加フローに戻ります。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:74
 #: 237874cb10d040cf86074695574daf32
 msgid ""
-"When the editor is left with changes, ``setup.json`` is rewritten with "
-"every instance, and all stored instances (reused plus newly added) are "
-"launched."
+"When the editor is left with changes, ``setup.json`` is rewritten with every"
+" instance, and all stored instances (reused plus newly added) are launched."
 msgstr ""
+"エディターに変更が残されると、'' setup.json "
+"''はすべてのインスタンスで書き換えられ、格納されているすべてのインスタンス（再利用されたインスタンスと新しく追加されたインスタンス）が起動されます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:79
 #: c81a1dba5f224291a56257375f84a1a0
 msgid "Global commands"
-msgstr ""
+msgstr "グローバルコマンド"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:81
 #: 8247157dfc0b4a32aa9ae300813386c6
 msgid ""
-"The following words can be typed at **every** prompt, including field-"
-"value prompts:"
-msgstr ""
+"The following words can be typed at **every** prompt, including field-value "
+"prompts:"
+msgstr "次の単語は、フィールド値プロンプトを含む**すべての**プロンプトで入力できます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:85
 #: 720b396d65c547fa845910a437a48236
 msgid "Command"
-msgstr ""
+msgstr "コマンド"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:85
 #: c29ffb659bf3446490bc9eaac6f2e7ea
 msgid "Effect"
-msgstr ""
+msgstr "効果"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:87
 #: 7702fd6a612347919c73ec35852a4622
 msgid "``Help``"
-msgstr ""
+msgstr "ヘルプ"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:87
 #: 886877e3eb7d407fa62b16a4fc968f62
 msgid "Print the usage text of the current prompt."
-msgstr ""
+msgstr "現在のプロンプトの使用状況テキストを印刷します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:89
 #: c569666357334b05ba4189c122bbeaaf
 msgid "``Fix_Config``"
-msgstr ""
+msgstr "'' Fix_Config ''"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:89
 #: 0a5c8bdb9c1d4f7eb8a41fce85acf0b4
-msgid "Jump to the instance editor (or, inside it, save and return to the list)."
-msgstr ""
+msgid ""
+"Jump to the instance editor (or, inside it, save and return to the list)."
+msgstr "インスタンスエディターにジャンプします（または、その中に保存してリストに戻ります）。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:92
 #: 7702fd6a612347919c73ec35852a4622
@@ -246,85 +260,88 @@ msgstr "''-- setup_num ''"
 msgid ""
 "Launch every instance configured in ``setup.json`` and exit the setup "
 "program."
-msgstr ""
+msgstr "'' setup.json ''で構成されているすべてのインスタンスを起動し、セットアッププログラムを終了します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:95
 #: cc2a8285cba3495db468d5f007f3ecfc
 msgid "``Add_Extension``"
-msgstr ""
+msgstr "拡張子を追加"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:95
 #: a6c3fac6c8f44d75a7a266bae3c54729
 msgid "Prompt for extension file path(s) and register them."
-msgstr ""
+msgstr "拡張子ファイルのパスを入力して登録します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:97
 #: 4febe01e668f4cc1aa1b92e328780ebe
 msgid "``Delete_Extension``"
-msgstr ""
+msgstr "拡張子を削除"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:97
 #: 5e54a7238b604a5fbe930ff4c5fd05d5
 msgid "Prompt for registered extension path(s) to remove."
-msgstr ""
+msgstr "登録されている拡張パスを削除するように求めます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:99
 #: 88bb1def13564b809d980ac0d7f22832
 msgid "``Quit``"
-msgstr ""
+msgstr "終了"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:99
 #: 22644327258c472aab543baf2ee08784
 msgid "Exit the setup program immediately."
-msgstr ""
+msgstr "すぐにセットアッププログラムを終了します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:103
 #: 34bd8aa59f064b5b9c6323a01278a409
 msgid "Instance editor"
-msgstr ""
+msgstr "インスタンスエディター"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:105
 #: 5832e770c51e4e61b0a372086616ad57
 msgid ""
 "The editor is reached by typing ``Fix_Config`` (at any prompt) or by "
-"answering ``Y`` to the \"Delete or change existing instances\" question. "
-"On an interactive terminal it reads real keys (and enables mouse "
-"tracking); on a pipe or in tests it falls back to line commands. "
-"``j``/``k`` or the arrow keys move the selection, a mouse click selects "
-"the clicked instance, ``Enter`` or a double click opens that instance's "
-"config editor, and ``Delete``/``Backspace`` or ``dd`` deletes the "
-"selected instance."
+"answering ``Y`` to the \"Delete or change existing instances\" question. On "
+"an interactive terminal it reads real keys (and enables mouse tracking); on "
+"a pipe or in tests it falls back to line commands. ``j``/``k`` or the arrow "
+"keys move the selection, a mouse click selects the clicked instance, "
+"``Enter`` or a double click opens that instance's config editor, and "
+"``Delete``/``Backspace`` or ``dd`` deletes the selected instance."
 msgstr ""
+"エディタにアクセスするには、（任意のプロンプトで）「Fix_Config」と入力するか、「既存のインスタンスの削除または変更」の質問に「Y」と回答します。インタラクティブ端末では、実際のキーを読み取り（マウストラッキングを有効にします）、パイプまたはテストではラインコマンドにフォールバックします。''"
+" j ''/'' k ''または矢印キーが選択範囲を移動すると、マウスクリックでクリックされたインスタンスが選択され、'' Enter "
+"''またはダブルクリックでそのインスタンスの構成エディタが開きます。 '' Delete ''/'' Backspace ''または'' dd "
+"''は選択したインスタンスを削除します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:115
 #: 36e871e8b76b4e6f8ab3d41c6e58e053
 msgid "Vim-style commands:"
-msgstr ""
+msgstr "Vimスタイルのコマンド："
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:117
 #: bf18c8047500461486e3bc05c6154ecc
 msgid "``:w`` – write ``setup.json`` without leaving the editor."
-msgstr ""
+msgstr "'': w '' –エディターを離れることなく'' setup.json ''を書き込みます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:118
 #: e723d0258ef143079a508676b8d418db
 msgid "``:wq`` – write ``setup.json`` and leave the editor."
-msgstr ""
+msgstr "'': wq '' – '' setup.json ''と書き、エディターを終了します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:119
 #: 8e54b99375e441308cd3dc8ec4cd5d3a
 msgid "``:q`` – leave; refused while there are unsaved changes."
-msgstr ""
+msgstr "'': q '' –離脱。保存されていない変更がある間、拒否されました。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:120
 #: 32cdc0d2f2f34602a77b692202f56b24
 msgid "``:q!`` – leave and discard all changes."
-msgstr ""
+msgstr "'': q !'' –すべての変更を残して破棄します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:121
 #: 7360415b19b04c13ab167e500f3437ac
 msgid "``Quit`` – exit the setup program immediately."
-msgstr ""
+msgstr "''終了'' –すぐにセットアッププログラムを終了します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:123
 #: aea22c0686c64df8bc842a51fbd2d67e
@@ -336,6 +353,11 @@ msgid ""
 "``int()``, and the word ``none`` resets a nullable field (``host``, "
 "``client_port``, ``timeout``, ``is_custom_keys``)."
 msgstr ""
+"コンフィグエディタ内では、'' j ''/'' k ''がフィールド間を移動し、'' Esc ''または'' Back "
+"''がリストに戻り、フィールドインデックスまたは'' Enter ''が選択したフィールドを編集します。空の入力は現在の値を保持します。ブール値は'' "
+"true ''/'' false ''/'' 1 ''/'' 0 ''/'' y ''/'' n ''を受け入れ、整数は'' int "
+"()''で解析され、単語'' none ''はnull許容フィールド('' host ''、'' client_port ''、'' timeout "
+"''、'' is_custom_keys '')をリセットします。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:132
 #: 720b396d65c547fa845910a437a48236
@@ -366,9 +388,10 @@ msgstr "''-- type {0,1 }''"
 #: ../../source/Instance_Setup/Instance_Setup.rst:139
 #: f0793c0f15584b42bc66b82e672854b5
 msgid ""
-"0 = Server, 1 = Client. Required for a plain command-line launch; without"
-" it the launcher runs interactively."
+"0 = Server, 1 = Client. Required for a plain command-line launch; without it"
+" the launcher runs interactively."
 msgstr ""
+"0 =サーバー、1 =クライアント。通常のコマンドライン起動に必要です。コマンドラインなしでは、ランチャーはインタラクティブに実行されます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:143
 #: 984f0a2d64024749ae1cfb521b9866d2
@@ -378,7 +401,8 @@ msgstr "''-- setup_addr_port ''"
 #: ../../source/Instance_Setup/Instance_Setup.rst:143
 #: 58e47d807455460fb6e76d76b836bc30
 #, fuzzy
-msgid "Bind address and port (e.g. ``127.0.0.1:8000``). Required with ``--type``."
+msgid ""
+"Bind address and port (e.g. ``127.0.0.1:8000``). Required with ``--type``."
 msgstr "バインドアドレスとポート (``host:port``) を入力します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:147
@@ -391,7 +415,7 @@ msgstr "''-- connect_addr_port ''"
 msgid ""
 "Server address and port to connect to. Required for Client; rejected in "
 "Server mode."
-msgstr ""
+msgstr "接続先のサーバーアドレスとポート。クライアントに必要です。サーバーモードで拒否されました。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:150
 #: 7702fd6a612347919c73ec35852a4622
@@ -401,53 +425,53 @@ msgstr "''-- setup_num ''"
 #: ../../source/Instance_Setup/Instance_Setup.rst:150
 #: 139258adce2844a28d57733bb973ec1e
 msgid ""
-"Number of instances to launch. Only 1 is allowed; a larger value is "
-"accepted but ignored with a warning."
-msgstr ""
+"Number of instances to launch. Only 1 is allowed; a larger value is accepted"
+" but ignored with a warning."
+msgstr "起動するインスタンスの数。許可されているのは1だけです。より大きな値は受け入れられますが、警告付きで無視されます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:154
 #: 984f0a2d64024749ae1cfb521b9866d2
 msgid "``--web_server``"
-msgstr ""
+msgstr "Web サーバー"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:154
 #: 108977e4c89b442488c39cad5378e8e5
 msgid ""
 "Launch the ``transfer_web`` server tool (browser UI) instead of a TCP "
 "instance."
-msgstr ""
+msgstr "TCPインスタンスの代わりに'' transfer_web ''サーバーツール(ブラウザーUI)を起動します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:157
 #: 984f0a2d64024749ae1cfb521b9866d2
 msgid "``--web_client``"
-msgstr ""
+msgstr "Webクライアント"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:157
 #: 99410d7adbc749e2bee7ff014945d19b
 msgid ""
 "Launch the ``transfer_web`` client tool (browser UI) instead of a TCP "
 "instance."
-msgstr ""
+msgstr "TCPインスタンスの代わりに'' transfer_web ''クライアントツール(ブラウザUI)を起動します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:160
 #: 5de4064738ce4d529c9df9d1da98a556
 msgid "``--add PATH [PATH ...]``"
-msgstr ""
+msgstr "''-- add PATH [PATH... ]''"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:160
 #: be6adb7451d84f9f934044d2891cc4db
 msgid "Register extension protocol file(s), then exit."
-msgstr ""
+msgstr "拡張プロトコルファイルを登録し、終了します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:163
 #: 58e2f444f8394dd5a5c41b400675c736
 msgid "``--delete PATH [PATH ...]``"
-msgstr ""
+msgstr "''--パス[パス...]を削除''"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:163
 #: 638774f6e42549ad88f930e50a2c3cad
 msgid "Unregister extension protocol file(s), then exit."
-msgstr ""
+msgstr "拡張プロトコルファイルの登録を解除し、終了します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:167
 #: e9b3cc31339a4f318337e8c68cc61fd5
@@ -455,6 +479,7 @@ msgid ""
 "A command-line launch replaces ``setup.json`` with the single launching "
 "instance, so any other stored instance is dropped."
 msgstr ""
+"コマンドライン起動は、'' setup.json ''を単一の起動インスタンスに置き換えるため、他の保存されたインスタンスはドロップされます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:171
 #: 327a63e83b8f4df9af4a5e6a32e2ce6e
@@ -475,18 +500,19 @@ msgstr "**ポート ``9000`` にバインドされたクライアントを起動
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:186
 #: afc6f0adaafd49009ee96e36393060cd
-msgid "**Launch from an existing configuration** (if ``setup.json`` is present):"
+msgid ""
+"**Launch from an existing configuration** (if ``setup.json`` is present):"
 msgstr "**既存の設定から起動** (setup.json が存在する場合):"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:193
 #: f2fd3c19413a4e6abb4b18037a347443
 msgid "**Launch the web tool** instead of a TCP instance:"
-msgstr ""
+msgstr "TCPインスタンスの代わりに** Webツールを起動**します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:200
 #: 71feceacd5b94bd98ce1973f45c16df1
 msgid "**Register an extension protocol file**:"
-msgstr ""
+msgstr "**拡張プロトコルファイルを登録**:"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:207
 #: 00dff5a17f42419585f498c51f7fcc97
@@ -503,20 +529,30 @@ msgstr "スクリプトは同じディレクトリに「setup.json」という�
 #: ../../source/Instance_Setup/Instance_Setup.rst:233
 #: 82c31bcb59fc481eaa532d1a0696ed8d
 msgid ""
-"**Both lists may contain any number of objects.** Every entry is "
-"completed with the default value of each parameter that the entry does "
-"not set. The stored server entry therefore carries ``host``, ``port``, "
-"``max_clients``, ``port_add_step``, ``port_range_num``, "
-"``max_file_transfer_thread_num``, ``is_hand_alloc_port``, "
-"``is_input_command_in_console``, ``max_custom_workers``, "
-"``is_extend_command``, ``is_enable_encrypto``, ``is_custom_keys``, "
-"``max_mem_buff``, ``is_asynic_clients_io``, ``is_debug`` and "
-"``is_print_log``; the client entry carries ``host``, ``client_host``, "
+"**Both lists may contain any number of objects.** Every entry is completed "
+"with the default value of each parameter that the entry does not set. The "
+"stored server entry therefore carries ``host``, ``port``, ``max_clients``, "
+"``port_add_step``, ``port_range_num``, ``max_file_transfer_thread_num``, "
+"``is_hand_alloc_port``, ``is_input_command_in_console``, "
+"``max_custom_workers``, ``is_extend_command``, ``is_enable_encrypto``, "
+"``is_custom_keys``, ``max_mem_buff``, ``is_asynic_clients_io``, ``is_debug``"
+" and ``is_print_log``; the client entry carries ``host``, ``client_host``, "
 "``port``, ``client_port``, ``timeout``, ``port_add_step``, "
 "``max_thread_num``, ``is_input_command_in_console``, ``is_wait_server``, "
 "``max_custom_workers``, ``is_extend_command``, ``is_enable_encrypto``, "
 "``is_custom_keys``, ``max_mem_buff``, ``is_debug`` and ``is_print_log``."
 msgstr ""
+"**両方のリストには、任意の数のオブジェクトを含めることができます。**すべてのエントリは、エントリが設定されていない各パラメータのデフォルト値で完了します。したがって、格納されたサーバーエントリは、''"
+" host ''、'' port ''、'' max_clients ''、'' port_add_step ''、'' port_range_num "
+"''、'' max_file_transfer_thread_num ''、'' is_hand_alloc_port ''、'' "
+"is_input_command_in_console ''、'' max_custom_workers ''、'' is_extend_command"
+" ''、'' is_enable_encrypto ''、'' is_custom_keys ''、 '' max_mem_buff ''、'' "
+"is_asynic_clients_io ''、'' is_debug ''および'' is_print_log ''。クライアントエントリには、'' "
+"host ''、'' client_host ''、'' port ''、'' client_port ''、'' timeout ''、'' "
+"port_add_step ''、'' max_thread_num ''、'' is_input_command_in_console ''、'' "
+"is_wait_server ''、'' max_custom_workers ''、'' is_extend_command ''、'' "
+"is_enable_encrypto ''、'' is_custom_keys ''、'' max_mem_buff ''、'' is_debug "
+"''および'' is_print_log ''が含まれます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:251
 #: 8ffd3b4e6719464cbd48a2b20d5764f2
@@ -527,14 +563,18 @@ msgstr "カスタムパラメータ"
 #: 284b4f1899d94269a530dec33958d0c8
 msgid ""
 "You may edit ``setup.json`` by hand (or change the same fields in the "
-"instance editor) to give any parameter accepted by ``TCP_Server_Base`` or"
-" ``TCP_Client_Base`` a non-default value. Custom values of an existing "
-"entry survive later interactive runs, because the launcher loads the "
-"existing entries and merges the defaults underneath them. A **command-"
-"line** launch does not: it builds the new instance from ``host``/``port``"
-" (and, for a client, the connect address) only and rewrites "
-"``setup.json`` from that, so hand-written extra keys are lost."
+"instance editor) to give any parameter accepted by ``TCP_Server_Base`` or "
+"``TCP_Client_Base`` a non-default value. Custom values of an existing entry "
+"survive later interactive runs, because the launcher loads the existing "
+"entries and merges the defaults underneath them. A **command-line** launch "
+"does not: it builds the new instance from ``host``/``port`` (and, for a "
+"client, the connect address) only and rewrites ``setup.json`` from that, so "
+"hand-written extra keys are lost."
 msgstr ""
+"'' setup.json ''を手動で編集（またはインスタンスエディタで同じフィールドを変更）して、'' TCP_Server_Base "
+"''または'' TCP_Client_Base "
+"''で受け入れられたパラメータにデフォルト値以外の値を与えることができます。既存のエントリのカスタム値は、ランチャーが既存のエントリを読み込み、その下の既定値をマージするため、後で対話型実行されても存続します。**コマンドライン**の起動はそうではありません。新しいインスタンスを''ホスト''/''ポート''からビルドします（そして、クライアントの場合、"
+" connect address)のみを使用して'' setup.json ''を書き換えるため、手書きの余分なキーが失われます。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:264
 #: 3746b90215c84dc38c8ca2bb20d396f6
@@ -544,20 +584,20 @@ msgstr "拡張プロトコルと起動モード"
 #: ../../source/Instance_Setup/Instance_Setup.rst:266
 #: 4c6e6cc80e9c4ce3afe79fad55a2815a
 msgid ""
-"Two extension protocols ship with the launcher and are loaded "
-"automatically for every instance whose ``setup.json`` entry sets "
+"Two extension protocols ship with the launcher and are loaded automatically "
+"for every instance whose ``setup.json`` entry sets "
 "``is_extend_command=True``:"
 msgstr ""
-"ランチャーには 2 つの拡張プロトコルが同梱されており、``setup.json`` のエントリで "
-"``is_extend_command=True`` が設定されているすべてのインスタンスに自動的にロードされます:"
+"ランチャーには 2 つの拡張プロトコルが同梱されており、``setup.json`` のエントリで ``is_extend_command=True``"
+" が設定されているすべてのインスタンスに自動的にロードされます:"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:270
 #: 2d05270538524347899b403011286dcc
 #, fuzzy
 msgid ""
 "``command_control_extension_tcp.py`` – remote command execution with per-"
-"client log collection (``/command``, with the ``/command_done`` "
-"completion report)."
+"client log collection (``/command``, with the ``/command_done`` completion "
+"report)."
 msgstr ""
 "- ``command_control_extension_tcp.py`` – クライアントごとのログ収集を伴うリモートコマンド実行 "
 "(``/command``)。"
@@ -566,8 +606,8 @@ msgstr ""
 #: 1540ce3848be4d519034dd90e1d27fdd
 #, fuzzy
 msgid ""
-"``forward_extension_tcp.py`` – forwarding messages, files, multiple "
-"files, folders and multiple folders to any number of destination clients "
+"``forward_extension_tcp.py`` – forwarding messages, files, multiple files, "
+"folders and multiple folders to any number of destination clients "
 "(``/file_forward``, ``/multiple_file_forward``, ``/folder_forward``, "
 "``/multiple_folder_forward`` on the client, and the ``/forward_file`` / "
 "``/forward_folder`` relays on the server)."
@@ -580,11 +620,11 @@ msgstr ""
 #: 92e914da56f1402e85ef75819caf5b3f
 msgid ""
 "Plain-message forwarding is native to the TCP protocol (no extension "
-"needed): the client-only command ``/forward_send_msg`` relays messages to"
-" the listed destination clients through the server."
+"needed): the client-only command ``/forward_send_msg`` relays messages to "
+"the listed destination clients through the server."
 msgstr ""
-"プレーンメッセージ転送はTCPプロトコルにネイティブです（拡張子は必要ありません）。クライアント専用コマンド''/ "
-"forward_send_msg ''は、サーバーを介してリストされた宛先クライアントにメッセージをリレーします。"
+"プレーンメッセージ転送はTCPプロトコルにネイティブです（拡張子は必要ありません）。クライアント専用コマンド''/ forward_send_msg "
+"''は、サーバーを介してリストされた宛先クライアントにメッセージをリレーします。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:286
 #: 836d703843ed4940a42f3b7a0c36b78e
@@ -598,10 +638,14 @@ msgstr "``is_extend_command=False`` (デフォルト) の場合、生の TCP プ
 #: 3849c157ba79441e8406bcf9a4fc7695
 msgid ""
 "Independently of ``is_extend_command``, every launch also loads the "
-"extension protocol files registered in ``PyFlow/added_extensions.json`` "
-"(see ``--add`` / ``Add_Extension`` above) via "
+"extension protocol files registered in ``PyFlow/added_extensions.json`` (see"
+" ``--add`` / ``Add_Extension`` above) via "
 "``add_extension.load_registered_extensions``."
 msgstr ""
+"'' is_extend_command ''とは別に、すべての起動は'' "
+"add_extension.load_registered_extensions ''を介して'' "
+"PyFlow/added_extensions.json ''に登録された拡張プロトコルファイルも読み込みます（上記の''-- add ''/'' "
+"Add_Extension ''を参照）。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:295
 #: fef96f9c96c64f6690b54175c7e7830d
@@ -614,9 +658,9 @@ msgstr "``is_input_command_in_console`` フラグは、インスタンスの起�
 #: 407ae406135b42b3a6efd4ba5242b296
 #, fuzzy
 msgid ""
-"``True`` (default) – the instance's own start method "
-"(``start_TCP_Server()`` / ``start_TCP_client()``) runs and keeps its "
-"console input loop in the foreground."
+"``True`` (default) – the instance's own start method (``start_TCP_Server()``"
+" / ``start_TCP_client()``) runs and keeps its console input loop in the "
+"foreground."
 msgstr ""
 "'' True '' (デフォルト) – '' START_TCP_SERVER ()''/'' START_TCP_CLIENT "
 "()''が直接呼び出され、コンソール入力ループは独自のスレッドで実行されます。"
@@ -625,9 +669,9 @@ msgstr ""
 #: 1e10d27ee5c04d69ac9de20031a68b31
 #, fuzzy
 msgid ""
-"``False`` – the instance is started in a background thread and the "
-"launcher keeps the process alive until the instance stops (useful for "
-"headless deployments)."
+"``False`` – the instance is started in a background thread and the launcher "
+"keeps the process alive until the instance stops (useful for headless "
+"deployments)."
 msgstr ""
 "``start_TCP_client()`` が直接呼び出され、コンソール入力ループは独自のスレッドで実行されます。 - ``False`` – "
 "インスタンスはバックグラウンド スレッドで実行され、ランチャーはインスタンスが停止するまでプロセスを維持します (ヘッドレス展開に便利)。"
@@ -637,11 +681,11 @@ msgstr ""
 #, fuzzy
 msgid ""
 "Both extensions also expose injectable registration "
-"(``setup_server_commands(server)`` / ``setup_client_commands(client)``) "
-"and a convenience ``client_setup(instance=None, "
+"(``setup_server_commands(server)`` / ``setup_client_commands(client)``) and "
+"a convenience ``client_setup(instance=None, "
 "is_input_command_in_console=True)`` / ``server_setup(instance=None, "
-"is_input_command_in_console=True)`` that accepts an existing instance, so"
-" several extensions can be loaded onto the same instance from code."
+"is_input_command_in_console=True)`` that accepts an existing instance, so "
+"several extensions can be loaded onto the same instance from code."
 msgstr ""
 "両方の拡張機能は、注入可能な登録 (``setup_server_commands(instance)`` / "
 "``setup_client_commands(instance)``) と、既存のインスタンスを受け入れる便利な "
@@ -658,8 +702,7 @@ msgstr "内部操作"
 #: 4ca266ef495b4a61bce44251b65f8c91
 #, fuzzy
 msgid ""
-"Each instance is launched in a new terminal window (or background "
-"process)."
+"Each instance is launched in a new terminal window (or background process)."
 msgstr "各インスタンスは新しいターミナル ウィンドウで起動されます"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:318
@@ -674,8 +717,8 @@ msgstr "設定は一時的な JSON 経由で渡されます"
 #: e40392b9adef407ca3ade4bf2d252190
 #, fuzzy
 msgid ""
-"If an instance fails to start, the error is displayed and the window "
-"pauses for inspection."
+"If an instance fails to start, the error is displayed and the window pauses "
+"for inspection."
 msgstr "と表示され、検査のためにウィンドウが一時停止します。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:324
@@ -692,16 +735,16 @@ msgstr "Python 3.6+"
 #: ../../source/Instance_Setup/Instance_Setup.rst:327
 #: 9bc8a330f1384ade97e4ee55efa58e6b
 msgid ""
-"The ``PyFlow.network_api.connect_tcp`` module must be importable (the "
-"script imports ``TCP_Server_Base`` and ``TCP_Client_Base`` from there)."
+"The ``PyFlow.network_api.connect_tcp`` module must be importable (the script"
+" imports ``TCP_Server_Base`` and ``TCP_Client_Base`` from there)."
 msgstr ""
+"'' PyFlow.network_api.connect_tcp ''モジュールはインポート可能でなければなりません（スクリプトはそこから'' "
+"TCP_Server_Base ''と'' TCP_Client_Base ''をインポートします）。"
 
 #~ msgid ""
-#~ "- ``forward_extension_tcp.py`` – forwarding "
-#~ "messages, files, multiple files, folders "
-#~ "and multiple folders to any number "
-#~ "of destination clients (``/send_msg_forward``, "
-#~ "``/file_forward``, ``/multiple_file_forward``, "
+#~ "- ``forward_extension_tcp.py`` – forwarding messages, files, multiple files,"
+#~ " folders and multiple folders to any number of destination clients "
+#~ "(``/send_msg_forward``, ``/file_forward``, ``/multiple_file_forward``, "
 #~ "``/folder_forward``, ``/multiple_folder_forward``)."
 #~ msgstr ""
 #~ "- ``forward_extension_tcp.py`` – "
@@ -709,13 +752,10 @@ msgstr ""
 #~ "(``/send_msg_forward``、``/file_forward``、``/multiple_file_forward``、``/folder_forward``、``/multiple_folder_forward``)。"
 
 #~ msgid ""
-#~ "- ``True`` (default) – ``start_TCP_Server()``"
-#~ " / ``start_TCP_client()`` is called "
-#~ "directly and the console input loop "
-#~ "runs in its own thread."
+#~ "- ``True`` (default) – ``start_TCP_Server()`` / ``start_TCP_client()`` is "
+#~ "called directly and the console input loop runs in its own thread."
 #~ msgstr ""
-#~ "- ``True`` (デフォルト) – ``start_TCP_Server()``"
-#~ " / ``start_TCP_client()`` "
+#~ "- ``True`` (デフォルト) – ``start_TCP_Server()`` / ``start_TCP_client()`` "
 #~ "が直接呼び出され、コンソール入力ループは独自のスレッドで実行されます。"
 
 #~ msgid "``True`` (default) – ``start_TCP_Server()`` /"
@@ -731,42 +771,33 @@ msgstr ""
 #~ msgstr "インスタンスの起動に失敗した場合、次のエラーが発生します。"
 
 #~ msgid ""
-#~ "**Note:** This launcher supports only "
-#~ "**one server** and **one client** "
-#~ "instance at a time. Adding a new"
-#~ " server or client configuration will "
-#~ "completely overwrite any previous "
-#~ "configuration of the same type."
+#~ "**Note:** This launcher supports only **one server** and **one client** "
+#~ "instance at a time. Adding a new server or client configuration will "
+#~ "completely overwrite any previous configuration of the same type."
 #~ msgstr ""
-#~ "**注意:** このランチャーは、一度に **1 つのサーバー** と **1"
-#~ " つのクライアント** "
+#~ "**注意:** このランチャーは、一度に **1 つのサーバー** と **1 つのクライアント** "
 #~ "インスタンスのみをサポートします。新しいサーバーまたはクライアント構成を追加すると、同じタイプの以前の構成が完全に上書きされます。"
 
 #~ msgid "The script will ask you to:"
 #~ msgstr "スクリプトは次のことを要求します。"
 
 #~ msgid ""
-#~ "Decide whether to add another instance"
-#~ " (if you add the same type "
-#~ "again, the previous configuration of "
-#~ "that type is overwritten)."
+#~ "Decide whether to add another instance (if you add the same type again, the "
+#~ "previous configuration of that type is overwritten)."
 #~ msgstr "別のインスタンスを追加するかどうかを決定します (同じタイプを再度追加すると、そのタイプの以前の構成が上書きされます)。"
 
 #~ msgid ""
-#~ "If ``setup.json`` already exists, you "
-#~ "will be prompted to either reuse "
-#~ "the existing configuration (launch the "
-#~ "stored instances) or overwrite it with"
-#~ " new definitions."
+#~ "If ``setup.json`` already exists, you will be prompted to either reuse the "
+#~ "existing configuration (launch the stored instances) or overwrite it with "
+#~ "new definitions."
 #~ msgstr ""
-#~ "``setup.json`` がすでに存在する場合は、既存の設定を再利用する (保存されたインスタンスを起動する)"
-#~ " か、新しい定義で上書きするかを尋ねるメッセージが表示されます。"
+#~ "``setup.json`` がすでに存在する場合は、既存の設定を再利用する (保存されたインスタンスを起動する) "
+#~ "か、新しい定義で上書きするかを尋ねるメッセージが表示されます。"
 
 #~ msgid ""
-#~ "**Important:** When you choose to "
-#~ "overwrite, the old server/client configuration"
-#~ " is **completely replaced** by the "
-#~ "new one. There is no merging."
+#~ "**Important:** When you choose to overwrite, the old server/client "
+#~ "configuration is **completely replaced** by the new one. There is no "
+#~ "merging."
 #~ msgstr "**重要:** 上書きを選択すると、古いサーバー/クライアント構成は新しい構成に**完全に置き換えられます**。合併はありません。"
 
 #~ msgid "**Required.** 0 = Server, 1 = Client."
@@ -776,42 +807,29 @@ msgstr ""
 #~ msgstr "クライアントの場合は、接続するサーバーのアドレスとポートも入力します。"
 
 #~ msgid ""
-#~ "*Ignored.* The script always launches a"
-#~ " single instance. This flag is "
-#~ "accepted for compatibility but has no"
-#~ " effect."
+#~ "*Ignored.* The script always launches a single instance. This flag is "
+#~ "accepted for compatibility but has no effect."
 #~ msgstr "*無視。*スクリプトは常に単一のインスタンスを起動します。このフラグは互換性のために受け入れられますが、効果はありません。"
 
 #~ msgid ""
-#~ "**Each list contains at most one "
-#~ "object.** When a new server or "
-#~ "client configuration is added, the "
-#~ "entire list for that type is "
-#~ "replaced."
+#~ "**Each list contains at most one object.** When a new server or client "
+#~ "configuration is added, the entire list for that type is replaced."
 #~ msgstr ""
 #~ "**各リストには最大 1 つのオブジェクトが含まれます。** "
 #~ "新しいサーバーまたはクライアント構成が追加されると、そのタイプのリスト全体が置き換えられます。"
 
 #~ msgid ""
-#~ "You can manually edit ``setup.json`` to"
-#~ " include any parameter accepted by "
-#~ "``TCP_Server_Base`` or ``TCP_Client_Base`` (see "
-#~ "the source code for the full "
-#~ "list). These custom values are retained"
-#~ " when the launcher overwrites the "
-#~ "configuration (since the script reads "
-#~ "the existing config and updates it "
-#~ "with user‑provided values, but if you"
-#~ " choose to overwrite, the old config"
-#~ " is discarded and only the new "
-#~ "fields are saved – so if you "
-#~ "want custom parameters, you should add"
-#~ " them after the first launch or "
-#~ "edit the file manually)."
+#~ "You can manually edit ``setup.json`` to include any parameter accepted by "
+#~ "``TCP_Server_Base`` or ``TCP_Client_Base`` (see the source code for the full"
+#~ " list). These custom values are retained when the launcher overwrites the "
+#~ "configuration (since the script reads the existing config and updates it "
+#~ "with user‑provided values, but if you choose to overwrite, the old config is"
+#~ " discarded and only the new fields are saved – so if you want custom "
+#~ "parameters, you should add them after the first launch or edit the file "
+#~ "manually)."
 #~ msgstr ""
 #~ "「setup.json」を手動で編集して、「TCP_Server_Base」または「TCP_Client_Base」で受け入れられるパラメータを含めることができます"
-#~ " (完全なリストについてはソースコードを参照してください)。これらのカスタム値は、ランチャーが構成を上書きするときに保持されます"
-#~ " "
+#~ " (完全なリストについてはソースコードを参照してください)。これらのカスタム値は、ランチャーが構成を上書きするときに保持されます "
 #~ "(スクリプトは既存の構成を読み取り、ユーザーが指定した値で更新するためですが、上書きを選択すると、古い構成は破棄され、新しいフィールドのみが保存されます。そのため、カスタム"
 #~ " パラメーターが必要な場合は、最初の起動後に追加するか、ファイルを手動で編集する必要があります)。"
 
@@ -823,4 +841,3 @@ msgstr ""
 
 #~ msgid "and ``TCP_Client_Base`` from there)."
 #~ msgstr "そこから ``TCP_Client_Base`` となります)。"
-
