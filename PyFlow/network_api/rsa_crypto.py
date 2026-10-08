@@ -16,6 +16,9 @@ lifecycle required by the encrypted TCP channel:
 - RSA-OAEP encrypt/decrypt with the ``_VALID`` plaintext signature so a
   stale key (for example a rotated ``~/.ssh`` pair) is detected and the
   peers re-exchange their public keys.
+- ECDH key agreement (P-256/P-384/P-521) with HKDF-SHA256 session-key
+  derivation and AES-256-GCM ``seal``/``open`` (``EcdhKeyPair``,
+  ``EcdhPubKey``, ``hkdf_sha256``).
 
 The C library is compiled into the installed package by ``setup.py`` (a C
 compiler and OpenSSL development headers are needed at install time); a
@@ -47,6 +50,7 @@ except ImportError:  # pragma: no cover - POSIX
 
 VALID_SIGN = "_VALID"  # plaintext suffix; a decrypt missing it signals a stale/wrong key
 
+
 def _os_replace_retry(src, dst, max_wait=30.0):
     """os.replace that survives transient Windows sharing conflicts.
 
@@ -64,7 +68,6 @@ def _os_replace_retry(src, dst, max_wait=30.0):
             if time.time() >= deadline:
                 raise
             time.sleep(0.05)
-
 
 
 @contextlib.contextmanager
@@ -124,6 +127,7 @@ def _exclusive_file_lock(path):
         finally:
             os.close(fd)
 
+
 PF_OK = 0  # pf_err_t values, must match pf_crypto.h
 PF_ERR_INVALID_ARG = 1
 PF_ERR_NOMEM = 2
@@ -134,6 +138,11 @@ PF_ERR_BUFFER_TOO_SMALL = 6
 PF_ERR_AUTH_FAILED = 7
 PF_ERR_UNSUPPORTED = 8
 PF_ERR_DECRYPT = 9
+
+PF_ECDH_SEAL_OVERHEAD = 44  # salt(16) + iv(12) + GCM tag(16); must match pf_ecdh.h
+
+# HKDF-SHA256 output cap (RFC 5869: 255 * 32 bytes); mirrors PF_CRYPTO_HKDF_SHA256_MAX_OUT.
+_HKDF_SHA256_MAX_OUT = 8160
 
 DEFAULT_KEY_BITS = 2048  # generated keys (bits); pf_rsa_keygen accepts 2048..16384
 
@@ -150,6 +159,18 @@ BUILD_LIBRARY_PATHS = (
 
 class CryptoLibraryError(RuntimeError):
     """Raised when the shared libcrypto_api cannot be loaded."""
+
+
+class CryptoOperationError(RuntimeError):
+    """Raised when a ``pf_*`` call fails.
+
+    ``code`` is the ``pf_err_t`` value (one of the ``PF_ERR_*`` module
+    constants), or ``None`` when the failing call returned no code.
+    """
+
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code
 
 
 class RsaKey:
@@ -222,6 +243,50 @@ def _configure(lib):
     lib.pf_rsa_ciphertext_len.restype = c_size_t
     lib.pf_rsa_key_free.argtypes = [c_void_p]
     lib.pf_rsa_key_free.restype = None
+
+    lib.pf_ecdh_keypair_generate.argtypes = [ctypes.c_char_p, ctypes.POINTER(c_void_p)]
+    lib.pf_ecdh_keypair_generate.restype = ctypes.c_int
+    lib.pf_ecdh_pub_to_pem.argtypes = [c_void_p, ctypes.POINTER(ctypes.c_char_p)]
+    lib.pf_ecdh_pub_to_pem.restype = ctypes.c_int
+    lib.pf_ecdh_pub_from_pem.argtypes = [ctypes.c_char_p, ctypes.POINTER(c_void_p)]
+    lib.pf_ecdh_pub_from_pem.restype = ctypes.c_int
+    lib.pf_ecdh_seal.argtypes = [
+        c_void_p,
+        c_void_p,
+        c_uint8_p,
+        c_size_t,
+        c_uint8_p,
+        c_size_t,
+        ctypes.POINTER(c_void_p),
+        ctypes.POINTER(c_size_t),
+    ]
+    lib.pf_ecdh_seal.restype = ctypes.c_int
+    lib.pf_ecdh_open.argtypes = [
+        c_void_p,
+        c_void_p,
+        c_uint8_p,
+        c_size_t,
+        c_uint8_p,
+        c_size_t,
+        ctypes.POINTER(c_void_p),
+        ctypes.POINTER(c_size_t),
+    ]
+    lib.pf_ecdh_open.restype = ctypes.c_int
+    lib.pf_ecdh_keypair_free.argtypes = [c_void_p]
+    lib.pf_ecdh_keypair_free.restype = None
+    lib.pf_ecdh_pubkey_free.argtypes = [c_void_p]
+    lib.pf_ecdh_pubkey_free.restype = None
+    lib.pf_crypto_hkdf_sha256.argtypes = [
+        c_uint8_p,
+        c_size_t,
+        c_uint8_p,
+        c_size_t,
+        c_uint8_p,
+        c_size_t,
+        c_uint8_p,
+        c_size_t,
+    ]
+    lib.pf_crypto_hkdf_sha256.restype = ctypes.c_int
     return lib
 
 
@@ -271,6 +336,209 @@ def load_library():
     )
 
 
+_libc_free = None  # lazily-bound free(3); libcrypto_api returns malloc'd buffers
+
+
+def _free_buffer(ptr):
+    """Release a malloc'd buffer returned by libcrypto_api with ``free(3)``.
+
+    The library allocates PEM strings and seal/open results with
+    ``malloc``; the matching deallocator is the C runtime's ``free``
+    (the process image on POSIX, ``msvcrt`` on Windows).
+    """
+    global _libc_free
+    if not ptr:
+        return
+    if _libc_free is None:
+        libc = ctypes.CDLL("msvcrt" if os.name == "nt" else None)
+        libc.free.argtypes = [ctypes.c_void_p]
+        libc.free.restype = None
+        _libc_free = libc.free
+    _libc_free(ptr)
+
+
+def _uint8_buffer(data):
+    """A ``uint8_t*`` ctypes view of ``data`` (``None`` when empty)."""
+    if not data:
+        return None
+    return (ctypes.c_uint8 * len(data)).from_buffer_copy(data)
+
+
+class EcdhPubKey:
+    """Owns a ``pf_ecdh_pubkey_t*`` handle; frees it on GC."""
+
+    def __init__(self, handle, lib):
+        self._handle = handle
+        self._lib = lib
+
+    @classmethod
+    def from_pem(cls, pem):
+        """Parse a peer public key from a PEM string.
+
+        Raises ``CryptoOperationError`` with ``.code == PF_ERR_PARSE``
+        for malformed PEM or a point that is not on the curve (the C
+        library verifies the point).
+        """
+        lib = load_library()
+        if isinstance(pem, str):
+            pem = pem.encode("utf-8")
+        handle = ctypes.c_void_p()
+        err = lib.pf_ecdh_pub_from_pem(pem, ctypes.byref(handle))
+        if err != PF_OK or not handle.value:
+            raise CryptoOperationError(
+                "pf_ecdh_pub_from_pem failed: {}".format(err),
+                err if err != PF_OK else PF_ERR_PARSE,
+            )
+        return cls(handle.value, lib)
+
+    @property
+    def handle(self):
+        return self._handle
+
+    def __del__(self):
+        if self._handle:
+            try:
+                self._lib.pf_ecdh_pubkey_free(self._handle)
+            except Exception:
+                pass
+            self._handle = None
+
+
+class EcdhKeyPair:
+    """Owns a ``pf_ecdh_keypair_t*`` handle; frees it on GC.
+
+    ``curve`` is one of ``"P-256"``/``"P-384"``/``"P-521"`` (``None``
+    selects P-256). OpenSSL key objects are not safe for concurrent use,
+    so ``public_pem``/``seal``/``open`` are serialised by an internal
+    lock.
+    """
+
+    def __init__(self, curve=None):
+        self._lib = load_library()
+        if isinstance(curve, str):
+            curve = curve.encode("utf-8")
+        handle = ctypes.c_void_p()
+        err = self._lib.pf_ecdh_keypair_generate(curve, ctypes.byref(handle))
+        if err != PF_OK or not handle.value:
+            raise CryptoOperationError("pf_ecdh_keypair_generate failed: {}".format(err), err)
+        self._handle = handle.value
+        self._lock = threading.Lock()
+
+    @property
+    def handle(self):
+        return self._handle
+
+    def public_pem(self):
+        """Export our public key as a PEM SubjectPublicKeyInfo string."""
+        with self._lock:
+            pem = ctypes.c_char_p()
+            err = self._lib.pf_ecdh_pub_to_pem(self._handle, ctypes.byref(pem))
+            if err != PF_OK or pem.value is None:
+                raise CryptoOperationError(
+                    "pf_ecdh_pub_to_pem failed: {}".format(err),
+                    err if err != PF_OK else PF_ERR_PARSE,
+                )
+            try:
+                return pem.value.decode("ascii")
+            finally:
+                _free_buffer(ctypes.cast(pem, ctypes.c_void_p).value)
+
+    def seal(self, peer, plain, aad=None):
+        """Encrypt ``plain`` to ``peer`` with an ECDH-derived AES-256-GCM key.
+
+        Returns the wire blob, exactly ``PF_ECDH_SEAL_OVERHEAD`` bytes
+        longer than ``plain``. Raises ``CryptoOperationError``.
+        """
+        plain = bytes(plain)
+        aad = bytes(aad) if aad is not None else b""
+        with self._lock:
+            out_buf = ctypes.c_void_p()
+            out_len = ctypes.c_size_t(0)
+            err = self._lib.pf_ecdh_seal(
+                self._handle,
+                peer.handle,
+                _uint8_buffer(aad),
+                len(aad),
+                _uint8_buffer(plain),
+                len(plain),
+                ctypes.byref(out_buf),
+                ctypes.byref(out_len),
+            )
+            if err != PF_OK:
+                raise CryptoOperationError("pf_ecdh_seal failed: {}".format(err), err)
+            try:
+                return ctypes.string_at(out_buf.value, out_len.value)
+            finally:
+                _free_buffer(out_buf.value)
+
+    def open(self, peer, sealed, aad=None):
+        """Inverse of :meth:`seal`, using ``peer``'s public key.
+
+        Raises ``CryptoOperationError`` with ``.code ==
+        PF_ERR_AUTH_FAILED`` when the tag does not verify (tampered
+        ciphertext, wrong peer key or mismatched AAD).
+        """
+        sealed = bytes(sealed)
+        aad = bytes(aad) if aad is not None else b""
+        with self._lock:
+            out_buf = ctypes.c_void_p()
+            out_len = ctypes.c_size_t(0)
+            err = self._lib.pf_ecdh_open(
+                self._handle,
+                peer.handle,
+                _uint8_buffer(aad),
+                len(aad),
+                _uint8_buffer(sealed),
+                len(sealed),
+                ctypes.byref(out_buf),
+                ctypes.byref(out_len),
+            )
+            if err != PF_OK:
+                raise CryptoOperationError("pf_ecdh_open failed: {}".format(err), err)
+            try:
+                return ctypes.string_at(out_buf.value, out_len.value)
+            finally:
+                _free_buffer(out_buf.value)
+
+    def __del__(self):
+        if getattr(self, "_handle", None):
+            try:
+                self._lib.pf_ecdh_keypair_free(self._handle)
+            except Exception:
+                pass
+            self._handle = None
+
+
+def hkdf_sha256(ikm, salt, info, out_len):
+    """HKDF-SHA256 (RFC 5869 extract-and-expand) over ``ikm``.
+
+    ``salt`` and ``info`` may be empty. ``out_len`` must be in
+    ``1.._HKDF_SHA256_MAX_OUT``. Raises ``CryptoOperationError``.
+    """
+    ikm = bytes(ikm)
+    salt = bytes(salt) if salt else b""
+    info = bytes(info) if info else b""
+    if out_len <= 0 or out_len > _HKDF_SHA256_MAX_OUT:
+        raise CryptoOperationError(
+            "invalid HKDF output length {}".format(out_len), PF_ERR_INVALID_ARG
+        )
+    lib = load_library()
+    out = (ctypes.c_uint8 * out_len)()
+    err = lib.pf_crypto_hkdf_sha256(
+        _uint8_buffer(ikm),
+        len(ikm),
+        _uint8_buffer(salt),
+        len(salt),
+        _uint8_buffer(info),
+        len(info),
+        out,
+        out_len,
+    )
+    if err != PF_OK:
+        raise CryptoOperationError("pf_crypto_hkdf_sha256 failed: {}".format(err), err)
+    return bytes(out[:out_len])
+
+
 def get_local_mac():
     """Return a stable 48-bit machine identifier as colon-separated hex.
 
@@ -313,15 +581,18 @@ class RsaCrypto:
         self.mac = get_local_mac()
         self.registry_path = os.path.join(self.pub_key_dir, "pub_key.json")
         self._registry_lock = threading.Lock()
-        self._key_lock = threading.Lock()  # serialises _priv_key use/reload so a handle is never freed mid-decrypt (no-GIL safe)
-        self._peer_pub_cache_lock = threading.Lock()  # peer-key cache; the encrypt loop holds it so a cached handle is never freed mid-encrypt
+        self._key_lock = (
+            threading.Lock()
+        )  # serialises _priv_key use/reload so a handle is never freed mid-decrypt (no-GIL safe)
+        self._peer_pub_cache_lock = (
+            threading.Lock()
+        )  # peer-key cache; the encrypt loop holds it so a cached handle is never freed mid-encrypt
         for directory in (self.pvt_key_dir, self.pub_key_dir):
             os.makedirs(directory, exist_ok=True)
         self.priv_path = None
         self.pub_path = None
         self._priv_key = None
         self._peer_pub_cache = {}  # path -> (mtime, RsaKey)
-
 
     def ensure_keys(self, force_reload=False):
         """Load the RSA keypair (see module docstring) and cache handles.
@@ -333,9 +604,7 @@ class RsaCrypto:
             if not force_reload and self._priv_key is not None and self.priv_path is not None:
                 return
             lib = load_library()
-            if self.custom_keys is not None and self._validate_custom_keys(
-                lib, self.custom_keys
-            ):
+            if self.custom_keys is not None and self._validate_custom_keys(lib, self.custom_keys):
                 self.priv_path = self.custom_keys[1]
                 self.pub_path = self.custom_keys[0]
                 self._priv_key = self._read_priv_handle(lib, self.priv_path)
@@ -441,38 +710,51 @@ class RsaCrypto:
             return False
         try:
             pub_handle = ctypes.c_void_p()
-            if lib.pf_rsa_read_pub(
-                pub_path.encode("utf-8"), ctypes.byref(pub_handle)
-            ) != PF_OK or not pub_handle.value:
+            if (
+                lib.pf_rsa_read_pub(pub_path.encode("utf-8"), ctypes.byref(pub_handle)) != PF_OK
+                or not pub_handle.value
+            ):
                 return False
             pub_key = RsaKey(pub_handle.value, lib)
             priv_handle = ctypes.c_void_p()
-            if lib.pf_rsa_read_priv(
-                pvt_path.encode("utf-8"), None, ctypes.byref(priv_handle)
-            ) != PF_OK or not priv_handle.value:
+            if (
+                lib.pf_rsa_read_priv(pvt_path.encode("utf-8"), None, ctypes.byref(priv_handle))
+                != PF_OK
+                or not priv_handle.value
+            ):
                 return False
             priv_key = RsaKey(priv_handle.value, lib)
             probe = b"custom-key-pair-check"  # pairing probe: pub-encrypt -> priv-decrypt must round-trip
             in_buf = (ctypes.c_uint8 * len(probe)).from_buffer_copy(probe)
             out_len = ctypes.c_size_t(0)
-            if lib.pf_rsa_encrypt(
-                pub_key.handle, in_buf, len(probe), None, ctypes.byref(out_len)
-            ) != PF_OK:
+            if (
+                lib.pf_rsa_encrypt(pub_key.handle, in_buf, len(probe), None, ctypes.byref(out_len))
+                != PF_OK
+            ):
                 return False
             out_buf = (ctypes.c_uint8 * out_len.value)()
-            if lib.pf_rsa_encrypt(
-                pub_key.handle, in_buf, len(probe), out_buf, ctypes.byref(out_len)
-            ) != PF_OK:
+            if (
+                lib.pf_rsa_encrypt(
+                    pub_key.handle, in_buf, len(probe), out_buf, ctypes.byref(out_len)
+                )
+                != PF_OK
+            ):
                 return False
             dec_len = ctypes.c_size_t(0)
-            if lib.pf_rsa_decrypt(
-                priv_key.handle, out_buf, out_len.value, None, ctypes.byref(dec_len)
-            ) != PF_OK:
+            if (
+                lib.pf_rsa_decrypt(
+                    priv_key.handle, out_buf, out_len.value, None, ctypes.byref(dec_len)
+                )
+                != PF_OK
+            ):
                 return False
             dec_buf = (ctypes.c_uint8 * dec_len.value)()
-            if lib.pf_rsa_decrypt(
-                priv_key.handle, out_buf, out_len.value, dec_buf, ctypes.byref(dec_len)
-            ) != PF_OK:
+            if (
+                lib.pf_rsa_decrypt(
+                    priv_key.handle, out_buf, out_len.value, dec_buf, ctypes.byref(dec_len)
+                )
+                != PF_OK
+            ):
                 return False
             return bytes(dec_buf[: dec_len.value]) == probe
         except Exception:
@@ -488,7 +770,9 @@ class RsaCrypto:
         err = lib.pf_rsa_write_priv(key.handle, tmp_priv.encode("utf-8"), None)
         if err != PF_OK:
             raise RuntimeError("pf_rsa_write_priv failed: {}".format(err))
-        _os_replace_retry(tmp_priv, priv_path)  # atomic: a concurrent reader never sees a half-written key
+        _os_replace_retry(
+            tmp_priv, priv_path
+        )  # atomic: a concurrent reader never sees a half-written key
         try:
             os.chmod(priv_path, 0o600)  # private key: owner-only
         except OSError:
@@ -499,7 +783,6 @@ class RsaCrypto:
             raise RuntimeError("pf_rsa_write_pub failed: {}".format(err))
         _os_replace_retry(tmp_pub, pub_path)
 
-
     def peer_pem_path(self, peer_role, peer_ip, peer_port):
         """Path of the exchanged public key file for ``peer_role`` at
         ``(peer_ip, peer_port)``.
@@ -508,9 +791,7 @@ class RsaCrypto:
         literals are safe on every platform, including Windows).
         """
         safe_ip = peer_ip.replace(":", "_")
-        return os.path.join(
-            self.pub_key_dir, "{}_{}_{}.pem".format(peer_role, safe_ip, peer_port)
-        )
+        return os.path.join(self.pub_key_dir, "{}_{}_{}.pem".format(peer_role, safe_ip, peer_port))
 
     def _load_registry(self):
         """Read ``pub_key.json``: ``{(ip, port)} -> [sha256, pem]``."""
@@ -627,7 +908,6 @@ class RsaCrypto:
             raise
         with self._peer_pub_cache_lock:
             self._peer_pub_cache.pop(dest, None)
-
 
     def _load_peer_pub(self, path):
         """Return the cached RsaKey for ``path``, (re)parsing on change.

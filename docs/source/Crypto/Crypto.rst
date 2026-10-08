@@ -58,12 +58,12 @@ the library.
 
 The library is built as a shared object (``libcrypto_api.so``) so it can
 be loaded from Python: ``PyFlow/network_api/rsa_crypto.py`` is a ctypes
-binding used by the TCP layer to encrypt messages with RSA-OAEP (see the
+binding used by the TCP layer. It exposes the RSA-OAEP message encryption
+and the ECDH/AES-256-GCM sealing (``EcdhKeyPair`` / ``EcdhPubKey`` /
+``hkdf_sha256``) that the framed TCP channel uses for its bulk and file
+transfer payloads (see the
 ``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The
 binding also implements the TCP layer's anti-MITM identity check (TOFU):
-peer public keys are exchanged on every connection, recorded under the
-peer's ``(ip, port)`` in ``network_api/.Flow/pub_key/pub_key.json`` with
-the SHA-256 of the received PEM text, and a changed key for a recorded
 endpoint rejects the connection; a key already known under another
 endpoint is accepted and re-registered under the new one. The encryption
 state machine is bounded: three consecutive decode failures trip a

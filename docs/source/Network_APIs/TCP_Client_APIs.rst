@@ -392,10 +392,13 @@ answer; a mode mismatch closes the connection. It then sends a plaintext
 ``/crypto_key_exchange <client-nonce>``
 greeting; the server replies with
 ``/crypto_key_exchange_ack <server-nonce> <need-client-pub> <force>``. Both
-sides then push their public key files over the file-transfer mechanism
 (plaintext) and TOFU-check the received key. Both sides switch to
 encrypted mode only after ``/crypto_ready`` has been received from the
-peer (so plaintext and ciphertext never interleave on a connection). On
+peer (so plaintext and framed traffic never interleave on a connection),
+then each announces frame readiness with a plaintext
+``/crypto_frames_start`` and publishes its ephemeral session ECDH public
+key as a ``/crypto_ecdh_pub`` line inside an RSA frame; frames are sent
+only once both announcements have been seen. On
 later connections the keys are re-exchanged and TOFU-checked again; the
 exchange is never skipped, only the identity check short-circuits for
 known keys. Public-key pushes are only accepted while a handshake is in
@@ -405,13 +408,34 @@ registry.
 Replay protection
 ^^^^^^^^^^^^^^^^^
 
-The handshake exchanges a random session nonce, and every encrypted line
-on the wire carries it plus a per-connection sequence number:
-``<sender-nonce>|<seq>|<ciphertext>``. The receiver drops a line whose
-nonce does not match the current session (ciphertext replayed from an
+The handshake exchanges a random session nonce, and every encrypted message
+travels in a frame — ``magic | type (1) | body length (4) | body`` with
+``<sender-nonce>|<seq>|`` at the start of the body. Frame type 1 carries a
+small text payload as chunked RSA-OAEP ciphertext (the historic wire
+encoding); type 2 carries everything else, including all binary and file
+data, as a ``pf_ecdh_seal`` blob (AES-256-GCM keyed by the session's
+ephemeral ECDH keypair, with ``<nonce>|<seq>`` bound as AAD). The receiver
+reads the type from the frame instead of inferring the algorithm from the
+payload length, and sequence numbers are per socket and cover both frame
+types. The receiver drops a frame whose
+nonce does not match the current session (replayed from an
 older connection) or whose sequence number is not the expected one
-(ciphertext replayed within the session / out of order); both counters
+(replayed within the session / out of order); both counters
 reset when the socket flips to encrypted mode after a (re-)exchange.
+
+Encrypted transfer connections
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+File and folder transfers, forwarded items and the forward relay run on
+temporary TCP connections. The listening side stamps each leg with its mode
+and a fresh nonce in the port advertisement (``/server_file_transfer_port``,
+``/forward_upload``); with ``is_enable_encrypto`` enabled both sides then
+frame that connection exactly like the control channel, with the same
+session key material, so file contents, names and sizes no longer cross the
+wire in the clear. The public-key pushes themselves stay plaintext by
+construction: they carry the keys the session is built on. A leg whose
+stamp promises encryption is aborted when the session key material is not
+ready rather than silently downgraded.
 
 Decode verification and key rotation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -430,7 +454,8 @@ new key.
 Re-exchanges are circuit-broken: after ``MAX_DECODE_FAILURES`` (3)
 consecutive decode failures the connection is closed instead of
 re-exchanging, so a garbage-injection or persistent-mismatch storm cannot
-spin the loop forever. A successful decryption resets the counter.
+spin the loop forever. Genuine peer traffic (messages and commands other
+than the protocol's own handshake/coordination lines) resets the counter.
 
 .. _tcp-client-command-api:
 

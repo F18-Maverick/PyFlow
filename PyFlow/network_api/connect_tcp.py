@@ -6,8 +6,12 @@
 - one message per line, terminated by a newline; a line that starts with ``/``
   is a command and goes to the command handlers, anything else is a plain
   message reported to the registered message listeners;
-- an RSA-encrypted channel is negotiated right after connect unless
-  ``is_enable_encrypto`` is False;
+- unless ``is_enable_encrypto`` is False, an encrypted channel is negotiated
+  right after connect: the handshake lines and the public-key pushes stay
+  plaintext, then every later message travels as a frame (RSA-OAEP for small
+  text payloads, an ECDH-keyed AES-GCM seal for everything else, including
+  file data), and each file/folder transfer sub-connection is framed the same
+  way once both sides hold the session keys (see `_SecureChannel`);
 - file/folder transfer, message forwarding and port allocation are layered on
   the same socket and share its command namespace.
 
@@ -114,6 +118,7 @@ def _is_closed_socket_error(exc):
         10038,  # WSAENOTSOCK (Windows)
     )
 
+
 MAX_DECODE_FAILURES = 3  # circuit breaker: close after N consecutive decode failures (re-exchange storm / garbage injection)
 SEND_WAIT_TIMEOUT = 30.0  # seconds a non-blocking client write waits for buffer room
 
@@ -171,14 +176,10 @@ def _parse_destination_path(command_part):
         if len(command_part) == 3:
             return command_part[-1]  # creation + destination, no client id
         if len(command_part) >= 4 and command_part[-2] != command_part[2]:
-            if not (
-                command_part[-2].startswith("(") and command_part[-2].endswith(")")
-            ):
+            if not (command_part[-2].startswith("(") and command_part[-2].endswith(")")):
                 return command_part[-2]
     elif len(command_part) >= 4:
-        if not (
-            command_part[-2].startswith("(") and command_part[-2].endswith(")")
-        ):
+        if not (command_part[-2].startswith("(") and command_part[-2].endswith(")")):
             return command_part[-2]
     return None
 
@@ -289,6 +290,548 @@ def parse_forward_originator(command, own_address=None):
                     return None  # direct send: the tuple is the receiver itself
                 return originator
     return None
+
+
+# ---- encrypted channel framing ---------------------------------------------
+#
+# On an encrypted socket every message travels as a frame:
+#
+#     magic "\\x00PF" | type (1) | body length (4, big endian) | body
+#
+# The body starts with the sender's session nonce and a per-socket sequence
+# number (``<nonce>|<seq>|``) covering both frame types, so replay and
+# cross-type reordering are detected. Two payload algorithms are used:
+#
+#   type 1 (RSA):   small text payloads up to the RSA-OAEP block limit; the
+#                   body carries the chunked base64 ciphertext (same wire
+#                   encoding the line-based control channel used before).
+#   type 2 (ECDH):  everything else, including all binary payloads; the body
+#                   carries a ``pf_ecdh_seal`` blob (salt|iv|ciphertext|tag)
+#                   keyed by the session's ephemeral ECDH keypair, with
+#                   ``<nonce>|<seq>`` bound as AAD.
+#
+# The receiver reads the frame type instead of inferring the algorithm from
+# the payload length: a length can be ambiguous (an ECDH frame for a specific
+# plaintext length has the same size as an RSA block) and inferring an
+# algorithm from attacker-controlled bytes is a classic confusion oracle.
+#
+# Plaintext protocol lines (handshake, re-exchange and transfer coordination)
+# may still arrive on an encrypted socket: they are passed through when they
+# belong to the known protocol set and dropped otherwise, so an encrypted
+# channel never dispatches injected plaintext commands.
+
+FRAME_MAGIC = b"\x00PF"  # UTF-8 text lines never start with NUL, so a framed stream is unambiguous
+FRAME_TYPE_RSA = 1
+FRAME_TYPE_ECDH = 2
+FRAME_HEADER_LEN = 8  # magic(3) + type(1) + length(4)
+MAX_FRAME_PLAINTEXT = 1 << 20  # payload bytes per frame
+MAX_FRAME_BODY = MAX_FRAME_PLAINTEXT + 8192  # sealed/rsa overhead slack
+CRYPTO_FRAMES_START = "/crypto_frames_start"  # plaintext line: peer may send frames now
+CRYPTO_ECDH_PUB = "/crypto_ecdh_pub"  # RSA-framed line carrying our ECDH public key
+CRYPTO_FRAMES_TIMEOUT = 30.0  # seconds a framed send waits for the peer's frames-start
+CRYPTO_PEER_KEY_TIMEOUT = 30.0  # seconds an ECDH frame waits for the peer's ECDH key
+TRANSFER_KEY_TIMEOUT = 10.0  # seconds a transfer leg waits for its session key material
+
+# Text payloads up to this size travel as a single RSA-OAEP block frame;
+# 190 is pf_rsa_max_plaintext_len for the default 2048-bit key and the floor
+# over the accepted key sizes (2048..16384), so the split is conservative.
+RSA_SMALL_TEXT_LIMIT = 190
+
+# Plaintext lines still tolerated on an encrypted socket: the crypto
+# handshake/re-exchange lines, the frames-start announcement and the transfer
+# port coordination messages. Anything else plaintext is dropped, so an
+# injected line can neither run commands nor substitute key material
+# (``/crypto_ecdh_pub`` is only ever accepted inside an RSA frame).
+_PLAINTEXT_LINE_PREFIXES = (
+    "/crypto_key_exchange",  # covers the ack too
+    "/crypto_ready",
+    "/crypto_pub_key",  # covers /crypto_pub_key_request
+    "/crypto_reject",
+    "/crypto_mode",
+    CRYPTO_FRAMES_START,
+    "/server_file_transfer_port",
+    "/forward_upload",
+)
+# A plaintext handshake line means the peer reset its secure state
+# (re-exchange): drop framing so the dance runs in raw mode again.
+_PLAINTEXT_RESET_PREFIXES = _PLAINTEXT_LINE_PREFIXES[:-3]
+
+
+class _FrameError(Exception):
+    """A secure channel saw a malformed or undecryptable frame."""
+
+
+def _pem_body_of(pem):
+    """Return the one-line base64 body of a PEM text (armor lines dropped)."""
+    body = "".join(
+        line.strip() for line in pem.splitlines() if line and not line.startswith("-----")
+    )
+    return body
+
+
+def _pem_text_of(body):
+    """Rebuild a standard PEM text from its one-line base64 body."""
+    lines = [body[i : i + 64] for i in range(0, len(body), 64)]
+    return "-----BEGIN PUBLIC KEY-----\n" + "\n".join(lines) + "\n-----END PUBLIC KEY-----\n"
+
+
+class _CryptoUnavailable(Exception):
+    """A transfer leg was stamped encrypted but the session key is not ready."""
+
+
+def _stamp_nonce(stamp):
+    """Parse a transfer mode stamp ("plain" / "enc:<nonce>") -> nonce or None."""
+    if stamp and stamp.startswith("enc:"):
+        nonce = stamp[4:].strip()
+        return nonce or None
+    return None
+
+
+def _crypto_is_protocol_line(message):
+    """True for the protocol's own handshake/coordination lines.
+
+    These must not reset the decode-failure streak: a re-exchange (and the
+    transfer-port coordination it needs) is not genuine peer traffic."""
+    if message.startswith("/crypto"):
+        return True
+    return message.startswith(("/server_file_transfer_port", "/forward_upload"))
+
+
+class _CryptoSession:
+    """Per control-session crypto context shared by that session's sockets.
+
+    Holds the RSA identity and an ephemeral ECDH keypair; the public ECDH key
+    travels as a small RSA-framed ``/crypto_ecdh_pub`` line after the channel
+    flips, so the bulk (ECDH-sealed) key material is authenticated by the
+    RSA/TOFU handshake that already authenticated the session.
+    """
+
+    def __init__(self, rsa_crypto_obj, role, log=None, debug=None):
+        self.rsa = rsa_crypto_obj
+        self.role = role
+        self.log = log
+        self.debug = debug
+        self.lock = threading.RLock()
+        self.ecdh = None
+        self.peer_ecdh = None
+        self.peer_ecdh_b64 = None
+        self.peer_ecdh_event = threading.Event()
+
+    def ensure_ecdh(self):
+        with self.lock:
+            if self.ecdh is None:
+                self.ecdh = rsa_crypto.EcdhKeyPair()
+            return self.ecdh
+
+    def reset_ecdh(self):
+        """Session was re-keyed: drop the old ECDH material."""
+        with self.lock:
+            self.ecdh = None
+            self.peer_ecdh = None
+            self.peer_ecdh_b64 = None
+            self.peer_ecdh_event.clear()
+
+    def set_peer_ecdh_b64(self, body):
+        try:
+            peer = rsa_crypto.EcdhPubKey.from_pem(_pem_text_of(body.strip()))
+        except Exception:
+            return False
+        with self.lock:
+            self.peer_ecdh = peer
+            self.peer_ecdh_b64 = body.strip()
+            self.peer_ecdh_event.set()
+        return True
+
+    def peer_ecdh_pub(self, timeout=0):
+        """The peer's ECDH public key, or None (waits up to ``timeout``)."""
+        if not self.peer_ecdh_event.wait(timeout=max(0.0, timeout)):
+            return None
+        with self.lock:
+            return self.peer_ecdh
+
+    def publish_pub(self, channel):
+        """Send our session ECDH public key once frames are allowed both ways."""
+        if channel is None or not channel.claim_ecdh_pub_send():
+            return
+        try:
+            body = _pem_body_of(self.ensure_ecdh().public_pem())
+            channel.send(f"{CRYPTO_ECDH_PUB} {body}\n", force_rsa=True)
+        except Exception:
+            if self.log:
+                self.log("crypto: publishing the session ECDH key failed")
+
+    def transfer_stamp(self, channel, force_plain=False):
+        """Mode+nonce announced to a transfer connector ("plain"/"enc:<nonce>").
+
+        Encrypted only when this side's channel flipped and both sides hold
+        the session ECDH material; key pushes force plaintext because they
+        carry the public keys themselves.
+        """
+        if force_plain or self.rsa is None or channel is None or not channel.secure:
+            return "plain"
+        self.ensure_ecdh()
+        if self.peer_ecdh_pub(TRANSFER_KEY_TIMEOUT) is None:
+            if self.log:
+                self.log("crypto: peer ECDH key missing, transfer stays plaintext")
+            return "plain"
+        return "enc:" + secrets.token_hex(16)
+
+    def attach_transfer(self, sock, control_channel, stamp):
+        """Channel for a stamped transfer leg, or None when it stays plaintext.
+
+        Raises `_CryptoUnavailable` when the stamp says encrypted but the
+        session key material is not ready: the caller aborts the transfer
+        instead of silently downgrading it.
+        """
+        nonce = _stamp_nonce(stamp)
+        if nonce is None:
+            return None
+        self.ensure_ecdh()
+        peer_pem_path = control_channel.peer_pem_path if control_channel is not None else None
+        if peer_pem_path is None or self.peer_ecdh_pub(TRANSFER_KEY_TIMEOUT) is None:
+            raise _CryptoUnavailable("transfer stamped encrypted but the session key is not ready")
+        log = self.log or (lambda *parts: None)
+        debug = self.debug or (lambda *parts: None)
+        channel = _SecureChannel(sock, self, log, debug)
+        channel.enable(nonce, nonce, peer_pem_path)
+        channel.note_peer_frames_ready()  # the stamp fixes the mode: no frames-start dance on transfer legs
+        return channel
+
+
+
+def _connector_transfer_crypto(session, control_channel, stamp):
+    """(session, peer_pem_path, nonce) for a connector-side transfer leg.
+
+    Returns None for a plaintext leg; raises `_CryptoUnavailable` when the
+    stamp promises encryption but the session key material is missing, so the
+    caller aborts the transfer instead of downgrading it silently.
+    """
+    nonce = _stamp_nonce(stamp)
+    if nonce is None:
+        return None
+    if session is None:
+        raise _CryptoUnavailable("no crypto session for the transfer leg")
+    session.ensure_ecdh()
+    peer_pem_path = control_channel.peer_pem_path if control_channel is not None else None
+    if peer_pem_path is None or session.peer_ecdh_pub(TRANSFER_KEY_TIMEOUT) is None:
+        raise _CryptoUnavailable("transfer key material is not ready")
+    return session, peer_pem_path, nonce
+
+
+def _enable_connector_channel(sock, crypto):
+    """Framing channel for a freshly connected transfer socket, or None."""
+    if crypto is None:
+        return None
+    session, peer_pem_path, nonce = crypto
+    channel = _SecureChannel(
+        sock,
+        session,
+        session.log or (lambda *parts: None),
+        session.debug or (lambda *parts: None),
+    )
+    channel.enable(nonce, nonce, peer_pem_path)
+    channel.note_peer_frames_ready()  # the stamp fixes the mode: no frames-start dance
+    return channel
+
+
+class _SecureChannel:
+    """Framed encryption for one socket.
+
+    Send: ``send`` chunks a payload into frames (RSA for a small text payload,
+    ECDH-sealed otherwise). Receive: ``feed`` parses socket bytes into the
+    plaintext buffer, ``take`` serves the byte stream the callers read.
+
+    Lifecycle: raw -> ``enable`` -> [``disable`` -> raw]. ``peer_frames_ready``
+    must be set before frames may be sent (the peer announces it with a
+    plaintext ``/crypto_frames_start`` after it flipped), so a frame can never
+    reach a peer whose reader still expects raw bytes.
+    """
+
+    def __init__(
+        self,
+        sock,
+        session,
+        log,
+        debug,
+        send_lock=None,
+        sendall=None,
+        on_decode_failure=None,
+        on_disable=None,
+    ):
+        self.socket = sock
+        self.session = session
+        self._log = log
+        self._debug = debug
+        self._on_decode_failure = on_decode_failure
+        self._on_disable = on_disable  # keep the owner's secure-socket set truthful
+        self._lock = threading.RLock()  # buffers + sequence counters
+        self._send_lock = (
+            send_lock if send_lock is not None else threading.Lock()
+        )  # shared with the plaintext send path: frame and raw writes never interleave
+        self._sendall = sendall if sendall is not None else sock.sendall
+        self.secure = False
+        self.peer_frames_ready = False
+        self.frames_allowed = threading.Event()
+        self.ecdh_pub_sent = False
+        self.local_nonce = None
+        self.peer_nonce = None
+        self.peer_pem_path = None
+        self.send_seq = 0
+        self.recv_seq = 0
+        self._raw = bytearray()  # socket bytes not yet parsed
+        self._plain = bytearray()  # decrypted bytes ready for the reader
+
+    def enable(self, local_nonce, peer_nonce, peer_pem_path=None):
+        """Start speaking frames (flip completed on both sides)."""
+        with self._lock:
+            self.local_nonce = local_nonce
+            self.peer_nonce = peer_nonce
+            self.peer_pem_path = peer_pem_path
+            self.send_seq = 0
+            self.recv_seq = 0
+            self.ecdh_pub_sent = False  # a fresh session publishes its own key
+            self.secure = True
+            if self.peer_frames_ready:
+                self.frames_allowed.set()
+
+    def disable(self):
+        """Drop back to raw mode (decode failure or peer re-exchange).
+
+        The next handshake must announce frame readiness again, so the
+        peer-ready flag is cleared with the mode, and the owner's secure-socket
+        set is updated through ``on_disable``."""
+        with self._lock:
+            was_secure = self.secure
+            self.secure = False
+            self.peer_frames_ready = False
+            self.ecdh_pub_sent = False
+            self.frames_allowed.clear()
+        if was_secure and self._on_disable is not None:
+            try:
+                self._on_disable()
+            except Exception:
+                pass
+
+    def note_peer_frames_ready(self):
+        """The peer announced it may receive frames."""
+        with self._lock:
+            self.peer_frames_ready = True
+            if self.secure:
+                self.frames_allowed.set()
+
+    def claim_ecdh_pub_send(self):
+        """True exactly once per session, when the peer can receive frames."""
+        with self._lock:
+            if self.ecdh_pub_sent or not self.frames_allowed.is_set():
+                return False
+            self.ecdh_pub_sent = True
+            return True
+
+    # -- send path -----------------------------------------------------------
+
+    def send(self, payload, force_rsa=False):
+        """Frame and send one payload (str or bytes) on this socket.
+
+        ``force_rsa`` is used for the ECDH public-key line, which must travel
+        in an RSA frame even if it is longer than the single-block limit (an
+        ECDH frame would be circular: the peer key it needs is this payload).
+
+        Raises on failure; the caller logs and reports the send failure.
+        """
+        if isinstance(payload, str):
+            data = payload.encode("utf-8")
+            small_text = True
+        else:
+            data = bytes(payload)
+            small_text = False
+        use_rsa = force_rsa or (small_text and len(data) <= RSA_SMALL_TEXT_LIMIT)
+        peer = self.session.peer_ecdh_pub(0 if use_rsa else CRYPTO_PEER_KEY_TIMEOUT)
+        if not use_rsa and peer is None:
+            raise RuntimeError("encrypted channel has no peer ECDH key")
+        if not self.frames_allowed.wait(timeout=CRYPTO_FRAMES_TIMEOUT):
+            raise RuntimeError("encrypted channel not ready (peer never allowed frames)")
+        if use_rsa:
+            with self._send_lock:
+                self._sendall(self._rsa_frame(data))
+            return
+        for start in range(0, max(len(data), 1), MAX_FRAME_PLAINTEXT):
+            chunk = data[start : start + MAX_FRAME_PLAINTEXT]
+            with self._send_lock:
+                self._sendall(self._ecdh_frame(chunk, peer))
+
+    def _rsa_frame(self, text_bytes):
+        with self._lock:
+            nonce = self.local_nonce or ""
+            seq = self.send_seq
+            self.send_seq = seq + 1
+        body = "{}|{}|{}".format(
+            nonce,
+            seq,
+            self.session.rsa.encrypt_for_peer(self.peer_pem_path, text_bytes.decode("utf-8")),
+        ).encode("ascii")
+        return self._wrap(FRAME_TYPE_RSA, body)
+
+    def _ecdh_frame(self, chunk, peer):
+        with self._lock:
+            nonce = self.local_nonce or ""
+            seq = self.send_seq
+            self.send_seq = seq + 1
+        aad = "{}|{}".format(nonce, seq).encode("ascii")
+        sealed = self.session.ecdh.seal(peer, chunk, aad)
+        return self._wrap(FRAME_TYPE_ECDH, aad + b"|" + sealed)
+
+    @staticmethod
+    def _wrap(frame_type, body):
+        return FRAME_MAGIC + bytes([frame_type]) + len(body).to_bytes(4, "big") + body
+
+    # -- receive path --------------------------------------------------------
+
+    def feed(self, data):
+        """Parse received socket bytes into the plaintext buffer."""
+        with self._lock:
+            self._raw += data
+            while self._raw:
+                if (
+                    self._raw[: min(len(self._raw), len(FRAME_MAGIC))]
+                    == FRAME_MAGIC[: min(len(self._raw), len(FRAME_MAGIC))]
+                ):
+                    if len(self._raw) < len(FRAME_MAGIC):
+                        break  # a partial magic may still be a frame
+                    if not self._consume_frame():
+                        break
+                else:
+                    if not self._consume_plaintext_line():
+                        break
+
+    def _consume_frame(self):
+        """Decode one whole frame; False when more bytes are needed."""
+        if len(self._raw) < FRAME_HEADER_LEN:
+            return False
+        frame_type = self._raw[len(FRAME_MAGIC)]
+        length = int.from_bytes(self._raw[len(FRAME_MAGIC) + 1 : FRAME_HEADER_LEN], "big")
+        if frame_type not in (FRAME_TYPE_RSA, FRAME_TYPE_ECDH) or length > MAX_FRAME_BODY:
+            self._raw.clear()  # a framed stream cannot be resynchronised
+            raise _FrameError("malformed frame header")
+        if len(self._raw) < FRAME_HEADER_LEN + length:
+            return False
+        body = bytes(self._raw[FRAME_HEADER_LEN : FRAME_HEADER_LEN + length])
+        del self._raw[: FRAME_HEADER_LEN + length]
+        if frame_type == FRAME_TYPE_RSA:
+            self._decode_rsa(body)
+        else:
+            self._decode_ecdh(body)
+        return True
+
+    def _consume_plaintext_line(self):
+        """Pass known plaintext protocol lines through; drop anything else.
+
+        Returns False when the line is not complete yet.
+        """
+        nl = self._raw.find(b"\n")
+        if nl < 0:
+            if len(self._raw) > MAX_FRAME_PLAINTEXT:
+                self._raw.clear()
+                raise _FrameError("unterminated plaintext line")
+            return False
+        line = bytes(self._raw[: nl + 1])
+        del self._raw[: nl + 1]
+        try:
+            stripped = line.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            stripped = ""
+        if stripped.startswith(_PLAINTEXT_LINE_PREFIXES):
+            if stripped.startswith(_PLAINTEXT_RESET_PREFIXES):
+                # the peer restarted the handshake: framing is over until re-flip
+                self._debug("crypto: peer re-exchange line, dropping framed mode")
+                self.disable()
+            self._plain += line
+        else:
+            self._debug("crypto: dropped plaintext line on an encrypted channel")
+        return True
+
+    def _split_prefix(self, body):
+        """Split ``<nonce>|<seq>|`` off a frame body -> (nonce, seq) or None."""
+        first = body.find(b"|")
+        if first < 0:
+            return None
+        second = body.find(b"|", first + 1)
+        if second < 0:
+            return None
+        try:
+            nonce = body[:first].decode("ascii")
+            seq = int(body[first + 1 : second])
+        except (UnicodeDecodeError, ValueError):
+            return None
+        return nonce, seq, body[second + 1 :]
+
+    def _check_replay(self, nonce, seq):
+        """True when the frame is fresh; a stale/duplicate frame is dropped."""
+        if nonce != self.peer_nonce:
+            self._debug("crypto: replay dropped (nonce mismatch)")
+            return False
+        if seq != self.recv_seq:
+            self._debug(
+                "crypto: replay/out-of-order dropped (seq {}, expected {})".format(
+                    seq, self.recv_seq
+                )
+            )
+            return False
+        return True
+
+    def _decode_rsa(self, body):
+        parts = self._split_prefix(body)
+        if parts is None:
+            raise _FrameError("malformed RSA frame")
+        nonce, seq, cipher = parts
+        if not self._check_replay(nonce, seq):
+            return
+        try:
+            ok, plain = self.session.rsa.decrypt_with_own(cipher.decode("ascii"))
+        except Exception:
+            ok, plain = False, None
+        if not ok:
+            raise _FrameError("RSA decryption failed")
+        self.recv_seq += 1
+        self._plain += plain.encode("utf-8") if isinstance(plain, str) else bytes(plain)
+
+    def _decode_ecdh(self, body):
+        parts = self._split_prefix(body)
+        if parts is None:
+            raise _FrameError("malformed ECDH frame")
+        nonce, seq, sealed = parts
+        if not self._check_replay(nonce, seq):
+            return
+        peer = self.session.peer_ecdh_pub(0)
+        if peer is None or self.session.ecdh is None:
+            raise _FrameError("ECDH frame without session key material")
+        aad = "{}|{}".format(nonce, seq).encode("ascii")
+        try:
+            plain = self.session.ecdh.open(peer, sealed, aad)
+        except Exception:
+            raise _FrameError("ECDH decryption failed")
+        self.recv_seq += 1
+        self._plain += plain
+
+    def take(self, n):
+        """Up to ``n`` plaintext bytes; empty when none are buffered."""
+        with self._lock:
+            if not self._plain:
+                return b""
+            out = bytes(self._plain[:n])
+            del self._plain[: len(out)]
+            return out
+
+    def drain_all(self):
+        """Bytes to hand back after framing failed.
+
+        The decrypted buffer plus the unparsed socket bytes: the peer's next
+        plaintext line may already have been read together with the frame
+        that failed."""
+        with self._lock:
+            out = bytes(self._plain) + bytes(self._raw)
+            self._plain.clear()
+            self._raw.clear()
+            return out
 
 
 class TCP_Server_Base:  # TCP server class
@@ -464,8 +1007,9 @@ class TCP_Server_Base:  # TCP server class
         self._async_loop = None  # event loop driving the client coroutines (asynic clients io only)
         self._async_wakeup = None  # future `stop` completes to release the async accept loop
         self._crypto_lock = threading.RLock()  # serialises the crypto collections below (no-GIL safe); held only around short ops, never across I/O
-        self._encrypted_sockets = set()
-        self._encrypted_recv_buffers = {}
+        self._encrypted_sockets = set()  # sockets currently speaking frames (see _SecureChannel)
+        self._channels = {}  # socket -> _SecureChannel (control and transfer connections)
+        self._crypto_sessions = {}  # client_address -> _CryptoSession (shared by a session's sockets)
         self._crypto_peer = {}  # socket -> (peer_role, peer_pem_path)
         self._crypto_send_locks = {}  # socket -> Lock: wire order must match seq allocation order
         self._crypto_state = {}  # client_address -> crypto handshake state
@@ -597,7 +1141,7 @@ class TCP_Server_Base:  # TCP server class
                 "min_port": self.min_port,
                 "max_port": self.max_port,
                 "is_running": True,
-                "pid": os.getpid(),   # the sweep reclaims the range once it is gone
+                "pid": os.getpid(),  # the sweep reclaims the range once it is gone
                 "started_at": time.time(),
             }
             self.server_port_info.append(each_server_info)
@@ -657,9 +1201,7 @@ class TCP_Server_Base:  # TCP server class
             # their entries, so this one is not necessarily the last, and a
             # shrinking list would make the next index run past its end
             self.server_port_info = [
-                entry
-                for entry in self.server_port_info
-                if entry["server_id"] != self.server_num
+                entry for entry in self.server_port_info if entry["server_id"] != self.server_num
             ]
             if len(self.server_port_info) == 0:
                 os.remove(self.port_temp_info_path)
@@ -948,9 +1490,7 @@ class TCP_Server_Base:  # TCP server class
             self.events_dict.setdefault(sock, []).append([command, timestamp])
             self._events_dict_size += len(command.encode("utf-8", "replace")) + len(timestamp)
             if self._events_dict_size >= self.max_dict_size:
-                self._flush_dict_locked(
-                    self.events_dict, "_events_dict_size", self.events_log_file
-                )
+                self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
 
     def _update_event_timestamp(self, sock, command, timestamp):
         """Stamp the completion time onto the recorded event for ``command``.
@@ -1012,9 +1552,7 @@ class TCP_Server_Base:  # TCP server class
 
     def _flush_events_dict(self):
         with self._events_dict_lock:
-            self._flush_dict_locked(
-                self.events_dict, "_events_dict_size", self.events_log_file
-            )
+            self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
 
     def _merge_json_log(self, path, snapshot):
         """Merge ``snapshot`` into the JSON log at ``path`` (append per socket).
@@ -1228,10 +1766,9 @@ class TCP_Server_Base:  # TCP server class
     def _crypto_get_send_lock(self, client_socket):
         """Per-socket lock serialising encrypt+send for one connection.
 
-        Sequence numbers are allocated inside ``_crypto_encrypt_message``,
-        so the wire write must happen under the same lock or a concurrent
-        sender could overtake it and the peer would drop the frame as
-        out-of-order (no-GIL safe)."""
+        A control socket's `_SecureChannel` shares this exact lock object, so
+        a frame write can never interleave with a raw write on the same
+        socket (and vice versa) during the flip."""
         with self._crypto_lock:
             lock = self._crypto_send_locks.get(client_socket)
             if lock is None:
@@ -1240,7 +1777,7 @@ class TCP_Server_Base:  # TCP server class
             return lock
 
     def send_message(self, client_socket, message):  # send message to specific client
-        """Write one line to a client socket, encrypting when the channel is up.
+        """Write one message to a client socket, framing it when the channel is up.
 
         Args:
             client_socket (socket.socket): Target connection.
@@ -1258,19 +1795,26 @@ class TCP_Server_Base:  # TCP server class
         if not self.running or not client_socket:
             self._log("disable the connect to server")
             raise RuntimeError("connection error")
-        with self._crypto_get_send_lock(client_socket):  # alloc+encrypt+sendall stay ordered per socket
+        with self._crypto_lock:
+            channel = self._channels.get(client_socket)
+        if channel is not None and channel.secure:
+            try:
+                if not isinstance(message, (str, bytes)):
+                    self._log(f"Unsupported message type: {type(message)}")
+                    return False
+                payload = message
+                if isinstance(message, str) and not message.strip().endswith("\n"):
+                    payload = message.strip() + "\n"  # line framing for the control protocol
+                channel.send(payload)
+                return True
+            except Exception as e:
+                if not _is_closed_socket_error(e):
+                    self._log(f"send msg error: {e}")
+                    self._log_exc()
+                raise
+        with self._crypto_get_send_lock(client_socket):  # plaintext writes stay ordered per socket
             try:  # add newline character for server to distinguish messages
-                with self._crypto_lock:
-                    encrypted = client_socket in self._encrypted_sockets
-                if encrypted:
-                    if isinstance(message, bytes):
-                        message = message.decode("utf-8")
-                    if not isinstance(message, str):
-                        self._log(f"Unsupported message type: {type(message)}")
-                        return False
-                    wire = self._crypto_encrypt_message(client_socket, message)
-                    data = wire.encode("ascii") + b"\n"
-                elif isinstance(message, str):
+                if isinstance(message, str):
                     deal_msg = message.strip()
                     if not deal_msg.endswith("\n"):
                         deal_msg += "\n"
@@ -1327,6 +1871,77 @@ class TCP_Server_Base:  # TCP server class
             self._encrypted_sockets.add(client_socket)
             self._crypto_peer[client_socket] = (peer_role, peer_pem_path)
 
+    def _crypto_session_for(self, client_address):
+        """The crypto session of one client address (created on demand)."""
+        with self._crypto_lock:
+            session = self._crypto_sessions.get(client_address)
+            if session is None and self.crypto is not None:
+                session = _CryptoSession(self.crypto, "server", self._log, self._debug)
+                self._crypto_sessions[client_address] = session
+            return session
+
+    def _crypto_control_state(self, client_socket):
+        """(session, channel) of one control socket; (None, None) when unknown."""
+        with self._crypto_lock:
+            addr = self._crypto_sock_addr.get(client_socket)
+            session = self._crypto_sessions.get(addr) if addr is not None else None
+            channel = self._channels.get(client_socket)
+        return session, channel
+
+    def _crypto_after_flip(self, client_socket):
+        """Announce frame readiness (plaintext) and publish the session ECDH key."""
+        _session, channel = self._crypto_control_state(client_socket)
+        if channel is None:
+            return
+        try:
+            # plaintext by design: the peer needs this line before it may frame
+            self._send_raw(client_socket, CRYPTO_FRAMES_START)
+        except Exception:
+            self._log_exc()
+        self._crypto_publish_ecdh_pub(client_socket)
+
+    def _crypto_publish_ecdh_pub(self, client_socket):
+        """Send our session ECDH public key once frames are allowed both ways."""
+        session, channel = self._crypto_control_state(client_socket)
+        if session is not None:
+            session.publish_pub(channel)
+
+    def _crypto_transfer_stamp(self, control_socket, force_plain=False):
+        """Mode+nonce a listener announces to a transfer connector."""
+        session, channel = self._crypto_control_state(control_socket)
+        if session is None:
+            return "plain"
+        return session.transfer_stamp(channel, force_plain)
+
+    def _crypto_attach_transfer_in(self, sock, control_socket, stamp):
+        """Framing channel for an accepted transfer socket (listener side)."""
+        session, control_channel = self._crypto_control_state(control_socket)
+        if session is None:
+            return None
+        channel = session.attach_transfer(sock, control_channel, stamp)
+        if channel is not None:
+            with self._crypto_lock:
+                self._channels[sock] = channel
+                self._encrypted_sockets.add(sock)
+        return channel
+
+    def _crypto_attach_transfer_out(self, sock, control_socket, stamp):
+        """Framing channel for a connected transfer socket (connector side)."""
+        session, control_channel = self._crypto_control_state(control_socket)
+        crypto = _connector_transfer_crypto(session, control_channel, stamp)
+        channel = _enable_connector_channel(sock, crypto)
+        if channel is not None:
+            with self._crypto_lock:
+                self._channels[sock] = channel
+                self._encrypted_sockets.add(sock)
+        return channel
+
+    def _crypto_drop_channel(self, sock):
+        """Forget a finished transfer socket's channel."""
+        with self._crypto_lock:
+            self._channels.pop(sock, None)
+            self._encrypted_sockets.discard(sock)
+
     @staticmethod
     def _new_crypto_state(force=False):
         """Fresh per-connection crypto handshake state."""
@@ -1339,30 +1954,15 @@ class TCP_Server_Base:  # TCP server class
             "peer_pem_path": None,
             "ready_sent": False,
             "peer_ready": False,
-            "send_seq": 0,
-            "recv_seq": 0,
             "decode_failures": 0,
         }
 
-    def _crypto_encrypt_message(self, client_socket, message):
-        """Encrypt ``message`` for the peer, prefixed with the session
-        nonce and an incrementing sequence number (replay protection)."""
-        with self._crypto_lock:
-            peer = self._crypto_peer.get(client_socket)
-            if peer is None or self.crypto is None:
-                raise RuntimeError("socket not bound to a crypto peer")
-            addr = self._crypto_sock_addr.get(client_socket)
-            state = self._crypto_state.get(addr) if addr is not None else None
-            if state is None:
-                raise RuntimeError("no crypto state for socket")
-            nonce = state.get("my_nonce") or ""
-            seq = state.get("send_seq", 0)
-            state["send_seq"] = seq + 1
-        body = self.crypto.encrypt_for_peer(peer[1], message.strip())
-        return f"{nonce}|{seq}|{body}"
-
     def receive_message(self, client_socket, msg_length):  # receive message
         """Read up to ``msg_length`` bytes from a client socket.
+
+        A socket speaking frames (see `_SecureChannel`) returns decrypted
+        plaintext, served from the channel's buffer; a socket without one is
+        read raw.
 
         Args:
             client_socket (socket.socket): Connection to read from.
@@ -1371,64 +1971,50 @@ class TCP_Server_Base:  # TCP server class
         Returns:
             bytes: Received bytes, empty when the peer closed the connection.
         """
-        data = client_socket.recv(msg_length)
-        return data
+        while True:
+            with self._crypto_lock:
+                channel = self._channels.get(client_socket)
+            if channel is None:
+                return client_socket.recv(msg_length)
+            data = channel.take(msg_length)
+            if data:
+                return data  # buffered plaintext is served even after a disable
+            if not channel.secure:
+                return client_socket.recv(msg_length)
+            raw = client_socket.recv(4096)
+            if not raw:
+                return b""
+            try:
+                channel.feed(raw)
+            except _FrameError as exc:
+                self._log(f"crypto: {exc}")
+                self._crypto_channel_error(client_socket)
+                leftover = channel.drain_all()
+                if leftover:
+                    return leftover  # hand back whatever was already read
+                continue  # framing is off now: keep serving in raw mode
 
-    def _crypto_process_line(self, client_socket, line):
-        """Decrypt a received line when the socket is in encrypted mode.
-
-        Wire format: ``<sender_nonce>|<seq>|<ciphertext>``. Returns
-        ``(True, plaintext)`` on success; a line that fails the nonce or
-        sequence check (replay / out-of-order) is silently dropped; a
-        line that cannot be decrypted at all drops the socket out of the
-        encrypted set and triggers the (circuit-broken) re-exchange.
-        """
+    def _crypto_channel_error(self, client_socket):
+        """A frame failed to decode: re-exchange on a control socket, close a
+        transfer socket (its leg has no handshake to recover with)."""
         with self._crypto_lock:
-            encrypted = client_socket in self._encrypted_sockets
-        if not encrypted:
-            return False, line
-        parts = line.split("|", 2)
-        if len(parts) != 3:
-            if line.startswith("/"):
-                return False, line  # plaintext crypto command (handshake/re-exchange), not ciphertext
-            return True, ""  # malformed ciphertext frame: not a key problem, drop silently
-        nonce, seq_str, cipher = parts
-        if len(nonce) != 32 or not all(c in "0123456789abcdef" for c in nonce):  # shape check: a plaintext message with "|" must not look like a ciphertext frame
-            return False, line
+            is_control = client_socket in self._crypto_sock_addr
+        if is_control:
+            self._crypto_on_decode_failure(client_socket)
+            return
+        self._log("crypto: transfer frame error, closing the transfer connection")
         try:
-            int(seq_str)
-        except ValueError:
-            return False, line
-        try:
-            ok, plain = self.crypto.decrypt_with_own(cipher)
-            if ok:
-                with self._crypto_lock:
-                    addr = self._crypto_sock_addr.get(client_socket)
-                    state = self._crypto_state.get(addr) if addr is not None else None
-                    if state is None:
-                        return True, ""
-                    if nonce != state.get("peer_nonce"):
-                        self._debug("crypto: replay dropped (nonce mismatch)")
-                        return True, ""
-                    try:
-                        seq = int(seq_str)
-                    except ValueError:
-                        return True, ""
-                    expected = state.get("recv_seq", 0)
-                    if seq != expected:
-                        self._debug(
-                            f"crypto: replay/out-of-order dropped (seq {seq}, expected {expected})"
-                        )
-                        return True, ""
-                    state["recv_seq"] = expected + 1
-                    state["decode_failures"] = 0
-                return True, plain
+            client_socket.close()
         except Exception:
             pass
-        if line.startswith("/"):
-            return False, line  # plaintext crypto command (handshake/re-exchange), not ciphertext
-        self._crypto_on_decode_failure(client_socket)
-        return False, line
+
+    def _crypto_note_healthy(self, client_socket):
+        """A frame decoded cleanly: reset the streak that feeds the breaker."""
+        with self._crypto_lock:
+            addr = self._crypto_sock_addr.get(client_socket)
+            state = self._crypto_state.get(addr) if addr is not None else None
+            if state is not None:
+                state["decode_failures"] = 0
 
     def _crypto_on_decode_failure(self, client_socket):
         """Decryption failed (stale/wrong key): drop encryption, reload
@@ -1439,6 +2025,10 @@ class TCP_Server_Base:  # TCP server class
         so a garbage-injection or persistent-mismatch storm cannot spin
         the re-exchange loop forever.
         """
+        with self._crypto_lock:
+            channel = self._channels.get(client_socket)
+        if channel is not None:
+            channel.disable()
         with self._crypto_lock:
             self._encrypted_sockets.discard(client_socket)
             self._crypto_peer.pop(client_socket, None)
@@ -1488,6 +2078,12 @@ class TCP_Server_Base:  # TCP server class
             except Exception:
                 self._log_exc()
 
+    def _crypto_drop_secure(self, client_socket):
+        """Framing stopped: keep the secure-socket set and peer map truthful."""
+        with self._crypto_lock:
+            self._encrypted_sockets.discard(client_socket)
+            self._crypto_peer.pop(client_socket, None)
+
     @staticmethod
     def _crypto_fresh_nonce():
         return secrets.token_hex(16)
@@ -1506,8 +2102,9 @@ class TCP_Server_Base:  # TCP server class
             state["my_nonce"] = my_nonce
             state["peer_pub_event"] = threading.Event()
             state["peer_pub_ok"] = None
-            state["send_seq"] = 0
-            state["recv_seq"] = 0
+        session = self._crypto_sessions.get(client_address)
+        if session is not None:
+            session.reset_ecdh()  # a fresh handshake is a fresh session key
         self._send_raw(client_socket, f"/crypto_key_exchange_ack {my_nonce} 1 {1 if force else 0}")
         threading.Thread(
             target=self._crypto_wait_server_ready,
@@ -1516,23 +2113,28 @@ class TCP_Server_Base:  # TCP server class
         ).start()
 
     def _crypto_try_server_flip(self, client_socket, state):
-        """Flip the socket to encrypted mode only when the peer key
-        passed the TOFU check and both sides announced readiness (no
-        plaintext/encrypted interleaving). Resets the sequence counters
-        so the fresh session starts at seq 0."""
-        # no send may interleave with the seq reset / flip
+        """Flip the socket to framed encryption once the peer key passed the
+        TOFU check and both sides announced readiness (no plaintext/framed
+        interleaving)."""
+        # no send may interleave with the flip
         with self._crypto_get_send_lock(client_socket):
             with self._crypto_lock:
-                if (
+                if not (
                     state.get("peer_pub_ok") is True
                     and state.get("peer_pem_path")
                     and state.get("ready_sent")
                     and state.get("peer_ready")
                     and client_socket not in self._encrypted_sockets
                 ):
-                    state["send_seq"] = 0
-                    state["recv_seq"] = 0
-                    self._crypto_mark_encrypted(client_socket, "client", state["peer_pem_path"])
+                    return
+                self._crypto_mark_encrypted(client_socket, "client", state["peer_pem_path"])
+                channel = self._channels.get(client_socket)
+                my_nonce = state.get("my_nonce")
+                peer_nonce = state.get("peer_nonce")
+                peer_pem_path = state.get("peer_pem_path")
+        if channel is not None:
+            channel.enable(my_nonce, peer_nonce, peer_pem_path)
+        threading.Thread(target=self._crypto_after_flip, args=(client_socket,), daemon=True).start()
 
     def _crypto_wait_server_ready(self, client_socket, client_address, state):
         """Wait until the client's public key arrived and passed the
@@ -1588,8 +2190,13 @@ class TCP_Server_Base:  # TCP server class
                 if waiting_time >= 200:
                     self._log("crypto: transfer port waiting timeout, public key push failed")
                     return False
-            self.file_transfer_mode(
-                self.crypto.pub_path, client_address[0], file_server_port, file_transfer_client_port
+            self.file_transfer_mode(  # a key push carries the keys themselves: always plaintext
+                self.crypto.pub_path,
+                client_address[0],
+                file_server_port,
+                file_transfer_client_port,
+                control_socket=client_socket,
+                crypto="plain",
             )
             self.pfree(file_transfer_client_port)
         except Exception:
@@ -1710,8 +2317,7 @@ class TCP_Server_Base:  # TCP server class
         loop = self._async_loop
         if loop is None or loop.is_closed():
             self._log(
-                "asynic clients io is enabled but no event loop is running, "
-                "closing the connection"
+                "asynic clients io is enabled but no event loop is running, closing the connection"
             )
             try:
                 client_socket.close()
@@ -1721,6 +2327,35 @@ class TCP_Server_Base:  # TCP server class
         loop.call_soon_threadsafe(
             loop.create_task, self._handle_client_async(client_socket, client_address)
         )
+
+    async def _async_receive(self, client_socket, loop):
+        """Read up to 4096 plaintext bytes from one accepted client.
+
+        Mirrors `receive_message` for the asyncio path: framed bytes are
+        decrypted off the event loop (RSA/ECDH are CPU-bound) and served from
+        the channel's buffer; a socket without a channel is read raw."""
+        while True:
+            with self._crypto_lock:
+                channel = self._channels.get(client_socket)
+            if channel is None:
+                return await loop.sock_recv(client_socket, 4096)
+            data = channel.take(4096)
+            if data:
+                return data  # buffered plaintext is served even after a disable
+            if not channel.secure:
+                return await loop.sock_recv(client_socket, 4096)
+            raw = await loop.sock_recv(client_socket, 4096)
+            if not raw:
+                return b""
+            try:
+                await asyncio.to_thread(channel.feed, raw)
+            except _FrameError as exc:
+                self._log(f"crypto: {exc}")
+                await asyncio.to_thread(self._crypto_channel_error, client_socket)
+                leftover = channel.drain_all()
+                if leftover:
+                    return leftover
+                continue  # framing is off now: keep serving in raw mode
 
     async def _handle_client_async(self, client_socket, client_address):
         """Serve one accepted client until it disconnects, as a coroutine.
@@ -1736,11 +2371,11 @@ class TCP_Server_Base:  # TCP server class
                 return
             buffer = ""
             while self.running:
-                data = await loop.sock_recv(client_socket, 4096)  # get msg from client
+                data = await self._async_receive(client_socket, loop)  # get msg from client
                 self._debug(data)
                 if not data:
                     break
-                buffer += data.decode("utf-8")
+                buffer += data.decode("utf-8", "replace")
                 while "\n" in buffer:  # deal with multiple messages in buffer
                     line, buffer = buffer.split("\n", 1)
                     message = line.strip()
@@ -1788,8 +2423,19 @@ class TCP_Server_Base:  # TCP server class
                 "connected_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             }
         if self.is_enable_encrypto and self.crypto is not None:
+            session = self._crypto_session_for(client_address)
+            channel = _SecureChannel(
+                client_socket,
+                session,
+                self._log,
+                self._debug,
+                send_lock=self._crypto_get_send_lock(client_socket),
+                sendall=lambda data, sock=client_socket: self._sendall(sock, data),
+                on_disable=lambda: self._crypto_drop_secure(client_socket),
+            )
             with self._crypto_lock:
                 self._crypto_sock_addr[client_socket] = client_address
+                self._channels[client_socket] = channel
         self._debug(f"new connection: {client_id}")
         self._debug(f"connection count mount: {len(self.clients)}")
         return client_id
@@ -1824,9 +2470,7 @@ class TCP_Server_Base:  # TCP server class
                 self._log(f"error while announcing crypto mode to {client_id} : {e}")
             return False
         if self.is_hand_alloc_port == True:
-            port_alloc_range_msg = "/client_alloc_port_range {}".format(
-                self.each_client_port_range
-            )
+            port_alloc_range_msg = "/client_alloc_port_range {}".format(self.each_client_port_range)
         else:
             port_alloc_range_msg = "/client_alloc_port_range NO_LIMIT"
         # the range is fixed for the server's lifetime, so only the connection
@@ -1844,7 +2488,7 @@ class TCP_Server_Base:  # TCP server class
         return True
 
     def _process_client_line(self, client_socket, client_address, client_id, message):
-        """Decrypt, log and dispatch one complete line from a client.
+        """Log and dispatch one complete (already decrypted) line from a client.
 
         Args:
             client_socket (socket.socket): Connection the line came from.
@@ -1855,9 +2499,9 @@ class TCP_Server_Base:  # TCP server class
         Returns:
             str | None: Response for that client, or None when none is due.
         """
-        ok, plain = self._crypto_process_line(client_socket, message)
-        if ok:
-            message = plain.strip()
+        if not _crypto_is_protocol_line(message):
+            # genuine peer traffic: reset the streak that feeds the breaker
+            self._crypto_note_healthy(client_socket)
         self._log(message)
         if message.startswith("/"):  # deal with special command
             self._record_event(client_socket, message)
@@ -1882,11 +2526,12 @@ class TCP_Server_Base:  # TCP server class
                 del self.clients[client_address]
         with self._crypto_lock:
             self._crypto_state.pop(client_address, None)
+            self._crypto_sessions.pop(client_address, None)
             self._crypto_sock_addr.pop(client_socket, None)
             self._crypto_peer.pop(client_socket, None)
             self._crypto_push_active.discard(client_socket)
             self._encrypted_sockets.discard(client_socket)
-            self._encrypted_recv_buffers.pop(client_socket, None)
+            self._channels.pop(client_socket, None)
             self._crypto_send_locks.pop(client_socket, None)
         client_socket.close()
         self._debug(f"client disconnected: {client_id}")
@@ -1979,12 +2624,14 @@ class TCP_Server_Base:  # TCP server class
                 command, client_id, client_socket
             )
         elif shlex.split(command.lower())[0] == "/server_file_transfer_port":
+            parts = command.split(" ")
             with self.file_transfer_server_port_lock:
-                self.file_transfer_server_port = int(command.split(" ")[1])
+                self.file_transfer_server_port = int(parts[1])
                 try:
-                    file_client_id = int(command.split(" ")[2])
+                    file_client_id = int(parts[2])
+                    stamp = parts[3] if len(parts) > 3 else "plain"  # listener mode+nonce
                     self.file_server_port_list.append(
-                        [self.file_transfer_server_port, file_client_id]
+                        [self.file_transfer_server_port, file_client_id, stamp]
                     )
                 except:
                     self._log_exc()
@@ -2030,9 +2677,7 @@ class TCP_Server_Base:  # TCP server class
             with self._crypto_lock:  # only accept pushes from a connection that started the handshake (else the TOFU registry could be poisoned)
                 handshaking = client_address in self._crypto_state
             if not handshaking:
-                self._log(
-                    f"crypto: ignoring /crypto_pub_key from non-handshaking peer {client_id}"
-                )
+                self._log(f"crypto: ignoring /crypto_pub_key from non-handshaking peer {client_id}")
                 return None
             self.file_transfer_server_recv_server_start_thread(client_id, client_socket, command)
             return None
@@ -2061,7 +2706,9 @@ class TCP_Server_Base:  # TCP server class
             with self._crypto_lock:
                 state = self._crypto_state.get(client_address)
                 if state is not None:
-                    state["peer_nonce"] = client_nonce  # reply to a server-initiated hello: fresh session nonce from the client's ack
+                    state["peer_nonce"] = (
+                        client_nonce  # reply to a server-initiated hello: fresh session nonce from the client's ack
+                    )
             if force or client_needs_server_pub == "1":
                 threading.Thread(
                     target=self._crypto_push_pub_to_client,
@@ -2086,12 +2733,36 @@ class TCP_Server_Base:  # TCP server class
             and self.crypto is not None
             and command.lower().split(" ")[0] == "/crypto_reject"
         ):
-            reason = command[len("/crypto_reject") :].strip()  # the peer rejected our public key (TOFU mismatch)
+            reason = command[
+                len("/crypto_reject") :
+            ].strip()  # the peer rejected our public key (TOFU mismatch)
             self._log(f"crypto: connection rejected by peer: {reason}")
             try:
                 client_socket.close()
             except Exception:
                 self._log_exc()
+            return None
+        elif (
+            self.is_enable_encrypto
+            and self.crypto is not None
+            and command.lower().split(" ")[0] == CRYPTO_FRAMES_START
+        ):
+            _session, channel = self._crypto_control_state(client_socket)
+            if channel is not None:
+                channel.note_peer_frames_ready()
+                self._crypto_publish_ecdh_pub(client_socket)
+            return None
+        elif (
+            self.is_enable_encrypto
+            and self.crypto is not None
+            and command.lower().split(" ")[0] == CRYPTO_ECDH_PUB
+        ):
+            # only ever accepted inside an RSA frame (see _PLAINTEXT_LINE_PREFIXES)
+            parts = command.split(" ", 1)
+            session = self._crypto_sessions.get(client_address)
+            if session is not None and len(parts) > 1:
+                if not session.set_peer_ecdh_b64(parts[1]):
+                    self._log(f"crypto: rejected the ECDH key of {client_id}")
             return None
         else:
             cmd_parts = shlex.split(command.strip())
@@ -2318,6 +2989,7 @@ class TCP_Server_Base:  # TCP server class
             nonlocal client_file_socket
             nonlocal server_file_socket
             file_running = False
+            self._crypto_drop_channel(client_file_socket)
             client_file_socket.close()
             server_file_socket.close()
 
@@ -2489,13 +3161,19 @@ class TCP_Server_Base:  # TCP server class
         command_part = shlex.split(command)
         file_client_id = command_part[len(command_part) - 1]
         destination_path = _parse_destination_path(command_part)
-        transfer_server_port_msg = "/server_file_transfer_port {} {}\n".format(
-            file_transfer_server_port, file_client_id
+        stamp = self._crypto_transfer_stamp(
+            client_socket, force_plain=command_part[0] == "/crypto_pub_key"
         )
-        self._send_raw(client_socket, transfer_server_port_msg)  # protocol control message: always plaintext (like the handshake)
+        transfer_server_port_msg = "/server_file_transfer_port {} {} {}\n".format(
+            file_transfer_server_port, file_client_id, stamp
+        )
+        self._send_raw(
+            client_socket, transfer_server_port_msg
+        )  # coordination line: always plaintext (like the handshake)
         server_file_socket.listen(1)
         try:
             client_file_socket, client_file_address = server_file_socket.accept()
+            self._crypto_attach_transfer_in(client_file_socket, client_socket, stamp)
             is_open_file_transfer = setting_file_save_path()
             if is_open_file_transfer == None:
                 pass
@@ -2637,9 +3315,7 @@ class TCP_Server_Base:  # TCP server class
                         shlex.quote(transfer_file), shlex.quote(str(client_addr))
                     )
                     if destination_path:
-                        file_transfer_command_message += " {}".format(
-                            shlex.quote(destination_path)
-                        )
+                        file_transfer_command_message += " {}".format(shlex.quote(destination_path))
                     self.file_transfer_server_recv_client_start_thread(
                         file_transfer_command_message
                     )
@@ -2700,9 +3376,7 @@ class TCP_Server_Base:  # TCP server class
                 self._log(f"start to send folder command: {each_file_transfer_command_message}")
             else:
                 if destination_path:
-                    folder_transfer_command_message += " {}".format(
-                        shlex.quote(destination_path)
-                    )
+                    folder_transfer_command_message += " {}".format(shlex.quote(destination_path))
                 self.send_message(client_socket, folder_transfer_command_message.strip())
                 self._log(f"start to send folder command: {folder_transfer_command_message}")
 
@@ -2776,6 +3450,7 @@ class TCP_Server_Base:  # TCP server class
             self.send_message(client_socket, send_msg)
             file_transfer_client_port = self.palloc()
             file_server_port = None
+            stamp = "plain"
             is_find_port = True
             while is_find_port:
                 time.sleep(1)
@@ -2784,6 +3459,7 @@ class TCP_Server_Base:  # TCP server class
                         for port_info in self.file_server_port_list:
                             if port_info[1] == client_id:
                                 file_server_port = port_info[0]
+                                stamp = port_info[2]  # the listener's mode+nonce
                                 self.file_server_port_list.remove(port_info)
                                 is_find_port = False
                                 break
@@ -2795,7 +3471,12 @@ class TCP_Server_Base:  # TCP server class
                     )
                     return False
             self.file_transfer_mode(
-                filename, client_address, file_server_port, file_transfer_client_port
+                filename,
+                client_address,
+                file_server_port,
+                file_transfer_client_port,
+                control_socket=client_socket,
+                crypto=stamp,
             )
             self.pfree(file_transfer_client_port)
         except IndexError:
@@ -2803,8 +3484,21 @@ class TCP_Server_Base:  # TCP server class
             self._log_exc()
 
     def file_transfer_mode(  # noqa: PLR0911 - peer-close and timeout exits are distinct outcomes
-        self, filename, server_address, server_port, client_port, pause_fid=None
+        self,
+        filename,
+        server_address,
+        server_port,
+        client_port,
+        pause_fid=None,
+        control_socket=None,
+        crypto=None,
     ):
+        """Send one file over a transfer sub-connection.
+
+        ``control_socket``/``crypto`` carry the listener's mode stamp
+        ("plain" or "enc:<nonce>"): an encrypted leg aborts when the session
+        key material is missing rather than downgrading silently.
+        """
         self._log(f"start to send file: {filename}")
         client_file_socket = None
         reset_time = 0
@@ -2813,6 +3507,7 @@ class TCP_Server_Base:  # TCP server class
             nonlocal file_running
             nonlocal client_file_socket
             file_running = False
+            self._crypto_drop_channel(client_file_socket)
             client_file_socket.close()
             with self.file_client_id_lock:
                 self.file_client_id -= 1
@@ -2832,6 +3527,13 @@ class TCP_Server_Base:  # TCP server class
                     return False
                 reset_time += 1
                 time.sleep(1)
+        try:
+            if crypto and crypto != "plain":
+                self._crypto_attach_transfer_out(client_file_socket, control_socket, crypto)
+        except _CryptoUnavailable as exc:
+            self._log(f"crypto: file transfer aborted: {exc}")
+            close_socket()
+            return False
         file_running = True
         file_receive_data_from_server = ""
 
@@ -3050,14 +3752,17 @@ class TCP_Server_Base:  # TCP server class
         ).start()
 
     def _forward_read_sign(self, sock, sign, timeout=15):
-        """Read from a target transfer socket until ``sign`` is seen."""
+        """Read from a target transfer socket until ``sign`` is seen.
+
+        Reads through `receive_message`, so a framed transfer connection
+        yields decrypted bytes here like any other plaintext leg."""
         buf = b""
         target = sign.encode("utf-8")
         err = self.error_sign.encode("utf-8")
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
-                data = sock.recv(4096)
+                data = self.receive_message(sock, 4096)
             except Exception:
                 return False
             if not data:
@@ -3072,7 +3777,7 @@ class TCP_Server_Base:  # TCP server class
     def _forward_recv_exact(self, sock, n):
         buf = b""
         while len(buf) < n:
-            data = sock.recv(n - len(buf))
+            data = self.receive_message(sock, n - len(buf))
             if not data:
                 raise ConnectionError("forward: uploader closed the stream")
             buf += data
@@ -3131,14 +3836,14 @@ class TCP_Server_Base:  # TCP server class
                 self.forward_item_to(
                     target, kind, rel_dir, fname, originator_addr, tfid, destination_path
                 )
-            # collect every target's advertised transfer port
+            # collect every target's advertised transfer port and mode stamp
             ports = {}
             deadline = time.time() + 20
             while len(ports) < len(tfids) and time.time() < deadline:
                 with self.file_transfer_server_port_lock:
                     for info in list(self.file_server_port_list):
                         if info[1] in tfids and info[1] not in ports:
-                            ports[info[1]] = info[0]
+                            ports[info[1]] = (info[0], info[2])
                             self.file_server_port_list.remove(info)
                 if len(ports) < len(tfids):
                     time.sleep(0.05)
@@ -3148,11 +3853,19 @@ class TCP_Server_Base:  # TCP server class
             # connect to each target and wait for its start sign
             target_conns = []
             for target, tfid in zip(targets, tfids):
+                tport, stamp = ports[tfid]
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 try:
-                    sock.connect((target[0], ports[tfid]))
+                    sock.connect((target[0], tport))
                 except Exception as e:
                     self._log(f"forward: cannot connect to target {target}: {e}")
+                    sock.close()
+                    continue
+                try:
+                    target_control = self.clients.get(target, {}).get("socket")
+                    self._crypto_attach_transfer_out(sock, target_control, stamp)
+                except _CryptoUnavailable as exc:
+                    self._log(f"forward: target {target} transfer aborted: {exc}")
                     sock.close()
                     continue
                 if not self._forward_read_sign(sock, self.server_start_file_transfer_sign):
@@ -3168,11 +3881,16 @@ class TCP_Server_Base:  # TCP server class
             up_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             up_sock.bind((self.host, self.palloc()))
             sport = up_sock.getsockname()[1]
+            up_stamp = self._crypto_transfer_stamp(forwarder_sock)
             up_sock.listen(1)
-            self.send_message(forwarder_sock, f"/forward_upload {fid} {sport}")
+            # coordination line: always plaintext, so it also reaches a peer
+            # that has not finished flipping to framed mode
+            self._send_raw(forwarder_sock, f"/forward_upload {fid} {sport} {up_stamp}")
             up_client, _ = up_sock.accept()
+            self._crypto_attach_transfer_in(up_client, forwarder_sock, up_stamp)
             self.send_message(up_client, self.server_start_file_transfer_sign)
             self._forward_pump(up_client, target_conns, forwarder_sock, fid, fname, relay)
+            self._crypto_drop_channel(up_client)
             up_client.close()
             up_sock.close()
             self.pfree(sport)
@@ -3221,7 +3939,7 @@ class TCP_Server_Base:  # TCP server class
                 if item is END:
                     break
                 try:
-                    sock.sendall(item)
+                    self.send_message(sock, item)
                 except Exception:
                     with cond:
                         while not q.empty():
@@ -3238,6 +3956,7 @@ class TCP_Server_Base:  # TCP server class
                         cond.notify_all()
             if self._forward_read_sign(sock, self.server_received_file_data_sign):
                 result["ok"] += 1
+            self._crypto_drop_channel(sock)
             try:
                 sock.close()
             except Exception:
@@ -3424,9 +4143,7 @@ class TCP_Server_Base:  # TCP server class
                 elif shlex.split(deal_cmd)[0].lower() == "/file_folder":
                     self.folder_file_transfer_server_recv_client_start(deal_cmd)
                 elif shlex.split(deal_cmd)[0].lower() == "/multiple_file_multiple_client":
-                    self.multiple_file_multiple_client_transfer_server_recv_client_start(
-                        deal_cmd
-                    )
+                    self.multiple_file_multiple_client_transfer_server_recv_client_start(deal_cmd)
                 elif shlex.split(deal_cmd)[0].lower() == "/diff_multiple_file_diff_multiple_client":
                     self.diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(
                         deal_cmd
@@ -3726,8 +4443,9 @@ class TCP_Client_Base:  # TCP client class
         self.is_debug = is_debug
         self.is_print_log = is_print_log
         self._crypto_lock = threading.RLock()  # serialises the crypto collections (no-GIL safe); held only around short ops, never across I/O
-        self._encrypted_sockets = set()
-        self._encrypted_recv_buffers = {}
+        self._encrypted_sockets = set()  # sockets currently speaking frames (see _SecureChannel)
+        self._channels = {}  # socket -> _SecureChannel (control and transfer connections)
+        self._crypto_session = None  # the session context, created when crypto is used
         self._crypto_peer = {}  # socket -> (peer_role, peer_pem_path)
         self.crypto = (
             rsa_crypto.RsaCrypto("client", self.project_dir, custom_keys=is_custom_keys)
@@ -3753,8 +4471,6 @@ class TCP_Client_Base:  # TCP client class
         self._crypto_handshake_started = False  # a hello was sent/received
         self._crypto_my_nonce = None  # session nonce we advertise
         self._crypto_server_nonce = None  # session nonce the server advertises
-        self._crypto_send_seq = 0  # outbound encrypted-message counter
-        self._crypto_recv_seq = 0  # inbound encrypted-message counter
         self._crypto_decode_failures = 0  # consecutive decode failures
         if self.is_extend_command:
             pass
@@ -3937,9 +4653,7 @@ class TCP_Client_Base:  # TCP client class
             self.events_dict.setdefault(sock, []).append([command, timestamp])
             self._events_dict_size += len(command.encode("utf-8", "replace")) + len(timestamp)
             if self._events_dict_size >= self.max_dict_size:
-                self._flush_dict_locked(
-                    self.events_dict, "_events_dict_size", self.events_log_file
-                )
+                self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
 
     def _update_event_timestamp(self, sock, command, timestamp):
         """Stamp the completion time onto the recorded event for ``command``.
@@ -4001,9 +4715,7 @@ class TCP_Client_Base:  # TCP client class
 
     def _flush_events_dict(self):
         with self._events_dict_lock:
-            self._flush_dict_locked(
-                self.events_dict, "_events_dict_size", self.events_log_file
-            )
+            self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
 
     def _merge_json_log(self, path, snapshot):
         """Merge ``snapshot`` into the JSON log at ``path`` (append per socket).
@@ -4166,7 +4878,7 @@ class TCP_Client_Base:  # TCP client class
                 "min_port": self.min_port,
                 "max_port": self.max_port,
                 "is_running": True,
-                "pid": os.getpid(),   # the sweep reclaims the range once it is gone
+                "pid": os.getpid(),  # the sweep reclaims the range once it is gone
                 "started_at": time.time(),
             }
             self.client_port_info.append(each_client_info)
@@ -4225,9 +4937,7 @@ class TCP_Client_Base:  # TCP client class
             # their entries, so this one is not necessarily the last, and a
             # shrinking list would make the next index run past its end
             self.client_port_info = [
-                entry
-                for entry in self.client_port_info
-                if entry["client_id"] != self.client_num
+                entry for entry in self.client_port_info if entry["client_id"] != self.client_num
             ]
             if len(self.client_port_info) == 0:
                 os.remove(self.port_temp_info_path)
@@ -4486,6 +5196,18 @@ class TCP_Client_Base:  # TCP client class
                     self._crypto_mode_event.clear()
                     self._crypto_mode_ok = False
                 self.receive_thread.daemon = True
+                if self.is_enable_encrypto and self.crypto is not None:
+                    session = self._crypto_session_ensure()
+                    channel = _SecureChannel(
+                        self.client_socket,
+                        session,
+                        self._log,
+                        self._debug,
+                        send_lock=self._crypto_send_lock,
+                        on_disable=lambda: self._crypto_drop_secure(self.client_socket),
+                    )
+                    with self._crypto_lock:
+                        self._channels[self.client_socket] = channel
                 self.receive_thread.start()
                 if not self._crypto_negotiate_mode():
                     return False
@@ -4540,9 +5262,9 @@ class TCP_Client_Base:  # TCP client class
                     message = line.strip()
                     if not message:
                         continue
-                    ok, plain = self._crypto_process_line(self.client_socket, message)
-                    if ok:
-                        message = plain.strip()
+                    if not _crypto_is_protocol_line(message):
+                        # genuine peer traffic: reset the streak that feeds the breaker
+                        self._crypto_note_healthy(self.client_socket)
                     sender = None  # the author's "ip:port"; None for direct server pushes
                     if message.startswith("/"):
                         # A /send_msg_from envelope is a message that another
@@ -4596,19 +5318,24 @@ class TCP_Client_Base:  # TCP client class
         if not self.running or not self.client_socket:
             self._log("disable the connect to server")
             return False
-        with self._crypto_send_lock:  # alloc+encrypt+sendall stay ordered (no-GIL safe)
+        with self._crypto_lock:
+            channel = self._channels.get(client_socket)
+        if channel is not None and channel.secure:
+            try:
+                if not isinstance(message, (str, bytes)):
+                    self._log(f"Unsupported message type: {type(message)}")
+                    return False
+                payload = message.strip() + "\n" if isinstance(message, str) else message
+                channel.send(payload)
+                return True
+            except Exception as e:
+                if not _is_closed_socket_error(e):
+                    self._log(f"send msg error: {e}")
+                    self._log_exc()
+                return False
+        with self._crypto_send_lock:  # plaintext writes stay ordered (no-GIL safe)
             try:  # add newline character for server to distinguish messages
-                with self._crypto_lock:
-                    encrypted = client_socket in self._encrypted_sockets
-                if encrypted:
-                    if isinstance(message, bytes):
-                        message = message.decode("utf-8")
-                    if not isinstance(message, str):
-                        self._log(f"Unsupported message type: {type(message)}")
-                        return False
-                    wire = self._crypto_encrypt_message(client_socket, message)
-                    data = wire.encode("ascii") + b"\n"
-                elif isinstance(message, str):
+                if isinstance(message, str):
                     deal_msg = message.strip()
                     if not deal_msg.endswith("\n"):
                         deal_msg += "\n"
@@ -4625,7 +5352,7 @@ class TCP_Client_Base:  # TCP client class
                     self._log(f"send msg error: {e}")
                     self._log_exc()
                 return False
-        
+
     def send_message_to_server(self, message):
         """Send the payload of a console line to the server.
 
@@ -4641,6 +5368,10 @@ class TCP_Client_Base:  # TCP client class
     def receive_message(self, client_socket, msg_length):  # receive msg
         """Read up to ``msg_length`` bytes from a socket.
 
+        A socket speaking frames (see `_SecureChannel`) returns decrypted
+        plaintext, served from the channel's buffer; a socket without one is
+        read raw.
+
         Args:
             client_socket (socket.socket): Connection to read from.
             msg_length (int): Maximum number of bytes to read.
@@ -4648,8 +5379,28 @@ class TCP_Client_Base:  # TCP client class
         Returns:
             bytes: Received bytes, empty when the peer closed the connection.
         """
-        data = client_socket.recv(msg_length)
-        return data
+        while True:
+            with self._crypto_lock:
+                channel = self._channels.get(client_socket)
+            if channel is None:
+                return client_socket.recv(msg_length)
+            data = channel.take(msg_length)
+            if data:
+                return data  # buffered plaintext is served even after a disable
+            if not channel.secure:
+                return client_socket.recv(msg_length)
+            raw = client_socket.recv(4096)
+            if not raw:
+                return b""
+            try:
+                channel.feed(raw)
+            except _FrameError as exc:
+                self._log(f"crypto: {exc}")
+                self._crypto_channel_error(client_socket)
+                leftover = channel.drain_all()
+                if leftover:
+                    return leftover  # hand back whatever was already read
+                continue  # framing is off now: keep serving in raw mode
 
     def _send_raw(self, client_socket, text):
         """Send a plaintext crypto-protocol message, bypassing encryption."""
@@ -4663,70 +5414,94 @@ class TCP_Client_Base:  # TCP client class
             self._encrypted_sockets.add(client_socket)
             self._crypto_peer[client_socket] = (peer_role, peer_pem_path)
 
-    def _crypto_encrypt_message(self, client_socket, message):
-        """Encrypt ``message`` for the server, prefixed with the session
-        nonce and an incrementing sequence number (replay protection)."""
+    def _crypto_session_ensure(self):
+        """The client's crypto session context (created on demand)."""
         with self._crypto_lock:
-            peer = self._crypto_peer.get(client_socket)
-            if peer is None or self.crypto is None:
-                raise RuntimeError("socket not bound to a crypto peer")
-            nonce = self._crypto_my_nonce or ""
-            seq = self._crypto_send_seq
-            self._crypto_send_seq = seq + 1
-        body = self.crypto.encrypt_for_peer(peer[1], message.strip())
-        return f"{nonce}|{seq}|{body}"
+            if self._crypto_session is None and self.crypto is not None:
+                self._crypto_session = _CryptoSession(self.crypto, "client", self._log, self._debug)
+            return self._crypto_session
 
-    def _crypto_process_line(self, client_socket, line):
-        """Decrypt a received line when the socket is in encrypted mode.
-
-        Wire format: ``<sender_nonce>|<seq>|<ciphertext>``. Returns
-        ``(True, plaintext)`` on success; a line that fails the nonce or
-        sequence check (replay / out-of-order) is silently dropped; a
-        line that cannot be decrypted at all drops the socket out of the
-        encrypted set and triggers the (circuit-broken) re-exchange.
-        """
+    def _crypto_control_state(self, client_socket):
+        """(session, channel) of one socket; (None, None) when unknown."""
         with self._crypto_lock:
-            encrypted = client_socket in self._encrypted_sockets
-        if not encrypted:
-            return False, line
-        parts = line.split("|", 2)
-        if len(parts) != 3:
-            if line.startswith("/"):
-                return False, line  # plaintext crypto command (handshake/re-exchange), not ciphertext
-            return True, ""  # malformed ciphertext frame: not a key problem, drop silently
-        nonce, seq_str, cipher = parts
-        if len(nonce) != 32 or not all(c in "0123456789abcdef" for c in nonce):  # shape check: a plaintext message with "|" must not look like a ciphertext frame
-            return False, line
+            return self._crypto_session, self._channels.get(client_socket)
+
+    def _crypto_channel_error(self, client_socket):
+        """A frame failed to decode: re-exchange on the control socket, close a
+        transfer socket (its leg has no handshake to recover with)."""
+        if client_socket is self.client_socket:
+            self._crypto_on_decode_failure(client_socket)
+            return
+        self._log("crypto: transfer frame error, closing the transfer connection")
         try:
-            int(seq_str)
-        except ValueError:
-            return False, line
-        try:
-            ok, plain = self.crypto.decrypt_with_own(cipher)
-            if ok:
-                with self._crypto_lock:
-                    if nonce != self._crypto_server_nonce:
-                        self._debug("crypto: replay dropped (nonce mismatch)")
-                        return True, ""
-                    try:
-                        seq = int(seq_str)
-                    except ValueError:
-                        return True, ""
-                    expected = self._crypto_recv_seq
-                    if seq != expected:
-                        self._debug(
-                            f"crypto: replay/out-of-order dropped (seq {seq}, expected {expected})"
-                        )
-                        return True, ""
-                    self._crypto_recv_seq = expected + 1
-                    self._crypto_decode_failures = 0
-                return True, plain
+            client_socket.close()
         except Exception:
             pass
-        if line.startswith("/"):
-            return False, line  # plaintext crypto command (handshake/re-exchange), not ciphertext
-        self._crypto_on_decode_failure(client_socket)
-        return False, line
+
+    def _crypto_after_flip(self, client_socket):
+        """Announce frame readiness (plaintext) and publish the session ECDH key."""
+        _session, channel = self._crypto_control_state(client_socket)
+        if channel is None:
+            return
+        try:
+            # plaintext by design: the peer needs this line before it may frame
+            self._send_raw(client_socket, CRYPTO_FRAMES_START)
+        except Exception:
+            self._log_exc()
+        self._crypto_publish_ecdh_pub(client_socket)
+
+    def _crypto_publish_ecdh_pub(self, client_socket):
+        """Send our session ECDH public key once frames are allowed both ways."""
+        session, channel = self._crypto_control_state(client_socket)
+        if session is not None:
+            session.publish_pub(channel)
+
+    def _crypto_transfer_stamp(self, control_socket, force_plain=False):
+        """Mode+nonce a listener announces to a transfer connector."""
+        session, channel = self._crypto_control_state(control_socket)
+        if session is None:
+            return "plain"
+        return session.transfer_stamp(channel, force_plain)
+
+    def _crypto_attach_transfer_in(self, sock, control_socket, stamp):
+        """Framing channel for an accepted transfer socket (listener side)."""
+        session, control_channel = self._crypto_control_state(control_socket)
+        if session is None:
+            return None
+        channel = session.attach_transfer(sock, control_channel, stamp)
+        if channel is not None:
+            with self._crypto_lock:
+                self._channels[sock] = channel
+                self._encrypted_sockets.add(sock)
+        return channel
+
+    def _crypto_drop_secure(self, client_socket):
+        """Framing stopped: keep the secure-socket set and peer map truthful."""
+        with self._crypto_lock:
+            self._encrypted_sockets.discard(client_socket)
+            self._crypto_peer.pop(client_socket, None)
+
+    def _crypto_note_healthy(self, client_socket):
+        """A frame decoded cleanly: reset the streak that feeds the breaker."""
+        with self._crypto_lock:
+            self._crypto_decode_failures = 0
+
+    def _crypto_attach_transfer_out(self, sock, control_socket, stamp):
+        """Framing channel for a connected transfer socket (connector side)."""
+        session, control_channel = self._crypto_control_state(control_socket)
+        crypto = _connector_transfer_crypto(session, control_channel, stamp)
+        channel = _enable_connector_channel(sock, crypto)
+        if channel is not None:
+            with self._crypto_lock:
+                self._channels[sock] = channel
+                self._encrypted_sockets.add(sock)
+        return channel
+
+    def _crypto_drop_channel(self, sock):
+        """Forget a finished transfer socket's channel."""
+        with self._crypto_lock:
+            self._channels.pop(sock, None)
+            self._encrypted_sockets.discard(sock)
 
     def _crypto_on_decode_failure(self, client_socket):
         """Decryption failed (stale/wrong key): drop encryption, reload
@@ -4735,6 +5510,10 @@ class TCP_Client_Base:  # TCP client class
         A circuit breaker closes the connection after
         ``MAX_DECODE_FAILURES`` consecutive failures, so a garbage or
         persistent-mismatch storm cannot spin the loop forever."""
+        with self._crypto_lock:
+            channel = self._channels.get(client_socket)
+        if channel is not None:
+            channel.disable()
         with self._crypto_lock:
             self._encrypted_sockets.discard(client_socket)
             self._crypto_peer.pop(client_socket, None)
@@ -4780,6 +5559,9 @@ class TCP_Client_Base:  # TCP client class
         """Drive the client half of the handshake to completion."""
         try:
             self.crypto.ensure_keys()
+            session = self._crypto_session_ensure()
+            if session is not None:
+                session.reset_ecdh()  # a fresh handshake is a fresh session key
             with self._crypto_lock:
                 ack_event = threading.Event()
                 done_event = threading.Event()
@@ -4791,8 +5573,6 @@ class TCP_Client_Base:  # TCP client class
                 self._crypto_server_pub_ok = None
                 self._crypto_server_pem_path = None
                 self._crypto_my_nonce = self._crypto_fresh_nonce()
-                self._crypto_send_seq = 0
-                self._crypto_recv_seq = 0
                 self._crypto_handshake_started = True
                 self._crypto_handshake_gen += 1
                 gen = self._crypto_handshake_gen
@@ -4835,32 +5615,41 @@ class TCP_Client_Base:  # TCP client class
             self._crypto_server_nonce = server_nonce
             self._crypto_handshake_started = True
             self._crypto_my_nonce = self._crypto_fresh_nonce()
-            self._crypto_send_seq = 0
-            self._crypto_recv_seq = 0
             self._crypto_handshake_gen += 1
             my_nonce = self._crypto_my_nonce
+        session = self._crypto_session_ensure()
+        if session is not None:
+            session.reset_ecdh()  # a re-exchange is a fresh session key
         ack = f"/crypto_key_exchange_ack {my_nonce} 1 {1 if force else 0}"
         self._send_raw(self.client_socket, ack)
         self._crypto_after_ack("1" if force else "0", force)
 
     def _crypto_try_flip(self):
-        """Flip to encrypted mode only when the server key passed the
-        TOFU check and both sides announced readiness. Resets the
-        sequence counters so the fresh session starts at seq 0."""
-        with self._crypto_send_lock:  # no send may interleave with the seq reset / flip
+        """Flip to framed encryption only when the server key passed the
+        TOFU check and both sides announced readiness (no plaintext/framed
+        interleaving)."""
+        with self._crypto_send_lock:  # no send may interleave with the flip
             with self._crypto_lock:
-                if (
+                if not (
                     self._crypto_server_ready
                     and self._crypto_own_ready_sent
                     and self._crypto_server_pub_ok is True
                     and self._crypto_server_pem_path
                     and self.client_socket not in self._encrypted_sockets
                 ):
-                    self._crypto_send_seq = 0
-                    self._crypto_recv_seq = 0
-                    self._crypto_mark_encrypted(
-                        self.client_socket, "server", self._crypto_server_pem_path
-                    )
+                    return
+                self._crypto_mark_encrypted(
+                    self.client_socket, "server", self._crypto_server_pem_path
+                )
+                channel = self._channels.get(self.client_socket)
+                my_nonce = self._crypto_my_nonce
+                peer_nonce = self._crypto_server_nonce
+                peer_pem_path = self._crypto_server_pem_path
+        if channel is not None:
+            channel.enable(my_nonce, peer_nonce, peer_pem_path)
+        threading.Thread(
+            target=self._crypto_after_flip, args=(self.client_socket,), daemon=True
+        ).start()
 
     @staticmethod
     def _crypto_fresh_nonce():
@@ -4918,7 +5707,9 @@ class TCP_Client_Base:  # TCP client class
     def _crypto_push_pub_key(self):
         """Push our public key file to the server via the file-transfer
         mechanism (client is the sender)."""
-        while True:  # serialise pushes: wait for a concurrent push (double handshake) instead of skipping it
+        while (
+            True
+        ):  # serialise pushes: wait for a concurrent push (double handshake) instead of skipping it
             with self._crypto_lock:
                 if self.client_socket not in self._crypto_push_active:
                     self._crypto_push_active.add(self.client_socket)
@@ -4947,8 +5738,13 @@ class TCP_Client_Base:  # TCP client class
                 if waiting_time >= 200:
                     self._log("crypto: transfer port waiting timeout, public key push failed")
                     return False
-            self.file_transfer_mode(
-                self.crypto.pub_path, self.host, file_server_port, file_transfer_client_port
+            self.file_transfer_mode(  # a key push carries the keys themselves: always plaintext
+                self.crypto.pub_path,
+                self.host,
+                file_server_port,
+                file_transfer_client_port,
+                control_socket=self.client_socket,
+                crypto="plain",
             )
             self.pfree(file_transfer_client_port)
         except Exception:
@@ -5044,12 +5840,14 @@ class TCP_Client_Base:  # TCP client class
                     f"server allocated port range for each client: {self.each_client_port_range}"
                 )
         elif shlex.split(command.lower())[0] == "/server_file_transfer_port":
+            parts = command.split(" ")
             with self.file_transfer_server_port_lock:
-                self.file_transfer_server_port = int(command.split(" ")[1])
+                self.file_transfer_server_port = int(parts[1])
                 try:
-                    file_client_id = int(command.split(" ")[2])
+                    file_client_id = int(parts[2])
+                    stamp = parts[3] if len(parts) > 3 else "plain"  # listener mode+nonce
                     self.file_server_port_list.append(
-                        [self.file_transfer_server_port, file_client_id]
+                        [self.file_transfer_server_port, file_client_id, stamp]
                     )
                 except:
                     self._log_exc()
@@ -5105,6 +5903,26 @@ class TCP_Client_Base:  # TCP client class
             with self._crypto_lock:
                 self._crypto_server_ready = True
             self._crypto_try_flip()
+        elif (
+            self.is_enable_encrypto
+            and self.crypto is not None
+            and command.lower().split(" ")[0] == CRYPTO_FRAMES_START
+        ):
+            _session, channel = self._crypto_control_state(self.client_socket)
+            if channel is not None:
+                channel.note_peer_frames_ready()
+                self._crypto_publish_ecdh_pub(self.client_socket)
+        elif (
+            self.is_enable_encrypto
+            and self.crypto is not None
+            and command.lower().split(" ")[0] == CRYPTO_ECDH_PUB
+        ):
+            # only ever accepted inside an RSA frame (see _PLAINTEXT_LINE_PREFIXES)
+            parts = command.split(" ", 1)
+            session = self._crypto_session_ensure()
+            if session is not None and len(parts) > 1:
+                if not session.set_peer_ecdh_b64(parts[1]):
+                    self._log("crypto: rejected the server ECDH key")
         elif shlex.split(command.lower())[0] == "/file":
             self.file_transfer_client_recv_server_start_thread(
                 client_id, self.client_socket, command
@@ -5120,7 +5938,8 @@ class TCP_Client_Base:  # TCP client class
                 sport = int(parts[2])
             except (IndexError, ValueError):
                 return
-            self._forward_upload_queue.put((fid, sport))
+            stamp = parts[3] if len(parts) > 3 else "plain"  # upload leg's mode+nonce
+            self._forward_upload_queue.put((fid, sport, stamp))
         elif shlex.split(command.lower())[0] == "/pause_trans":
             try:
                 fid = int(shlex.split(command)[1])
@@ -5239,7 +6058,7 @@ class TCP_Client_Base:  # TCP client class
                             self.send_message(self.client_socket, "/quit")
                             time.sleep(0.5)
                             break
-                        elif shlex.split(message.lower())[0]=="/send_msg":
+                        elif shlex.split(message.lower())[0] == "/send_msg":
                             self.send_message_to_server(message)
                         elif shlex.split(message.lower())[0] == "/file":
                             self.file_transfer_client_recv_client_start_thread(message)
@@ -5304,9 +6123,7 @@ class TCP_Client_Base:  # TCP client class
     def multiple_folder_file_transfer_client_recv_client_start(self, message):
         transfer_folder_file_list = shlex.split(message)[1:]
         destination_path = None
-        if len(transfer_folder_file_list) >= 2 and not os.path.isdir(
-            transfer_folder_file_list[-1]
-        ):
+        if len(transfer_folder_file_list) >= 2 and not os.path.isdir(transfer_folder_file_list[-1]):
             destination_path = transfer_folder_file_list.pop()
         for transfer_folder_file in transfer_folder_file_list:
             command = "/file_folder {}".format(shlex.quote(transfer_folder_file))
@@ -5356,9 +6173,7 @@ class TCP_Client_Base:  # TCP client class
                 self._log(f"start to send folder command: {each_file_transfer_command_message}")
             else:
                 if destination_path:
-                    folder_transfer_command_message += " {}".format(
-                        shlex.quote(destination_path)
-                    )
+                    folder_transfer_command_message += " {}".format(shlex.quote(destination_path))
                 self.send_message(self.client_socket, folder_transfer_command_message.strip())
                 self._log(f"start to send folder command: {folder_transfer_command_message}")
 
@@ -5399,9 +6214,7 @@ class TCP_Client_Base:  # TCP client class
         for file in file_list:
             each_file_transfer_command_message = "/file {}".format(shlex.quote(file))
             if destination_path:
-                each_file_transfer_command_message += " {}".format(
-                    shlex.quote(destination_path)
-                )
+                each_file_transfer_command_message += " {}".format(shlex.quote(destination_path))
 
             def limited_transfer(cmd=each_file_transfer_command_message):
                 # hold the slot for the whole transfer, not only for the
@@ -5438,6 +6251,7 @@ class TCP_Client_Base:  # TCP client class
             self.send_message(self.client_socket, send_msg)
             file_transfer_client_port = self.palloc()
             file_server_port = None
+            stamp = "plain"
             is_find_port = True
             while is_find_port:
                 time.sleep(1)
@@ -5446,6 +6260,7 @@ class TCP_Client_Base:  # TCP client class
                         for port_info in self.file_server_port_list:
                             if port_info[1] == client_id:
                                 file_server_port = port_info[0]
+                                stamp = port_info[2]  # the listener's mode+nonce
                                 self.file_server_port_list.remove(port_info)
                                 is_find_port = False
                                 break
@@ -5457,7 +6272,12 @@ class TCP_Client_Base:  # TCP client class
                     )
                     return False
             self.file_transfer_mode(
-                filename, self.host, file_server_port, file_transfer_client_port
+                filename,
+                self.host,
+                file_server_port,
+                file_transfer_client_port,
+                control_socket=self.client_socket,
+                crypto=stamp,
             )
             self.pfree(file_transfer_client_port)
         except IndexError:
@@ -5465,8 +6285,21 @@ class TCP_Client_Base:  # TCP client class
             self._log("invalid command, please use '/file <filename>'")
 
     def file_transfer_mode(  # noqa: PLR0911 - peer-close and timeout exits are distinct outcomes
-        self, filename, server_address, server_port, client_port, pause_fid=None
+        self,
+        filename,
+        server_address,
+        server_port,
+        client_port,
+        pause_fid=None,
+        control_socket=None,
+        crypto=None,
     ):
+        """Send one file over a transfer sub-connection.
+
+        ``control_socket``/``crypto`` carry the listener's mode stamp
+        ("plain" or "enc:<nonce>"): an encrypted leg aborts when the session
+        key material is missing rather than downgrading silently.
+        """
         self._log(f"start to send file: {filename}")
         client_file_socket = None
         reset_time = 0
@@ -5475,6 +6308,7 @@ class TCP_Client_Base:  # TCP client class
             nonlocal file_running
             nonlocal client_file_socket
             file_running = False
+            self._crypto_drop_channel(client_file_socket)
             client_file_socket.close()
             with self.file_client_id_lock:
                 self.file_client_id -= 1
@@ -5494,6 +6328,13 @@ class TCP_Client_Base:  # TCP client class
                     return False
                 reset_time += 1
                 time.sleep(1)
+        try:
+            if crypto and crypto != "plain":
+                self._crypto_attach_transfer_out(client_file_socket, control_socket, crypto)
+        except _CryptoUnavailable as exc:
+            self._log(f"crypto: file transfer aborted: {exc}")
+            close_socket()
+            return False
         file_running = True
         file_receive_data_from_server = ""
 
@@ -5758,10 +6599,18 @@ class TCP_Client_Base:  # TCP client class
         if upload is None:
             self._log(f"forward: timed out waiting for an upload slot for {fname}")
             return
-        fid, sport = upload
+        fid, sport, stamp = upload
         client_port = self.palloc()
         try:
-            self.file_transfer_mode(abspath, self.host, sport, client_port, pause_fid=fid)
+            self.file_transfer_mode(
+                abspath,
+                self.host,
+                sport,
+                client_port,
+                pause_fid=fid,
+                control_socket=self.client_socket,
+                crypto=stamp,
+            )
         finally:
             self.pfree(client_port)
             with self._forward_pause_cond:
@@ -5825,6 +6674,7 @@ class TCP_Client_Base:  # TCP client class
             nonlocal client_file_socket
             nonlocal server_file_socket
             file_running = False
+            self._crypto_drop_channel(client_file_socket)
             client_file_socket.close()
             server_file_socket.close()
 
@@ -5986,13 +6836,19 @@ class TCP_Client_Base:  # TCP client class
         command_part = shlex.split(command)
         file_client_id = command_part[len(command_part) - 1]
         destination_path = _parse_destination_path(command_part)
-        transfer_server_port_msg = "/server_file_transfer_port {} {}\n".format(
-            file_transfer_server_port, file_client_id
+        stamp = self._crypto_transfer_stamp(
+            client_socket, force_plain=command_part[0] == "/crypto_pub_key"
         )
-        self._send_raw(client_socket, transfer_server_port_msg)  # protocol control message: always plaintext (like the handshake)
+        transfer_server_port_msg = "/server_file_transfer_port {} {} {}\n".format(
+            file_transfer_server_port, file_client_id, stamp
+        )
+        self._send_raw(
+            client_socket, transfer_server_port_msg
+        )  # coordination line: always plaintext (like the handshake)
         server_file_socket.listen(1)
         try:
             client_file_socket, client_file_address = server_file_socket.accept()
+            self._crypto_attach_transfer_in(client_file_socket, client_socket, stamp)
             is_open_file_transfer = setting_file_save_path()
             if is_open_file_transfer == None:
                 pass
@@ -6018,6 +6874,11 @@ class TCP_Client_Base:  # TCP client class
         self.free_port()
         self._flush_messages_dict()
         self._flush_events_dict()
+        with self._crypto_lock:
+            if self.client_socket is not None:
+                self._channels.pop(self.client_socket, None)
+                self._encrypted_sockets.discard(self.client_socket)
+            self._crypto_session = None
         if self.client_socket:
             try:
                 # the receive thread may be blocked in recv() on this socket:
