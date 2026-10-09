@@ -451,7 +451,10 @@ consecutive decode failures on one connection the connection is closed
 instead of re-exchanging, so a garbage-injection or persistent-mismatch
 storm cannot spin the loop forever. Genuine peer traffic (messages and
 commands other than the protocol's own handshake/coordination lines)
-resets the counter.
+resets the counter. Frames the peer had already sent when this side dropped
+out of encrypted mode are stale: they cannot be authenticated any more, so
+they are consumed and dropped — they neither surface as messages nor reset
+the counter.
 
 .. code-block:: python
 

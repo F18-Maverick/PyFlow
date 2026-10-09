@@ -244,6 +244,9 @@ def _configure(lib):
     lib.pf_rsa_key_free.argtypes = [c_void_p]
     lib.pf_rsa_key_free.restype = None
 
+    lib.pf_crypto_free.argtypes = [c_void_p]
+    lib.pf_crypto_free.restype = None
+
     lib.pf_ecdh_keypair_generate.argtypes = [ctypes.c_char_p, ctypes.POINTER(c_void_p)]
     lib.pf_ecdh_keypair_generate.restype = ctypes.c_int
     lib.pf_ecdh_pub_to_pem.argtypes = [c_void_p, ctypes.POINTER(ctypes.c_char_p)]
@@ -336,25 +339,17 @@ def load_library():
     )
 
 
-_libc_free = None  # lazily-bound free(3); libcrypto_api returns malloc'd buffers
-
-
 def _free_buffer(ptr):
-    """Release a malloc'd buffer returned by libcrypto_api with ``free(3)``.
+    """Release a buffer returned by libcrypto_api.
 
     The library allocates PEM strings and seal/open results with
-    ``malloc``; the matching deallocator is the C runtime's ``free``
-    (the process image on POSIX, ``msvcrt`` on Windows).
+    ``malloc`` and exports ``pf_crypto_free`` for them. Freeing with a
+    runtime bound on this side is not equivalent: on Windows the library
+    may use a different C runtime than the interpreter (ucrt vs msvcrt),
+    and freeing across heaps corrupts the process heap.
     """
-    global _libc_free
-    if not ptr:
-        return
-    if _libc_free is None:
-        libc = ctypes.CDLL("msvcrt" if os.name == "nt" else None)
-        libc.free.argtypes = [ctypes.c_void_p]
-        libc.free.restype = None
-        _libc_free = libc.free
-    _libc_free(ptr)
+    if ptr:
+        load_library().pf_crypto_free(ptr)
 
 
 def _uint8_buffer(data):

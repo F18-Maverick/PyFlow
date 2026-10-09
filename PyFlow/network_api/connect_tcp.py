@@ -539,7 +539,9 @@ class _SecureChannel:
 
     Send: ``send`` chunks a payload into frames (RSA for a small text payload,
     ECDH-sealed otherwise). Receive: ``feed`` parses socket bytes into the
-    plaintext buffer, ``take`` serves the byte stream the callers read.
+    plaintext buffer while the channel is framed (and reports the bytes
+    unparsed while it is not), ``take`` serves the byte stream the callers
+    read.
 
     Lifecycle: raw -> ``enable`` -> [``disable`` -> raw]. ``peer_frames_ready``
     must be set before frames may be sent (the peer announces it with a
@@ -687,24 +689,56 @@ class _SecureChannel:
     # -- receive path --------------------------------------------------------
 
     def feed(self, data):
-        """Parse received socket bytes into the plaintext buffer."""
+        """Parse received socket bytes; returns the bytes for the line reader.
+
+        While the channel is framed every byte is parsed into the plaintext
+        buffer and an empty result comes back; while it is not, plaintext
+        bytes are returned for the line reader. Frame bytes are consumed in
+        both modes: a peer that has not processed a re-exchange yet keeps
+        sending frames after this side dropped framing, and such a stale
+        frame cannot be authenticated any more — its bytes must never reach
+        the line reader, which would echo them as a message and reset the
+        decode-failure streak.
+
+        The parse shares the channel lock with ``enable``/``disable``, so a
+        flip that lands while the caller's read was in flight still
+        classifies the bytes by the state of that moment.
+        """
         with self._lock:
             self._raw += data
-            while self._raw:
-                if (
-                    self._raw[: min(len(self._raw), len(FRAME_MAGIC))]
-                    == FRAME_MAGIC[: min(len(self._raw), len(FRAME_MAGIC))]
-                ):
-                    if len(self._raw) < len(FRAME_MAGIC):
-                        break  # a partial magic may still be a frame
-                    if not self._consume_frame():
-                        break
-                else:
-                    if not self._consume_plaintext_line():
-                        break
+            return self._parse_buffered()
+
+    def _parse_buffered(self):
+        """Parse everything buffered; returns the bytes for the line reader.
+
+        Must be called under the channel lock. A ``disable`` performed while
+        parsing (the peer's re-exchange line) is honoured: the bytes behind
+        it belong to the peer's raw stream and are returned as such.
+        """
+        plain = bytearray()
+        while self._raw:
+            if (
+                self._raw[: min(len(self._raw), len(FRAME_MAGIC))]
+                == FRAME_MAGIC[: min(len(self._raw), len(FRAME_MAGIC))]
+            ):
+                if len(self._raw) < len(FRAME_MAGIC):
+                    break  # a partial magic may still be a frame
+                if not self._consume_frame():
+                    break
+            elif self.secure:
+                if not self._consume_plaintext_line():
+                    break
+            else:
+                plain += self._raw
+                self._raw.clear()
+        return bytes(plain)
 
     def _consume_frame(self):
-        """Decode one whole frame; False when more bytes are needed."""
+        """Consume one whole frame; False when more bytes are needed.
+
+        A framed channel decrypts the body; a raw one drops it, because the
+        session keys were torn down with the framing.
+        """
         if len(self._raw) < FRAME_HEADER_LEN:
             return False
         frame_type = self._raw[len(FRAME_MAGIC)]
@@ -716,6 +750,9 @@ class _SecureChannel:
             return False
         body = bytes(self._raw[FRAME_HEADER_LEN : FRAME_HEADER_LEN + length])
         del self._raw[: FRAME_HEADER_LEN + length]
+        if not self.secure:
+            self._debug("crypto: dropped a stale frame")
+            return True
         if frame_type == FRAME_TYPE_RSA:
             self._decode_rsa(body)
         else:
@@ -821,17 +858,21 @@ class _SecureChannel:
             del self._plain[: len(out)]
             return out
 
-    def drain_all(self):
-        """Bytes to hand back after framing failed.
+    def drain_plaintext(self):
+        """Bytes the line reader still gets after framing failed.
 
-        The decrypted buffer plus the unparsed socket bytes: the peer's next
-        plaintext line may already have been read together with the frame
-        that failed."""
+        The decrypted buffer plus the plaintext already buffered with the
+        frame that failed — the peer's re-exchange line, for example. Frame
+        bytes stay in the channel, where the stale-frame drop consumes them:
+        they must not be served as a line, and the channel may still need
+        them to resynchronise.
+        """
         with self._lock:
-            out = bytes(self._plain) + bytes(self._raw)
+            plain = bytearray(self._plain)
             self._plain.clear()
-            self._raw.clear()
-            return out
+            if not self.secure:
+                plain += self._parse_buffered()
+            return bytes(plain)
 
 
 class TCP_Server_Base:  # TCP server class
@@ -1962,7 +2003,9 @@ class TCP_Server_Base:  # TCP server class
 
         A socket speaking frames (see `_SecureChannel`) returns decrypted
         plaintext, served from the channel's buffer; a socket without one is
-        read raw.
+        read raw. A read that started while the channel was raw is classified
+        by the channel when it returns, so bytes of a flip that landed during
+        the read never land in the line reader.
 
         Args:
             client_socket (socket.socket): Connection to read from.
@@ -1979,20 +2022,20 @@ class TCP_Server_Base:  # TCP server class
             data = channel.take(msg_length)
             if data:
                 return data  # buffered plaintext is served even after a disable
-            if not channel.secure:
-                return client_socket.recv(msg_length)
-            raw = client_socket.recv(4096)
+            raw = client_socket.recv(4096 if channel.secure else msg_length)
             if not raw:
                 return b""
             try:
-                channel.feed(raw)
+                plain = channel.feed(raw)
             except _FrameError as exc:
                 self._log(f"crypto: {exc}")
                 self._crypto_channel_error(client_socket)
-                leftover = channel.drain_all()
+                leftover = channel.drain_plaintext()
                 if leftover:
                     return leftover  # hand back whatever was already read
                 continue  # framing is off now: keep serving in raw mode
+            if plain:
+                return plain  # plaintext mode: the line reader gets the bytes
 
     def _crypto_channel_error(self, client_socket):
         """A frame failed to decode: re-exchange on a control socket, close a
@@ -2333,7 +2376,10 @@ class TCP_Server_Base:  # TCP server class
 
         Mirrors `receive_message` for the asyncio path: framed bytes are
         decrypted off the event loop (RSA/ECDH are CPU-bound) and served from
-        the channel's buffer; a socket without a channel is read raw."""
+        the channel's buffer; a socket without a channel is read raw. As in
+        `receive_message`, the channel classifies what the read returned, so a
+        flip that landed during the read never leaks frame bytes into the line
+        reader."""
         while True:
             with self._crypto_lock:
                 channel = self._channels.get(client_socket)
@@ -2342,20 +2388,20 @@ class TCP_Server_Base:  # TCP server class
             data = channel.take(4096)
             if data:
                 return data  # buffered plaintext is served even after a disable
-            if not channel.secure:
-                return await loop.sock_recv(client_socket, 4096)
             raw = await loop.sock_recv(client_socket, 4096)
             if not raw:
                 return b""
             try:
-                await asyncio.to_thread(channel.feed, raw)
+                plain = await asyncio.to_thread(channel.feed, raw)
             except _FrameError as exc:
                 self._log(f"crypto: {exc}")
                 await asyncio.to_thread(self._crypto_channel_error, client_socket)
-                leftover = channel.drain_all()
+                leftover = channel.drain_plaintext()
                 if leftover:
                     return leftover
                 continue  # framing is off now: keep serving in raw mode
+            if plain:
+                return plain  # plaintext mode: the line reader gets the bytes
 
     async def _handle_client_async(self, client_socket, client_address):
         """Serve one accepted client until it disconnects, as a coroutine.
@@ -5370,7 +5416,9 @@ class TCP_Client_Base:  # TCP client class
 
         A socket speaking frames (see `_SecureChannel`) returns decrypted
         plaintext, served from the channel's buffer; a socket without one is
-        read raw.
+        read raw. A read that started while the channel was raw is classified
+        by the channel when it returns, so bytes of a flip that landed during
+        the read never land in the line reader.
 
         Args:
             client_socket (socket.socket): Connection to read from.
@@ -5387,20 +5435,20 @@ class TCP_Client_Base:  # TCP client class
             data = channel.take(msg_length)
             if data:
                 return data  # buffered plaintext is served even after a disable
-            if not channel.secure:
-                return client_socket.recv(msg_length)
-            raw = client_socket.recv(4096)
+            raw = client_socket.recv(4096 if channel.secure else msg_length)
             if not raw:
                 return b""
             try:
-                channel.feed(raw)
+                plain = channel.feed(raw)
             except _FrameError as exc:
                 self._log(f"crypto: {exc}")
                 self._crypto_channel_error(client_socket)
-                leftover = channel.drain_all()
+                leftover = channel.drain_plaintext()
                 if leftover:
                     return leftover  # hand back whatever was already read
                 continue  # framing is off now: keep serving in raw mode
+            if plain:
+                return plain  # plaintext mode: the line reader gets the bytes
 
     def _send_raw(self, client_socket, text):
         """Send a plaintext crypto-protocol message, bypassing encryption."""

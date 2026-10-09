@@ -113,8 +113,11 @@ Use ``pf_err_string`` to convert an error code to readable text and
 
 The library uses caller-provided output buffers for fixed-size results.
 Functions that return allocated buffers document that the caller must
-release them with ``free``. Opaque key handles must be released with their
-corresponding ``*_free`` function. HKDF output is capped at
+release them with ``pf_crypto_free`` — the library's own ``free``, so the
+allocation and the deallocation always run on the same C runtime (a host
+such as CPython on Windows may use a different one, and freeing across
+runtimes corrupts the heap). Opaque key handles must be released with
+their corresponding ``*_free`` function. HKDF output is capped at
 ``PF_CRYPTO_HKDF_SHA256_MAX_OUT`` (8160 bytes) by both
 ``pf_crypto_hkdf_sha256`` and ``pf_ecdh_derive_key``.
 
@@ -193,7 +196,7 @@ Parsed peer keys are checked to lie on the curve before use.
                        info, info_len,
                        session_key, sizeof(session_key));
 
-    free(public_pem);
+    pf_crypto_free(public_pem);
     pf_ecdh_pubkey_free(peer);
     pf_ecdh_keypair_free(local);
 
@@ -213,7 +216,7 @@ The ``pf_ecdh_seal`` output format is:
 The fixed overhead is ``PF_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext
 is allowed. A failed tag check returns ``PF_ERR_AUTH_FAILED`` and no
 plaintext is returned. On success the output buffer is ``malloc``-ed and
-the caller frees it.
+the caller releases it with ``pf_crypto_free``.
 
 ECDH key pairs can be persisted with ``pf_ecdh_keypair_write_priv`` and
 ``pf_ecdh_keypair_read_priv`` (PKCS#8 PEM, optionally passphrase-protected
