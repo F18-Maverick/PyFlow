@@ -21,7 +21,9 @@ Inbound events (plain-text messages and files pushed by the server,
 whether direct sends or client forwards) are captured on the TCP
 client's receive threads through ``TCP_Client_Base``'s
 ``add_message_listener``/``add_file_listener`` APIs, queued here, and
-polled by the frontend via ``/api/events``.
+polled by the frontend via ``/api/events``.  The message listener reports
+every inbound line, protocol commands included; a direct command from
+the server is dropped here, so the queue carries user messages only.
 
 Accounts: a connected client logs in with a server account before the
 instance list is usable.  A forced login needs both factors — the account
@@ -483,15 +485,20 @@ class ClientWebApp:
         return self._event_seq
 
     def _on_incoming_message(self, sender, text):
-        """Client receive thread: an inbound plain-text message.
+        """Client receive thread: an inbound line from the server.
 
         ``sender`` is the author's ``"ip:port"`` when another client forwarded
         the message to us (the server relay envelope carries it), or ``None``
         for a direct push from the server. Direct pushes surface under the
         server entry; forwarded ones under the sender's own conversation.
+        The listener reports every line, protocol commands included; a direct
+        command is not chat and is dropped, while an attributed line is a
+        forwarded payload and is kept.
         """
         text = (text or "").strip()
         if not text:
+            return
+        if sender is None and text.startswith("/"):  # protocol command, not chat
             return
         if text.startswith("Welcome!:"):  # connection greeting, not chat
             return

@@ -505,8 +505,10 @@ protocol loop:
     def remove_file_listener(self, listener)
 
 ``add_message_listener`` registers ``listener(client_id, message)``
-for every inbound plain message (lines that do not start with ``/``;
-commands go to the command handlers instead). ``add_file_listener``
+for every inbound line, commands included (``/help``, ``/file ...``,
+the crypto handshake lines, ...), so a listener observes all inbound
+traffic; line dispatch is unaffected, a command still goes to the
+command handlers. ``add_file_listener``
 registers ``listener(client_id, full_path, name, size, command)`` and
 fires after a file uploaded by a client has been fully written to the
 transfer directory (``command`` is the wire command that triggered it,

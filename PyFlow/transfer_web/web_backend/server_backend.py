@@ -20,7 +20,9 @@ minute.
 Inbound events (plain-text messages and file uploads arriving from
 clients) are captured on the TCP server's receive threads through
 ``TCP_Server_Base``'s ``add_message_listener``/``add_file_listener``
-APIs, queued here, and polled by the frontend via ``/api/events``.
+APIs, queued here, and polled by the frontend via ``/api/events``.  The
+message listener reports every inbound line, protocol commands included;
+the commands are dropped here, so the queue carries user messages only.
 
 Authentication: anonymous visitors get a white landing page (the server
 addresses, a login button, a registration button and a password-reset button);
@@ -696,9 +698,13 @@ class ServerWebApp:
         return self._event_seq
 
     def _on_incoming_message(self, client_id, text):
-        """Server receive thread: a plain-text message arrived from a client."""
+        """Server receive thread: an inbound line from a client.
+
+        The message listener reports every line, protocol commands included;
+        a command is dispatch traffic, not chat, so it is dropped.
+        """
         text = (text or "").strip()
-        if not text:
+        if not text or text.startswith("/"):
             return
         self._push_event(
             {"type": "msg", "from": client_id, "text": text, "at": time.strftime("%H:%M:%S")}

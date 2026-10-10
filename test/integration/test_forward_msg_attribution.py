@@ -17,7 +17,9 @@ Records of a forwarded message belong to the originator on both ends:
 
 Message listeners on both classes share one contract,
 ``listener(sender_id, message)``; on the client ``sender_id`` is ``None``
-for direct pushes from the server.
+for direct pushes from the server. Every inbound line is reported,
+protocol commands included, so the tests below match on the entries they
+care about instead of the whole transcript.
 """
 
 import shlex
@@ -150,7 +152,10 @@ def test_listener_gets_sender_for_forward_and_none_for_direct_push(trio):
     b.add_message_listener(lambda sender, text: received.append((sender, text)))
     _forward(a, "hello", b)
     server.send_message(_server_sock(server, b), "direct from server")
-    assert wait_until(lambda: len(received) == 2), f"messages never arrived {received=}"
+    assert wait_until(
+        lambda: (_client_key(a), "hello") in received
+        and (None, "direct from server") in received
+    ), f"messages never arrived {received=}"
     assert (_client_key(a), "hello") in received
     assert (None, "direct from server") in received
 
@@ -162,10 +167,9 @@ def test_forwarded_message_reaches_destination_as_plain(trio):
     received = []
     b.add_message_listener(lambda sender, text: received.append((sender, text)))
     _forward(a, "hello from a", b)
-    assert wait_until(lambda: any(t == "hello from a" for _, t in received)), (
+    assert wait_until(lambda: (_client_key(a), "hello from a") in received), (
         f"payload never reached {received=}"
     )
-    assert received[0][0] == _client_key(a)
     assert wait_until(
         lambda: any(
             e[0] == "hello from a" for e in b.messages_dict.get(_client_key(a), [])
@@ -215,8 +219,9 @@ def test_public_forward_api(trio):
     received = []
     b.add_message_listener(lambda sender, text: received.append((sender, text)))
     assert server.forward_message_to(_addr(b), "via api", _addr(a))
-    assert wait_until(lambda: len(received) == 1), f"never arrived {received=}"
-    assert received[0] == (_client_key(a), "via api")
+    assert wait_until(lambda: (_client_key(a), "via api") in received), (
+        f"never arrived {received=}"
+    )
     cmd = server.forward_target_command("file", "", "a.txt", _addr(a), 7)
     assert parse_forward_originator(cmd) == _client_key(a)
     assert server.forward_message_to(("127.0.0.1", 1), "x", _addr(a)) is False  # unreachable
@@ -236,7 +241,8 @@ def test_extension_command_cannot_hijack_envelope(trio):
     received = []
     b.add_message_listener(lambda sender, text: received.append((sender, text)))
     _forward(a, "hi", b)
-    assert wait_until(lambda: len(received) == 1), f"payload never reached {received=}"
-    assert received[0] == (_client_key(a), "hi")
+    assert wait_until(lambda: (_client_key(a), "hi") in received), (
+        f"payload never reached {received=}"
+    )
     time.sleep(0.3)
     assert hijacked == []

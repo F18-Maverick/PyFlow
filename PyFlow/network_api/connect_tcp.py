@@ -3,9 +3,10 @@
 ``TCP_Server_Base`` accepts connections and dispatches inbound lines;
 ``TCP_Client_Base`` connects, sends and reads on the same conventions:
 
-- one message per line, terminated by a newline; a line that starts with ``/``
-  is a command and goes to the command handlers, anything else is a plain
-  message reported to the registered message listeners;
+- one message per line, terminated by a newline; every inbound line is
+  reported to the registered message listeners (commands included), and a
+  line that starts with ``/`` is then dispatched to the command handlers,
+  anything else treated as a plain message;
 - unless ``is_enable_encrypto`` is False, an encrypted channel is negotiated
   right after connect: the handshake lines and the public-key pushes stay
   plaintext, then every later message travels as a frame (RSA-OAEP for small
@@ -880,11 +881,11 @@ class TCP_Server_Base:  # TCP server class
 
     Each accepted connection is served by `handle_client`, either in its own
     thread (the default) or by a coroutine on an asyncio event loop when
-    ``is_asynic_clients_io`` is True: a line starting with ``/`` goes to
-    `handle_command` (built-in commands plus the handlers registered with
-    `register_command`), any other line is a plain message delivered to the
-    listeners registered with `add_message_listener` and stored in
-    ``messages_dict``.
+    ``is_asynic_clients_io`` is True: every inbound line is delivered to the
+    listeners registered with `add_message_listener` first; a line starting
+    with ``/`` then goes to `handle_command` (built-in commands plus the
+    handlers registered with `register_command`), any other line is a plain
+    message stored in ``messages_dict``.
 
     Attributes:
         host (str): Address the server socket binds to.
@@ -1384,10 +1385,12 @@ class TCP_Server_Base:  # TCP server class
         self._custom_handler_threaded[registe_index][command_name] = run_in_thread
 
     def add_message_listener(self, listener):
-        """Register ``listener(client_id, message)`` for every inbound plain message.
+        """Register ``listener(client_id, message)`` for every inbound line.
 
-        Plain messages are the lines received from clients that do not start with
-        ``/``; commands go through the registered command handlers instead.
+        Every line received from a client is reported, commands included
+        (``/help``, ``/file ...``, the crypto handshake lines, ...), so the
+        listener observes all inbound traffic; dispatch is unaffected, a
+        command still goes through the command handlers.
 
         Args:
             listener (callable): ``listener(client_id, message)`` where
@@ -2534,7 +2537,7 @@ class TCP_Server_Base:  # TCP server class
         return True
 
     def _process_client_line(self, client_socket, client_address, client_id, message):
-        """Log and dispatch one complete (already decrypted) line from a client.
+        """Report, log and dispatch one complete (already decrypted) line from a client.
 
         Args:
             client_socket (socket.socket): Connection the line came from.
@@ -2549,10 +2552,12 @@ class TCP_Server_Base:  # TCP server class
             # genuine peer traffic: reset the streak that feeds the breaker
             self._crypto_note_healthy(client_socket)
         self._log(message)
+        # every inbound line is an event for the message listeners (commands
+        # included); dispatch below is unaffected
+        self._notify_message_received(client_id, message)
         if message.startswith("/"):  # deal with special command
             self._record_event(client_socket, message)
             return self.handle_command(client_socket, client_address, message)
-        self._notify_message_received(client_id, message)
         self._record_message(client_socket, message)
         timestamp = datetime.now().strftime("%H:%M:%S")  # deal with normal message
         log_msg = f"[{timestamp}] {client_id}: {message}"
@@ -4315,11 +4320,13 @@ class TCP_Server_Base:  # TCP server class
 class TCP_Client_Base:  # TCP client class
     """TCP client: connect to a server, dispatch commands, send and receive messages.
 
-    Lines received from the server go through `receive_messages`: a line starting
-    with ``/`` is handled by `handle_server_command` (protocol commands plus the
-    handlers registered for the "server" side), any other line is a plain message
-    delivered to the listeners registered with `add_message_listener` and stored in
-    ``messages_dict``. With ``is_input_command_in_console`` the console thread
+    Lines received from the server go through `receive_messages`: every line is
+    delivered to the listeners registered with `add_message_listener` first
+    (commands included; a forwarded ``/send_msg_from`` envelope is delivered as
+    its payload), then a line starting with ``/`` is handled by
+    `handle_server_command` (protocol commands plus the handlers registered for
+    the "server" side), any other line is stored in ``messages_dict`` as a plain
+    message. With ``is_input_command_in_console`` the console thread
     `interactive_mode` sends typed lines to the server.
 
     Attributes:
@@ -4553,9 +4560,11 @@ class TCP_Client_Base:  # TCP client class
         self._custom_handler_threaded[registe_index][command_name] = run_in_thread
 
     def add_message_listener(self, listener):
-        """Register ``listener(sender_id, message)`` for every inbound plain message.
+        """Register ``listener(sender_id, message)`` for every inbound line.
 
-        Mirrors the server-side contract; commands are not reported here.
+        Every line received from the server is reported, commands included, so
+        the listener observes all inbound traffic; a message another client
+        forwarded here is reported as its payload, attributed to the forwarder.
 
         Args:
             listener (callable): ``listener(sender_id, message)``; ``sender_id`` is
@@ -5287,11 +5296,12 @@ class TCP_Client_Base:  # TCP client class
     def receive_messages(self):  # get server msg
         """Read from the server until the connection ends.
 
-        Runs on the receive thread: plain lines are reported to the message
-        listeners and stored in ``messages_dict`` (``/send_msg_from`` envelopes are
-        attributed to their sender first), other ``/`` lines go to
-        `handle_server_command`. Any end of the connection clears ``running`` and
-        releases the port range.
+        Runs on the receive thread: every inbound line is reported to the message
+        listeners (commands included); a plain message is also stored in
+        ``messages_dict``, while a ``/send_msg_from`` envelope is reported and
+        stored as its payload attributed to the forwarding client, and other ``/``
+        lines additionally go to `handle_server_command`. Any end of the
+        connection clears ``running`` and releases the port range.
         """
         buffer = ""
         while self.running:
@@ -5317,21 +5327,27 @@ class TCP_Client_Base:  # TCP client class
                         # client forwarded to us: its records belong to the
                         # originator, whose socket exists only on the server, so
                         # the originator's address is the store key here. The
-                        # payload then flows through the single plain-message
-                        # path below (notify + store + print).
+                        # payload is reported and stored below like any inbound
+                        # message; the envelope itself is not dispatched.
                         unwrapped = parse_forwarded_message(message)
                         if unwrapped is not None:
                             raw = message
                             sender, message = unwrapped
                             self._record_event(sender, raw)
+                            if not message:
+                                continue
                         else:
+                            # a command from the server: reported to the listeners
+                            # like every inbound line, then handled
                             self._record_event(self.client_socket, message)
-                            self.handle_server_command(message)
-                    if message:
-                        if not message.startswith("/"):
                             self._notify_message_received(sender, message)
-                            self._record_message(sender or self.client_socket, message)
-                        self._log(f"\n[server] {message}")
+                            self.handle_server_command(message)
+                            self._log(f"\n[server] {message}")
+                            continue
+                    self._notify_message_received(sender, message)
+                    if not message.startswith("/"):
+                        self._record_message(sender or self.client_socket, message)
+                    self._log(f"\n[server] {message}")
             except socket.timeout:
                 continue
             except ConnectionResetError:

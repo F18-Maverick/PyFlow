@@ -308,11 +308,12 @@ protocol loop:
     def remove_file_listener(self, listener)
 
 ``add_message_listener`` registers ``listener(sender_id, message)``
-for every inbound plain message (lines that do not start with ``/``;
-commands go to `handle_server_command` instead). ``sender_id`` is the
-author's ``"ip:port"`` — for a message another client forwarded here
-through the ``/send_msg_from`` envelope it is the forwarding client, and
-it is ``None`` for a direct push from the server. ``add_file_listener``
+for every inbound line, commands included, so a listener observes all
+inbound traffic; a message another client forwarded here through the
+``/send_msg_from`` envelope is reported as its payload. ``sender_id`` is
+the author's ``"ip:port"`` — the forwarding client for such a forwarded
+message, and it is ``None`` for a direct push from the server.
+``add_file_listener``
 registers ``listener(client_id, full_path, name, size, command)`` and
 fires after a file sent by the server has been fully written to disk.
 Both listeners run on a protocol thread, so they must not block, and an
