@@ -24,6 +24,8 @@ def test_tcp_server_init():
     assert server.port == 65002  # noqa: PLR2004
     assert callable(server.start_TCP_Server)
     assert server.is_enable_encrypto is True
+    assert server.recv_messages_chunk_len == 4096  # noqa: PLR2004
+    assert server.file_transfer_chunk_len == 65536  # noqa: PLR2004
     assert server.is_custom_keys is None
 
 

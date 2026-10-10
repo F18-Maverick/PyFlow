@@ -187,13 +187,17 @@ def test_config_forms_list_the_new_flags(web, client, client_web):
     # the client class has no coroutine mode: offering it would fail validation
     assert "is_asynic_clients_io" not in client_keys
 
+    chunk_keys = ("recv_messages_chunk_len", "file_transfer_chunk_len")
+    for key in chunk_keys:
+        assert key in server_keys and key in client_keys, key
+
     login(client)
     server_form = client.get("/config").get_data(as_text=True)
-    for key in ("is_asynic_clients_io", "is_debug", "is_print_log"):
+    for key in ("is_asynic_clients_io", "is_debug", "is_print_log", *chunk_keys):
         assert f'id="f-{key}"' in server_form, key
     client_app, client_flask = client_web
     client_form = client_flask.get("/config").get_data(as_text=True)
-    for key in ("is_debug", "is_print_log"):
+    for key in ("is_debug", "is_print_log", *chunk_keys):
         assert f'id="f-{key}"' in client_form, key
     assert 'id="f-is_asynic_clients_io"' not in client_form
 

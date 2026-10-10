@@ -128,6 +128,71 @@ def test_server_receives_file_from_client(pair, tmp_path):
     assert files[0].read_bytes() == payload
 
 
+def test_custom_file_transfer_chunk_len_is_honored_in_both_directions(tmp_path):
+    """A non-default ``file_transfer_chunk_len`` drives the stream.
+
+    Both directions are covered: a payload split into many small chunks
+    still arrives byte-identical on each receiver.
+    """
+    port = free_port()
+    server = TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+        file_transfer_chunk_len=1024,
+    )
+    threading.Thread(target=server.start_TCP_Server, daemon=True).start()
+    assert server_ready(server), "server did not start"
+    client = TCP_Client_Base(
+        host="127.0.0.1",
+        port=port,
+        client_host="127.0.0.1",
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+        file_transfer_chunk_len=1024,
+    )
+    recv_dir = tmp_path / "recv"
+    recv_dir.mkdir()
+    client.file_transfer_dir = str(recv_dir)
+    assert client.connect()
+    try:
+        src = tmp_path / "chunked.bin"
+        payload = os.urandom(64 * 1024 + 123)  # 64 chunks of 1 KiB, plus a tail
+        src.write_bytes(payload)
+
+        # server -> client (server sends, client writes to disk)
+        client.file_transfer_client_recv_server_start_thread(
+            "cid", client.client_socket, f"/file {src} 0"
+        )
+        server_port = _wait_port(server)
+        assert server_port is not None
+        server.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
+        assert wait_until(lambda: any(recv_dir.iterdir()), timeout=15), (
+            "client did not receive the file"
+        )
+        assert list(recv_dir.iterdir())[0].read_bytes() == payload
+
+        # client -> server (client sends, server writes to disk)
+        server_recv = tmp_path / "server_recv"
+        server_recv.mkdir()
+        server.file_transfer_dir = str(server_recv)
+        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
+        server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
+        client_port = _wait_port(client)
+        assert client_port is not None
+        client.file_transfer_mode(str(src), "127.0.0.1", client_port, 0)
+        assert wait_until(lambda: any(server_recv.iterdir()), timeout=15), (
+            "server did not receive the file"
+        )
+        assert list(server_recv.iterdir())[0].read_bytes() == payload
+    finally:
+        client.close()
+        server.stop()
+
+
 def test_server_pushes_file_with_quoted_client_addr(pair, tmp_path):
     """The console-style command with quoted parameters works end to end:
     /file "<path>" "('127.0.0.1', <port>)" - the quoted tuple survives

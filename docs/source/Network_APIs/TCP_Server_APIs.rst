@@ -27,6 +27,8 @@ clients.
             is_enable_encrypto: Any=True,
             is_custom_keys: Any=None,
             max_mem_buff: Any=2048,
+            recv_messages_chunk_len: Any=4096,
+            file_transfer_chunk_len: Any=65536,
             is_asynic_clients_io: Any=False,
             is_debug: Any=False,
             is_print_log: Any=True) -> None:
@@ -58,6 +60,10 @@ The parameters of the ``__init__`` method are as follows:
 - ``max_mem_buff``: The in-memory buffering ceiling of the forward pump,
   given in MiB and stored as bytes (``self.max_mem_buff``); past it the
   uploading peer is told to pause. The default is 2048.
+- ``recv_messages_chunk_len``: The number of bytes read per receive on the
+  control connection, covering commands and messages. The default is 4096.
+- ``file_transfer_chunk_len``: The chunk size in bytes for streaming a file
+  or folder transfer in either direction. The default is 65536 (64 KiB).
 - ``is_asynic_clients_io``: A flag indicating whether clients are served by
   asyncio coroutines on one event loop instead of one thread per client. It
   lifts the ``max_clients`` limit, so a single server can hold thousands of
@@ -87,6 +93,8 @@ All parameters have default values:
 - ``is_custom_keys``: Default is ``None`` 
   (a ``[pub_key_path, pvt_key_path]`` list uses a user-supplied keypair
   instead of the default ``~/.ssh`` / generated keys)
+- ``recv_messages_chunk_len``: Default is ``4096``
+- ``file_transfer_chunk_len``: Default is ``65536`` (64 KiB)
 - ``is_asynic_clients_io``: Default is ``False``
   (when ``True``, every accepted connection is served by a coroutine on one
   asyncio event loop, and ``max_clients`` is ignored)

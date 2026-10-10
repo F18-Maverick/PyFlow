@@ -124,3 +124,54 @@ def test_client_listener_does_not_swallow_commands(pair):
     )
     assert received.count((None, "/probe 1")) == 1  # reported once, then dispatched
     assert wait_until(lambda: handled == ["/probe 1"]), f"handler never ran {handled=}"
+
+
+def test_small_recv_messages_chunk_len_still_reassembles_lines(tmp_path):
+    """A line larger than ``recv_messages_chunk_len`` arrives intact.
+
+    Both directions are covered: the control reader just takes more reads.
+    """
+    port = free_port()
+    server = TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+        recv_messages_chunk_len=8,
+    )
+    server.messages_log_file = str(tmp_path / "server_messages_log.json")
+    server.events_log_file = str(tmp_path / "server_events_log.json")
+    threading.Thread(target=server.start_TCP_Server, daemon=True).start()
+    assert server_ready(server), "server did not start"
+    client = TCP_Client_Base(
+        host="127.0.0.1",
+        port=port,
+        client_host="127.0.0.1",
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+        recv_messages_chunk_len=8,
+    )
+    client.messages_log_file = str(tmp_path / "client_messages_log.json")
+    client.events_log_file = str(tmp_path / "client_events_log.json")
+    assert client.connect()
+    try:
+        long_line = "chunked-message-" + "x" * 200  # far beyond one 8-byte read
+        server_received = []
+        server.add_message_listener(
+            lambda client_id, text: server_received.append((client_id, text))
+        )
+        client.send_message(client.client_socket, long_line)
+        assert wait_until(lambda: (_client_key(client), long_line) in server_received), (
+            f"client line never arrived in full {server_received=}"
+        )
+        client_received = []
+        client.add_message_listener(lambda sender, text: client_received.append((sender, text)))
+        server.send_message(_server_sock(server, client), long_line)
+        assert wait_until(lambda: (None, long_line) in client_received), (
+            f"server line never arrived in full {client_received=}"
+        )
+    finally:
+        client.close()
+        server.stop()

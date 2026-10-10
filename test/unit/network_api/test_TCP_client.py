@@ -12,6 +12,8 @@ def test_tcp_client_init():
     assert callable(client.connect)
     assert client.is_enable_encrypto is True
     assert client.is_custom_keys is None
+    assert client.recv_messages_chunk_len == 4096  # noqa: PLR2004
+    assert client.file_transfer_chunk_len == 65536  # noqa: PLR2004
 
 import socket  # noqa: E402
 import threading  # noqa: E402

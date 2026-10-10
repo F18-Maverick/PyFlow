@@ -52,6 +52,8 @@ SERVER_DEFAULTS = {
     "is_enable_encrypto": True,
     "is_custom_keys": None,
     "max_mem_buff": 2048,
+    "recv_messages_chunk_len": 4096,
+    "file_transfer_chunk_len": 65536,
     "is_asynic_clients_io": False,
     "is_debug": False,
     "is_print_log": True,
@@ -72,6 +74,8 @@ CLIENT_DEFAULTS = {
     "is_enable_encrypto": True,
     "is_custom_keys": None,
     "max_mem_buff": 2048,
+    "recv_messages_chunk_len": 4096,
+    "file_transfer_chunk_len": 65536,
     "is_debug": False,
     "is_print_log": True,
 }
@@ -268,11 +272,13 @@ Config fields (empty input keeps the current value):
           max_file_transfer_thread_num, is_hand_alloc_port,
           is_input_command_in_console, max_custom_workers, is_extend_command,
           is_enable_encrypto, is_custom_keys, max_mem_buff,
+          recv_messages_chunk_len, file_transfer_chunk_len,
           is_asynic_clients_io, is_debug, is_print_log
   client: host, client_host, port, client_port, timeout, port_add_step,
           max_thread_num, is_input_command_in_console, is_wait_server,
           max_custom_workers, is_extend_command, is_enable_encrypto,
-          is_custom_keys, max_mem_buff, is_debug, is_print_log
+          is_custom_keys, max_mem_buff, recv_messages_chunk_len,
+          file_transfer_chunk_len, is_debug, is_print_log
 Booleans accept true/false/1/0/y/n; integers are parsed with int(). Type
 "none" to reset a nullable field (host/client_port/timeout/is_custom_keys).
 Help, Fix_Config, Setup and Quit work at every prompt, including field

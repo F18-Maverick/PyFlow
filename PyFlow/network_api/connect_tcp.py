@@ -915,6 +915,8 @@ class TCP_Server_Base:  # TCP server class
         is_enable_encrypto=True,
         is_custom_keys=None,
         max_mem_buff=2048,
+        recv_messages_chunk_len=4096,
+        file_transfer_chunk_len=65536,
         is_asynic_clients_io=False,
         is_debug=False,
         is_print_log=True,
@@ -945,6 +947,10 @@ class TCP_Server_Base:  # TCP server class
                 instead of the default key lookup; an invalid pair is ignored.
             max_mem_buff (int): Buffering ceiling in MiB for the in-memory forward
                 pump; past it the uploader is told to pause. Defaults to 2048.
+            recv_messages_chunk_len (int): Bytes read per receive on the control
+                connection, covering commands and messages. Defaults to 4096.
+            file_transfer_chunk_len (int): Chunk size in bytes streamed when
+                sending or receiving a file or folder. Defaults to 65536 (64 KiB).
             is_asynic_clients_io (bool): Serve clients with asyncio coroutines on
                 an event loop instead of one thread per client, so a single
                 server can hold thousands of concurrent connections. Defaults to
@@ -959,6 +965,8 @@ class TCP_Server_Base:  # TCP server class
                 cannot be created or read.
         """
         self.max_mem_buff = max_mem_buff * 1024 * 1024
+        self.recv_messages_chunk_len = recv_messages_chunk_len
+        self.file_transfer_chunk_len = file_transfer_chunk_len
         self._forward_fid = 0
         self._forward_fid_lock = threading.Lock()
         self._forward_relays = {}
@@ -1713,7 +1721,7 @@ class TCP_Server_Base:  # TCP server class
             while not stop_event.is_set():
                 try:
                     client_sock.settimeout(1.0)
-                    data = self.receive_message(client_sock, 4096)
+                    data = self.receive_message(client_sock, self.recv_messages_chunk_len)
                     if not data:
                         break
                     if on_data:
@@ -2025,7 +2033,7 @@ class TCP_Server_Base:  # TCP server class
             data = channel.take(msg_length)
             if data:
                 return data  # buffered plaintext is served even after a disable
-            raw = client_socket.recv(4096 if channel.secure else msg_length)
+            raw = client_socket.recv(self.recv_messages_chunk_len if channel.secure else msg_length)
             if not raw:
                 return b""
             try:
@@ -2329,7 +2337,9 @@ class TCP_Server_Base:  # TCP server class
                 return
             buffer = ""
             while True:
-                data = self.receive_message(client_socket, 4096)  # get msg from client
+                data = self.receive_message(  # get msg from client
+                    client_socket, self.recv_messages_chunk_len
+                )
                 self._debug(data)
                 if not data:
                     break
@@ -2375,7 +2385,7 @@ class TCP_Server_Base:  # TCP server class
         )
 
     async def _async_receive(self, client_socket, loop):
-        """Read up to 4096 plaintext bytes from one accepted client.
+        """Read up to ``recv_messages_chunk_len`` plaintext bytes from one accepted client.
 
         Mirrors `receive_message` for the asyncio path: framed bytes are
         decrypted off the event loop (RSA/ECDH are CPU-bound) and served from
@@ -2387,11 +2397,11 @@ class TCP_Server_Base:  # TCP server class
             with self._crypto_lock:
                 channel = self._channels.get(client_socket)
             if channel is None:
-                return await loop.sock_recv(client_socket, 4096)
-            data = channel.take(4096)
+                return await loop.sock_recv(client_socket, self.recv_messages_chunk_len)
+            data = channel.take(self.recv_messages_chunk_len)
             if data:
                 return data  # buffered plaintext is served even after a disable
-            raw = await loop.sock_recv(client_socket, 4096)
+            raw = await loop.sock_recv(client_socket, self.recv_messages_chunk_len)
             if not raw:
                 return b""
             try:
@@ -3147,7 +3157,9 @@ class TCP_Server_Base:  # TCP server class
                 with open(full_path.strip(), "wb") as f:
                     remaining = file_size
                     while remaining > 0:
-                        chunk = self.receive_message(client_file_socket, min(65536, remaining))
+                        chunk = self.receive_message(
+                            client_file_socket, min(self.file_transfer_chunk_len, remaining)
+                        )
                         if not chunk:
                             try:
                                 self.send_message(client_file_socket, self.error_sign)
@@ -3594,7 +3606,7 @@ class TCP_Server_Base:  # TCP server class
             nonlocal file_receive_data_from_server
             while file_running:
                 try:
-                    data = self.receive_message(client_file_socket, 4096)
+                    data = self.receive_message(client_file_socket, self.recv_messages_chunk_len)
                     if not data:
                         self._log("\nbreak the file transfer connection from server")
                         try:
@@ -3662,7 +3674,7 @@ class TCP_Server_Base:  # TCP server class
                         with self._forward_pause_cond:
                             while self._forward_pause.get(pause_fid, False):
                                 self._forward_pause_cond.wait()
-                    file_data = f.read(65536)
+                    file_data = f.read(self.file_transfer_chunk_len)
                     if not file_data:
                         break
                     self.send_message(client_file_socket, file_data)
@@ -3813,7 +3825,7 @@ class TCP_Server_Base:  # TCP server class
         deadline = time.time() + timeout
         while time.time() < deadline:
             try:
-                data = self.receive_message(sock, 4096)
+                data = self.receive_message(sock, self.recv_messages_chunk_len)
             except Exception:
                 return False
             if not data:
@@ -4032,7 +4044,9 @@ class TCP_Server_Base:  # TCP server class
                 with cond:
                     while state["paused"]:
                         cond.wait()
-                chunk = self._forward_recv_exact(up_sock, min(65536, remaining))
+                chunk = self._forward_recv_exact(
+                    up_sock, min(self.file_transfer_chunk_len, remaining)
+                )
                 remaining -= len(chunk)
                 enqueue(chunk)
             for q in queues.values():
@@ -4356,6 +4370,8 @@ class TCP_Client_Base:  # TCP client class
         is_enable_encrypto=True,
         is_custom_keys=None,
         max_mem_buff=2048,
+        recv_messages_chunk_len=4096,
+        file_transfer_chunk_len=65536,
         is_debug=False,
         is_print_log=True,
     ):
@@ -4389,6 +4405,10 @@ class TCP_Client_Base:  # TCP client class
             max_mem_buff (int): Buffer ceiling in MiB, kept for parity with the
                 server class; the client's forward path does not read it today.
                 Defaults to 2048.
+            recv_messages_chunk_len (int): Bytes read per receive on the control
+                connection, covering commands and messages. Defaults to 4096.
+            file_transfer_chunk_len (int): Chunk size in bytes streamed when
+                sending or receiving a file or folder. Defaults to 65536 (64 KiB).
             is_debug (bool): Log execution-process lines in addition to command
                 and result lines. Defaults to False.
             is_print_log (bool): Log at all; False silences every line this
@@ -4400,6 +4420,8 @@ class TCP_Client_Base:  # TCP client class
                 cannot be created or read.
         """
         self.max_mem_buff = max_mem_buff * 1024 * 1024
+        self.recv_messages_chunk_len = recv_messages_chunk_len
+        self.file_transfer_chunk_len = file_transfer_chunk_len
         self._forward_upload_queue = queue.Queue()
         self._forward_pause = {}
         self._forward_pause_cond = threading.Condition()
@@ -5177,7 +5199,7 @@ class TCP_Client_Base:  # TCP client class
             while not stop_event.is_set():
                 try:
                     client_sock.settimeout(1.0)
-                    data = self.receive_message(client_sock, 4096)
+                    data = self.receive_message(client_sock, self.recv_messages_chunk_len)
                     if not data:
                         break
                     if on_data:
@@ -5306,7 +5328,7 @@ class TCP_Client_Base:  # TCP client class
         buffer = ""
         while self.running:
             try:
-                data = self.receive_message(self.client_socket, 4096)
+                data = self.receive_message(self.client_socket, self.recv_messages_chunk_len)
                 if not data:
                     self._log("\nbreak the connection from server")
                     self.running = False
@@ -5451,7 +5473,7 @@ class TCP_Client_Base:  # TCP client class
             data = channel.take(msg_length)
             if data:
                 return data  # buffered plaintext is served even after a disable
-            raw = client_socket.recv(4096 if channel.secure else msg_length)
+            raw = client_socket.recv(self.recv_messages_chunk_len if channel.secure else msg_length)
             if not raw:
                 return b""
             try:
@@ -6408,7 +6430,7 @@ class TCP_Client_Base:  # TCP client class
             nonlocal file_receive_data_from_server
             while file_running:
                 try:
-                    data = self.receive_message(client_file_socket, 4096)
+                    data = self.receive_message(client_file_socket, self.recv_messages_chunk_len)
                     if not data:
                         self._log("\nbreak the file transfer connection from server")
                         try:
@@ -6476,7 +6498,7 @@ class TCP_Client_Base:  # TCP client class
                         with self._forward_pause_cond:
                             while self._forward_pause.get(pause_fid, False):
                                 self._forward_pause_cond.wait()
-                    file_data = f.read(65536)
+                    file_data = f.read(self.file_transfer_chunk_len)
                     if not file_data:
                         break
                     self.send_message(client_file_socket, file_data)
@@ -6845,7 +6867,9 @@ class TCP_Client_Base:  # TCP client class
                 with open(full_path.strip(), "wb") as f:
                     remaining = file_size
                     while remaining > 0:
-                        chunk = self.receive_message(client_file_socket, min(65536, remaining))
+                        chunk = self.receive_message(
+                            client_file_socket, min(self.file_transfer_chunk_len, remaining)
+                        )
                         if not chunk:
                             try:
                                 self.send_message(client_file_socket, self.error_sign)

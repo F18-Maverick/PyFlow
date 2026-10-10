@@ -123,6 +123,20 @@ SERVER_PARAM_FIELDS = [
     ("is_custom_keys", "Custom keys", "text", "", "Optional [pub_key_path, pvt_key_path] pair."),
     ("max_mem_buff", "Max memory buffer (MB)", "number", 2048, "In-memory transfer buffer in MB."),
     (
+        "recv_messages_chunk_len",
+        "Recv messages chunk len",
+        "number",
+        4096,
+        "Bytes read per receive on the control connection.",
+    ),
+    (
+        "file_transfer_chunk_len",
+        "File transfer chunk len",
+        "number",
+        65536,
+        "Bytes per streamed chunk of a file or folder transfer.",
+    ),
+    (
         "is_asynic_clients_io",
         "Asyncio clients io",
         "bool",

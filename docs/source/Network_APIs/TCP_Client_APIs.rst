@@ -27,6 +27,8 @@ the TCP server and exchange data with the server.
             is_enable_encrypto: Any=True,
             is_custom_keys: Any=None,
             max_mem_buff: Any=2048,
+            recv_messages_chunk_len: Any=4096,
+            file_transfer_chunk_len: Any=65536,
             is_debug: Any=False,
             is_print_log: Any=True) -> None:
             ...
@@ -57,6 +59,10 @@ The parameters of the ``__init__`` method are as follows:
 - ``max_mem_buff``: The buffering ceiling in MiB, stored as bytes
   (``self.max_mem_buff``). It is kept for parity with the server class; the
   client's forward path does not read it today. The default is 2048.
+- ``recv_messages_chunk_len``: The number of bytes read per receive on the
+  control connection, covering commands and messages. The default is 4096.
+- ``file_transfer_chunk_len``: The chunk size in bytes for streaming a file
+  or folder transfer in either direction. The default is 65536 (64 KiB).
 - ``is_debug``: A flag selecting how much detail is logged. With ``False``
   (the default) the client logs command content and execution results only;
   with ``True`` it also logs the key steps of the execution process.
@@ -90,6 +96,8 @@ Every parameter has default values:
 - ``max_mem_buff``: Default is ``2048``
   (kept for parity with the server class; the client's forward path does not
   read it today)
+- ``recv_messages_chunk_len``: Default is ``4096``
+- ``file_transfer_chunk_len``: Default is ``65536`` (64 KiB)
 
 The TCP Client Setup API will initialize all the necessary 
 parameters and resources for the TCP client.
