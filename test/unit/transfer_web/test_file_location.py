@@ -11,6 +11,7 @@ import json
 import os
 import threading
 from types import SimpleNamespace
+from urllib.parse import quote
 
 import pytest
 
@@ -267,41 +268,52 @@ def test_the_token_table_stays_bounded(client_web):
 # ---- file manager commands ---------------------------------------------------
 
 
-def test_reveal_helper_picks_the_platform_command(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "backend", [server_backend, client_backend], ids=["server", "client"]
+)
+def test_reveal_helper_picks_the_platform_command(backend, tmp_path, monkeypatch):
     """Windows selects the entry, macOS reveals it, Linux asks the desktop bus."""
     target = tmp_path / "note.txt"
     target.write_text("note", encoding="utf-8")
     popen = []
     runs = []
+    monkeypatch.setattr(backend.subprocess, "Popen", lambda argv, **kwargs: popen.append(argv))
     monkeypatch.setattr(
-        client_backend.subprocess, "Popen", lambda argv, **kwargs: popen.append(argv)
-    )
-    monkeypatch.setattr(
-        client_backend.subprocess,
+        backend.subprocess,
         "run",
         lambda argv, **kwargs: runs.append(argv) or SimpleNamespace(returncode=0),
     )
 
-    monkeypatch.setattr(client_backend.os, "name", "nt")
-    client_backend._reveal_in_file_manager(str(target))
+    monkeypatch.setattr(backend.os, "name", "nt")
+    backend._reveal_in_file_manager(str(target))
     assert popen == [f'explorer /select,"{target}"']
 
     popen.clear()
-    monkeypatch.setattr(client_backend.os, "name", "posix")
-    monkeypatch.setattr(client_backend.sys, "platform", "darwin")
-    client_backend._reveal_in_file_manager(str(target))
+    monkeypatch.setattr(backend.os, "name", "posix")
+    monkeypatch.setattr(backend.sys, "platform", "darwin")
+    backend._reveal_in_file_manager(str(target))
     assert popen == [["open", "-R", str(target)]]
 
     popen.clear()
-    monkeypatch.setattr(client_backend.sys, "platform", "linux")
-    client_backend._reveal_in_file_manager(str(target))
-    assert runs[0][0] == "dbus-send"
-    assert f"array:string:{target.as_uri()}" in runs[0]
+    monkeypatch.setattr(backend.sys, "platform", "linux")
+    backend._reveal_in_file_manager(str(target))
+    # the whole call is pinned: dbus-send defaults to --type=signal, which a
+    # file manager ignores, and the URI must carry the percent-encoded path
+    assert runs[0] == [
+        "dbus-send",
+        "--session",
+        "--dest=org.freedesktop.FileManager1",
+        "--type=method_call",
+        "/org/freedesktop/FileManager1",
+        "org.freedesktop.FileManager1.ShowItems",
+        f"array:string:file://{quote(str(target))}",
+        "string:",
+    ]
     assert popen == []  # the desktop bus selected the entry, nothing else to do
 
     popen.clear()
     monkeypatch.setattr(
-        client_backend.subprocess, "run", lambda argv, **kwargs: SimpleNamespace(returncode=1)
+        backend.subprocess, "run", lambda argv, **kwargs: SimpleNamespace(returncode=1)
     )
-    client_backend._reveal_in_file_manager(str(target))
+    backend._reveal_in_file_manager(str(target))
     assert popen == [["xdg-open", str(tmp_path)]]  # fallback: open the folder

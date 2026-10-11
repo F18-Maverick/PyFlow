@@ -45,7 +45,6 @@ that account.  The credentials are remembered in
 
 import json
 import os
-import pathlib
 import shlex
 import socket
 import subprocess
@@ -312,7 +311,7 @@ def _reveal_in_file_manager(path):
                 "--type=method_call",
                 "/org/freedesktop/FileManager1",
                 "org.freedesktop.FileManager1.ShowItems",
-                f"array:string:{pathlib.Path(path).as_uri()}",
+                f"array:string:file://{quote(path)}",
                 "string:",
             ],
             stdout=subprocess.DEVNULL,

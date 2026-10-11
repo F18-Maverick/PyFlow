@@ -21,6 +21,7 @@ from PyFlow.network_api import rsa_crypto
 from PyFlow.network_api.connect_tcp import (
     FRAME_MAGIC,
     FRAME_TYPE_RSA,
+    MAX_DECODE_FAILURES,
     TCP_Client_Base,
     TCP_Server_Base,
 )
@@ -487,14 +488,29 @@ def test_unauthenticated_pub_push_ignored(tmp_path, capsys):
 def test_decode_failure_burst_closes_connection(tcp_pair):
     """After MAX_DECODE_FAILURES consecutive decode failures the
     circuit breaker closes the connection instead of re-exchanging
-    forever."""
+    forever.
+
+    Only a frame the server still parses as framed is counted: one that
+    lands after it dropped framing again (mid re-exchange) is stale and is
+    deliberately ignored — and the framed state is the channel's ``secure``
+    flag, which is set after the socket rejoins ``_encrypted_sockets``.
+    Waiting on that flag keeps every injection counted.
+    """
     server, client, _ = tcp_pair
     assert _wait_flip(client)
-    for i in range(3):
-        # malformed frames: every one trips a decode failure on the server
-        client.client_socket.sendall(_frame(FRAME_TYPE_RSA, b"garbage-%d" % i))
-        if not _wait_server_reexchanged(server, client):
-            break  # breaker fired, connection closed
+    sock = _server_sock(server, client)
+
+    def server_framed():
+        channel = server._channels.get(sock)
+        return bool(channel is not None and channel.secure)
+
+    for _ in range(MAX_DECODE_FAILURES):
+        assert wait_until(server_framed, timeout=30), "the server never framed the channel again"
+        client.client_socket.sendall(_frame(FRAME_TYPE_RSA, b"garbage"))
+        # the frame was parsed, counted, and framing dropped again
+        assert wait_until(
+            lambda: not server_framed() or not client.running, timeout=30
+        ), "the malformed frame was not counted by the breaker"
     assert _wait_disconnected(client)
 
 

@@ -56,7 +56,6 @@ console administrator keeps an account.
 import functools
 import json
 import os
-import pathlib
 import secrets
 import shlex
 import socket
@@ -65,6 +64,7 @@ import sys
 import threading
 import time
 import traceback
+from urllib.parse import quote
 
 from flask import Flask, jsonify, redirect, render_template, request, session
 
@@ -410,7 +410,7 @@ def _reveal_in_file_manager(path):
                 "--type=method_call",
                 "/org/freedesktop/FileManager1",
                 "org.freedesktop.FileManager1.ShowItems",
-                f"array:string:{pathlib.Path(path).as_uri()}",
+                f"array:string:file://{quote(path)}",
                 "string:",
             ],
             stdout=subprocess.DEVNULL,
