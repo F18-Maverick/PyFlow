@@ -93,6 +93,7 @@ def test_protected_endpoints_reject_anonymous_requests(client):
         ("post", "/api/users"),
         ("post", "/api/run_extension"),
         ("post", "/api/email_config"),
+        ("post", "/api/open_location"),
         ("post", "/api/email_config/disable"),
     ]:
         resp = getattr(client, method)(path, json={})

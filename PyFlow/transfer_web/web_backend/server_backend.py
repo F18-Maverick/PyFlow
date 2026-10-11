@@ -23,6 +23,9 @@ clients) are captured on the TCP server's receive threads through
 APIs, queued here, and polled by the frontend via ``/api/events``.  The
 message listener reports every inbound line, protocol commands included;
 the commands are dropped here, so the queue carries user messages only.
+A file event carries the token of the saved file as well, so the chat can
+link the name to ``/api/open_location``: the route hands the path recorded
+for that token to the file manager of this host.
 
 Authentication: anonymous visitors get a white landing page (the server
 addresses and a login button; while a verification mailbox is configured, also
@@ -53,6 +56,7 @@ console administrator keeps an account.
 import functools
 import json
 import os
+import pathlib
 import secrets
 import shlex
 import socket
@@ -355,6 +359,72 @@ def _config_display_value(key, value):
     return value
 
 
+def _reveal_in_file_manager(path):
+    """Show a transferred file or folder in the file manager of this host.
+
+    A file is revealed (selected) inside its folder, a folder is opened
+    directly.  ``path`` comes from this backend's own transfer records, never
+    from the browser.
+
+    Args:
+        path (str): Existing absolute path of a transferred file or folder.
+
+    Raises:
+        OSError: If the desktop could not be asked to show the path.
+    """
+
+    def spawn(argv):
+        subprocess.Popen(
+            argv,
+            close_fds=True,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    path = os.path.abspath(path)
+    if os.name == "nt":  # /select highlights the entry inside its folder
+        # one command line: explorer reads the path from the string it was
+        # started with, and /select with a separate argument is unreliable
+        subprocess.Popen(
+            f'explorer /select,"{path}"',
+            close_fds=True,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+    if sys.platform == "darwin":
+        spawn(["open", "-R", path])
+        return
+    # Linux/BSD: ask a free-desktop file manager to select the entry; a host
+    # without that service gets the containing folder opened by xdg-open.
+    try:
+        shown = subprocess.run(
+            [
+                "dbus-send",
+                "--session",
+                "--dest=org.freedesktop.FileManager1",
+                "--type=method_call",
+                "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1.ShowItems",
+                f"array:string:{pathlib.Path(path).as_uri()}",
+                "string:",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+        if shown.returncode == 0:
+            return
+    except (OSError, subprocess.SubprocessError):
+        pass  # no dbus-send, no session bus, or no FileManager1 service
+    spawn(["xdg-open", path if os.path.isdir(path) else os.path.dirname(path)])
+
+
 class ServerWebApp:
     """Flask app + TCP_Server_Base wrapper for the web tool."""
 
@@ -383,6 +453,9 @@ class ServerWebApp:
         self._bind_lock = threading.Lock()
         self.ftp_root = None  # shared folder of the web "ftp" server (host path)
         self._ftp_lock = threading.Lock()
+        self._open_targets = {}  # token -> path recorded for /api/open_location
+        self._open_targets_lock = threading.Lock()
+        self._open_target_seq = 0
 
         self.users = UserDatabase(db_path)
         self.mail = MailService(mail_config_path)
@@ -743,6 +816,48 @@ class ServerWebApp:
             started += 1
         return f"{FTP_GET_OK_COMMAND} {request_id} {started} {skipped}"
 
+    # --------------------------------------------------------- file locations
+
+    def _register_open_target(self, path):
+        """Remember one transferred path under an opaque token.
+
+        File messages carry no filesystem paths: the frontend gets the token of
+        the saved file, and ``/api/open_location`` resolves it back to the path
+        this backend recorded.
+
+        Args:
+            path (str): Path of a transferred file or folder.
+
+        Returns:
+            str: Token addressing that path.
+        """
+        with self._open_targets_lock:
+            self._open_target_seq += 1
+            token = str(self._open_target_seq)
+            self._open_targets[token] = os.path.abspath(path)
+            # keep the table as bounded as the event queue it serves
+            while len(self._open_targets) > 1000:
+                self._open_targets.pop(next(iter(self._open_targets)))
+        return token
+
+    def _open_file_location(self, token):
+        """Show the path recorded for one token in this host's file manager.
+
+        Args:
+            token (str): Token returned by `_register_open_target`.
+
+        Raises:
+            ValueError: If the token is unknown or its file is gone.
+            OSError: If the desktop could not be asked to show the path.
+        """
+        with self._open_targets_lock:
+            path = self._open_targets.get(token)
+        if not path:
+            raise ValueError("unknown file location")
+        if not os.path.exists(path):
+            raise ValueError("the file is no longer at its location")
+        _reveal_in_file_manager(path)
+
     # ------------------------------------------------ inbound event handling
 
     def _push_event(self, event):
@@ -790,6 +905,7 @@ class ServerWebApp:
                 "name": name,
                 "path": rel,
                 "size": size,
+                "open_token": self._register_open_target(full_path),
                 "from": client_id,
                 "at": time.strftime("%H:%M:%S"),
             }
@@ -1230,7 +1346,15 @@ class ServerWebApp:
                     args=(tuple(target), path, destination),
                     daemon=True,
                 ).start()
-            return jsonify({"ok": True, "paths": saved})
+            return jsonify(
+                {
+                    "ok": True,
+                    "open_items": [
+                        {"name": os.path.basename(path), "token": self._register_open_target(path)}
+                        for path in saved
+                    ],
+                }
+            )
 
         @app.post("/api/send_folder")
         @login_required
@@ -1264,7 +1388,27 @@ class ServerWebApp:
                 args=(tuple(target), root, destination),
                 daemon=True,
             ).start()
-            return jsonify({"ok": True, "path": root})
+            return jsonify(
+                {
+                    "ok": True,
+                    "open_items": [
+                        {"name": os.path.basename(root), "token": self._register_open_target(root)}
+                    ],
+                }
+            )
+
+        @app.post("/api/open_location")
+        @login_required
+        def api_open_location():
+            """Open the location of a transferred file in this host's file manager."""
+            data = request.get_json(silent=True) or {}
+            try:
+                self._open_file_location(str(data.get("token") or ""))
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 404
+            except OSError as e:
+                return jsonify({"ok": False, "error": f"cannot open the file manager: {e}"}), 500
+            return jsonify({"ok": True})
 
         @app.post("/api/run_extension")
         @admin_required

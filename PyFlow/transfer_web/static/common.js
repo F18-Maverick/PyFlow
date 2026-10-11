@@ -24,7 +24,7 @@
     connected: false,
     target: null, // "server" | [ip, port]
     extensions: [], // [{name, icon, command}]
-    conversations: {}, // targetKey -> [{dir: "in"|"out"|"sys", text}]
+    conversations: {}, // targetKey -> [{dir: "in"|"out"|"sys", text, links}]
     eventId: 0, // last inbound event id consumed from /api/events
   };
 
@@ -95,6 +95,51 @@
       entry.ip === state.ownAddress.ip &&
       entry.port === state.ownAddress.port
     );
+  }
+
+  /* ---------------- file locations ---------------- */
+
+  /* Ask the backend that recorded a transfer to open its file location.
+   *
+   * A file/folder message carries an opaque token, never a filesystem path:
+   * the backend resolves the token back to the path it saved and hands that
+   * path to the file manager of the host running the backend.
+   */
+  async function openLocation(token, name) {
+    try {
+      await api("/api/open_location", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      toast("Opening the location of " + name + " on this host", "ok");
+    } catch (e) {
+      toast("Cannot open the file location: " + e.message, "err");
+    }
+  }
+
+  /* Fill one message element with its text, turning every linked file name into
+   * an anchor; names are matched in the order the message lists them. */
+  function renderMessageBody(el, m) {
+    const links = m.links || [];
+    let cursor = 0;
+    links.forEach((link) => {
+      const at = m.text.indexOf(link.name, cursor);
+      if (at < 0) return; // the text does not list this name: keep it plain
+      if (at > cursor) el.appendChild(document.createTextNode(m.text.slice(cursor, at)));
+      const anchor = document.createElement("a");
+      anchor.className = "file-link";
+      anchor.href = "#";
+      anchor.textContent = link.name;
+      anchor.title = "Open the location of this file on the host running the backend";
+      anchor.addEventListener("click", (e) => {
+        e.preventDefault();
+        openLocation(link.token, link.name);
+      });
+      el.appendChild(anchor);
+      cursor = at + link.name.length;
+    });
+    if (cursor < m.text.length) el.appendChild(document.createTextNode(m.text.slice(cursor)));
   }
 
   /* ---------------- sidebar ---------------- */
@@ -216,7 +261,12 @@
         addMessage("in", from + ev.text, target);
       } else if (ev.type === "file") {
         const size = fmtSize(ev.size);
-        addMessage("in", from + "file received: " + ev.name + " (" + size + ") -> " + ev.path, target);
+        addMessage(
+          "in",
+          from + "file received: " + ev.name + " (" + size + ") -> " + ev.path,
+          target,
+          ev.open_token ? [{ name: ev.name, token: ev.open_token }] : []
+        );
         toast("File received: " + ev.name + " (" + size + ")", "ok");
       }
     });
@@ -256,10 +306,10 @@
     }
   }
 
-  function addMessage(dir, text, target) {
+  function addMessage(dir, text, target, links) {
     const key = targetKey(target || state.target);
     if (!state.conversations[key]) state.conversations[key] = [];
-    state.conversations[key].push({ dir, text });
+    state.conversations[key].push({ dir, text, links: links || [] });
     if (key === targetKey(state.target)) renderConversation();
   }
 
@@ -286,7 +336,7 @@
     msgs.forEach((m) => {
       const el = document.createElement("div");
       el.className = "msg " + m.dir;
-      el.textContent = m.text;
+      renderMessageBody(el, m);
       area.appendChild(el);
     });
     area.scrollTop = area.scrollHeight;
@@ -371,11 +421,18 @@
         fd.append("files", f, folderMode ? f.webkitRelativePath || f.name : f.name);
       });
       try {
-        await api("/api/" + (folderMode ? "send_folder" : "send_file"), { method: "POST", body: fd });
+        const data = await api("/api/" + (folderMode ? "send_folder" : "send_file"), {
+          method: "POST",
+          body: fd,
+        });
         const label = folderMode
           ? (files[0].webkitRelativePath || files[0].name).split("/")[0]
           : files.map((f) => f.name).join(", ");
-        addMessage("out", (folderMode ? "folder sent: " : "file sent: ") + label, target);
+        const links = (data.open_items || []).map((item) => ({
+          name: item.name,
+          token: item.token,
+        }));
+        addMessage("out", (folderMode ? "folder sent: " : "file sent: ") + label, target, links);
         toast("Transfer started", "ok");
         closeModal(backdrop);
       } catch (e) {

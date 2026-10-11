@@ -225,6 +225,11 @@ see every connected instance. Contacts are added with
 the **Contacts** button (search by user ID, username or email); the other
 side answers the request in its **Requests** list, and only after both
 accounts accepted each other does the contact appear in the sidebar.
+Every file or folder message links the transferred name: clicking it asks the
+backend that recorded the transfer to open that location in the file manager
+of its host — a received file is revealed inside its arrival folder, a sent
+one opens the staged copy in `uploads/`. The browser only ever carries the
+opaque token of the record, never a filesystem path.
 Extension protocols are loaded by the client page and by administrators on
 the server page. The web tool keeps its remaining state in the same
 `.Flow_Web/` directory: `setup_client.json` (last client startup
