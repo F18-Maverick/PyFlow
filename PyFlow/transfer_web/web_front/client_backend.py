@@ -25,17 +25,19 @@ polled by the frontend via ``/api/events``.  The message listener reports
 every inbound line, protocol commands included; a direct command from
 the server is dropped here, so the queue carries user messages only.
 
-Accounts: a connected client logs in with a server account before the
-instance list is usable.  A forced login needs both factors — the account
-password and a verification code mailed to the account address — while a
-client that starts again replays the saved credentials and session token
-through ``/api/client_verify``.  ``/api/login`` opens the session, the
-``/api/contacts/*`` and ``/api/contact_requests`` routes proxy the contact
-management to the server, and the session token is sent over TCP with
-``/web_bind`` so the server can push the contact list of that account.  The
-credentials are remembered in ``.Flow_Web/client_login.json``
-(owner-readable only) and the login window is shown whenever no session could
-be restored.
+Accounts: the connected server decides whether its clients need accounts.  A
+server with a verification mailbox is public, so this backend forces the
+account login before the instance list is usable; a server without one is
+internal and everything account-related is skipped — no login window, no
+contacts, and every client sees every other instance.  A forced login needs
+both factors — the account password and a verification code mailed to the
+account address — while a client that starts again replays the saved
+credentials and session token through ``/api/client_verify``.  ``/api/login``
+opens the session, the ``/api/contacts/*`` and ``/api/contact_requests``
+routes proxy the contact management to the server, and the session token is
+sent over TCP with ``/web_bind`` so the server can push the contact list of
+that account.  The credentials are remembered in
+``.Flow_Web/client_login.json`` (owner-readable only).
 """
 
 import json
@@ -92,6 +94,13 @@ FTP_GET_OK_COMMAND = "/ftp_get_ok"
 FTP_ERROR_COMMAND = "/ftp_error"
 UNAUTHORIZED = 401
 
+# Refusal of the account actions while the connected server runs without a
+# verification mailbox: it then serves an internal network and needs no client
+# accounts at all (a client is identified by its connection address).
+CLIENT_ACCOUNTS_OFF = (
+    "client accounts are not enabled on this server (no verification mailbox is configured)"
+)
+
 # Ordered (key, label, type, default, help) for every TCP_Client_Base
 # parameter shown in the startup-configuration UI.
 CLIENT_PARAM_FIELDS = [
@@ -116,7 +125,13 @@ CLIENT_PARAM_FIELDS = [
         True,
         "Wait for the server to be reachable before starting.",
     ),
-    ("max_custom_workers", "Max custom workers", "number", 10, "Maximum custom-command worker threads."),
+    (
+        "max_custom_workers",
+        "Max custom workers",
+        "number",
+        10,
+        "Maximum custom-command worker threads.",
+    ),
     (
         "is_extend_command",
         "Extend command",
@@ -259,8 +274,10 @@ class ClientWebApp:
         self._echo_expect = None  # plain text last sent to the server (echo suppression)
         self._echo_expect_at = 0.0
 
-        # Account session of the connected server: the token/account pair the
-        # TCP connection is bound to, plus the last login outcome.
+        # Account session of the connected server: whether its clients log in
+        # at all (a verification mailbox means public use), the token/account
+        # pair the TCP connection is bound to, plus the last login outcome.
+        self.login_required = True
         self._server_base = ""
         self.session = None
         self._login_error = ""
@@ -583,7 +600,11 @@ class ClientWebApp:
         return {}
 
     def start_from_config(self):
-        """Start the TCP client from ``.Flow_Web/setup_client.json`` and log in."""
+        """Start the TCP client from ``.Flow_Web/setup_client.json``.
+
+        The connected server reports whether its clients log in; only then is a
+        saved session replayed, and the login window is only shown then.
+        """
         params = self._load_client_params()
         if not params:
             return
@@ -594,8 +615,10 @@ class ClientWebApp:
                 self._last_address = last
             except ValueError:
                 self._server_base = ""
+        self._refresh_login_requirement()
         self._start_client_from_params(params)
-        self._auto_login()
+        if self.login_required:
+            self._auto_login()
 
     def _normalize_client_params(self, params):
         """Normalize form values into TCP_Client_Base constructor arguments."""
@@ -624,7 +647,10 @@ class ClientWebApp:
         self.client = TCP_Client_Base(**params)
         forward_extension_tcp.setup_client_commands(self.client)
         self.client.register_command(
-            "/web_clients_update", self._on_clients_update, where_to_run="server", run_in_thread=True
+            "/web_clients_update",
+            self._on_clients_update,
+            where_to_run="server",
+            run_in_thread=True,
         )
         self.client.add_message_listener(self._on_incoming_message)
         self._register_ftp_commands()
@@ -698,6 +724,34 @@ class ClientWebApp:
         if result.get("ok") is False:
             raise ValueError(result.get("error") or "the server refused the request")
         return result
+
+    def _refresh_login_requirement(self):
+        """Ask the connected server whether its clients have to log in.
+
+        The server derives the answer from its verification mailbox: a
+        configured SMTP service means public-network use, where every client
+        logs in; without one the server is internal and clients work without
+        accounts.  A server that cannot be asked keeps the last known answer,
+        so the login window is only skipped once it was confirmed.
+        """
+        if not self._server_base:
+            return
+        try:
+            info = self._server_request("/api/server_info")
+        except ValueError:
+            return
+        self.login_required = bool(info.get("login_required", True))
+
+    def _require_accounts(self):
+        """Refuse an account action while the connected server needs no accounts.
+
+        Returns:
+            tuple | None: ``(response, 400)`` while the server is internal,
+                ``None`` while its clients identify with accounts.
+        """
+        if not self.login_required:
+            return jsonify({"ok": False, "error": CLIENT_ACCOUNTS_OFF}), 400
+        return None
 
     def _save_login_file(self, identify, password, token):
         """Store the credentials used to log in to this server.
@@ -820,15 +874,13 @@ class ClientWebApp:
 
     def _bind_account(self):
         """Bind the TCP connection to the logged-in account of the session."""
-        if self.session is None or self._bind_ack:
+        if not self.login_required or self.session is None or self._bind_ack:
             return
         with self._bind_lock:
             if self._bind_pending:
                 return
             self._bind_pending = True
-        threading.Thread(
-            target=self._bind_loop, args=(self.session["token"],), daemon=True
-        ).start()
+        threading.Thread(target=self._bind_loop, args=(self.session["token"],), daemon=True).start()
 
     def _bind_loop(self, token):
         """Send ``/web_bind`` once a second until the server acknowledged it."""
@@ -868,6 +920,9 @@ class ClientWebApp:
         Returns:
             tuple: Flask response of the request.
         """
+        err = self._require_accounts()
+        if err is not None:
+            return err
         if self.session is None:
             return jsonify({"ok": False, "error": "login required"}), 401
         token = self.session["token"]
@@ -897,21 +952,21 @@ class ClientWebApp:
 
         @app.get("/")
         def index():
-            if self.connected:
-                if self.session is None:
-                    self._auto_login()
-                if self.session is not None:
-                    return render_template(
-                        "client_main.html", mode="client", user=self.session["user"]
-                    )
-                return render_template(
-                    "client_login.html",
-                    identify=self._saved_identify,
-                    login_error=self._login_error,
-                    server_address=self._server_base,
-                )
+            if not self.connected:
+                return render_template("client_connect.html", last_address=_last_server_address())
+            self._refresh_login_requirement()
+            if not self.login_required:
+                # Internal server: clients need no accounts, straight to the tool.
+                return render_template("client_main.html", mode="client", user=None)
+            if self.session is None:
+                self._auto_login()
+            if self.session is not None:
+                return render_template("client_main.html", mode="client", user=self.session["user"])
             return render_template(
-                "client_connect.html", last_address=_last_server_address()
+                "client_login.html",
+                identify=self._saved_identify,
+                login_error=self._login_error,
+                server_address=self._server_base,
             )
 
         @app.get("/config")
@@ -967,6 +1022,7 @@ class ClientWebApp:
             host = info.get("host")
             port = int(info.get("port"))
             is_enable_encrypto = bool(info.get("is_enable_encrypto", True))
+            self.login_required = bool(info.get("login_required", True))
             self._last_address = address
             self._server_base = base
             self._forget_session()
@@ -975,7 +1031,8 @@ class ClientWebApp:
             except Exception as e:
                 traceback.print_exc()
                 return jsonify({"ok": False, "error": f"failed to start TCP client: {e}"}), 500
-            self._auto_login()
+            if self.login_required:
+                self._auto_login()
             return jsonify({"ok": True, "server_info": self.server_info})
 
         @app.post("/api/save_config")
@@ -1010,15 +1067,16 @@ class ClientWebApp:
                 self._bind_account()
             return jsonify(
                 {
-                    "connected": self.connected
-                    and self.client is not None
-                    and self.client.running,
+                    "connected": self.connected and self.client is not None and self.client.running,
                     "server_info": self.server_info,
                     "clients": self._clients_snapshot(),
                     "own_address": self._own_address(),
                     "pid": os.getpid(),
-                    "logged_in": self.session is not None,
-                    "user": self.session["user"] if self.session else None,
+                    "logged_in": self.login_required and self.session is not None,
+                    "user": self.session["user"]
+                    if (self.login_required and self.session)
+                    else None,
+                    "login_required": self.login_required,
                     "server_address": self._server_base,
                 }
             )
@@ -1026,6 +1084,9 @@ class ClientWebApp:
         @app.post("/api/login")
         def api_login():
             """Log the web client in with the account password and a mailed code."""
+            err = self._require_accounts()
+            if err is not None:
+                return err
             data = request.get_json(force=True)
             identify = str(data.get("identify") or "").strip()
             password = str(data.get("password") or "")
@@ -1053,6 +1114,9 @@ class ClientWebApp:
         @app.post("/api/login/send_code")
         def api_login_send_code():
             """Ask the server to mail a login code to one account."""
+            err = self._require_accounts()
+            if err is not None:
+                return err
             data = request.get_json(force=True)
             identify = str(data.get("identify") or "").strip()
             if not identify:

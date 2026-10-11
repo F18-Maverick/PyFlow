@@ -4,7 +4,8 @@ The administrator configures the outgoing mailbox from the server's
 startup-configuration page.  The settings are validated with a real SMTP login
 and only then written to ``.Flow_Web/email_config.json``; while no validated
 configuration is present the service refuses to send, so a server can never
-silently drop verification codes.
+silently drop verification codes.  The same page takes the mailbox away again
+(`disable`), which switches the server back to internal use.
 """
 
 import json
@@ -193,6 +194,25 @@ class MailService:
         with self._lock:
             self._config = normalized
         return dict(normalized)
+
+    def disable(self):
+        """Remove the stored mailbox so no verification code can be sent.
+
+        This is the switch back to internal mode: with no mailbox the server
+        serves its clients without accounts again.
+
+        Raises:
+            ValueError: If the stored file cannot be removed; the service then
+                keeps its settings and stays enabled.
+        """
+        try:
+            os.remove(self.config_path)
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            raise ValueError(f"cannot remove {self.config_path}: {e}") from e
+        with self._lock:
+            self._config = None
 
     def send_code(self, to_address, code, purpose, expires_in):
         """Send one verification code by email.

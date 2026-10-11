@@ -6,7 +6,8 @@
   <title>PyFlow Server</title>
   <style>
     /* Anonymous visitors get a plain white page: the server is up, connect to
-       it from a client, register an account, or log in to administer it. */
+       it from a client, and log in to administer it (registration and password
+       reset appear as well while a verification mailbox is configured). */
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; }
     body {
@@ -123,9 +124,16 @@
     </p>
     <div class="landing-actions">
       <button id="login-btn">Login</button>
+      {% if accounts_enabled %}
       <button id="register-btn">Register</button>
       <button id="reset-btn">Change password</button>
+      {% endif %}
     </div>
+    {% if not accounts_enabled %}
+    <p class="addresses">No verification mailbox is configured, so this server serves an internal
+      network: clients connect without registration or login, and only the administrator signs in
+      here.</p>
+    {% endif %}
   </div>
 
   <div class="overlay" id="overlay" hidden>
@@ -225,11 +233,16 @@
       }
 
       document.getElementById("login-btn").addEventListener("click", () => show("login"));
-      document.getElementById("register-btn").addEventListener("click", () => show("register"));
-      document.getElementById("reset-btn").addEventListener("click", () => {
-        startReset();
-        show("reset");
-      });
+      // Registration and password reset only exist while a mailbox is configured.
+      const registerBtn = document.getElementById("register-btn");
+      if (registerBtn) registerBtn.addEventListener("click", () => show("register"));
+      const resetBtn = document.getElementById("reset-btn");
+      if (resetBtn) {
+        resetBtn.addEventListener("click", () => {
+          startReset();
+          show("reset");
+        });
+      }
       overlay.addEventListener("click", (e) => { if (e.target === overlay) closeAll(); });
       document.addEventListener("keydown", (e) => {
         if (e.key === "Escape" && !overlay.hidden) closeAll();

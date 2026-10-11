@@ -139,8 +139,13 @@
       const empty = document.createElement("div");
       empty.className = "empty-hint";
       empty.style.padding = "16px 8px";
-      empty.textContent =
-        MODE === "client" ? "No contact is connected" : "No clients connected";
+      if (MODE === "server") {
+        empty.textContent = "No clients connected";
+      } else if (window.WEB_USER == null) {
+        empty.textContent = "No other client is connected";
+      } else {
+        empty.textContent = "No contact is connected";
+      }
       list.appendChild(empty);
     }
   }

@@ -65,9 +65,19 @@ def test_landing_page_for_anonymous_visitors(client):
     body = client.get("/").get_data(as_text=True)
     assert "The PyFlow Server is running! Connect it in clients by the server host." in body
     assert 'id="login-btn"' in body
-    assert 'id="register-btn"' in body  # self-service registration
-    assert 'id="reset-btn"' in body  # self-service password change
     assert "Change Config" not in body  # no administration UI before a login
+    # no mailbox: clients need no account, so no self-service registration
+    assert 'id="register-btn"' not in body
+    assert 'id="reset-btn"' not in body
+    assert "only the administrator signs in" in body
+
+
+def test_landing_offers_registration_only_with_a_mailbox(web, client, monkeypatch):
+    monkeypatch.setattr(web.mail, "is_enabled", lambda: True)
+    body = client.get("/").get_data(as_text=True)
+    assert 'id="register-btn"' in body
+    assert 'id="reset-btn"' in body
+    assert "only the administrator signs in" not in body
 
 
 def test_protected_endpoints_reject_anonymous_requests(client):
@@ -78,17 +88,20 @@ def test_protected_endpoints_reject_anonymous_requests(client):
         ("get", "/api/extensions_ui"),
         ("get", "/api/users"),
         ("get", "/api/email_config"),
-        ("get", "/api/contact_requests"),
         ("post", "/api/send_msg"),
         ("post", "/api/save_config"),
         ("post", "/api/users"),
         ("post", "/api/run_extension"),
         ("post", "/api/email_config"),
-        ("post", "/api/contacts/search"),
+        ("post", "/api/email_config/disable"),
     ]:
         resp = getattr(client, method)(path, json={})
         assert resp.status_code == 401, (method, path)
     assert client.get("/config").status_code == 302  # back to the landing page
+
+    # the client account routes answer that this server has no accounts at all
+    assert client.get("/api/contact_requests").status_code == 400
+    assert client.post("/api/contacts/search", json={}).status_code == 400
 
 
 def test_server_info_stays_public_for_clients(client):
@@ -98,11 +111,10 @@ def test_server_info_stays_public_for_clients(client):
     assert resp.status_code != 403
 
 
-def test_registration_stays_public_for_new_accounts(client):
-    # anyone who can reach the landing page may ask for a registration code
+def test_registration_needs_a_configured_mailbox(client):
     resp = client.post("/api/register/send_code", json={"email": "new@example.com"})
-    assert resp.status_code == 400  # no mailbox configured yet, not a login failure
-    assert "mail service is not configured" in resp.get_json()["error"]
+    assert resp.status_code == 400  # no mailbox: the whole account flow is off
+    assert "client accounts are not enabled" in resp.get_json()["error"]
 
 
 def test_default_admin_is_seeded_with_a_hashed_password(web, tmp_path):
@@ -152,6 +164,7 @@ def test_regular_user_gets_no_administration_access(client):
     assert client.get("/api/users").status_code == 403
     assert client.get("/api/email_config").status_code == 403
     assert add_user(client, "mallory", "mallory-password").status_code == 403
+    assert client.post("/api/email_config/disable").status_code == 403
     assert client.post("/api/run_extension", json={"command": "/anything"}).status_code == 403
     assert client.get("/api/status").status_code == 200  # normal functionality remains
 

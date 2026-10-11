@@ -5,7 +5,9 @@ tests pin the contract the browser relies on: a connected but anonymous client
 gets the login window, a successful login writes
 ``.Flow_Web/client_login.json``, every later page load logs in again from that
 file, the session token is bound to the TCP connection, and logging out deletes
-the file. The client talks to a real server web backend through its Flask test
+the file.  A server without a verification mailbox needs no client accounts at
+all: its login window and account controls disappear, which the tests below pin
+as well.  The client talks to a real server web backend through its Flask test
 client, so the two sides are exercised together without opening sockets.
 """
 
@@ -71,20 +73,121 @@ def rendered_templates(app):
         flask.template_rendered.disconnect(record, app)
 
 
-@pytest.fixture
-def server(tmp_path, monkeypatch):
-    """The server web backend the client backend logs in to."""
-    monkeypatch.setattr(server_backend, "SECRET_KEY_FILE", str(tmp_path / "server_key"))
+# A validated mailbox switches the server into public mode: clients log in.
+# The file is written before the app is built, like a restarted configured
+# server reads it back.
+MAILBOX_CONFIG = {
+    "host": "smtp.example.com",
+    "port": 465,
+    "username": "bot@example.com",
+    "password": "authorization-code",
+    "from": "PyFlow <bot@example.com>",
+    "encryption": "ssl",
+}
+
+
+class FakeTcpServer:
+    """TCP_Server_Base stand-in: enough for the server's own API surface."""
+
+    def __init__(self):
+        self.running = True
+        self.host = "127.0.0.1"
+        self.port = 65432
+        self.is_enable_encrypto = False
+        self.clients = {}
+        self.client_lock = threading.Lock()
+        self.pushes = []
+
+    def send_message(self, sock, message):
+        """Record one line written to a client."""
+        self.pushes.append((sock, message))
+        return True
+
+
+class FakeSession:
+    """Stand-in for an authenticated SMTP session."""
+
+    def quit(self):
+        """Close the session."""
+
+    def close(self):
+        """Close the session."""
+
+
+def make_server(tmp_path, monkeypatch, name="server", with_mailbox=True):
+    """Build a server web backend; a mailbox makes it public (clients log in)."""
+    monkeypatch.setattr(server_backend, "SECRET_KEY_FILE", str(tmp_path / f"{name}_key"))
+    mail_path = tmp_path / f"{name}_mail.json"
+    if with_mailbox:
+        mail_path.write_text(json.dumps(MAILBOX_CONFIG), encoding="utf-8")
     app = server_backend.ServerWebApp(
-        db_path=str(tmp_path / "server.db"), mail_config_path=str(tmp_path / "mail.json")
+        db_path=str(tmp_path / f"{name}.db"), mail_config_path=str(mail_path)
     )
     app.app.config.update(TESTING=True)
+    app.server = FakeTcpServer()
     app.sent = []
 
     def record_code(to_address, code, purpose, expires_in):
         app.sent.append({"to": to_address, "code": code, "purpose": purpose})
 
     monkeypatch.setattr(app.mail, "send_code", record_code)
+    return app
+
+
+def connect_client(tmp_path, monkeypatch, server_app, login_name="client_login.json"):
+    """A ClientWebApp whose account requests reach ``server_app`` in-process."""
+    monkeypatch.setattr(client_backend, "FLOW_WEB_DIR", str(tmp_path))
+    monkeypatch.setattr(client_backend, "CLIENT_LOGIN_FILE", str(tmp_path / login_name))
+    monkeypatch.setattr(
+        client_backend, "CLIENT_LAST_SERVER_FILE", str(tmp_path / "client_last_server.json")
+    )
+    monkeypatch.setattr(client_backend, "CLIENT_CONFIG_FILE", str(tmp_path / "setup_client.json"))
+    monkeypatch.setattr(
+        client_backend,
+        "CLIENT_EXTENSIONS_UI_FILE",
+        str(tmp_path / "client_extensions_ui.json"),
+    )
+    app = client_backend.ClientWebApp(web_port=5099)
+    app.app.config.update(TESTING=True)
+    app.connected = True
+    app.client = FakeTcpClient()
+    app._server_base = "http://server.test"
+
+    server_client = server_app.app.test_client()
+
+    def request(path, payload=None):
+        """Call the server backend the way the real HTTP request would."""
+        route, _, query = path.partition("?")
+        if query:
+            params = {key: value[0] for key, value in parse_qs(query).items()}
+            response = server_client.get(route, query_string=params)
+        elif payload is None:
+            response = server_client.get(route)
+        else:
+            response = server_client.post(route, json=payload)
+        data = response.get_json() or {}
+        if response.status_code >= 400 or data.get("ok") is False:
+            raise _ServerRequestError(
+                response.status_code, data.get("error") or f"HTTP {response.status_code}"
+            )
+        return data
+
+    monkeypatch.setattr(app, "_server_request", request)
+    return app
+
+
+@pytest.fixture
+def server(tmp_path, monkeypatch):
+    """The public-mode server web backend the client backend logs in to."""
+    app = make_server(tmp_path, monkeypatch)
+    yield app
+    app.users.close()
+
+
+@pytest.fixture
+def internal_server(tmp_path, monkeypatch):
+    """A server web backend without a mailbox: its clients need no accounts."""
+    app = make_server(tmp_path, monkeypatch, name="internal", with_mailbox=False)
     yield app
     app.users.close()
 
@@ -111,50 +214,24 @@ def account(server):
 
 @pytest.fixture
 def web(tmp_path, monkeypatch, server):
-    """A ClientWebApp connected to the in-process server backend."""
-    monkeypatch.setattr(client_backend, "FLOW_WEB_DIR", str(tmp_path))
-    monkeypatch.setattr(client_backend, "CLIENT_LOGIN_FILE", str(tmp_path / "client_login.json"))
-    monkeypatch.setattr(
-        client_backend, "CLIENT_LAST_SERVER_FILE", str(tmp_path / "client_last_server.json")
-    )
-    monkeypatch.setattr(client_backend, "CLIENT_CONFIG_FILE", str(tmp_path / "setup_client.json"))
-    monkeypatch.setattr(
-        client_backend,
-        "CLIENT_EXTENSIONS_UI_FILE",
-        str(tmp_path / "client_extensions_ui.json"),
-    )
-    app = client_backend.ClientWebApp(web_port=5099)
-    app.app.config.update(TESTING=True)
-    app.connected = True
-    app.client = FakeTcpClient()
-    app._server_base = "http://server.test"
+    """A ClientWebApp connected to the in-process public-mode server."""
+    return connect_client(tmp_path, monkeypatch, server)
 
-    server_client = server.app.test_client()
 
-    def request(path, payload=None):
-        """Call the server backend the way the real HTTP request would."""
-        route, _, query = path.partition("?")
-        if query:
-            params = {key: value[0] for key, value in parse_qs(query).items()}
-            response = server_client.get(route, query_string=params)
-        elif payload is None:
-            response = server_client.get(route)
-        else:
-            response = server_client.post(route, json=payload)
-        data = response.get_json() or {}
-        if response.status_code >= 400 or data.get("ok") is False:
-            raise _ServerRequestError(
-                response.status_code, data.get("error") or f"HTTP {response.status_code}"
-            )
-        return data
-
-    monkeypatch.setattr(app, "_server_request", request)
-    return app
+@pytest.fixture
+def internal_web(tmp_path, monkeypatch, internal_server):
+    """A ClientWebApp connected to the in-process account-free server."""
+    return connect_client(tmp_path, monkeypatch, internal_server, login_name="internal_login.json")
 
 
 @pytest.fixture
 def client(web):
     return web.app.test_client()
+
+
+@pytest.fixture
+def internal_client(internal_web):
+    return internal_web.app.test_client()
 
 
 def login(client, server, identify="alice", password="alices-password", code=None):
@@ -190,6 +267,57 @@ def test_disconnected_client_gets_the_connect_page(web, client):
     with rendered_templates(web.app) as names:
         client.get("/")
     assert names == ["client_connect.html"]
+
+
+def test_internal_server_needs_no_login_and_shows_no_account_controls(
+    internal_web, internal_client
+):
+    with rendered_templates(internal_web.app) as names:
+        resp = internal_client.get("/")
+    assert resp.status_code == 200
+    assert names == ["client_main.html"]
+    body = resp.get_data(as_text=True)
+    assert "Contacts" not in body and "User info" not in body and "Log out" not in body
+    assert 'id="ftp-btn"' in body  # the tool itself stays usable
+    assert internal_web.client.sent == []  # no account was bound over TCP
+
+    status = internal_client.get("/api/status").get_json()
+    assert status["login_required"] is False
+    assert status["logged_in"] is False
+    assert status["user"] is None
+
+
+def test_internal_server_refuses_the_account_actions(internal_web, internal_client):
+    internal_client.get("/")  # a page load asks the server and switches the mode off
+    cases = [
+        ("post", "/api/login", {"identify": "alice", "password": "x", "code": "1"}),
+        ("post", "/api/login/send_code", {"identify": "alice"}),
+        ("post", "/api/contacts/search", {"query": "alice"}),
+        ("get", "/api/contact_requests", None),
+    ]
+    for method, path, payload in cases:
+        if method == "get":
+            resp = internal_client.get(path)
+        else:
+            resp = internal_client.post(path, json=payload)
+        assert resp.status_code == 400, (method, path)
+        assert "client accounts are not enabled" in resp.get_json()["error"], (method, path)
+
+
+def test_configuring_the_mailbox_makes_the_next_page_load_ask_for_a_login(
+    internal_web, internal_client, internal_server, monkeypatch
+):
+    with rendered_templates(internal_web.app) as first:
+        internal_client.get("/")
+    assert first == ["client_main.html"]
+
+    # the administrator stores a mailbox: the server is public from now on
+    monkeypatch.setattr(internal_server.mail, "_connect", lambda settings: FakeSession())
+    internal_server.mail.configure(dict(MAILBOX_CONFIG))
+
+    with rendered_templates(internal_web.app) as second:
+        internal_client.get("/")
+    assert second == ["client_login.html"]
 
 
 def test_forced_login_saves_the_password_and_the_session_token(
@@ -254,9 +382,12 @@ def test_forced_login_reports_a_wrong_password_or_code(web, client, server, acco
 def test_forced_login_needs_an_account(client):
     missing = client.post("/api/login", json={"identify": "", "password": "x", "code": "1"})
     assert missing.status_code == 400
-    assert client.post(
-        "/api/login", json={"identify": "alice", "password": "x", "code": "1"}
-    ).status_code == 401  # unknown account, refused by the server
+    assert (
+        client.post(
+            "/api/login", json={"identify": "alice", "password": "x", "code": "1"}
+        ).status_code
+        == 401
+    )  # unknown account, refused by the server
 
 
 def test_a_later_page_load_logs_in_again_from_the_saved_file(web, client, server, account):
@@ -343,9 +474,7 @@ def test_logout_deletes_the_file_and_ends_the_server_session(
     assert verify.status_code == 401
 
 
-def test_contact_proxies_need_a_session_and_pass_the_token_through(
-    web, client, server, account
-):
+def test_contact_proxies_need_a_session_and_pass_the_token_through(web, client, server, account):
     assert client.post("/api/contacts/search", json={"query": "alice"}).status_code == 401
     assert client.get("/api/contact_requests").status_code == 401
 
@@ -373,24 +502,33 @@ def test_contacts_can_be_added_answered_and_become_mutual(web, client, server, a
     found = results.get_json()["results"]
     assert [entry["relation"] for entry in found] == ["none"]
     assert client.post("/api/contacts/request", json={"user_id": bob["user_id"]}).status_code == 200
-    assert client.post("/api/contacts/search", json={"query": "bob"}).get_json()["results"][0][
-        "relation"
-    ] == "outgoing"
+    assert (
+        client.post("/api/contacts/search", json={"query": "bob"}).get_json()["results"][0][
+            "relation"
+        ]
+        == "outgoing"
+    )
 
     bob_client, bob_token = server_login(server, "bob", "bobs-password")
     pending = bob_client.get(f"/api/contact_requests?token={bob_token}").get_json()["incoming"]
     assert [entry["user"]["username"] for entry in pending] == ["alice"]
-    assert bob_client.post(
-        "/api/contacts/respond",
-        json={"token": bob_token, "request_id": pending[0]["id"], "accept": True},
-    ).status_code == 200
+    assert (
+        bob_client.post(
+            "/api/contacts/respond",
+            json={"token": bob_token, "request_id": pending[0]["id"], "accept": True},
+        ).status_code
+        == 200
+    )
 
     # the contact is mutual now, and both sides are back in the search results
     assert server.users.are_contacts(account["user_id"], bob["user_id"]) is True
     assert server.users.are_contacts(bob["user_id"], account["user_id"]) is True
-    assert client.post("/api/contacts/search", json={"query": "bob"}).get_json()["results"][0][
-        "relation"
-    ] == "contact"
+    assert (
+        client.post("/api/contacts/search", json={"query": "bob"}).get_json()["results"][0][
+            "relation"
+        ]
+        == "contact"
+    )
 
 
 def test_a_server_401_drops_the_session_but_keeps_the_credentials(

@@ -25,23 +25,29 @@ message listener reports every inbound line, protocol commands included;
 the commands are dropped here, so the queue carries user messages only.
 
 Authentication: anonymous visitors get a white landing page (the server
-addresses, a login button, a registration button and a password-reset button);
-the configuration and status pages need a session.  Accounts live in the SQLite
-store ``.Flow_Web/flow_web.db`` (see `user_database`); the first run seeds the
+addresses and a login button; while a verification mailbox is configured, also
+a registration button and a password-reset button); the configuration and
+status pages need a session.  Accounts live in the SQLite store
+``.Flow_Web/flow_web.db`` (see `user_database`); the first run seeds the
 ``admin``/``admin`` administrator and the frontend warns on every login until
 those default credentials are changed.  Registration, password reset and
 code-based client logins are delivered by the mailbox configured from the
 startup-configuration page (see `mail_service`).
 
-Client accounts: the client web frontend logs in through ``/api/client_login``
-with a username/email, the account password *and* a mailed verification code —
-both factors are required — and receives a session token.  Re-entering the
-client web UI replays the saved credentials and token through
-``/api/client_verify``, which only accepts them while they still open that
-account.  The token binds the TCP connection the client opens (``/web_bind``) to
-that account, and the instance list pushed to a client is limited to its
-contacts, so accounts that never exchanged a contact request cannot see each
-other.
+Client accounts: the verification mailbox is the switch of the whole client
+side.  While ``.Flow_Web/email_config.json`` holds a validated mailbox the
+server is meant for public networks: the client web frontend logs in through
+``/api/client_login`` with a username/email, the account password *and* a
+mailed verification code — both factors are required — and receives a session
+token.  Re-entering the client web UI replays the saved credentials and token
+through ``/api/client_verify``, which only accepts them while they still open
+that account.  The token binds the TCP connection the client opens
+(``/web_bind``) to that account, and the instance list pushed to a client is
+limited to its contacts, so accounts that never exchanged a contact request
+cannot see each other.  Without a mailbox the server is an internal tool:
+clients connect without registration or login, every client sees every other
+connected instance, and the client account routes are closed — only the
+console administrator keeps an account.
 """
 
 import functools
@@ -88,6 +94,13 @@ SECRET_KEY_FILE = os.path.join(FLOW_WEB_DIR, "web_secret_key")
 BIND_COMMAND = "/web_bind"
 BIND_OK_COMMAND = "/web_bind_ok"
 
+# Refusal of every client-account flow while no verification mailbox is
+# configured: the server then serves an internal network, where clients need
+# no accounts and only the console administrator has one.
+CLIENT_ACCOUNTS_OFF = (
+    "client accounts are not enabled on this server (no verification mailbox is configured)"
+)
+
 # Ordered (key, label, type, default, help) for every TCP_Server_Base
 # parameter shown in the startup-configuration UI.
 SERVER_PARAM_FIELDS = [
@@ -103,7 +116,13 @@ SERVER_PARAM_FIELDS = [
         10,
         "Maximum concurrent file-transfer threads.",
     ),
-    ("is_hand_alloc_port", "Hand-allocated ports", "bool", False, "Manually allocate transfer ports."),
+    (
+        "is_hand_alloc_port",
+        "Hand-allocated ports",
+        "bool",
+        False,
+        "Manually allocate transfer ports.",
+    ),
     (
         "is_input_command_in_console",
         "Console input",
@@ -111,7 +130,13 @@ SERVER_PARAM_FIELDS = [
         False,
         "Forced False by the web architecture (the web UI is the input).",
     ),
-    ("max_custom_workers", "Max custom workers", "number", 10, "Maximum custom-command worker threads."),
+    (
+        "max_custom_workers",
+        "Max custom workers",
+        "number",
+        10,
+        "Maximum custom-command worker threads.",
+    ),
     (
         "is_extend_command",
         "Extend command",
@@ -149,7 +174,13 @@ SERVER_PARAM_FIELDS = [
 
 # Web-only settings (not TCP_Server_Base parameters).
 WEB_FIELDS = [
-    ("web_port", "Web port", "number", DEFAULT_WEB_PORT, "Port of this web backend (clients query it)."),
+    (
+        "web_port",
+        "Web port",
+        "number",
+        DEFAULT_WEB_PORT,
+        "Port of this web backend (clients query it).",
+    ),
 ]
 
 # The web "ftp" share is not FTP: it browses one folder on the server host and
@@ -230,6 +261,7 @@ def _ftp_listing(root, rel_path):
     entries.sort(key=lambda entry: (not entry["dir"], entry["name"].lower()))
     parent = None if rel == "" else (os.path.dirname(rel) or "")
     return {"path": rel, "parent": parent, "entries": entries}
+
 
 def _load_or_create_secret_key(path=None):
     """Persist the Flask session key so logins survive a restart."""
@@ -465,13 +497,16 @@ class ServerWebApp:
         """Return the TCP address/port web clients connect to.
 
         Returns:
-            dict: ``{"host", "port", "is_enable_encrypto"}`` of the running TCP
-                server; ``host`` is resolved when it binds a wildcard address.
+            dict: ``{"host", "port", "is_enable_encrypto", "login_required"}``
+                of the running TCP server; ``host`` is resolved when it binds a
+                wildcard address, and ``login_required`` tells a client whether
+                it has to log in before it may use the connection.
         """
         return {
             "host": _public_host(self.server.host),
             "port": self.server.port,
             "is_enable_encrypto": self.server.is_enable_encrypto,
+            "login_required": self._client_login_required(),
         }
 
     def _account_of(self, addr):
@@ -524,16 +559,25 @@ class ServerWebApp:
     def _client_list_for(self, addr):
         """List the connected instances one client is allowed to see.
 
-        A client sees itself nowhere and sees another account only once the two
-        are contacts; an unbound connection sees no other instance at all.
+        With a verification mailbox a client sees itself nowhere and another
+        account only once the two are contacts; an unbound connection sees no
+        other instance at all.  Without a mailbox (internal use) accounts are
+        not involved, so a client sees every other connected instance and only
+        itself is left out.
 
         Args:
             addr (tuple): Peer ``(ip, port)`` of the requesting connection.
 
         Returns:
-            list[dict]: Contact entries, each with ``ip``, ``port``, ``id``,
-                ``user_id``, ``username`` and ``email``.
+            list[dict]: Entries, each with ``ip``, ``port`` and ``id``; contact
+                entries of a logged-in client also carry ``user_id``,
+                ``username`` and ``email``.
         """
+        if not self._client_login_required():
+            own = (addr[0], addr[1])
+            return [
+                entry for entry in self._connected_entries() if (entry["ip"], entry["port"]) != own
+            ]
         user = self._account_of(addr)
         if user is None:
             return []
@@ -784,6 +828,30 @@ class ServerWebApp:
             token = str(data["token"])
         return self.users.session_user(token)
 
+    def _client_login_required(self):
+        """Report whether web clients must log in before they may use this server.
+
+        The verification mailbox is the switch: a validated mailbox means the
+        server is meant for public networks, so every client identifies with an
+        account; without one the server is an internal tool whose clients work
+        anonymously and where only the console administrator keeps an account.
+
+        Returns:
+            bool: True while a validated SMTP configuration is stored.
+        """
+        return self.mail.is_enabled()
+
+    def _require_accounts(self):
+        """Refuse an account flow while the server runs without a mailbox.
+
+        Returns:
+            tuple | None: ``(response, 400)`` while clients need no accounts,
+                ``None`` while the account flows are available.
+        """
+        if not self._client_login_required():
+            return jsonify({"ok": False, "error": CLIENT_ACCOUNTS_OFF}), 400
+        return None
+
     def _send_code(self, purpose, target):
         """Issue a verification code for an email address and deliver it.
 
@@ -1007,6 +1075,9 @@ class ServerWebApp:
 
             @functools.wraps(view)
             def wrapped(*args, **kwargs):
+                err = self._require_accounts()
+                if err is not None:
+                    return err
                 user = self._session_user()
                 if user is None:
                     return jsonify({"ok": False, "error": "login required"}), 401
@@ -1018,7 +1089,11 @@ class ServerWebApp:
         def index():
             user = self._current_user()
             if user is None:
-                return render_template("server_landing.html", hint=self._landing_context())
+                return render_template(
+                    "server_landing.html",
+                    hint=self._landing_context(),
+                    accounts_enabled=self._client_login_required(),
+                )
             if self.mode == "status" or user["role"] != "admin":
                 # The startup-configuration page is administrator-only.
                 return render_template(
@@ -1205,7 +1280,9 @@ class ServerWebApp:
             handler = self.server._custom_handlers[1].get(parts[0].lower())
             if handler is None:
                 return jsonify({"ok": False, "error": f"command {parts[0]} is not registered"}), 404
-            threading.Thread(target=self._run_extension, args=(handler, command), daemon=True).start()
+            threading.Thread(
+                target=self._run_extension, args=(handler, command), daemon=True
+            ).start()
             return jsonify({"ok": True})
 
         @app.get("/api/available_commands")
@@ -1226,9 +1303,7 @@ class ServerWebApp:
         @login_required
         def api_ftp_status():
             root = self._ftp_shared_root()
-            return jsonify(
-                {"ok": True, "root": root, "shared": bool(root and os.path.isdir(root))}
-            )
+            return jsonify({"ok": True, "root": root, "shared": bool(root and os.path.isdir(root))})
 
         @app.post("/api/ftp/add")
         @admin_required
@@ -1318,6 +1393,9 @@ class ServerWebApp:
         @app.post("/api/register/send_code")
         def api_register_send_code():
             """Mail a registration code to an address that is still free."""
+            err = self._require_accounts()
+            if err is not None:
+                return err
             data = request.get_json(silent=True) or {}
             email = str(data.get("email") or "").strip()
             try:
@@ -1330,6 +1408,9 @@ class ServerWebApp:
         @app.post("/api/register")
         def api_register():
             """Create an account once the mailed code checks out."""
+            err = self._require_accounts()
+            if err is not None:
+                return err
             data = request.get_json(silent=True) or {}
             try:
                 user = self.users.register_with_code(
@@ -1345,6 +1426,9 @@ class ServerWebApp:
         @app.post("/api/login/send_code")
         def api_login_send_code():
             """Mail a login code to the address of an existing account."""
+            err = self._require_accounts()
+            if err is not None:
+                return err
             data = request.get_json(silent=True) or {}
             try:
                 _, email = self._account_with_email(str(data.get("identify") or ""))
@@ -1355,6 +1439,9 @@ class ServerWebApp:
         @app.post("/api/password/send_code")
         def api_password_send_code():
             """Mail a password-reset code to the address of an existing account."""
+            err = self._require_accounts()
+            if err is not None:
+                return err
             data = request.get_json(silent=True) or {}
             try:
                 _, email = self._account_with_email(str(data.get("identify") or ""))
@@ -1365,6 +1452,9 @@ class ServerWebApp:
         @app.post("/api/password/reset")
         def api_password_reset():
             """Set a new password once the mailed reset code checks out."""
+            err = self._require_accounts()
+            if err is not None:
+                return err
             data = request.get_json(silent=True) or {}
             try:
                 self.users.reset_password_with_code(
@@ -1382,6 +1472,9 @@ class ServerWebApp:
         @app.post("/api/client_login")
         def api_client_login():
             """Log a web client in against its password and a mailed verification code."""
+            err = self._require_accounts()
+            if err is not None:
+                return err
             data = request.get_json(silent=True) or {}
             identify = str(data.get("identify") or "").strip()
             password = str(data.get("password") or "")
@@ -1418,6 +1511,9 @@ class ServerWebApp:
             along with the token; the token alone only proves the session is
             known, while the credentials prove they still open that account.
             """
+            err = self._require_accounts()
+            if err is not None:
+                return err
             data = request.get_json(silent=True) or {}
             user = self._session_user()
             if user is None:
@@ -1461,9 +1557,7 @@ class ServerWebApp:
             """Search accounts by user id, username or email."""
             data = request.get_json(silent=True) or {}
             try:
-                matches = self.users.search_users(
-                    str(data.get("query") or ""), user["user_id"]
-                )
+                matches = self.users.search_users(str(data.get("query") or ""), user["user_id"])
             except ValueError as e:
                 return jsonify({"ok": False, "error": str(e)}), 400
             contacts = {c["user_id"] for c in self.users.contacts(user["user_id"])}
@@ -1492,9 +1586,7 @@ class ServerWebApp:
             """Ask another account to become a contact."""
             data = request.get_json(silent=True) or {}
             try:
-                target = self.users.request_contact(
-                    user["user_id"], str(data.get("user_id") or "")
-                )
+                target = self.users.request_contact(user["user_id"], str(data.get("user_id") or ""))
             except ValueError as e:
                 return jsonify({"ok": False, "error": str(e)}), 400
             return jsonify({"ok": True, "user": target})
@@ -1544,6 +1636,18 @@ class ServerWebApp:
                 return jsonify({"ok": False, "error": str(e)}), 400
             config.pop("password", None)
             return jsonify({"ok": True, "enabled": True, "config": config})
+
+        @app.post("/api/email_config/disable")
+        @admin_required
+        def api_disable_email_config():
+            """Drop the mailbox and switch the server back to internal mode."""
+            try:
+                self.mail.disable()
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 400
+            # Every client's instance list changes with the mode.
+            self._broadcast_clients()
+            return jsonify({"ok": True, "enabled": False})
 
         # Server console session and user administration.
 

@@ -2,7 +2,10 @@
  *
  * User info, contact search and pending contact requests for the web client.
  * The client backend proxies every request to the server the TCP client is
- * connected to, so this script only talks to its own backend.
+ * connected to, so this script only talks to its own backend.  A server
+ * without a verification mailbox needs no client accounts: client_main.html
+ * then renders window.WEB_USER as null, the account buttons are absent, and
+ * only the "ftp" share and the chat UI remain.
  *
  * client_main.html sets window.WEB_USER and calls
  * PyFlowClientAccount.mount({user: window.WEB_USER}); the sidebar buttons
@@ -500,19 +503,23 @@
 
   window.PyFlowClientAccount = {
     mount(options) {
-      state.user = (options && options.user) || window.WEB_USER || {};
+      state.user = (options && options.user) || window.WEB_USER || null;
       const contactsBtn = document.getElementById("contacts-btn");
       if (contactsBtn) contactsBtn.addEventListener("click", openContactsModal);
       const requestsBtn = document.getElementById("requests-btn");
       if (requestsBtn) requestsBtn.addEventListener("click", openRequestsModal);
       const userInfoBtn = document.getElementById("user-info-btn");
       if (userInfoBtn) userInfoBtn.addEventListener("click", openUserInfoModal);
-      const ftpBtn = document.getElementById("ftp-btn");
-      if (ftpBtn) ftpBtn.addEventListener("click", openFtpModal);
       const logoutBtn = document.getElementById("logout-btn");
       if (logoutBtn) logoutBtn.addEventListener("click", logout);
-      pollRequests();
-      setInterval(pollRequests, POLL_MS);
+      const ftpBtn = document.getElementById("ftp-btn");
+      if (ftpBtn) ftpBtn.addEventListener("click", openFtpModal);
+      if (state.user) {
+        // Contact requests only exist on a server that uses accounts; without
+        // one the page holds no account controls and nothing is polled.
+        pollRequests();
+        setInterval(pollRequests, POLL_MS);
+      }
     },
     openFtp: openFtpModal,
     logout: logout,
