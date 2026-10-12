@@ -10,6 +10,7 @@ socket is opened and no crypto library is needed.
 import json
 import os
 import threading
+import time
 
 import pytest
 
@@ -82,6 +83,7 @@ class FakeTcpClient:
         self.client_host = "127.0.0.1"
         self.client_port = 40000
         self.timeout = None
+        self.file_transfer_dir = "/tmp"
         self.port_add_step = 1
         self.max_thread_num = 10
         self.max_mem_buff = 2048 * 1024 * 1024
@@ -110,6 +112,18 @@ class FakeTcpClient:
     def close(self):
         """Drop the pretend connection."""
         self.running = False
+
+
+def _pushed(web, count, timeout=5.0):
+    """Wait until ``count`` pushes were recorded, then return them.
+
+    A file push streams on a background thread (a folder push records itself
+    right away), so the assertions wait for the thread instead of racing it.
+    """
+    deadline = time.time() + timeout
+    while len(web.server.pushes) < count and time.time() < deadline:
+        time.sleep(0.01)
+    return web.server.pushes
 
 
 def _request_id(line):
@@ -290,11 +304,12 @@ def test_protocol_download_handler_pushes_the_selection(web, share):
         f"{server_backend.FTP_GET_COMMAND} 1 {json.dumps(['alpha.txt', 'sub', '../escape'])}",
     )
     assert reply == f"{server_backend.FTP_GET_OK_COMMAND} 1 2 1"
-    kinds = [kind for kind, _cmd in web.server.pushes]
-    assert kinds == ["file", "folder"]
-    assert str(share / "alpha.txt") in web.server.pushes[0][1]
-    assert str(share / "sub") in web.server.pushes[1][1]
-    assert "41000" in web.server.pushes[0][1]  # addressed to the asking client
+    pushes = _pushed(web, 2)  # the file push streams on a background thread
+    by_kind = dict(pushes)  # one push per entry; the threads record them in any order
+    assert sorted(by_kind) == ["file", "folder"]
+    assert str(share / "alpha.txt") in by_kind["file"]
+    assert str(share / "sub") in by_kind["folder"]
+    assert "41000" in by_kind["file"]  # addressed to the asking client
 
     unknown = ("127.0.0.1", 41001)
     assert handler(None, unknown, f"{server_backend.FTP_GET_COMMAND} 2 []").startswith(
@@ -313,15 +328,17 @@ def test_protocol_download_handler_honours_the_destination(web, share):
     request = {"paths": ["alpha.txt", "sub"], "destination": "/tmp/picked"}
     reply = handler(None, address, f"{server_backend.FTP_GET_COMMAND} 5 {json.dumps(request)}")
     assert reply == f"{server_backend.FTP_GET_OK_COMMAND} 5 2 0"
-    assert [kind for kind, _cmd in web.server.pushes] == ["file", "folder"]
-    assert all("/tmp/picked" in command for _kind, command in web.server.pushes)
+    pushes = _pushed(web, 2)
+    by_kind = dict(pushes)  # one push per entry; the threads record them in any order
+    assert sorted(by_kind) == ["file", "folder"]
+    assert all("/tmp/picked" in command for command in by_kind.values())
 
     # an empty destination keeps the receiver's default transfer folder
     web.server.pushes.clear()
     request = {"paths": ["alpha.txt"], "destination": "  "}
     reply = handler(None, address, f"{server_backend.FTP_GET_COMMAND} 6 {json.dumps(request)}")
     assert reply == f"{server_backend.FTP_GET_OK_COMMAND} 6 1 0"
-    assert "/tmp/picked" not in web.server.pushes[0][1]
+    assert "/tmp/picked" not in _pushed(web, 1)[0][1]
 
     malformed = {"paths": "alpha.txt", "destination": "/tmp/picked"}
     reply = handler(None, address, f"{server_backend.FTP_GET_COMMAND} 7 {json.dumps(malformed)}")
@@ -410,6 +427,8 @@ def test_client_lists_the_server_share(client_web):
     assert response.status_code == 200
     listing = response.get_json()["listing"]
     assert [e["name"] for e in listing["entries"]] == ["sub", "alpha.txt"]
+    # the dialog states where an empty destination downloads into
+    assert response.get_json()["default_folder"] == "/tmp"
     assert app.client.sent[0].startswith(client_backend.FTP_LIST_COMMAND + " 1 ")
     assert json.loads(app.client.sent[0].split(" ", 2)[2]) == ""  # the path travels as JSON
 
@@ -422,7 +441,7 @@ def test_client_downloads_the_selection(client_web):
         "/api/ftp/download", json={"paths": ["alpha.txt", "sub", "sub/beta.bin"]}
     )
     assert response.status_code == 200
-    assert response.get_json() == {"ok": True, "started": 3, "skipped": 0}
+    assert response.get_json() == {"ok": True, "folder": "/tmp", "started": 3, "skipped": 0}
     sent = app.client.sent[0]
     assert sent.startswith(client_backend.FTP_GET_COMMAND + " ")
     assert json.loads(sent.split(" ", 2)[2]) == {
@@ -439,8 +458,24 @@ def test_client_download_passes_the_destination(client_web):
         "/api/ftp/download", json={"paths": ["alpha.txt"], "destination": " /tmp/picked "}
     )
     assert response.status_code == 200
+    assert response.get_json()["folder"] == "/tmp/picked"
     payload = json.loads(app.client.sent[0].split(" ", 2)[2])
     assert payload == {"paths": ["alpha.txt"], "destination": "/tmp/picked"}
+
+    # a relative destination is taken under the client's transfer folder
+    response = client.post(
+        "/api/ftp/download", json={"paths": ["alpha.txt"], "destination": "sub/dir"}
+    )
+    assert response.get_json()["folder"] == os.path.join("/tmp", "sub", "dir")
+
+
+def test_client_download_reports_the_arrival_folder(client_web):
+    """An empty destination reports the client's default transfer folder."""
+    app, client = client_web
+    app.client.replier = _server_reply(app, shared=True, started=1)
+    response = client.post("/api/ftp/download", json={"paths": ["alpha.txt"]})
+    assert response.status_code == 200
+    assert response.get_json()["folder"] == "/tmp"
 
 
 def test_client_download_needs_a_selection(client_web):

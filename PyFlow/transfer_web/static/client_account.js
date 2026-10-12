@@ -336,8 +336,11 @@
   /* ---------------- server "ftp" share (not FTP: native protocol transfers) ---------------- */
 
   // Selected share-relative paths survive folder navigation, so a selection can
-  // span folders; the checkbox on the left of every row is the only state.
-  const ftpState = { path: "", selected: new Set(), listing: null };
+  // span folders.  ``selected`` is the only selection state; every checkbox
+  // and every row click writes through it (see ``setPicked``), and
+  // ``defaultFolder`` is where the server sends the download when the
+  // destination field stays empty.
+  const ftpState = { path: "", selected: new Set(), listing: null, defaultFolder: "" };
 
   function fmtSize(n) {
     if (n == null || isNaN(n)) return "";
@@ -381,19 +384,22 @@
     when.textContent = new Date(entry.mtime * 1000).toLocaleString();
     row.appendChild(when);
 
-    // Windows-explorer conventions: a single click toggles the checkbox of the
+    // Windows-explorer conventions: a single click toggles the selection of the
     // row, a double click opens a folder and is ignored on a file (the two
-    // clicks of the double click cancel each other out).
-    function toggle() {
-      if (ftpState.selected.has(rel)) ftpState.selected.delete(rel);
-      else ftpState.selected.add(rel);
-      box.checked = ftpState.selected.has(rel);
-      row.classList.toggle("picked", box.checked);
+    // clicks of the double click cancel each other out).  The checkbox itself
+    // mutates the same state, so the box can never disagree with the footer.
+    function setPicked(picked) {
+      if (picked) ftpState.selected.add(rel);
+      else ftpState.selected.delete(rel);
+      box.checked = picked;
+      row.classList.toggle("picked", picked);
       render();
     }
-    row.addEventListener("click", (e) => {
-      if (e.target !== box) toggle();
-    });
+    // The checkbox click is handled by the change event alone; stopping it here
+    // keeps the row handler from toggling a second time.
+    box.addEventListener("click", (e) => e.stopPropagation());
+    box.addEventListener("change", () => setPicked(box.checked));
+    row.addEventListener("click", () => setPicked(!ftpState.selected.has(rel)));
     row.addEventListener("dblclick", () => {
       if (!entry.dir) return; // double-clicking a file does nothing
       openFolder(rel);
@@ -409,6 +415,16 @@
     downloadBtn.disabled = ftpState.selected.size === 0;
   }
 
+  // State where an empty destination downloads into, so the arrival folder is
+  // known before anything is transferred.
+  function updateFtpDestHint(backdrop) {
+    const hint = backdrop.querySelector("#ftp-dest-hint");
+    if (!hint) return;
+    hint.textContent = ftpState.defaultFolder
+      ? "Empty = the default transfer folder of this client: " + ftpState.defaultFolder
+      : "";
+  }
+
   function renderFtpModal(backdrop) {
     const listing = ftpState.listing || { entries: [], path: "", parent: null };
     const list = backdrop.querySelector("#ftp-list");
@@ -416,6 +432,7 @@
     backdrop.querySelector("#ftp-up").disabled =
       listing.parent === null || listing.parent === undefined;
     updateFtpFooter(backdrop);
+    updateFtpDestHint(backdrop);
     list.innerHTML = "";
     if (!listing.entries.length) {
       const empty = document.createElement("div");
@@ -440,6 +457,7 @@
       const data = await post("/api/ftp/list", { path: ftpState.path });
       ftpState.listing = data.listing || { entries: [], path: ftpState.path, parent: null };
       ftpState.path = ftpState.listing.path || "";
+      if (data.default_folder) ftpState.defaultFolder = String(data.default_folder);
       if (modal) renderFtpModal(modal);
     } catch (e) {
       toast('Cannot open the server "ftp" server: ' + e.message, "err");
@@ -450,6 +468,7 @@
   function openFtpModal() {
     ftpState.path = "";
     ftpState.selected = new Set();
+    ftpState.defaultFolder = "";
     const backdrop = openModal(
       "<h2>Server &quot;ftp&quot;</h2>" +
         '<div class="note">Files and folders below live on the server. Tick what you want ' +
@@ -462,8 +481,8 @@
         '<button class="btn btn-ghost" id="ftp-close">Close</button></div>' +
         '<div class="ftp-list" id="ftp-list"></div>' +
         '<div class="field"><label for="ftp-dest">Download to (folder on this host)</label>' +
-        '<input type="text" id="ftp-dest" placeholder="e.g. /home/user/downloads ' +
-        '(leave empty for the default transfer folder)"></div>' +
+        '<input type="text" id="ftp-dest" placeholder="e.g. /home/user/downloads">' +
+        '<div class="help" id="ftp-dest-hint"></div></div>' +
         '<div class="ftp-footer"><span class="spacer"></span>' +
         '<button class="btn" id="ftp-download" disabled>Download selected (0)</button></div>'
     );
@@ -482,7 +501,10 @@
       try {
         const data = await post("/api/ftp/download", { paths, destination });
         closeModal(backdrop);
-        toast("Download started (" + (data.started || 0) + " item(s))", "ok");
+        let message = "Download started (" + (data.started || 0) + " item(s))";
+        if (data.folder) message += " -> " + data.folder;
+        if (data.skipped) message += " (" + data.skipped + " skipped)";
+        toast(message, "ok");
       } catch (e) {
         toast("Download failed: " + e.message, "err");
       }

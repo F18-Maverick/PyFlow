@@ -500,6 +500,41 @@ class ClientWebApp:
         _command, payload = self._ftp_request(FTP_GET_COMMAND, payload)
         return payload
 
+    def _ftp_transfer_folder(self):
+        """Folder this client saves transfers in when no destination is given.
+
+        Returns:
+            str: Absolute path of the transfer folder of the running TCP
+                client (``PyFlow/network_api/received_files`` by default), or
+                "" while no client is connected.
+        """
+        if self.client is None:
+            return ""
+        return os.path.abspath(self.client.file_transfer_dir)
+
+    def _ftp_arrival_folder(self, destination):
+        """Folder a download with ``destination`` lands in on this host.
+
+        The receiver resolves the destination exactly like this: an absolute
+        one replaces its transfer folder, a relative one is taken under it,
+        and an empty one keeps the folder itself.
+
+        Args:
+            destination (str | None): Folder typed in the download dialog.
+
+        Returns:
+            str: Absolute arrival folder of the entries, for the download
+                feedback; "" while no client is connected.
+        """
+        base = self._ftp_transfer_folder()
+        if not base:
+            return ""
+        if not destination:
+            return base
+        if os.path.isabs(destination):
+            return os.path.abspath(destination)
+        return os.path.abspath(os.path.join(base, destination))
+
     def _register_ftp_commands(self):
         """Register the replies of the web "ftp" share on the TCP client."""
         if self.client is None:
@@ -662,25 +697,21 @@ class ClientWebApp:
         self._push_event(event)
 
     def _on_incoming_file(self, full_path, name, size, command):
-        """Client receive thread: a file pushed by the server was saved."""
+        """Client receive thread: a file pushed by the server was saved.
+
+        The event carries the absolute path of the saved file, so the chat
+        line names exactly where the transfer landed on this host.
+        """
         try:
             cmd_name = (command or "").strip().split(" ", 1)[0].lower()
         except Exception:
             cmd_name = ""
         if cmd_name == "/crypto_pub_key":  # handshake keys are not user data
             return
-        rel = full_path
-        if self.client is not None:
-            try:
-                candidate = os.path.relpath(full_path, self.client.file_transfer_dir)
-                if not candidate.startswith(".."):
-                    rel = candidate
-            except Exception:
-                pass
         event = {
             "type": "file",
             "name": name,
-            "path": rel,
+            "path": full_path,
             "size": size,
             "open_token": self._register_open_target(full_path),
             "at": time.strftime("%H:%M:%S"),
@@ -1434,7 +1465,11 @@ class ClientWebApp:
                 listing = self._ftp_list(str(payload.get("path") or ""))
             except _ServerRequestError as e:
                 return jsonify({"ok": False, "error": str(e)}), e.status
-            return jsonify({"ok": True, "listing": listing})
+            # ``default_folder`` tells the dialog where an empty destination
+            # sends the download, so the choice is never a guess.
+            return jsonify(
+                {"ok": True, "listing": listing, "default_folder": self._ftp_transfer_folder()}
+            )
 
         @app.post("/api/ftp/download")
         def api_ftp_download():
@@ -1447,7 +1482,10 @@ class ClientWebApp:
                 result = self._ftp_download([str(entry) for entry in wanted], destination)
             except _ServerRequestError as e:
                 return jsonify({"ok": False, "error": str(e)}), e.status
-            return jsonify({"ok": True, **result})
+            # ``folder`` names the arrival folder of the started download.
+            return jsonify(
+                {"ok": True, "folder": self._ftp_arrival_folder(destination), **result}
+            )
 
         @app.get("/api/extensions_ui")
         def api_get_extensions_ui():

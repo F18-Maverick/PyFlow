@@ -774,7 +774,9 @@ class ServerWebApp:
         Every entry is handed to the protocol's native transfer (``/file`` for
         a file, ``/file_folder`` for a folder) addressed to the asking client,
         carrying the receiver-side destination the client asked for (the
-        receiver's default transfer folder when it asked for none).
+        receiver's default transfer folder when it asked for none).  A file
+        streams in a background thread, like the folder push, so the answer
+        reports the started transfers instead of waiting for them.
 
         The request body is the list of share-relative entries; a client may
         also send ``{"paths": [...], "destination": "..."}`` to pick where the
@@ -812,7 +814,11 @@ class ServerWebApp:
             if os.path.isdir(target):
                 self._send_folder_to_client(tuple(addr), target, destination)
             else:
-                self._send_file_to_client(tuple(addr), target, destination)
+                threading.Thread(
+                    target=self._send_file_to_client,
+                    args=(tuple(addr), target, destination),
+                    daemon=True,
+                ).start()
             started += 1
         return f"{FTP_GET_OK_COMMAND} {request_id} {started} {skipped}"
 

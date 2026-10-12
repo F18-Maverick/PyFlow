@@ -158,7 +158,7 @@ def test_client_file_event_carries_a_resolvable_token(client_web, revealed, tmp_
 
     event = client.get("/api/events?since=0").get_json()["events"][-1]
     assert event["name"] == "beta.bin"
-    assert event["path"] == os.path.join("sub", "beta.bin")
+    assert event["path"] == str(saved)  # the exact spot the file landed on
     assert open_location(client, event["open_token"]).get_json() == {"ok": True}
     assert revealed == [str(saved)]
 
