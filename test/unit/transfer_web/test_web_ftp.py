@@ -83,7 +83,7 @@ class FakeTcpClient:
         self.client_host = "127.0.0.1"
         self.client_port = 40000
         self.timeout = None
-        self.file_transfer_dir = "/tmp"
+        self.file_transfer_dir = ""  # set by the fixture to a folder on this host
         self.port_add_step = 1
         self.max_thread_num = 10
         self.max_mem_buff = 2048 * 1024 * 1024
@@ -180,6 +180,9 @@ def client_web(tmp_path, monkeypatch):
     app.app.config.update(TESTING=True)
     app.connected = True
     app.client = FakeTcpClient()
+    # A real folder, not a hardcoded POSIX path: the download feedback reports
+    # this folder in the host's own path flavour.
+    app.client.file_transfer_dir = str(tmp_path / "received")
     app._register_ftp_commands()
     return app, app.app.test_client()
 
@@ -428,7 +431,7 @@ def test_client_lists_the_server_share(client_web):
     listing = response.get_json()["listing"]
     assert [e["name"] for e in listing["entries"]] == ["sub", "alpha.txt"]
     # the dialog states where an empty destination downloads into
-    assert response.get_json()["default_folder"] == "/tmp"
+    assert response.get_json()["default_folder"] == app.client.file_transfer_dir
     assert app.client.sent[0].startswith(client_backend.FTP_LIST_COMMAND + " 1 ")
     assert json.loads(app.client.sent[0].split(" ", 2)[2]) == ""  # the path travels as JSON
 
@@ -441,7 +444,12 @@ def test_client_downloads_the_selection(client_web):
         "/api/ftp/download", json={"paths": ["alpha.txt", "sub", "sub/beta.bin"]}
     )
     assert response.status_code == 200
-    assert response.get_json() == {"ok": True, "folder": "/tmp", "started": 3, "skipped": 0}
+    assert response.get_json() == {
+        "ok": True,
+        "folder": app.client.file_transfer_dir,
+        "started": 3,
+        "skipped": 0,
+    }
     sent = app.client.sent[0]
     assert sent.startswith(client_backend.FTP_GET_COMMAND + " ")
     assert json.loads(sent.split(" ", 2)[2]) == {
@@ -454,19 +462,22 @@ def test_client_download_passes_the_destination(client_web):
     """A chosen download folder reaches the server; an empty one is dropped."""
     app, client = client_web
     app.client.replier = _server_reply(app, shared=True, started=1)
+    destination = os.path.join(os.path.dirname(app.client.file_transfer_dir), "picked")
     response = client.post(
-        "/api/ftp/download", json={"paths": ["alpha.txt"], "destination": " /tmp/picked "}
+        "/api/ftp/download", json={"paths": ["alpha.txt"], "destination": f" {destination} "}
     )
     assert response.status_code == 200
-    assert response.get_json()["folder"] == "/tmp/picked"
+    assert response.get_json()["folder"] == destination
     payload = json.loads(app.client.sent[0].split(" ", 2)[2])
-    assert payload == {"paths": ["alpha.txt"], "destination": "/tmp/picked"}
+    assert payload == {"paths": ["alpha.txt"], "destination": destination}
 
     # a relative destination is taken under the client's transfer folder
     response = client.post(
         "/api/ftp/download", json={"paths": ["alpha.txt"], "destination": "sub/dir"}
     )
-    assert response.get_json()["folder"] == os.path.join("/tmp", "sub", "dir")
+    assert response.get_json()["folder"] == os.path.join(
+        app.client.file_transfer_dir, "sub", "dir"
+    )
 
 
 def test_client_download_reports_the_arrival_folder(client_web):
@@ -475,7 +486,7 @@ def test_client_download_reports_the_arrival_folder(client_web):
     app.client.replier = _server_reply(app, shared=True, started=1)
     response = client.post("/api/ftp/download", json={"paths": ["alpha.txt"]})
     assert response.status_code == 200
-    assert response.get_json()["folder"] == "/tmp"
+    assert response.get_json()["folder"] == app.client.file_transfer_dir
 
 
 def test_client_download_needs_a_selection(client_web):
