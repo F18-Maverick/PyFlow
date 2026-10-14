@@ -2,7 +2,11 @@
 
 import errno
 
-from PyFlow.network_api.connect_tcp import TCP_Server_Base, _is_closed_socket_error
+from PyFlow.network_api.connect_tcp import (
+    CommandNotFoundError,
+    TCP_Server_Base,
+    _is_closed_socket_error,
+)
 
 
 def test_is_closed_socket_error_covers_teardown_signals():
@@ -252,3 +256,70 @@ def test_dead_holders_are_reclaimed_from_the_port_record():
     finally:
         server.free_port()
 
+
+# ---- call_extension_functions ----------------------------------------------
+
+
+def test_call_extension_functions_runs_a_console_command_from_code():
+    """A command registered for the console runs from code, line unchanged."""
+    server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
+    seen = []
+    server.register_command(
+        "/mycmd", lambda sock, addr, cmd: seen.append((sock, addr, cmd)) or "done", "client"
+    )
+
+    assert server.call_extension_functions("/mycmd hello world") == "done"
+    # a direct call names no peer, so the handler gets the None context
+    assert seen == [(None, None, "/mycmd hello world")]
+
+
+def test_call_extension_functions_finds_the_inbound_group_case_insensitively():
+    """A handler for the lines clients send is reachable by its name too."""
+    server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
+    seen = []
+    server.register_command("/inbound", lambda sock, addr, cmd: seen.append(cmd), "server")
+
+    server.call_extension_functions("/INBOUND x y")
+
+    assert seen == ["/INBOUND x y"]
+
+
+def test_call_extension_functions_prefers_the_console_group():
+    """The console group wins a name both groups register."""
+    server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
+    server.register_command("/dup", lambda sock, addr, cmd: "console", "client")
+    server.register_command("/dup", lambda sock, addr, cmd: "inbound", "server")
+
+    assert server.call_extension_functions("/dup") == "console"
+
+
+def test_call_extension_functions_runs_synchronously():
+    """``run_in_thread`` belongs to the dispatch paths, not to a direct call."""
+    server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
+    seen = []
+    server.register_command(
+        "/slow", lambda sock, addr, cmd: seen.append(cmd), "client", run_in_thread=True
+    )
+
+    server.call_extension_functions("/slow now")
+
+    assert seen == ["/slow now"]  # finished before the call returned
+
+
+def test_call_extension_functions_rejects_unregistered_commands():
+    """An unknown first token raises, and the message names the line."""
+    server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
+    server.register_command("/known", lambda sock, addr, cmd: None, "client")
+
+    with pytest.raises(CommandNotFoundError) as exc:
+        server.call_extension_functions("/ghost arg")
+    assert "/ghost arg" in str(exc.value)
+    with pytest.raises(CommandNotFoundError):  # an empty line selects nothing
+        server.call_extension_functions("   ")
+
+
+def test_call_extension_functions_rejects_an_unsplittable_command():
+    """A line whose quoting cannot be parsed is a caller error, not a lookup miss."""
+    server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
+    with pytest.raises(ValueError, match="No closing quotation"):
+        server.call_extension_functions('/known "unclosed')

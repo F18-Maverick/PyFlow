@@ -876,6 +876,40 @@ class _SecureChannel:
             return bytes(plain)
 
 
+class CommandNotFoundError(Exception):
+    """A command passed to `call_extension_functions` is not registered.
+
+    Raised when the first token of the command matches no handler registered
+    with `register_command`, on either instance class.
+    """
+
+
+def _custom_handler_for(command, handlers):
+    """Return the extension handler one command line selects.
+
+    Args:
+        command (str): Command line whose first token names the handler.
+        handlers (list): The ``[{}, {}]`` registry, the console group and the
+            inbound group.
+
+    Returns:
+        callable: The registered handler; with both groups registering the
+            name, the console group wins.
+
+    Raises:
+        CommandNotFoundError: If neither group registers the first token.
+        ValueError: If ``command`` cannot be split (unbalanced quotes).
+    """
+    cmd_parts = shlex.split(command.strip())
+    cmd_name = cmd_parts[0].lower() if cmd_parts else ""
+    handler = handlers[1].get(cmd_name)
+    if handler is None:
+        handler = handlers[0].get(cmd_name)
+    if handler is None:
+        raise CommandNotFoundError(f"Unknown extension command: {command}")
+    return handler
+
+
 class TCP_Server_Base:  # TCP server class
     """TCP server: accept clients, dispatch commands, relay messages and files.
 
@@ -1391,6 +1425,33 @@ class TCP_Server_Base:  # TCP server class
             return False
         self._custom_handlers[registe_index][command_name] = handler
         self._custom_handler_threaded[registe_index][command_name] = run_in_thread
+
+
+    def call_extension_functions(self, command):
+        """Call one registered extension command handler directly from code.
+
+        The handler is selected by the first token of ``command``, matched
+        case-insensitively against the names given to `register_command`: the
+        console group is searched first, then the group fed by the lines
+        clients send. The handler runs on the calling thread — ``run_in_thread``
+        only affects the console and inbound dispatch paths — and is called
+        with ``None`` for both ``client_socket`` and ``client_address``, since
+        a direct call names no peer.
+
+        Args:
+            command (str): Command line to run, e.g. ``"/my_command arg"``; the
+                handler receives it unchanged.
+
+        Returns:
+            object: Whatever the handler returns.
+
+        Raises:
+            CommandNotFoundError: If no registered handler matches the first
+                token of ``command``.
+            ValueError: If ``command`` cannot be split (unbalanced quotes).
+        """
+        handler = _custom_handler_for(command, self._custom_handlers)
+        return handler(None, None, command)
 
     def add_message_listener(self, listener):
         """Register ``listener(client_id, message)`` for every inbound line.
@@ -4580,6 +4641,33 @@ class TCP_Client_Base:  # TCP client class
             return False
         self._custom_handlers[registe_index][command_name] = handler
         self._custom_handler_threaded[registe_index][command_name] = run_in_thread
+
+    def call_extension_functions(self, command):
+        """Call one registered extension command handler directly from code.
+
+        The handler is selected by the first token of ``command``, matched
+        case-insensitively against the names given to `register_command`: the
+        console group is searched first, then the group fed by the lines the
+        server sends. The handler runs on the calling thread — ``run_in_thread``
+        only affects the console and inbound dispatch paths — and is called
+        with this client's socket and id, the context its dispatch paths give
+        it.
+
+        Args:
+            command (str): Command line to run, e.g. ``"/my_command arg"``; the
+                handler receives it unchanged.
+
+        Returns:
+            object: Whatever the handler returns.
+
+        Raises:
+            CommandNotFoundError: If no registered handler matches the first
+                token of ``command``.
+            ValueError: If ``command`` cannot be split (unbalanced quotes).
+        """
+        handler = _custom_handler_for(command, self._custom_handlers)
+        client_id = f"{self.client_host}:{self.client_port}"
+        return handler(self.client_socket, client_id, command)
 
     def add_message_listener(self, listener):
         """Register ``listener(sender_id, message)`` for every inbound line.

@@ -544,7 +544,8 @@ is invoked for any message starting with ``/``.
 We support two solutions for command handling:
 inputting a command in the console or
 receiving a command from other clients. You can also call the
-functions defined for each command in the code.
+functions defined for each command in the code via
+`call_extension_functions`.
 
 *Note: You can select the solution which you 
 want to use by changing the args of the 
@@ -594,6 +595,13 @@ defined as:
         where_to_run: Any,
         run_in_thread: Any=False) -> bool:
         ...
+
+    def call_extension_functions(self, command):
+        ...
+
+`call_extension_functions` runs one registered command's handler
+straight from code; the command's first token selects it, exactly as
+it does for a typed line.
 
 The args of the `register_command` function 
 are as follows:
@@ -1002,6 +1010,7 @@ are as follows:
 
 4. The server command APIs:
     - `register_command`
+    - `call_extension_functions`
     - `_execute_custom_handler`
     - `submit_task`
     - `create_temporary_server`

@@ -524,6 +524,7 @@ The command extension API for the client is defined as:
 .. code-block:: python
 
     def register_command(self, command_name, handler, where_to_run, run_in_thread=False)
+    def call_extension_functions(self, command)
     def submit_task(self, func, *args, **kwargs)
     def create_temporary_server(self, handler, port=None, max_connections=1)
     def create_temporary_client(self, server_host, server_port, bind_port=None, on_data=None)
@@ -542,6 +543,10 @@ as on the server side:
 
 It returns ``False`` when ``where_to_run`` is neither ``"server"`` nor
 ``"client"`` (nothing is registered then); on success it returns ``None``.
+
+`call_extension_functions` runs one registered command's handler
+straight from code, on the client as on the server; the command's
+first token selects it, exactly as it does for a typed line.
 
 *Note: The client stores registered commands in the same 
 structure as the server: ``self._custom_handlers = [{}, {}]``, 
@@ -807,6 +812,7 @@ is as follows:
 
 4. The client command APIs:
     - `register_command`
+    - `call_extension_functions`
     - `_execute_custom_handler`
     - `submit_task`
     - `create_temporary_server`

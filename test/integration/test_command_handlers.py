@@ -392,6 +392,23 @@ def test_command_batch_streams_a_running_command_in_chunks(live_pair, logs_dir, 
     assert "Log chunk" in capsys.readouterr().out
 
 
+def test_call_extension_functions_runs_batches_of_a_live_pair(live_pair, logs_dir):
+    """Both public entry points reach the control extension without a console.
+
+    The server call goes through the console group (the handler a typed line
+    would run) and the client call through the inbound group (the handler a
+    line pushed by the server would run).
+    """
+    server, client, address = live_pair
+    log_path = logs_dir / ctl._log_filename_for_address(address)
+
+    assert server.call_extension_functions(console_batch(["echo from_server"], address)) is None
+    assert wait_until(lambda: finished(log_path, "echo from_server"), timeout=30)
+
+    assert client.call_extension_functions(f'/command "{address}" "echo from_client"') is None
+    assert wait_until(lambda: finished(log_path, "echo from_client"), timeout=30)
+
+
 def test_injectable_setup_registers_commands(server, client):
     """setup_server_commands/setup_client_commands register the control
     extension on existing instances (used by flow_setup's unified launch)."""
