@@ -1,6 +1,8 @@
 import json
+import os
 import shlex
 import socket
+import sys
 import threading
 import time
 from pathlib import Path
@@ -10,6 +12,21 @@ from helpers import free_port, wait_until
 
 import PyFlow.command_control_extension_tcp as ctl
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
+
+CMD_LIKE_SHELL = '''"""Echo every input line like cmd.exe does, and run it in one /bin/sh."""
+
+import subprocess
+import sys
+
+shell = subprocess.Popen(["/bin/sh"], stdin=subprocess.PIPE)
+for line in sys.stdin:
+    sys.stdout.write(line)  # cmd.exe prints every line of its piped input
+    sys.stdout.flush()
+    shell.stdin.write(line.encode("utf-8"))
+    shell.stdin.flush()
+shell.stdin.close()
+shell.wait()
+'''
 
 
 class DummySocket:
@@ -287,6 +304,39 @@ def test_command_batch_keeps_entries_when_a_chunk_upload_fails(
     assert [entry["output"] for entry in uploaded[-1]["ls"]] == ["first half\n", "second half\n"]
 
 
+def test_command_batch_drops_lines_the_shell_echoes_back(client, logs_dir, monkeypatch, capsys):
+    """Lines a shell echoes from its stdin (cmd.exe) are control lines, not output."""
+    chunks = []
+
+    def fake_transfer(message, file_folder_abspath=None):
+        chunks.append(json.loads(Path(shlex.split(message)[1]).read_text(encoding="utf-8")))
+        return True
+
+    monkeypatch.setattr(client, "file_transfer_client_recv_client_start", fake_transfer)
+    monkeypatch.setattr(client, "send_message", lambda client_socket, message: None)
+
+    marker = ctl._COMMAND_END_MARKER + "abc123"
+    echoed_marker_line = f"echo {marker} %ERRORLEVEL%"
+    batch = ctl._CommandBatch(("127.0.0.1", 3000), ["dir /b"], "peer")
+    batch._echoed_lines.update({"dir /b", echoed_marker_line})  # what _write_stdin records there
+    with batch._log_lock:
+        batch._current_command = "dir /b"
+        batch._current_cmd_id = "1"
+        batch._sentinel_prefix = marker
+        batch._consume_stdout_locked("dir /b\r\n")  # echoed command line
+        assert batch._pending == []
+        batch._consume_stdout_locked(f"echo {marker}")  # echoed marker line, still incomplete
+        assert batch._pending == []
+        batch._consume_stdout_locked(" %ERRORLEVEL%\r\nfile_a.txt\r\n")
+        assert [entry["output"] for entry in batch._pending] == ["file_a.txt\r\n"]
+        batch._consume_stdout_locked(f"{marker} 0\r\n")
+
+    entries = chunks[-1]["dir /b"]
+    assert [entry["stream"] for entry in entries] == ["stdout", "end"]
+    assert entries[0]["output"] == "file_a.txt\r\n"
+    assert entries[1]["returncode"] == 0
+
+
 def test_command_log_chunk_appends_to_the_same_log(server, tmp_path, logs_dir):
     """Every chunk of a client extends that client's log; nothing is overwritten."""
     server.file_transfer_dir = str(tmp_path / "received")
@@ -358,27 +408,37 @@ def test_command_batch_shares_one_shell_between_its_commands(live_pair, logs_dir
     _server, _client, address = live_pair
     (tmp_path / "file_a.txt").write_text("a", encoding="utf-8")
     log_path = logs_dir / ctl._log_filename_for_address(address)
-    change_dir = "cd {}".format(shlex.quote(str(tmp_path)))
+    if os.name == "nt":  # cmd quotes with double quotes and lists with dir
+        change_dir = f'cd /d "{tmp_path}"'
+        list_command = "dir /b"
+    else:
+        change_dir = "cd {}".format(shlex.quote(str(tmp_path)))
+        list_command = "ls -1"
 
-    ctl._command_handler(None, ("127.0.0.1", 1), console_batch([change_dir, "ls -1"], address))
+    ctl._command_handler(None, ("127.0.0.1", 1), console_batch([change_dir, list_command], address))
 
-    assert wait_until(lambda: finished(log_path, "ls -1"), timeout=30)
-    listing = "".join(entry["output"] for entry in entries_of(log_path, "ls -1"))
+    assert wait_until(lambda: finished(log_path, list_command), timeout=30)
+    listing = "".join(entry["output"] for entry in entries_of(log_path, list_command))
     assert "file_a.txt" in listing  # listed from the directory the batch changed into
     assert finished(log_path, change_dir)
     assert wait_until(
-        lambda: (log_of(logs_dir / "merged_logs.json") or {}).get("ls -1"), timeout=30
+        lambda: (log_of(logs_dir / "merged_logs.json") or {}).get(list_command), timeout=30
     )
 
 
-def test_command_batch_streams_a_running_command_in_chunks(live_pair, logs_dir, capsys):
+def test_command_batch_streams_a_running_command_in_chunks(live_pair, logs_dir, tmp_path, capsys):
     """A command that keeps producing output is tracked while it still runs."""
     _server, _client, address = live_pair
     log_path = logs_dir / ctl._log_filename_for_address(address)
-    command = (
-        "i=0; while [ $i -lt 3200 ]; do echo 0123456789012345678901234567890123456789; "
-        "i=$((i+1)); done; sleep 5; echo tail"
-    )
+    if os.name == "nt":  # cmd has no `while`; print a large file, idle, then mark the end
+        big_file = tmp_path / "big.txt"
+        big_file.write_text("0123456789" * 7000, encoding="utf-8")  # 70 KB: over one chunk
+        command = f'type "{big_file}" & ping -n 8 127.0.0.1 > nul & echo tail'
+    else:
+        command = (
+            "i=0; while [ $i -lt 3200 ]; do echo 0123456789012345678901234567890123456789; "
+            "i=$((i+1)); done; sleep 5; echo tail"
+        )
 
     ctl._command_handler(None, ("127.0.0.1", 1), console_batch([command], address))
 
@@ -464,3 +524,24 @@ def test_client_setup_with_existing_instance_threaded():
         if c is not None:
             c.close()
         s.stop()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="simulates cmd.exe, which Windows already runs")
+def test_command_batch_ignores_the_lines_a_cmd_like_shell_echoes_back(
+    live_pair, logs_dir, tmp_path, monkeypatch
+):
+    """Control lines a shell echoes back (cmd.exe) never reach the log."""
+    shell_script = tmp_path / "cmd_like_shell.py"
+    shell_script.write_text(CMD_LIKE_SHELL, encoding="utf-8")
+    monkeypatch.setattr(ctl, "_shell_argv", lambda: [sys.executable, str(shell_script)])
+    monkeypatch.setattr(ctl, "_shell_echoes_stdin", lambda: True)
+    _server, _client, address = live_pair
+    log_path = logs_dir / ctl._log_filename_for_address(address)
+    command = "echo hello"
+
+    ctl._command_handler(None, ("127.0.0.1", 1), console_batch([command], address))
+
+    assert wait_until(lambda: finished(log_path, command), timeout=30)
+    output = "".join(entry["output"] for entry in entries_of(log_path, command))
+    assert output.strip() == "hello"  # neither the echoed command nor the echoed marker
+    assert ctl._COMMAND_END_MARKER not in output

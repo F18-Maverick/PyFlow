@@ -192,6 +192,29 @@ def _could_still_be_marker_tail(text):
     return re.fullmatch(r" ?\d*\r?", text) is not None
 
 
+def _without_echoed_lines(text, echoed_lines):
+    """Drop the complete lines of ``text`` that a shell echoed back.
+
+    A shell that echoes the lines it reads from its stdin (``cmd.exe``) sends
+    them back mixed into the output of the commands; they are control lines of
+    the batch, not command output.
+
+    Args:
+        text (str): Captured output that has not been logged yet.
+        echoed_lines (set[str]): Lines already written to the shell's stdin.
+
+    Returns:
+        str: ``text`` without those lines; a line that is not complete yet stays
+            in the result until the next read delivers its end.
+    """
+    kept = []
+    for line in text.splitlines(keepends=True):
+        if line.endswith(("\n", "\r")) and line.rstrip("\r\n") in echoed_lines:
+            continue
+        kept.append(line)
+    return "".join(kept)
+
+
 def _shell_argv():
     """Return the command line of the shell that runs one batch's commands.
 
@@ -202,6 +225,17 @@ def _shell_argv():
     if os.name == "nt":
         return [os.environ.get("COMSPEC", "cmd.exe")]
     return ["/bin/sh"]
+
+
+def _shell_echoes_stdin():
+    """Report whether the batch's shell echoes the lines it reads from its stdin.
+
+    Returns:
+        bool: True for ``cmd.exe``, which prints every line of its piped input
+            back into the output stream, so those lines are filtered out of the
+            log; ``/bin/sh`` never echoes them.
+    """
+    return os.name == "nt"
 
 
 def _shell_end_marker_line(token):
@@ -268,6 +302,7 @@ class _CommandBatch:
         self._pending_bytes = 0
         self._chunk_seq = 0
         self._stdout_buffer = ""
+        self._echoed_lines = set()  # lines cmd.exe echoes back (Windows only)
         self._current_command = ""
         self._current_cmd_id = "0"
         self._sentinel_prefix = ""
@@ -298,6 +333,7 @@ class _CommandBatch:
             print(f"ErrorWhileRunningTheCommandBatch: the batch stopped early: {e}")
         finally:
             self._close_shell()
+        self._log_leftover_output()
         self._flush_remaining()
         self._report_done()
 
@@ -310,7 +346,7 @@ class _CommandBatch:
             stderr=subprocess.PIPE,
             bufsize=0,
         )
-        if os.name == "nt":  # cmd echoes every line it reads unless this is off
+        if os.name == "nt":  # ask cmd to stop echoing its input lines
             self._write_stdin("@echo off" + _SHELL_LINE_END)
         self._readers = [
             threading.Thread(target=self._read_stream, args=("stdout",), daemon=True),
@@ -378,6 +414,8 @@ class _CommandBatch:
     def _consume_stdout_locked(self, text):
         """Log stdout text, stripping the end markers of finished commands."""
         self._stdout_buffer += text
+        if self._echoed_lines:
+            self._stdout_buffer = _without_echoed_lines(self._stdout_buffer, self._echoed_lines)
         while self._stdout_buffer:
             if not self._sentinel_prefix:
                 self._emit_locked("stdout", self._stdout_buffer)
@@ -392,7 +430,18 @@ class _CommandBatch:
                 self._emit_locked("stdout", self._stdout_buffer[:end])
                 self._stdout_buffer = self._stdout_buffer[end:]
                 return
-            if position > 0:
+            line_start = self._stdout_buffer.rfind("\n", 0, position) + 1
+            if line_start != position:
+                # the marker sits inside a line, and an end marker always starts
+                # its own line: this is text of the command's output, or a
+                # control line the shell echoed back
+                if self._marker_line_may_be_echoed(position, line_start):
+                    return  # log nothing until that line is complete
+                end = position + len(self._sentinel_prefix)
+                self._emit_locked("stdout", self._stdout_buffer[:end])
+                self._stdout_buffer = self._stdout_buffer[end:]
+                continue
+            if position > 0:  # the marker starts its line, but earlier output precedes it
                 self._emit_locked("stdout", self._stdout_buffer[:position])
                 self._stdout_buffer = self._stdout_buffer[position:]
                 continue
@@ -407,9 +456,30 @@ class _CommandBatch:
                 continue
             if _could_still_be_marker_tail(remainder):  # still arriving
                 return
+            if not any(end in remainder for end in ("\n", "\r")):
+                return  # the line the marker starts is not complete yet
             # the marker text came from the command's own output: log it and scan on
             self._emit_locked("stdout", self._sentinel_prefix)
             self._stdout_buffer = remainder
+
+    def _marker_line_may_be_echoed(self, position, line_start):
+        """Report whether the text ahead of a marker may still become an echoed line.
+
+        Args:
+            position (int): Offset of the marker inside ``_stdout_buffer``.
+            line_start (int): Offset of the first character of the marker's line.
+
+        Returns:
+            bool: True while that text is a prefix of a line written to the
+                shell's stdin and the line is not complete yet; logging it now
+                would put a control line the shell echoed back into the log.
+        """
+        if not self._echoed_lines:
+            return False
+        head = self._stdout_buffer[line_start:position]
+        if not any(echo.startswith(head) for echo in self._echoed_lines):
+            return False
+        return not any(end in self._stdout_buffer[position:] for end in ("\n", "\r"))
 
     def _emit_locked(self, stream, text):
         """Append one log entry for captured text; the caller holds the log lock.
@@ -527,6 +597,21 @@ class _CommandBatch:
         print(f"Command log {self._log_filename} is complete on the server")
         print("Dealing the command successfully!")
 
+    def _log_leftover_output(self):
+        """Log the stdout text the stream end left in the buffer.
+
+        The scanner holds a line back while it may still grow into a marker or
+        into a line the shell echoed back; text still buffered when the shell
+        stops is command output and is logged here instead of being dropped.
+        """
+        with self._log_lock:
+            leftover = self._stdout_buffer
+            self._stdout_buffer = ""
+            if self._echoed_lines:
+                leftover = _without_echoed_lines(leftover, self._echoed_lines)
+            if leftover:
+                self._emit_locked("stdout", leftover)
+
     def _close_shell(self):
         """Close the shell's stdin and let the readers drain its output."""
         if self._proc is None:
@@ -545,6 +630,8 @@ class _CommandBatch:
     def _write_stdin(self, text):
         """Write one shell line, treating a dead shell as a closed session."""
         try:
+            if _shell_echoes_stdin():  # those lines come back mixed into the output
+                self._echoed_lines.add(text.rstrip("\r\n"))
             self._proc.stdin.write(text.encode("utf-8"))
             self._proc.stdin.flush()
         except OSError as e:
