@@ -122,6 +122,7 @@ def _is_closed_socket_error(exc):
 
 MAX_DECODE_FAILURES = 3  # circuit breaker: close after N consecutive decode failures (re-exchange storm / garbage injection)
 SEND_WAIT_TIMEOUT = 30.0  # seconds a non-blocking client write waits for buffer room
+LOG_MERGE_ATTEMPTS = 8  # a log flush re-merges while other instances keep publishing
 
 
 def _wait_writable(client_socket, timeout):
@@ -139,6 +140,107 @@ def _wait_writable(client_socket, timeout):
         selector.register(client_socket, selectors.EVENT_WRITE)
         if not selector.select(timeout):
             raise TimeoutError(f"peer did not accept data within {timeout} seconds")
+
+
+_LOG_MERGE_LOCKS = {}  # log path -> RLock serialising that file's merges in this process
+_LOG_MERGE_LOCKS_LOCK = threading.Lock()
+
+
+def _log_merge_lock(path):
+    """Return this process's lock for the log at ``path``.
+
+    Shared by every merge of that file in this process (see
+    `_publish_json_log`), so threads of one program never interleave their
+    read-merge-publish.
+    """
+    with _LOG_MERGE_LOCKS_LOCK:
+        return _LOG_MERGE_LOCKS.setdefault(os.path.abspath(path), threading.RLock())
+
+
+def _log_content(path):
+    """Read the exact bytes of the log at ``path``, or None when it is absent.
+
+    `_publish_json_log` compares the content it read against this before it
+    replaces the file: any publish by another process changes the bytes (an
+    entry is always added), so a match means nothing was published in between.
+    """
+    try:
+        with open(path, "rb") as f:
+            return f.read()
+    except FileNotFoundError:
+        return None
+
+
+def _read_json_log(path):
+    """Parse the JSON log at ``path``: ``(data, content)``.
+
+    ``({}, None)`` while the file does not exist. A log that is empty (a
+    publish cut short) or carries a trailing fragment (a crash, or a publish
+    by the versions that shared one ``.tmp`` path) is read up to its first
+    document: what is left is dropped, and the next publish rewrites the file
+    without it, so a broken log cannot poison every later flush.
+    """
+    content = _log_content(path)
+    if content is None:
+        return {}, None
+    text = content.decode("utf-8")
+    if not text.strip():
+        return {}, content  # nothing to keep: the publish repairs the file
+    try:
+        return json.loads(text), content
+    except ValueError:
+        data, _end = json.JSONDecoder().raw_decode(text)
+        return data, content
+
+
+def _publish_json_log(path, snapshot, record_key):
+    """Merge one snapshot into the JSON log at ``path``.
+
+    The file is read, merged and published back atomically (``os.replace``),
+    so a reader never sees a truncated or partial log.
+
+    Two writers must not lose each other's entries, which is what one shared
+    ``<path>.tmp`` used to produce: one of them renamed a half-written file
+    into place, the log no longer parsed (``Extra data``) and every later
+    flush was dropped. Hence, per writer:
+
+    * the temp file carries this writer's pid and thread id, so two writers
+      can never truncate or rename each other's file into place;
+    * ``_log_merge_lock`` serialises the merges of this process — several
+      instances in one program (or one test session) sharing a log lose
+      nothing;
+    * a merge whose file changed under it — another *process* published since
+      this writer read it — is redone from the new content instead of
+      clobbering that process's entries.
+
+    Args:
+        path (str): JSON log file to merge into.
+        snapshot (dict): Socket -> ``[[content, timestamp], ...]`` entries to add.
+        record_key (callable): Maps one socket to its key in the log.
+
+    Raises:
+        RuntimeError: When every attempt lost the race to another writer.
+    """
+    with _log_merge_lock(path):
+        for _ in range(LOG_MERGE_ATTEMPTS):
+            existing, content = _read_json_log(path)
+            for sock, entries in snapshot.items():
+                key = record_key(sock)
+                existing.setdefault(key, []).extend(entries)
+            tmp_path = "{}.{}.{}.tmp".format(path, os.getpid(), threading.get_ident())
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(existing, f, ensure_ascii=False, indent=2)
+            if _log_content(path) == content:  # no other process published meanwhile
+                for _ in range(5):  # Windows: the log may be briefly open for reading
+                    try:
+                        os.replace(tmp_path, path)
+                        return
+                    except PermissionError:
+                        time.sleep(0.05)
+                os.replace(tmp_path, path)
+                return
+            os.remove(tmp_path)  # another process got there first: redo the merge
+        raise RuntimeError("the log kept changing under the merge")
 
 
 def _log_line(enabled, parts):
@@ -1690,28 +1792,14 @@ class TCP_Server_Base:  # TCP server class
     def _merge_json_log(self, path, snapshot):
         """Merge ``snapshot`` into the JSON log at ``path`` (append per socket).
 
-        The file is replaced atomically (temp file + os.replace) so a
-        concurrent reader never sees a truncated/partial log.
+        Publishes through `_publish_json_log`: a temp file named after this
+        writer, and an optimistic re-merge when another instance published in
+        between, so concurrent flushes of several instances sharing one log
+        neither corrupt nor lose each other. A failure is logged, never raised
+        into the caller.
         """
         try:
-            if os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    existing = json.load(f)
-            else:
-                existing = {}
-            for sock, entries in snapshot.items():
-                key = self._record_key(sock)
-                existing.setdefault(key, []).extend(entries)
-            tmp_path = path + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(existing, f, ensure_ascii=False, indent=2)
-            for _ in range(5):  # Windows: the log may be briefly open for reading
-                try:
-                    os.replace(tmp_path, path)
-                    return
-                except PermissionError:
-                    time.sleep(0.05)
-            os.replace(tmp_path, path)
+            _publish_json_log(path, snapshot, self._record_key)
         except Exception as e:
             self._log(f"log file update failed: {e}")
             self._log_exc()
@@ -3163,7 +3251,19 @@ class TCP_Server_Base:  # TCP server class
             nonlocal save_path
             filename = None
             full_path = None
-            self.send_message(client_file_socket, self.server_start_file_transfer_sign)
+            try:
+                self.send_message(client_file_socket, self.server_start_file_transfer_sign)
+            except Exception as e:
+                # the instance stopped (or the peer vanished) between the accept
+                # and this start sign: the transfer is over. A closing instance
+                # raises RuntimeError("connection error") by design — the normal
+                # teardown signal — and it must never kill this thread (pytest
+                # reports any escape as an unhandled thread exception).
+                if not _is_closed_socket_error(e):
+                    self._log(f"error while starting the file transfer: {e}")
+                    self._log_exc()
+                close_socket()
+                return False
             try:
                 name_len_bytes = b""
                 while len(name_len_bytes) < 4:
@@ -4905,28 +5005,14 @@ class TCP_Client_Base:  # TCP client class
     def _merge_json_log(self, path, snapshot):
         """Merge ``snapshot`` into the JSON log at ``path`` (append per socket).
 
-        The file is replaced atomically (temp file + os.replace) so a
-        concurrent reader never sees a truncated/partial log.
+        Publishes through `_publish_json_log`: a temp file named after this
+        writer, and an optimistic re-merge when another instance published in
+        between, so concurrent flushes of several instances sharing one log
+        neither corrupt nor lose each other. A failure is logged, never raised
+        into the caller.
         """
         try:
-            if os.path.exists(path):
-                with open(path, "r", encoding="utf-8") as f:
-                    existing = json.load(f)
-            else:
-                existing = {}
-            for sock, entries in snapshot.items():
-                key = self._record_key(sock)
-                existing.setdefault(key, []).extend(entries)
-            tmp_path = path + ".tmp"
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(existing, f, ensure_ascii=False, indent=2)
-            for _ in range(5):  # Windows: the log may be briefly open for reading
-                try:
-                    os.replace(tmp_path, path)
-                    return
-                except PermissionError:
-                    time.sleep(0.05)
-            os.replace(tmp_path, path)
+            _publish_json_log(path, snapshot, self._record_key)
         except Exception as e:
             self._log(f"log file update failed: {e}")
             self._log_exc()

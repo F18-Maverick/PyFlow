@@ -538,6 +538,7 @@ def test_stale_frame_coalesced_behind_a_plaintext_line_is_consumed(tcp_pair):
     assert wait_until(lambda: not server_framed(), timeout=30)
 
     # hold the server in the re-exchange window: what lands next is stale
+    real_try_flip = server._crypto_try_server_flip
     server._crypto_try_server_flip = lambda *args, **kwargs: None
 
     def streak():
@@ -555,6 +556,11 @@ def test_stale_frame_coalesced_behind_a_plaintext_line_is_consumed(tcp_pair):
         lambda: any("dropped a stale frame" in entry for entry in dropped), timeout=5
     ), "the stale frame behind the line was not consumed as a frame"
     assert streak() == 1, "frame bytes echoed as a line reset the decode-failure streak"
+
+    # let the re-exchange settle before the fixture tears down: an in-flight
+    # key push would race the stop (its thread reports an unhandled exception)
+    server._crypto_try_server_flip = real_try_flip
+    assert wait_until(server_framed, timeout=30), "the re-exchange never settled"
 
 
 def test_mode_negotiation_survives_server_announcement_race(tmp_path):

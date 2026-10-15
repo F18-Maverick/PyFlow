@@ -18,6 +18,18 @@ from PyFlow.network_api.connect_tcp import (
 from unittest.mock import MagicMock
 
 
+def _isolate_log_files(instance, log_dir, name):
+    """Keep an instance's message/event logs out of the shared project directory.
+
+    Every instance defaults to the same ``messages_log.json`` /
+    ``events_log.json`` under the project directory: concurrent writers then
+    race on the same temp file and the losing flush is dropped with
+    "log file update failed".
+    """
+    instance.messages_log_file = str(log_dir / f"{name}_messages_log.json")
+    instance.events_log_file = str(log_dir / f"{name}_events_log.json")
+
+
 @pytest.fixture
 def pair(tmp_path):
     port = free_port()
@@ -28,6 +40,7 @@ def pair(tmp_path):
         is_input_command_in_console=False,
         is_enable_encrypto=False,
     )
+    _isolate_log_files(server, tmp_path, "server")
     threading.Thread(target=server.start_TCP_Server, daemon=True).start()
     assert server_ready(server), "server did not start"
     client = TCP_Client_Base(
@@ -38,6 +51,7 @@ def pair(tmp_path):
         is_input_command_in_console=False,
         is_enable_encrypto=False,
     )
+    _isolate_log_files(client, tmp_path, "client")
     recv_dir = tmp_path / "recv"
     recv_dir.mkdir()
     client.file_transfer_dir = str(recv_dir)
@@ -113,9 +127,7 @@ def test_server_receives_file_from_client(pair, tmp_path):
     # the server believes the client sent a "/file" command: it opens a
     # temporary server and advertises the port back to the client
     server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-    server.file_transfer_server_recv_server_start_thread(
-        "cid", server_sock, f"/file {src} 0"
-    )
+    server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
     server_port = _wait_port(client)
     assert server_port is not None
 
@@ -126,6 +138,72 @@ def test_server_receives_file_from_client(pair, tmp_path):
     )
     files = list(server_recv.iterdir())
     assert files[0].read_bytes() == payload
+
+
+def test_transfer_thread_survives_a_stop_before_the_start_sign(pair, tmp_path):
+    """A stop between the accept and the start sign must not kill the thread.
+
+    ``send_message`` raises ``RuntimeError("connection error")`` once the
+    instance stopped — the normal teardown signal between a closing thread and
+    a receive thread — and an escape from this thread surfaces as
+    ``PytestUnhandledThreadExceptionWarning`` (Windows CI saw it while a
+    pub-key push was in flight during teardown).
+    """
+    server, client, _ = pair
+    server_recv = tmp_path / "server_recv"
+    server_recv.mkdir()
+    server.file_transfer_dir = str(server_recv)
+    src = tmp_path / "upload.bin"
+    src.write_bytes(b"payload")
+
+    escaped = []
+    previous_hook = threading.excepthook
+
+    def hook(args):
+        escaped.append(args)
+        previous_hook(args)
+
+    real_send = server.send_message
+    stopped_first = threading.Event()
+
+    def stop_then_send(client_socket, message):
+        if message is server.server_start_file_transfer_sign and not stopped_first.is_set():
+            # the race under test: the stop lands after the accept and before
+            # the transfer thread's start sign
+            stopped_first.set()
+            server.stop()
+        return real_send(client_socket, message)
+
+    server.send_message = stop_then_send
+    threading.excepthook = hook
+    try:
+        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
+        server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
+        server_port = _wait_port(client)
+        assert server_port is not None
+        client.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
+        assert wait_until(stopped_first.is_set, timeout=10), (
+            "the server-side transfer never reached its start sign"
+        )
+    finally:
+        threading.excepthook = previous_hook
+        client.close()
+        server.stop()
+
+    def transfer_threads():
+        return [
+            thread
+            for thread in threading.enumerate()
+            if thread.name.endswith("(file_transfer_client_recv)")
+        ]
+
+    assert wait_until(lambda: not transfer_threads(), timeout=10), "the transfer thread never ended"
+    failures = [
+        args for args in escaped if args.thread.name.endswith("(file_transfer_client_recv)")
+    ]
+    assert not failures, (
+        f"the transfer thread died with {failures[0].exc_type.__name__}: {failures[0].exc_value}"
+    )
 
 
 def test_custom_file_transfer_chunk_len_is_honored_in_both_directions(tmp_path):
@@ -143,6 +221,7 @@ def test_custom_file_transfer_chunk_len_is_honored_in_both_directions(tmp_path):
         is_enable_encrypto=False,
         file_transfer_chunk_len=1024,
     )
+    _isolate_log_files(server, tmp_path, "server")
     threading.Thread(target=server.start_TCP_Server, daemon=True).start()
     assert server_ready(server), "server did not start"
     client = TCP_Client_Base(
@@ -154,6 +233,7 @@ def test_custom_file_transfer_chunk_len_is_honored_in_both_directions(tmp_path):
         is_enable_encrypto=False,
         file_transfer_chunk_len=1024,
     )
+    _isolate_log_files(client, tmp_path, "client")
     recv_dir = tmp_path / "recv"
     recv_dir.mkdir()
     client.file_transfer_dir = str(recv_dir)
@@ -281,9 +361,7 @@ def test_client_uploads_folder_to_destination(pair, tmp_path):
     (folder / "a.txt").write_text("hello")
     (folder / "sub" / "b.txt").write_text("world")
 
-    client.folder_file_transfer_client_recv_client_start(
-        f'/file_folder "{folder}" "{dest}"'
-    )
+    client.folder_file_transfer_client_recv_client_start(f'/file_folder "{folder}" "{dest}"')
 
     # the folder keeps its own name under the destination (same structure as
     # the default receive directory, with the destination as its root)
@@ -339,16 +417,10 @@ def test_client_uploads_multiple_files_to_destination(pair, tmp_path):
     f2 = tmp_path / "two.bin"
     f2.write_bytes(b"two")
 
-    client.multiple_file_transfer_client_recv_client_start(
-        f'/multiple_file "{f1}" "{f2}" "{dest}"'
-    )
+    client.multiple_file_transfer_client_recv_client_start(f'/multiple_file "{f1}" "{f2}" "{dest}"')
 
-    assert wait_until(lambda: (dest / "one.bin").exists(), timeout=10), (
-        "one.bin not at destination"
-    )
-    assert wait_until(lambda: (dest / "two.bin").exists(), timeout=10), (
-        "two.bin not at destination"
-    )
+    assert wait_until(lambda: (dest / "one.bin").exists(), timeout=10), "one.bin not at destination"
+    assert wait_until(lambda: (dest / "two.bin").exists(), timeout=10), "two.bin not at destination"
     assert (dest / "one.bin").read_bytes() == b"one"
     assert (dest / "two.bin").read_bytes() == b"two"
 
@@ -383,6 +455,7 @@ def test_client_uploads_multiple_folders_to_destination(pair, tmp_path):
     assert (dest / "data_a" / "a.txt").read_text() == "hello"
     assert (dest / "data_b" / "b.txt").read_text() == "world"
 
+
 def test_windows_paths_need_quoting_through_shlex():
     """Unquoted ``C:\\dir`` is mangled by shlex (backslash = escape), so
     transfer commands must quote Windows paths; the destination parser then
@@ -404,6 +477,7 @@ def test_windows_paths_need_quoting_through_shlex():
     # /FILE_FOLDER from a console must still deliver the destination
     tokens = shlex.split('/FILE_FOLDER "/data" "C:\\dest"')
     assert _parse_destination_path(tokens) == "C:\\dest"
+
 
 def test_server_console_file_command_preserves_path_case(pair, tmp_path, monkeypatch):
     """The server console matches command names case-insensitively (an
@@ -446,6 +520,7 @@ def _forward_client(server, recv_dir):
         is_input_command_in_console=False,
         is_enable_encrypto=False,
     )
+    _isolate_log_files(client, recv_dir.parent, recv_dir.name)
     client.file_transfer_dir = str(recv_dir)
     assert client.connect()
     return client
@@ -459,15 +534,18 @@ def test_parse_forward_originator():
     assert parse_forward_originator(cmd("file", "", "a.txt", ("127.0.0.1", 3000), 7)) == (
         "127.0.0.1:3000"
     )
-    assert parse_forward_originator(
-        cmd("file", "", "a.txt", ("127.0.0.1", 3000), 7, "dest")
-    ) == "127.0.0.1:3000"
-    assert parse_forward_originator(
-        cmd("folder", "d", "a.txt", ("127.0.0.1", 3000), 7)
-    ) == "127.0.0.1:3000"
-    assert parse_forward_originator(
-        cmd("folder", "d", "a.txt", ("127.0.0.1", 3000), 7, "dest")
-    ) == "127.0.0.1:3000"
+    assert (
+        parse_forward_originator(cmd("file", "", "a.txt", ("127.0.0.1", 3000), 7, "dest"))
+        == "127.0.0.1:3000"
+    )
+    assert (
+        parse_forward_originator(cmd("folder", "d", "a.txt", ("127.0.0.1", 3000), 7))
+        == "127.0.0.1:3000"
+    )
+    assert (
+        parse_forward_originator(cmd("folder", "d", "a.txt", ("127.0.0.1", 3000), 7, "dest"))
+        == "127.0.0.1:3000"
+    )
     # direct send: the tuple is the receiver's own address -> filtered
     assert (
         parse_forward_originator(
@@ -490,9 +568,7 @@ def test_forwarded_file_carries_originator(pair, tmp_path):
     src.write_bytes(payload)
     forwarder = _forward_client(server, tmp_path / "fwd")
     commands = []
-    target.add_file_listener(
-        lambda full_path, name, size, command: commands.append(command)
-    )
+    target.add_file_listener(lambda full_path, name, size, command: commands.append(command))
     t = target.client_socket.getsockname()
     cmd = '/forward_file "{}" "({}, {})"'.format(src, repr(t[0]), t[1])
     forwarder.forward_file_console(cmd)
@@ -582,9 +658,12 @@ def test_forward_skips_unreachable_and_server_targets(pair, tmp_path):
     server_addr = (server.host, server.port)  # the server itself
     cmd = '/forward_file "{}" "({}, {})" "({}, {})" "({}, {})"'.format(
         src,
-        repr(a[0]), a[1],
-        repr(bad[0]), bad[1],
-        repr(server_addr[0]), server_addr[1],
+        repr(a[0]),
+        a[1],
+        repr(bad[0]),
+        bad[1],
+        repr(server_addr[0]),
+        server_addr[1],
     )
     forwarder.forward_file_console(cmd)
 
@@ -635,6 +714,7 @@ def test_forward_flow_control_pauses_uploader(pair, tmp_path, monkeypatch):
     assert any(str(m).startswith("/pause_trans") for m in sent), "expected a /pause_trans"
     assert any(str(m).startswith("/start_trans") for m in sent), "expected a /start_trans"
     forwarder.close()
+
 
 def test_forward_file_with_destination(pair, tmp_path):
     """/forward_file with a trailing destination dir: targets write the
@@ -687,6 +767,7 @@ def test_forward_folder_with_destination(pair, tmp_path):
     assert not any(recv_dir.iterdir()), "default directory must stay empty"
     forwarder.close()
 
+
 def test_multiple_file_multiple_client_console_command(pair, tmp_path):
     """/multiple_file_multiple_client from the server console sends one file to
     every listed client (the console form used to be a silent no-op because
@@ -702,6 +783,7 @@ def test_multiple_file_multiple_client_console_command(pair, tmp_path):
         is_input_command_in_console=False,
         is_enable_encrypto=False,
     )
+    _isolate_log_files(client2, tmp_path, "client2")
     client2.file_transfer_dir = str(recv2)
     assert client2.connect()
     src = tmp_path / "broadcast.bin"
