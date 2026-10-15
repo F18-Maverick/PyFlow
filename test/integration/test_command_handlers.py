@@ -442,14 +442,22 @@ def test_command_batch_streams_a_running_command_in_chunks(live_pair, logs_dir, 
 
     ctl._command_handler(None, ("127.0.0.1", 1), console_batch([command], address))
 
-    assert wait_until(lambda: output_bytes(log_path, command) >= ctl._LOG_CHUNK_BYTES, timeout=30)
+    assert wait_until(lambda: output_bytes(log_path, command) >= ctl._LOG_CHUNK_BYTES, timeout=60)
     running = entries_of(log_path, command)
     assert [entry for entry in running if entry["stream"] == "stdout"]  # output already collected
-    assert not [entry for entry in running if entry["stream"] == "end"]  # while the command runs
 
-    assert wait_until(lambda: finished(log_path, command), timeout=30)
+    assert wait_until(lambda: finished(log_path, command), timeout=60)
     assert "tail" in "".join(entry["output"] for entry in entries_of(log_path, command))
-    assert "Log chunk" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Log chunk" in out
+    # The output crossed the chunk size while the command was still running, so
+    # the client uploaded a chunk of its own and the chunk that closes the
+    # command is a second one. A client that only uploads when the command
+    # finished delivers a single chunk. The per-delivery notices are counted,
+    # never a wall-clock deadline: the whole round trip (chunk upload, merge on
+    # the server) may outlast the command's idle on a loaded CI runner.
+    delivered = out.count(f"appended to {ctl._log_filename_for_address(address)} on the server")
+    assert delivered >= 2, out
 
 
 def test_call_extension_functions_runs_batches_of_a_live_pair(live_pair, logs_dir):
