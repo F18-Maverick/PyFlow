@@ -847,6 +847,7 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
         upload_entry = client.file_upload_progress[fid]
         assert recv_entry[:2] == [0, len(payload)]
         assert upload_entry[:2] == [0, len(payload)]
+        assert recv_entry[3] == "upload.bin" and upload_entry[3] == "upload.bin"
     finally:
         with client._forward_pause_cond:
             client._forward_pause[fid] = False
@@ -914,6 +915,7 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
         upload_entry = server.file_upload_progress[fid]
         assert recv_entry[:2] == [0, len(payload)]
         assert upload_entry[:2] == [0, len(payload)]
+        assert recv_entry[3] == "download.bin" and upload_entry[3] == "download.bin"
     finally:
         with server._forward_pause_cond:
             server._forward_pause[fid] = False

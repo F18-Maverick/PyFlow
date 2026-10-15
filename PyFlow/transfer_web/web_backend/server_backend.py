@@ -174,6 +174,20 @@ SERVER_PARAM_FIELDS = [
     ),
     ("is_debug", "Debug log", "bool", False, "Log execution-process lines as well."),
     ("is_print_log", "Print log", "bool", True, "Log at all; False silences the instance."),
+    (
+        "is_enable_file_transfer_progress_bar",
+        "File transfer progress bar",
+        "bool",
+        True,
+        "Track every running file transfer; the console web UI draws its progress bars from it.",
+    ),
+    (
+        "is_enable_real_time_network_speed",
+        "Real-time network speed",
+        "bool",
+        True,
+        "Measure the protocol's current network speed; the console web UI shows it.",
+    ),
 ]
 
 # Web-only settings (not TCP_Server_Base parameters).
@@ -196,6 +210,27 @@ FTP_GET_COMMAND = "/ftp_get"
 FTP_LIST_OK_COMMAND = "/ftp_list_ok"
 FTP_GET_OK_COMMAND = "/ftp_get_ok"
 FTP_ERROR_COMMAND = "/ftp_error"
+
+
+def _transfer_rows(progress):
+    """JSON rows for one progress store (``fid -> [transferred, total, speed, name]``).
+
+    Returns:
+        list[dict]: One row per running transfer, ordered by file name.
+    """
+    rows = []
+    for fid, entry in list(progress.items()):
+        rows.append(
+            {
+                "fid": fid,
+                "name": entry[3],
+                "transferred": entry[0],
+                "total": entry[1],
+                "speed": entry[2],
+            }
+        )
+    rows.sort(key=lambda row: (row["name"], row["fid"]))
+    return rows
 
 
 def _ftp_resolve(root, rel_path):
@@ -628,6 +663,29 @@ class ServerWebApp:
                 entry.update(account)
             entries.append(entry)
         return entries
+
+    def _transfers_payload(self):
+        """Snapshot the running transfers and the network speeds of the server."""
+        server = self.server
+        if server is None:
+            return {
+                "ok": True,
+                "progress_enabled": False,
+                "speed_enabled": False,
+                "upload_network_speed": None,
+                "recv_network_speed": None,
+                "uploading": [],
+                "downloading": [],
+            }
+        return {
+            "ok": True,
+            "progress_enabled": bool(server.is_enable_file_transfer_progress_bar),
+            "speed_enabled": bool(server.is_enable_real_time_network_speed),
+            "upload_network_speed": server.upload_network_speed,
+            "recv_network_speed": server.recv_network_speed,
+            "uploading": _transfer_rows(server.file_upload_progress),
+            "downloading": _transfer_rows(server.file_recv_progress),
+        }
 
     def _client_list_for(self, addr):
         """List the connected instances one client is allowed to see.
@@ -1243,6 +1301,12 @@ class ServerWebApp:
                     "pid": os.getpid(),
                 }
             )
+
+        @app.get("/api/transfers")
+        @login_required
+        def api_transfers():
+            """Live transfer progress and network speeds (polled by the UI)."""
+            return jsonify(self._transfers_payload())
 
         @app.post("/api/save_config")
         @admin_required

@@ -1080,11 +1080,11 @@ class TCP_Server_Base:  # TCP server class
         is_enable_real_time_network_speed (bool): Whether the real-time network
             speed is measured into ``upload_network_speed``/``recv_network_speed``.
         file_recv_progress (dict): Running downloads keyed by fid; each value is
-            ``[received bytes, total bytes, current speed]`` (the speed is None
-            until the transfer has moved its first chunk, and while speed
-            measurement is off).
+            ``[received bytes, total bytes, current speed, file name]`` (the
+            speed is None until the transfer has moved its first chunk, and
+            while speed measurement is off).
         file_upload_progress (dict): Running uploads keyed by fid; each value is
-            ``[sent bytes, total bytes, current speed]``, same shape.
+            ``[sent bytes, total bytes, current speed, file name]``, same shape.
         upload_network_speed (float | None): Bytes per second sent, or None when
             not measured.
         recv_network_speed (float | None): Bytes per second received, or None
@@ -1374,7 +1374,7 @@ class TCP_Server_Base:  # TCP server class
                 self.recv_network_speed = speed
         return speed
 
-    def _file_progress_start(self, progress_dict, fid, total_bytes):
+    def _file_progress_start(self, progress_dict, fid, total_bytes, name):
         """Register one file transfer in a progress store.
 
         Args:
@@ -1383,15 +1383,16 @@ class TCP_Server_Base:  # TCP server class
             fid (int | None): The transfer's fid; None tracks nothing (a leg
                 without a protocol transfer id, such as a key push).
             total_bytes (int): Size of the file being transferred.
+            name (str): Name of the file being transferred.
 
         Returns:
-            list | None: The ``[transferred, total, speed]`` entry the transfer
-                updates, or None when tracking is off
+            list | None: The ``[transferred, total, speed, name]`` entry the
+                transfer updates, or None when tracking is off
                 (``is_enable_file_transfer_progress_bar`` False, or no fid).
         """
         if fid is None or not self.is_enable_file_transfer_progress_bar:
             return None
-        entry = [0, total_bytes, None]
+        entry = [0, total_bytes, None, name]
         progress_dict[fid] = entry
         return entry
 
@@ -3517,7 +3518,7 @@ class TCP_Server_Base:  # TCP server class
                 full_path = os.path.join(save_path, final_filename).strip()
                 os.makedirs(os.path.dirname(full_path), exist_ok=True)
                 progress = self._file_progress_start(
-                    self.file_recv_progress, progress_fid, file_size
+                    self.file_recv_progress, progress_fid, file_size, final_filename
                 )
                 with open(full_path.strip(), "wb") as f:
                     remaining = file_size
@@ -4045,7 +4046,9 @@ class TCP_Server_Base:  # TCP server class
             self.send_message(client_file_socket, name_len.to_bytes(4, "big"))
             self.send_message(client_file_socket, file_name_encoded)
             self.send_message(client_file_socket, file_size.to_bytes(8, "big"))
-            progress = self._file_progress_start(self.file_upload_progress, fid, file_size)
+            progress = self._file_progress_start(
+                self.file_upload_progress, fid, file_size, os.path.basename(filename)
+            )
             with open(filename, "rb") as f:
                 while True:
                     if pause_fid is not None:
@@ -4738,11 +4741,11 @@ class TCP_Client_Base:  # TCP client class
         is_enable_real_time_network_speed (bool): Whether the real-time network
             speed is measured into ``upload_network_speed``/``recv_network_speed``.
         file_recv_progress (dict): Running downloads keyed by fid; each value is
-            ``[received bytes, total bytes, current speed]`` (the speed is None
-            until the transfer has moved its first chunk, and while speed
-            measurement is off).
+            ``[received bytes, total bytes, current speed, file name]`` (the
+            speed is None until the transfer has moved its first chunk, and
+            while speed measurement is off).
         file_upload_progress (dict): Running uploads keyed by fid; each value is
-            ``[sent bytes, total bytes, current speed]``, same shape.
+            ``[sent bytes, total bytes, current speed, file name]``, same shape.
         upload_network_speed (float | None): Bytes per second sent, or None when
             not measured.
         recv_network_speed (float | None): Bytes per second received, or None
@@ -5356,7 +5359,7 @@ class TCP_Client_Base:  # TCP client class
                 self.recv_network_speed = speed
         return speed
 
-    def _file_progress_start(self, progress_dict, fid, total_bytes):
+    def _file_progress_start(self, progress_dict, fid, total_bytes, name):
         """Register one file transfer in a progress store.
 
         Args:
@@ -5365,15 +5368,16 @@ class TCP_Client_Base:  # TCP client class
             fid (int | None): The transfer's fid; None tracks nothing (a leg
                 without a protocol transfer id, such as a key push).
             total_bytes (int): Size of the file being transferred.
+            name (str): Name of the file being transferred.
 
         Returns:
-            list | None: The ``[transferred, total, speed]`` entry the transfer
-                updates, or None when tracking is off
+            list | None: The ``[transferred, total, speed, name]`` entry the
+                transfer updates, or None when tracking is off
                 (``is_enable_file_transfer_progress_bar`` False, or no fid).
         """
         if fid is None or not self.is_enable_file_transfer_progress_bar:
             return None
-        entry = [0, total_bytes, None]
+        entry = [0, total_bytes, None, name]
         progress_dict[fid] = entry
         return entry
 
@@ -7053,7 +7057,9 @@ class TCP_Client_Base:  # TCP client class
             self.send_message(client_file_socket, name_len.to_bytes(4, "big"))
             self.send_message(client_file_socket, file_name_encoded)
             self.send_message(client_file_socket, file_size.to_bytes(8, "big"))
-            progress = self._file_progress_start(self.file_upload_progress, fid, file_size)
+            progress = self._file_progress_start(
+                self.file_upload_progress, fid, file_size, os.path.basename(filename)
+            )
             with open(filename, "rb") as f:
                 while True:
                     if pause_fid is not None:
@@ -7432,7 +7438,7 @@ class TCP_Client_Base:  # TCP client class
                 full_path = os.path.join(save_path, final_filename).strip()
                 os.makedirs(os.path.dirname(full_path), exist_ok=True)
                 progress = self._file_progress_start(
-                    self.file_recv_progress, progress_fid, file_size
+                    self.file_recv_progress, progress_fid, file_size, final_filename
                 )
                 with open(full_path.strip(), "wb") as f:
                     remaining = file_size

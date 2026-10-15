@@ -647,13 +647,14 @@ Both classes record every running file transfer:
 The keys are the transfers' fids: the transfer id the sender stamps on the
 transfer command (``/file <path> <id>``), which also identifies the relay leg
 of a forwarded file. The protocol-internal public-key push is not tracked.
-Each value is a three-item list:
+Each value is a four-item list:
 
 - ``[0]``: bytes transferred so far;
 - ``[1]``: total size of the file, in bytes;
 - ``[2]``: the current network speed of that direction — ``None`` until the
   transfer has moved its first chunk, and while
-  ``is_enable_real_time_network_speed`` is ``False``.
+  ``is_enable_real_time_network_speed`` is ``False``;
+- ``[3]``: name of the file being transferred.
 
 An entry appears when a transfer starts and is removed when it ends, so the
 stores hold exactly the transfers that are in flight at that moment (iterate
@@ -667,6 +668,11 @@ connection, file transfers included — into ``upload_network_speed`` and
 ``recv_network_speed`` (bytes per second, a rolling average over
 ``NETWORK_SPEED_WINDOW`` seconds). With the flag ``False`` nothing is
 sampled and every speed value is ``None``.
+
+The web tool (``transfer_web``) reads these stores: both backends serve
+``/api/transfers`` (the rows plus the two speed attributes), and the shared
+frontend renders the live speed readout in the topbar and one progress bar per
+running transfer.
 
 .. _related-apis:
 

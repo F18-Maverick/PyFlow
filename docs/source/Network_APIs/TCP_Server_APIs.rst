@@ -79,7 +79,7 @@ The parameters of the ``__init__`` method are as follows:
 - ``is_enable_file_transfer_progress_bar``: A flag indicating whether every
   running file transfer is tracked in ``file_recv_progress`` (downloads) and
   ``file_upload_progress`` (uploads). Each entry is a
-  ``[transferred bytes, total bytes, current speed]`` list keyed by the
+  ``[transferred bytes, total bytes, current speed, file name]`` list keyed by the
   transfer's fid, and is removed once the transfer ends.
 - ``is_enable_real_time_network_speed``: A flag indicating whether the
   protocol's real-time network speed is measured. With ``True`` (the default)

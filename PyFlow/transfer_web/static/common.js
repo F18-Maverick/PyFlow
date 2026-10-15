@@ -596,6 +596,95 @@
     });
   }
 
+  /* ---------------- transfers (progress bars + speed readout) ---------------- */
+
+  /* "1.2 MB/s"; an off measurement renders as a dash instead of a zero. */
+  function fmtSpeed(bps) {
+    if (bps == null || isNaN(bps)) return "—";
+    return fmtSize(bps) + "/s";
+  }
+
+  function transferPercent(row) {
+    if (!row.total) return 0;
+    return Math.max(0, Math.min(100, Math.round((row.transferred / row.total) * 100)));
+  }
+
+  /* One row: arrow + file name, percentage, bar, "done / total · speed".
+   *
+   * The name comes from the peer that started the transfer, so every part is
+   * built with DOM text nodes instead of markup: a crafted name must never
+   * reach an attribute or a tag position. */
+  function renderTransferRow(row, dir) {
+    const pct = transferPercent(row);
+    const el = document.createElement("div");
+    el.className = "transfer-row";
+
+    const head = document.createElement("div");
+    head.className = "transfer-head";
+    const name = document.createElement("span");
+    name.className = "tname";
+    name.textContent = (dir === "up" ? "↑ " : "↓ ") + row.name;
+    name.title = row.name;
+    const pctEl = document.createElement("span");
+    pctEl.className = "tpct";
+    pctEl.textContent = pct + "%";
+    head.appendChild(name);
+    head.appendChild(pctEl);
+
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    const fill = document.createElement("div");
+    fill.className = "bar-fill " + dir;
+    fill.style.width = pct + "%";
+    bar.appendChild(fill);
+
+    const meta = document.createElement("div");
+    meta.className = "transfer-meta";
+    meta.textContent =
+      fmtSize(row.transferred) + " / " + fmtSize(row.total) + " · " + fmtSpeed(row.speed);
+
+    el.appendChild(head);
+    el.appendChild(bar);
+    el.appendChild(meta);
+    return el;
+  }
+
+  /* Poll the backend for the running transfers and the live speeds. */
+  async function refreshTransfers() {
+    let data;
+    try {
+      data = await api("/api/transfers");
+    } catch (e) {
+      return; // offline, or a backend without the endpoint
+    }
+    const speed = $("net-speed");
+    if (speed) {
+      if (data.speed_enabled) {
+        speed.innerHTML =
+          "&#8593; " + fmtSpeed(data.upload_network_speed) +
+          " &middot; &#8595; " + fmtSpeed(data.recv_network_speed);
+      } else {
+        speed.textContent = "speed off";
+      }
+      speed.classList.toggle("off", !data.speed_enabled);
+    }
+    const panel = $("transfer-panel");
+    if (!panel) return;
+    const rows = [];
+    if (data.progress_enabled) {
+      (data.downloading || []).forEach((row) => rows.push([row, "down"]));
+      (data.uploading || []).forEach((row) => rows.push([row, "up"]));
+    }
+    panel.hidden = !rows.length;
+    panel.innerHTML = "";
+    if (!rows.length) return;
+    const title = document.createElement("div");
+    title.className = "transfer-title";
+    title.textContent = "Transfers (" + rows.length + ")";
+    panel.appendChild(title);
+    rows.forEach((entry) => panel.appendChild(renderTransferRow(entry[0], entry[1])));
+  }
+
   /* ---------------- init ---------------- */
 
   async function loadExtensions() {
@@ -640,8 +729,10 @@
     loadExtensions();
     refreshStatus();
     refreshEvents();
+    refreshTransfers();
     setInterval(refreshStatus, 2000);
     setInterval(refreshEvents, 2000);
+    setInterval(refreshTransfers, 500);
   }
 
   if (document.readyState === "loading") {

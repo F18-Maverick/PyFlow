@@ -161,6 +161,20 @@ CLIENT_PARAM_FIELDS = [
     ),
     ("is_debug", "Debug log", "bool", False, "Log execution-process lines as well."),
     ("is_print_log", "Print log", "bool", True, "Log at all; False silences the instance."),
+    (
+        "is_enable_file_transfer_progress_bar",
+        "File transfer progress bar",
+        "bool",
+        True,
+        "Track every running file transfer; the web UI draws its progress bars from it.",
+    ),
+    (
+        "is_enable_real_time_network_speed",
+        "Real-time network speed",
+        "bool",
+        True,
+        "Measure the protocol's current network speed; the web UI shows it.",
+    ),
 ]
 
 
@@ -244,6 +258,27 @@ def _channel_ready(client):
         return True
     with client._crypto_lock:
         return client.client_socket in client._encrypted_sockets
+
+
+def _transfer_rows(progress):
+    """JSON rows for one progress store (``fid -> [transferred, total, speed, name]``).
+
+    Returns:
+        list[dict]: One row per running transfer, ordered by file name.
+    """
+    rows = []
+    for fid, entry in list(progress.items()):
+        rows.append(
+            {
+                "fid": fid,
+                "name": entry[3],
+                "transferred": entry[0],
+                "total": entry[1],
+                "speed": entry[2],
+            }
+        )
+    rows.sort(key=lambda row: (row["name"], row["fid"]))
+    return rows
 
 
 class _ServerRequestError(ValueError):
@@ -1227,6 +1262,11 @@ class ClientWebApp:
                 }
             )
 
+        @app.get("/api/transfers")
+        def api_transfers():
+            """Live transfer progress and network speeds (polled by the UI)."""
+            return jsonify(self._transfers_payload())
+
         @app.post("/api/login")
         def api_login():
             """Log the web client in with the account password and a mailed code."""
@@ -1525,6 +1565,29 @@ class ClientWebApp:
                 return jsonify({"ok": False, "error": str(e)}), 400
             threading.Thread(target=self._restart, daemon=True).start()
             return jsonify({"ok": True, "restarting": True})
+
+    def _transfers_payload(self):
+        """Snapshot the running transfers and the network speeds of the client."""
+        client = self.client
+        if client is None:
+            return {
+                "ok": True,
+                "progress_enabled": False,
+                "speed_enabled": False,
+                "upload_network_speed": None,
+                "recv_network_speed": None,
+                "uploading": [],
+                "downloading": [],
+            }
+        return {
+            "ok": True,
+            "progress_enabled": bool(client.is_enable_file_transfer_progress_bar),
+            "speed_enabled": bool(client.is_enable_real_time_network_speed),
+            "upload_network_speed": client.upload_network_speed,
+            "recv_network_speed": client.recv_network_speed,
+            "uploading": _transfer_rows(client.file_upload_progress),
+            "downloading": _transfer_rows(client.file_recv_progress),
+        }
 
     # ------------------------------------------------------------------- run
 
