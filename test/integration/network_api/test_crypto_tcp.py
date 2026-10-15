@@ -19,6 +19,7 @@ from helpers import free_port, server_ready, wait_until
 
 from PyFlow.network_api import rsa_crypto
 from PyFlow.network_api.connect_tcp import (
+    CRYPTO_FRAMES_START,
     FRAME_MAGIC,
     FRAME_TYPE_RSA,
     MAX_DECODE_FAILURES,
@@ -512,6 +513,48 @@ def test_decode_failure_burst_closes_connection(tcp_pair):
             lambda: not server_framed() or not client.running, timeout=30
         ), "the malformed frame was not counted by the breaker"
     assert _wait_disconnected(client)
+
+
+def test_stale_frame_coalesced_behind_a_plaintext_line_is_consumed(tcp_pair):
+    """A stale frame that arrives behind a plaintext line in one read is
+    still consumed as a frame, never served as a line.
+
+    Windows loopback regularly coalesces the peer's frames-start line and the
+    frame behind it into one read; serving those frame bytes as a line echoes
+    them as a message and resets the decode-failure streak, so the breaker
+    never trips (that leak made the burst test above fail on Windows CI).
+    """
+    server, client, _ = tcp_pair
+    assert _wait_flip(client)
+    sock = _server_sock(server, client)
+
+    def server_framed():
+        channel = server._channels.get(sock)
+        return bool(channel is not None and channel.secure)
+
+    # one counted failure drops the server's framing and re-exchanges
+    assert wait_until(server_framed, timeout=30)
+    client.client_socket.sendall(_frame(FRAME_TYPE_RSA, b"garbage"))
+    assert wait_until(lambda: not server_framed(), timeout=30)
+
+    # hold the server in the re-exchange window: what lands next is stale
+    server._crypto_try_server_flip = lambda *args, **kwargs: None
+
+    def streak():
+        with server._crypto_lock:
+            state = server._crypto_state.get(server._crypto_sock_addr.get(sock))
+            return None if state is None else state.get("decode_failures")
+
+    dropped = []  # the channel's own stale-frame notice
+    server._channels[sock]._debug = dropped.append
+    client.client_socket.sendall(
+        CRYPTO_FRAMES_START.encode("utf-8") + b"\n" + _frame(FRAME_TYPE_RSA, b"garbage")
+    )
+
+    assert wait_until(
+        lambda: any("dropped a stale frame" in entry for entry in dropped), timeout=5
+    ), "the stale frame behind the line was not consumed as a frame"
+    assert streak() == 1, "frame bytes echoed as a line reset the decode-failure streak"
 
 
 def test_mode_negotiation_survives_server_announcement_race(tmp_path):

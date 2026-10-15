@@ -78,6 +78,32 @@ def test_raw_stale_frame_split_across_reads():
         assert channel.take(4096) == b""
 
 
+def test_raw_frame_behind_plaintext_is_not_leaked():
+    """A stale frame behind plaintext in one chunk is consumed, not a line.
+
+    A peer's frames-start line and the frame behind it regularly coalesce
+    into one read (Windows loopback does it every time); serving the frame
+    as a line would echo it as a message and reset the decode-failure
+    streak, so the breaker would never trip.
+    """
+    channel = _channel()
+    stale = _frame(FRAME_TYPE_RSA, b"{nonce|0|cipher}")
+
+    assert channel.feed(b"/crypto_frames_start\n" + stale) == b"/crypto_frames_start\n"
+    assert channel.take(4096) == b""
+
+
+def test_raw_frame_behind_plaintext_split_across_reads():
+    """Same, with the frame (magic included) straddling the read boundary."""
+    stale = _frame(FRAME_TYPE_ECDH, b"x" * 32)
+
+    for cut in range(len(stale) + 1):
+        channel = _channel()
+        plain = channel.feed(b"line\n" + stale[:cut]) + channel.feed(stale[cut:])
+        assert plain == b"line\n", f"cut {cut}: frame bytes reached the line reader"
+        assert channel.take(4096) == b""
+
+
 def test_raw_partial_magic_is_held():
     """Bytes that may still become a frame are not served as plaintext."""
     channel = _channel()

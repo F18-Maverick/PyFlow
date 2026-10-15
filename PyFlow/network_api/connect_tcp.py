@@ -535,6 +535,19 @@ def _enable_connector_channel(sock, crypto):
     return channel
 
 
+def _magic_tail_len(buf):
+    """Length of the proper ``FRAME_MAGIC`` prefix ``buf`` ends with (0..2).
+
+    A magic split across reads is held, never served as plaintext: the bytes
+    behind it belong to a frame, and frame bytes are not line traffic (see
+    `_SecureChannel.feed`).
+    """
+    for length in range(len(FRAME_MAGIC) - 1, 0, -1):
+        if buf.endswith(FRAME_MAGIC[:length]):
+            return length
+    return 0
+
+
 class _SecureChannel:
     """Framed encryption for one socket.
 
@@ -730,8 +743,15 @@ class _SecureChannel:
                 if not self._consume_plaintext_line():
                     break
             else:
-                plain += self._raw
-                self._raw.clear()
+                # raw: only the bytes ahead of a stale frame are line traffic;
+                # the frame behind them is consumed on the next turn — frame
+                # bytes must never reach the line reader, which would echo
+                # them as a message and reset the breaker (see feed)
+                start = self._raw.find(FRAME_MAGIC)
+                if start < 0:  # hold a magic a split may still complete
+                    start = len(self._raw) - _magic_tail_len(self._raw)
+                plain += self._raw[:start]
+                del self._raw[:start]
         return bytes(plain)
 
     def _consume_frame(self):
