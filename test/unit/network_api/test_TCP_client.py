@@ -14,6 +14,12 @@ def test_tcp_client_init():
     assert client.is_custom_keys is None
     assert client.recv_messages_chunk_len == 4096  # noqa: PLR2004
     assert client.file_transfer_chunk_len == 65536  # noqa: PLR2004
+    assert client.is_enable_file_transfer_progress_bar is True
+    assert client.is_enable_real_time_network_speed is True
+    assert client.file_recv_progress == {}
+    assert client.file_upload_progress == {}
+    assert client.upload_network_speed is None
+    assert client.recv_network_speed is None
 
 import socket  # noqa: E402
 import threading  # noqa: E402

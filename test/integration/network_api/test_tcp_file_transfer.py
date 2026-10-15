@@ -802,3 +802,217 @@ def test_multiple_file_multiple_client_console_command(pair, tmp_path):
     assert not any(recv2.iterdir()), "default directory must stay empty on client 2"
     assert (dest / "broadcast.bin").read_bytes() == payload
     client2.close()
+
+
+def test_file_progress_and_speed_are_tracked(pair, tmp_path):
+    """A running transfer is tracked in the progress stores of both sides.
+
+    The uploader is held before its first data chunk (pause_fid), so the
+    in-flight state — the entry at zero bytes with the full size — is observed
+    deterministically; after the transfer the entries are gone, while the
+    captured lists show every byte was folded in and the speed slots hold live
+    values.
+    """
+    server, client, _ = pair
+    server_recv = tmp_path / "server_recv"
+    server_recv.mkdir()
+    server.file_transfer_dir = str(server_recv)
+    src = tmp_path / "upload.bin"
+    payload = os.urandom(300 * 1024)
+    src.write_bytes(payload)
+    fid = 4242
+
+    server_sock = server.clients[client.client_socket.getsockname()]["socket"]
+    server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} {fid}")
+    server_port = _wait_port(client)
+    assert server_port is not None
+
+    with client._forward_pause_cond:
+        client._forward_pause[fid] = True
+    sender = threading.Thread(
+        target=client.file_transfer_mode,
+        args=(str(src), "127.0.0.1", server_port, 0),
+        kwargs={"pause_fid": fid, "fid": fid},
+        daemon=True,
+    )
+    sender.start()
+    try:
+        assert wait_until(lambda: server.file_recv_progress.get(fid), timeout=10), (
+            "the receive side did not register its progress"
+        )
+        assert wait_until(lambda: client.file_upload_progress.get(fid), timeout=10), (
+            "the upload side did not register its progress"
+        )
+        recv_entry = server.file_recv_progress[fid]
+        upload_entry = client.file_upload_progress[fid]
+        assert recv_entry[:2] == [0, len(payload)]
+        assert upload_entry[:2] == [0, len(payload)]
+    finally:
+        with client._forward_pause_cond:
+            client._forward_pause[fid] = False
+            client._forward_pause_cond.notify_all()
+        sender.join(timeout=15)
+    assert not sender.is_alive(), "the upload did not finish"
+
+    def got():
+        path = server_recv / "upload.bin"
+        return path.exists() and path.stat().st_size == len(payload)
+
+    assert wait_until(got, timeout=15), "the server did not receive the file"
+    assert (server_recv / "upload.bin").read_bytes() == payload
+    # the captured entries tracked every chunk in place ...
+    assert recv_entry[0] == len(payload) and upload_entry[0] == len(payload)
+    assert recv_entry[2] > 0 and upload_entry[2] > 0
+    # ... and were dropped when the transfer ended
+    assert fid not in server.file_recv_progress
+    assert fid not in client.file_upload_progress
+    # the protocol-wide measurement covers the control layer as well
+    assert server.recv_network_speed > 0
+    assert client.upload_network_speed > 0
+
+
+def test_download_progress_and_speed_are_tracked(pair, tmp_path):
+    """The reverse direction is tracked too: the server uploads, the client
+    downloads, and both progress stores follow the same fid.
+
+    The server-side pause gate is created by the test because no server-side
+    caller passes ``pause_fid`` (only forward uploads use the pause); the send
+    loop reads both attributes like the client's.
+    """
+    server, client, recv_dir = pair
+    src = tmp_path / "download.bin"
+    payload = os.urandom(300 * 1024)
+    src.write_bytes(payload)
+    fid = 5150
+
+    # the client side of the transfer: it believes the server sent a
+    # "/file" command, so it opens a temporary server and advertises the
+    # port to the server over the control channel
+    client.file_transfer_client_recv_server_start_thread(
+        "cid", client.client_socket, f"/file {src} {fid}"
+    )
+    server_port = _wait_port(server)
+    assert server_port is not None
+
+    server._forward_pause = {fid: True}
+    server._forward_pause_cond = threading.Condition()
+    sender = threading.Thread(
+        target=server.file_transfer_mode,
+        args=(str(src), "127.0.0.1", server_port, 0),
+        kwargs={"pause_fid": fid, "fid": fid},
+        daemon=True,
+    )
+    sender.start()
+    try:
+        assert wait_until(lambda: client.file_recv_progress.get(fid), timeout=10), (
+            "the client did not register its download progress"
+        )
+        assert wait_until(lambda: server.file_upload_progress.get(fid), timeout=10), (
+            "the server did not register its upload progress"
+        )
+        recv_entry = client.file_recv_progress[fid]
+        upload_entry = server.file_upload_progress[fid]
+        assert recv_entry[:2] == [0, len(payload)]
+        assert upload_entry[:2] == [0, len(payload)]
+    finally:
+        with server._forward_pause_cond:
+            server._forward_pause[fid] = False
+            server._forward_pause_cond.notify_all()
+        sender.join(timeout=15)
+    assert not sender.is_alive(), "the download did not finish"
+
+    def got():
+        path = recv_dir / "download.bin"
+        return path.exists() and path.stat().st_size == len(payload)
+
+    assert wait_until(got, timeout=15), "the client did not receive the file"
+    assert (recv_dir / "download.bin").read_bytes() == payload
+    assert recv_entry[0] == len(payload) and upload_entry[0] == len(payload)
+    assert recv_entry[2] > 0 and upload_entry[2] > 0
+    assert fid not in client.file_recv_progress
+    assert fid not in server.file_upload_progress
+    assert client.recv_network_speed > 0
+    assert server.upload_network_speed > 0
+
+
+def test_file_progress_and_speed_can_be_disabled(tmp_path):
+    """With both switches off nothing is recorded: the progress stores stay
+    empty and every speed value stays None, while the transfer still works."""
+    port = free_port()
+    server = TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+        is_enable_file_transfer_progress_bar=False,
+        is_enable_real_time_network_speed=False,
+    )
+    _isolate_log_files(server, tmp_path, "server")
+    threading.Thread(target=server.start_TCP_Server, daemon=True).start()
+    assert server_ready(server), "server did not start"
+    client = TCP_Client_Base(
+        host="127.0.0.1",
+        port=port,
+        client_host="127.0.0.1",
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+        is_enable_file_transfer_progress_bar=False,
+        is_enable_real_time_network_speed=False,
+    )
+    _isolate_log_files(client, tmp_path, "client")
+    server_recv = tmp_path / "server_recv"
+    server_recv.mkdir()
+    server.file_transfer_dir = str(server_recv)
+    assert client.connect()
+    try:
+        src = tmp_path / "upload.bin"
+        payload = os.urandom(64 * 1024 + 7)
+        src.write_bytes(payload)
+        fid = 7
+
+        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
+        server.file_transfer_server_recv_server_start_thread(
+            "cid", server_sock, f"/file {src} {fid}"
+        )
+        server_port = _wait_port(client)
+        assert server_port is not None
+
+        with client._forward_pause_cond:
+            client._forward_pause[fid] = True
+        sender = threading.Thread(
+            target=client.file_transfer_mode,
+            args=(str(src), "127.0.0.1", server_port, 0),
+            kwargs={"pause_fid": fid, "fid": fid},
+            daemon=True,
+        )
+        sender.start()
+        try:
+            # the receiver is already in its data loop (its output file exists),
+            # so the point where a tracked transfer would register has passed
+            assert wait_until(lambda: any(server_recv.iterdir()), timeout=10), (
+                "the receive side never opened its output file"
+            )
+            assert server.file_recv_progress == {}
+            assert client.file_upload_progress == {}
+        finally:
+            with client._forward_pause_cond:
+                client._forward_pause[fid] = False
+                client._forward_pause_cond.notify_all()
+            sender.join(timeout=15)
+        assert not sender.is_alive(), "the upload did not finish"
+
+        def got():
+            path = server_recv / "upload.bin"
+            return path.exists() and path.stat().st_size == len(payload)
+
+        assert wait_until(got, timeout=15), "the server did not receive the file"
+        assert (server_recv / "upload.bin").read_bytes() == payload
+        assert server.file_recv_progress == {}
+        assert client.file_upload_progress == {}
+        assert server.upload_network_speed is None and server.recv_network_speed is None
+        assert client.upload_network_speed is None and client.recv_network_speed is None
+    finally:
+        client.close()
+        server.stop()

@@ -30,7 +30,9 @@ the TCP server and exchange data with the server.
             recv_messages_chunk_len: Any=4096,
             file_transfer_chunk_len: Any=65536,
             is_debug: Any=False,
-            is_print_log: Any=True) -> None:
+            is_print_log: Any=True,
+            is_enable_file_transfer_progress_bar: Any=True,
+            is_enable_real_time_network_speed: Any=True) -> None:
             ...
 
 The TCP Client Setup API is defined in the ``TCP_Client_Base`` class.
@@ -69,6 +71,19 @@ The parameters of the ``__init__`` method are as follows:
 - ``is_print_log``: A flag indicating whether the client logs at all. With
   ``False`` it prints nothing, whatever ``is_debug`` says.
 
+- ``is_enable_file_transfer_progress_bar``: A flag indicating whether every
+  running file transfer is tracked in ``file_recv_progress`` (downloads) and
+  ``file_upload_progress`` (uploads). Each entry is a
+  ``[transferred bytes, total bytes, current speed]`` list keyed by the
+  transfer's fid, and is removed once the transfer ends.
+- ``is_enable_real_time_network_speed``: A flag indicating whether the
+  protocol's real-time network speed is measured. With ``True`` (the default)
+  every send and receive — the control layer and every temporary connection,
+  file transfers included — feeds ``upload_network_speed`` and
+  ``recv_network_speed`` (bytes per second, a rolling average over
+  ``NETWORK_SPEED_WINDOW`` seconds). With ``False`` nothing is measured and
+  every speed value is ``None``.
+
 Every parameter has default values:
 
 - ``host``: Default is ``None`` (must be provided before connecting)
@@ -98,6 +113,10 @@ Every parameter has default values:
   read it today)
 - ``recv_messages_chunk_len``: Default is ``4096``
 - ``file_transfer_chunk_len``: Default is ``65536`` (64 KiB)
+- ``is_enable_file_transfer_progress_bar``: Default is ``True``
+  (``False`` records no transfer progress)
+- ``is_enable_real_time_network_speed``: Default is ``True``
+  (``False`` measures no speed; every speed value is ``None``)
 
 The TCP Client Setup API will initialize all the necessary 
 parameters and resources for the TCP client.

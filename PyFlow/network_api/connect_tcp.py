@@ -26,6 +26,7 @@ docstrings below.
 """
 
 import asyncio
+import collections
 import os
 import ast
 import sys
@@ -123,6 +124,9 @@ def _is_closed_socket_error(exc):
 MAX_DECODE_FAILURES = 3  # circuit breaker: close after N consecutive decode failures (re-exchange storm / garbage injection)
 SEND_WAIT_TIMEOUT = 30.0  # seconds a non-blocking client write waits for buffer room
 LOG_MERGE_ATTEMPTS = 8  # a log flush re-merges while other instances keep publishing
+
+NETWORK_SPEED_WINDOW = 1.0  # sample window of the real-time speed, in seconds
+NETWORK_SPEED_MIN_SPAN = 0.1  # seconds floor, so one short burst is not extrapolated
 
 
 def _wait_writable(client_socket, timeout):
@@ -285,6 +289,23 @@ def _parse_destination_path(command_part):
         if not (command_part[-2].startswith("(") and command_part[-2].endswith(")")):
             return command_part[-2]
     return None
+
+
+def _transfer_fid(command_part):
+    """Return the fid a sender stamped on its transfer command, or None.
+
+    Every user transfer command ends with the sender's transfer id
+    (``/file <path> <id>``, ``/file_folder <rel> <file> [<dest>] <id>``); it
+    keys that leg in ``file_recv_progress``/``file_upload_progress``. The
+    protocol-internal ``/crypto_pub_key`` push reports None: it is no user
+    file transfer.
+    """
+    if command_part and command_part[0] == "/crypto_pub_key":
+        return None
+    try:
+        return int(command_part[-1])
+    except (IndexError, TypeError, ValueError):
+        return None
 
 
 def parse_forwarded_message(command):
@@ -1054,6 +1075,20 @@ class TCP_Server_Base:  # TCP server class
         is_enable_encrypto (bool): Whether the RSA channel is negotiated.
         is_debug (bool): Whether execution-process lines are logged as well.
         is_print_log (bool): Whether the instance logs anything at all.
+        is_enable_file_transfer_progress_bar (bool): Whether every running file
+            transfer is tracked in ``file_recv_progress``/``file_upload_progress``.
+        is_enable_real_time_network_speed (bool): Whether the real-time network
+            speed is measured into ``upload_network_speed``/``recv_network_speed``.
+        file_recv_progress (dict): Running downloads keyed by fid; each value is
+            ``[received bytes, total bytes, current speed]`` (the speed is None
+            until the transfer has moved its first chunk, and while speed
+            measurement is off).
+        file_upload_progress (dict): Running uploads keyed by fid; each value is
+            ``[sent bytes, total bytes, current speed]``, same shape.
+        upload_network_speed (float | None): Bytes per second sent, or None when
+            not measured.
+        recv_network_speed (float | None): Bytes per second received, or None
+            when not measured.
     """
 
     def __init__(
@@ -1076,6 +1111,8 @@ class TCP_Server_Base:  # TCP server class
         is_asynic_clients_io=False,
         is_debug=False,
         is_print_log=True,
+        is_enable_file_transfer_progress_bar=True,
+        is_enable_real_time_network_speed=True,
     ):
         """Create the server and, unless extended, start accepting clients.
 
@@ -1115,7 +1152,20 @@ class TCP_Server_Base:  # TCP server class
                 and result lines. Defaults to False.
             is_print_log (bool): Log at all; False silences every line this
                 instance would print. Defaults to True.
-
+            is_enable_file_transfer_progress_bar (bool): Track every running
+                file transfer in ``file_recv_progress`` (downloads) and
+                ``file_upload_progress`` (uploads): each entry holds the bytes
+                transferred so far, the total size and the current speed (None
+                while ``is_enable_real_time_network_speed`` is False). An entry
+                appears when a transfer starts and is dropped when it ends.
+                Defaults to True.
+            is_enable_real_time_network_speed (bool): Measure the real-time
+                network speed of every send and receive — the control layer and
+                every temporary connection (file transfers included) — into
+                ``upload_network_speed`` and ``recv_network_speed`` (bytes per
+                second, averaged over ``NETWORK_SPEED_WINDOW`` seconds). With
+                False nothing is measured and every speed value is None.
+                Defaults to True.
         Raises:
             OSError: If the ``.Flow`` directories or ``decode_command_table.json``
                 cannot be created or read.
@@ -1123,6 +1173,21 @@ class TCP_Server_Base:  # TCP server class
         self.max_mem_buff = max_mem_buff * 1024 * 1024
         self.recv_messages_chunk_len = recv_messages_chunk_len
         self.file_transfer_chunk_len = file_transfer_chunk_len
+        self.is_enable_file_transfer_progress_bar = is_enable_file_transfer_progress_bar
+        self.is_enable_real_time_network_speed = is_enable_real_time_network_speed
+        # Per-transfer progress stores: fid -> [transferred bytes, total bytes,
+        # current speed]. An entry appears when a transfer starts and is removed
+        # when it ends, so the stores hold exactly the transfers running now;
+        # iterate over a copy while transfers are in flight.
+        self.file_recv_progress = {}  # downloads: fid -> [received, total, speed]
+        self.file_upload_progress = {}  # uploads: fid -> [sent, total, speed]
+        self.upload_network_speed = None  # bytes/s over the last NETWORK_SPEED_WINDOW seconds
+        self.recv_network_speed = None
+        self._network_speed_lock = threading.Lock()  # serialises the speed sample windows
+        self._upload_speed_samples = collections.deque()  # (timestamp, bytes) samples
+        self._recv_speed_samples = collections.deque()
+        self._upload_speed_total = 0  # bytes held in the sample windows
+        self._recv_speed_total = 0
         self._forward_fid = 0
         self._forward_fid_lock = threading.Lock()
         self._forward_relays = {}
@@ -1251,6 +1316,112 @@ class TCP_Server_Base:  # TCP server class
         """Print the traceback of the exception being handled, in debug mode only."""
         if self.is_print_log and self.is_debug:
             traceback.print_exc()
+
+    def _measure_network_speed(self, payload, is_upload):
+        """Fold just-sent/received traffic into the real-time speed estimate.
+
+        Every send and receive sample feeds this — control messages, file data
+        and relay traffic alike — so the speed attributes describe the
+        instance's current traffic as a rolling average over
+        ``NETWORK_SPEED_WINDOW`` seconds.
+
+        Args:
+            payload (bytes | str | int): Bytes just written or read; a str
+                counts as its UTF-8 length, an int is a byte count already.
+            is_upload (bool): True for sent bytes (``upload_network_speed``),
+                False for received ones (``recv_network_speed``).
+
+        Returns:
+            float | None: The refreshed speed in bytes per second, or None when
+                ``is_enable_real_time_network_speed`` is False; both speed
+                attributes are None then.
+        """
+        if not self.is_enable_real_time_network_speed:
+            self.upload_network_speed = None
+            self.recv_network_speed = None
+            return None
+        if isinstance(payload, str):
+            byte_count = len(payload.encode("utf-8"))
+        elif isinstance(payload, int):
+            byte_count = payload
+        else:
+            byte_count = len(payload)
+        if not byte_count:
+            return None
+        now = time.monotonic()
+        with self._network_speed_lock:
+            if is_upload:
+                samples = self._upload_speed_samples
+                total = self._upload_speed_total + byte_count
+            else:
+                samples = self._recv_speed_samples
+                total = self._recv_speed_total + byte_count
+            samples.append((now, byte_count))
+            cutoff = now - NETWORK_SPEED_WINDOW
+            while samples[0][0] < cutoff:  # only the current window counts
+                total -= samples.popleft()[1]
+            if is_upload:
+                self._upload_speed_total = total
+            else:
+                self._recv_speed_total = total
+            span = now - samples[0][0]
+            if span < NETWORK_SPEED_MIN_SPAN:  # a single burst is not extrapolated
+                span = NETWORK_SPEED_MIN_SPAN
+            speed = total / span
+            if is_upload:
+                self.upload_network_speed = speed
+            else:
+                self.recv_network_speed = speed
+        return speed
+
+    def _file_progress_start(self, progress_dict, fid, total_bytes):
+        """Register one file transfer in a progress store.
+
+        Args:
+            progress_dict (dict): ``self.file_recv_progress`` for an inbound
+                transfer, ``self.file_upload_progress`` for an outbound one.
+            fid (int | None): The transfer's fid; None tracks nothing (a leg
+                without a protocol transfer id, such as a key push).
+            total_bytes (int): Size of the file being transferred.
+
+        Returns:
+            list | None: The ``[transferred, total, speed]`` entry the transfer
+                updates, or None when tracking is off
+                (``is_enable_file_transfer_progress_bar`` False, or no fid).
+        """
+        if fid is None or not self.is_enable_file_transfer_progress_bar:
+            return None
+        entry = [0, total_bytes, None]
+        progress_dict[fid] = entry
+        return entry
+
+    def _file_progress_update(self, entry, byte_count, is_upload):
+        """Fold one transferred chunk into a progress entry.
+
+        Args:
+            entry (list | None): Entry from `_file_progress_start`, or None
+                when the transfer is not tracked.
+            byte_count (int): Bytes of the chunk just sent or received.
+            is_upload (bool): True for sent chunks, False for received ones.
+
+        The speed slot mirrors the live measurement, so it stays None while
+        ``is_enable_real_time_network_speed`` is False.
+        """
+        if entry is None:
+            return
+        entry[0] += byte_count
+        entry[2] = self.upload_network_speed if is_upload else self.recv_network_speed
+
+    def _file_progress_finish(self, progress_dict, fid, entry):
+        """Drop a finished transfer's progress entry.
+
+        A newer transfer may already hold the same fid (transfer ids are reused
+        as transfers end), so only this transfer's own entry is dropped.
+        """
+        if entry is None:
+            return
+        if progress_dict.get(fid) is entry:
+            del progress_dict[fid]
 
     def alloc_port(self, port_add_step, port_range_num):
         """Reserve this server's port range under the cross-process lock.
@@ -2027,6 +2198,7 @@ class TCP_Server_Base:  # TCP server class
                 if isinstance(message, str) and not message.strip().endswith("\n"):
                     payload = message.strip() + "\n"  # line framing for the control protocol
                 channel.send(payload)
+                self._measure_network_speed(payload, is_upload=True)
                 return True
             except Exception as e:
                 if not _is_closed_socket_error(e):
@@ -2046,6 +2218,7 @@ class TCP_Server_Base:  # TCP server class
                     self._log(f"Unsupported message type: {type(message)}")
                     return False
                 self._sendall(client_socket, data)
+                self._measure_network_speed(data, is_upload=True)
                 return True
             except Exception as e:
                 if not _is_closed_socket_error(e):
@@ -2085,7 +2258,9 @@ class TCP_Server_Base:  # TCP server class
         data = text.strip()
         if not data.endswith("\n"):
             data += "\n"
-        self._sendall(client_socket, data.encode("utf-8"))
+        encoded = data.encode("utf-8")
+        self._sendall(client_socket, encoded)
+        self._measure_network_speed(encoded, is_upload=True)
 
     def _crypto_mark_encrypted(self, client_socket, peer_role, peer_pem_path):
         with self._crypto_lock:
@@ -2198,9 +2373,12 @@ class TCP_Server_Base:  # TCP server class
             with self._crypto_lock:
                 channel = self._channels.get(client_socket)
             if channel is None:
-                return client_socket.recv(msg_length)
+                data = client_socket.recv(msg_length)
+                self._measure_network_speed(data, is_upload=False)
+                return data
             data = channel.take(msg_length)
             if data:
+                self._measure_network_speed(data, is_upload=False)
                 return data  # buffered plaintext is served even after a disable
             raw = client_socket.recv(self.recv_messages_chunk_len if channel.secure else msg_length)
             if not raw:
@@ -2212,9 +2390,11 @@ class TCP_Server_Base:  # TCP server class
                 self._crypto_channel_error(client_socket)
                 leftover = channel.drain_plaintext()
                 if leftover:
+                    self._measure_network_speed(leftover, is_upload=False)
                     return leftover  # hand back whatever was already read
                 continue  # framing is off now: keep serving in raw mode
             if plain:
+                self._measure_network_speed(plain, is_upload=False)
                 return plain  # plaintext mode: the line reader gets the bytes
 
     def _crypto_channel_error(self, client_socket):
@@ -3251,6 +3431,7 @@ class TCP_Server_Base:  # TCP server class
             nonlocal save_path
             filename = None
             full_path = None
+            progress = None  # this leg's file_recv_progress entry, when tracked
             try:
                 self.send_message(client_file_socket, self.server_start_file_transfer_sign)
             except Exception as e:
@@ -3335,6 +3516,9 @@ class TCP_Server_Base:  # TCP server class
                     final_filename = os.path.basename(original_filename)
                 full_path = os.path.join(save_path, final_filename).strip()
                 os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                progress = self._file_progress_start(
+                    self.file_recv_progress, progress_fid, file_size
+                )
                 with open(full_path.strip(), "wb") as f:
                     remaining = file_size
                     while remaining > 0:
@@ -3353,6 +3537,7 @@ class TCP_Server_Base:  # TCP server class
                             )
                         f.write(chunk)
                         remaining -= len(chunk)
+                        self._file_progress_update(progress, len(chunk), is_upload=False)
                 # TOFU first: the ack is only a notification, and a failed
                 # ack send must not skip the key registration (the server
                 # would never announce readiness and the handshake hangs)
@@ -3397,6 +3582,8 @@ class TCP_Server_Base:  # TCP server class
             else:
                 close_socket()
                 return None
+            finally:
+                self._file_progress_finish(self.file_recv_progress, progress_fid, progress)
 
         server_file_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_file_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -3404,6 +3591,7 @@ class TCP_Server_Base:  # TCP server class
         file_transfer_server_port = server_file_socket.getsockname()[1]
         command_part = shlex.split(command)
         file_client_id = command_part[len(command_part) - 1]
+        progress_fid = _transfer_fid(command_part)  # keys this leg in file_recv_progress
         destination_path = _parse_destination_path(command_part)
         stamp = self._crypto_transfer_stamp(
             client_socket, force_plain=command_part[0] == "/crypto_pub_key"
@@ -3721,6 +3909,7 @@ class TCP_Server_Base:  # TCP server class
                 file_transfer_client_port,
                 control_socket=client_socket,
                 crypto=stamp,
+                fid=client_id,
             )
             self.pfree(file_transfer_client_port)
         except IndexError:
@@ -3736,12 +3925,18 @@ class TCP_Server_Base:  # TCP server class
         pause_fid=None,
         control_socket=None,
         crypto=None,
+        fid=None,
     ):
         """Send one file over a transfer sub-connection.
 
         ``control_socket``/``crypto`` carry the listener's mode stamp
         ("plain" or "enc:<nonce>"): an encrypted leg aborts when the session
         key material is missing rather than downgrading silently.
+
+        ``fid`` is the transfer's id — the caller's own transfer id for a plain
+        send, the relay id for a forwarded upload — and keys this leg in
+        ``file_upload_progress``. None (a leg without a protocol transfer id,
+        such as a public-key push) tracks no progress.
         """
         self._log(f"start to send file: {filename}")
         client_file_socket = None
@@ -3817,6 +4012,7 @@ class TCP_Server_Base:  # TCP server class
         receive_thread = threading.Thread(target=receive_file_transfer_messages, daemon=True)
         receive_thread.start()
         waiting_time = 0
+        progress = None  # this leg's file_upload_progress entry, when tracked
         try:
             while True:
                 if file_receive_data_from_server == self.server_start_file_transfer_sign:
@@ -3849,6 +4045,7 @@ class TCP_Server_Base:  # TCP server class
             self.send_message(client_file_socket, name_len.to_bytes(4, "big"))
             self.send_message(client_file_socket, file_name_encoded)
             self.send_message(client_file_socket, file_size.to_bytes(8, "big"))
+            progress = self._file_progress_start(self.file_upload_progress, fid, file_size)
             with open(filename, "rb") as f:
                 while True:
                     if pause_fid is not None:
@@ -3859,6 +4056,7 @@ class TCP_Server_Base:  # TCP server class
                     if not file_data:
                         break
                     self.send_message(client_file_socket, file_data)
+                    self._file_progress_update(progress, len(file_data), is_upload=True)
             extra_time = (file_size // (100 * 1024 * 1024)) * 10
             timeout = int(30 + extra_time)
             while True:
@@ -3907,6 +4105,8 @@ class TCP_Server_Base:  # TCP server class
             close_socket()
             self._log(f"send error: {e}")
             return False
+        finally:
+            self._file_progress_finish(self.file_upload_progress, fid, progress)
 
     # ---- native in-memory forward relay (server side) ----------------------
 
@@ -4533,6 +4733,20 @@ class TCP_Client_Base:  # TCP client class
         is_enable_encrypto (bool): Whether the RSA channel is negotiated.
         is_debug (bool): Whether execution-process lines are logged as well.
         is_print_log (bool): Whether the instance logs anything at all.
+        is_enable_file_transfer_progress_bar (bool): Whether every running file
+            transfer is tracked in ``file_recv_progress``/``file_upload_progress``.
+        is_enable_real_time_network_speed (bool): Whether the real-time network
+            speed is measured into ``upload_network_speed``/``recv_network_speed``.
+        file_recv_progress (dict): Running downloads keyed by fid; each value is
+            ``[received bytes, total bytes, current speed]`` (the speed is None
+            until the transfer has moved its first chunk, and while speed
+            measurement is off).
+        file_upload_progress (dict): Running uploads keyed by fid; each value is
+            ``[sent bytes, total bytes, current speed]``, same shape.
+        upload_network_speed (float | None): Bytes per second sent, or None when
+            not measured.
+        recv_network_speed (float | None): Bytes per second received, or None
+            when not measured.
     """
 
     def __init__(
@@ -4555,6 +4769,8 @@ class TCP_Client_Base:  # TCP client class
         file_transfer_chunk_len=65536,
         is_debug=False,
         is_print_log=True,
+        is_enable_file_transfer_progress_bar=True,
+        is_enable_real_time_network_speed=True,
     ):
         """Create the client and, unless extended, connect and start reading.
 
@@ -4594,7 +4810,20 @@ class TCP_Client_Base:  # TCP client class
                 and result lines. Defaults to False.
             is_print_log (bool): Log at all; False silences every line this
                 instance would print. Defaults to True.
-
+            is_enable_file_transfer_progress_bar (bool): Track every running
+                file transfer in ``file_recv_progress`` (downloads) and
+                ``file_upload_progress`` (uploads): each entry holds the bytes
+                transferred so far, the total size and the current speed (None
+                while ``is_enable_real_time_network_speed`` is False). An entry
+                appears when a transfer starts and is dropped when it ends.
+                Defaults to True.
+            is_enable_real_time_network_speed (bool): Measure the real-time
+                network speed of every send and receive — the control layer and
+                every temporary connection (file transfers included) — into
+                ``upload_network_speed`` and ``recv_network_speed`` (bytes per
+                second, averaged over ``NETWORK_SPEED_WINDOW`` seconds). With
+                False nothing is measured and every speed value is None.
+                Defaults to True.
         Raises:
             ValueError: If ``is_wait_server`` is True and ``timeout`` is not None.
             OSError: If the ``.Flow`` directories or ``decode_command_table.json``
@@ -4603,6 +4832,21 @@ class TCP_Client_Base:  # TCP client class
         self.max_mem_buff = max_mem_buff * 1024 * 1024
         self.recv_messages_chunk_len = recv_messages_chunk_len
         self.file_transfer_chunk_len = file_transfer_chunk_len
+        self.is_enable_file_transfer_progress_bar = is_enable_file_transfer_progress_bar
+        self.is_enable_real_time_network_speed = is_enable_real_time_network_speed
+        # Per-transfer progress stores: fid -> [transferred bytes, total bytes,
+        # current speed]. An entry appears when a transfer starts and is removed
+        # when it ends, so the stores hold exactly the transfers running now;
+        # iterate over a copy while transfers are in flight.
+        self.file_recv_progress = {}  # downloads: fid -> [received, total, speed]
+        self.file_upload_progress = {}  # uploads: fid -> [sent, total, speed]
+        self.upload_network_speed = None  # bytes/s over the last NETWORK_SPEED_WINDOW seconds
+        self.recv_network_speed = None
+        self._network_speed_lock = threading.Lock()  # serialises the speed sample windows
+        self._upload_speed_samples = collections.deque()  # (timestamp, bytes) samples
+        self._recv_speed_samples = collections.deque()
+        self._upload_speed_total = 0  # bytes held in the sample windows
+        self._recv_speed_total = 0
         self._forward_upload_queue = queue.Queue()
         self._forward_pause = {}
         self._forward_pause_cond = threading.Condition()
@@ -5054,6 +5298,112 @@ class TCP_Client_Base:  # TCP client class
         """Print the traceback of the exception being handled, in debug mode only."""
         if self.is_print_log and self.is_debug:
             traceback.print_exc()
+
+    def _measure_network_speed(self, payload, is_upload):
+        """Fold just-sent/received traffic into the real-time speed estimate.
+
+        Every send and receive sample feeds this — control messages, file data
+        and relay traffic alike — so the speed attributes describe the
+        instance's current traffic as a rolling average over
+        ``NETWORK_SPEED_WINDOW`` seconds.
+
+        Args:
+            payload (bytes | str | int): Bytes just written or read; a str
+                counts as its UTF-8 length, an int is a byte count already.
+            is_upload (bool): True for sent bytes (``upload_network_speed``),
+                False for received ones (``recv_network_speed``).
+
+        Returns:
+            float | None: The refreshed speed in bytes per second, or None when
+                ``is_enable_real_time_network_speed`` is False; both speed
+                attributes are None then.
+        """
+        if not self.is_enable_real_time_network_speed:
+            self.upload_network_speed = None
+            self.recv_network_speed = None
+            return None
+        if isinstance(payload, str):
+            byte_count = len(payload.encode("utf-8"))
+        elif isinstance(payload, int):
+            byte_count = payload
+        else:
+            byte_count = len(payload)
+        if not byte_count:
+            return None
+        now = time.monotonic()
+        with self._network_speed_lock:
+            if is_upload:
+                samples = self._upload_speed_samples
+                total = self._upload_speed_total + byte_count
+            else:
+                samples = self._recv_speed_samples
+                total = self._recv_speed_total + byte_count
+            samples.append((now, byte_count))
+            cutoff = now - NETWORK_SPEED_WINDOW
+            while samples[0][0] < cutoff:  # only the current window counts
+                total -= samples.popleft()[1]
+            if is_upload:
+                self._upload_speed_total = total
+            else:
+                self._recv_speed_total = total
+            span = now - samples[0][0]
+            if span < NETWORK_SPEED_MIN_SPAN:  # a single burst is not extrapolated
+                span = NETWORK_SPEED_MIN_SPAN
+            speed = total / span
+            if is_upload:
+                self.upload_network_speed = speed
+            else:
+                self.recv_network_speed = speed
+        return speed
+
+    def _file_progress_start(self, progress_dict, fid, total_bytes):
+        """Register one file transfer in a progress store.
+
+        Args:
+            progress_dict (dict): ``self.file_recv_progress`` for an inbound
+                transfer, ``self.file_upload_progress`` for an outbound one.
+            fid (int | None): The transfer's fid; None tracks nothing (a leg
+                without a protocol transfer id, such as a key push).
+            total_bytes (int): Size of the file being transferred.
+
+        Returns:
+            list | None: The ``[transferred, total, speed]`` entry the transfer
+                updates, or None when tracking is off
+                (``is_enable_file_transfer_progress_bar`` False, or no fid).
+        """
+        if fid is None or not self.is_enable_file_transfer_progress_bar:
+            return None
+        entry = [0, total_bytes, None]
+        progress_dict[fid] = entry
+        return entry
+
+    def _file_progress_update(self, entry, byte_count, is_upload):
+        """Fold one transferred chunk into a progress entry.
+
+        Args:
+            entry (list | None): Entry from `_file_progress_start`, or None
+                when the transfer is not tracked.
+            byte_count (int): Bytes of the chunk just sent or received.
+            is_upload (bool): True for sent chunks, False for received ones.
+
+        The speed slot mirrors the live measurement, so it stays None while
+        ``is_enable_real_time_network_speed`` is False.
+        """
+        if entry is None:
+            return
+        entry[0] += byte_count
+        entry[2] = self.upload_network_speed if is_upload else self.recv_network_speed
+
+    def _file_progress_finish(self, progress_dict, fid, entry):
+        """Drop a finished transfer's progress entry.
+
+        A newer transfer may already hold the same fid (transfer ids are reused
+        as transfers end), so only this transfer's own entry is dropped.
+        """
+        if entry is None:
+            return
+        if progress_dict.get(fid) is entry:
+            del progress_dict[fid]
 
     def alloc_port(self, port_add_step, port_range_num):
         """Reserve this client's port range under the cross-process lock.
@@ -5605,6 +5955,7 @@ class TCP_Client_Base:  # TCP client class
                     return False
                 payload = message.strip() + "\n" if isinstance(message, str) else message
                 channel.send(payload)
+                self._measure_network_speed(payload, is_upload=True)
                 return True
             except Exception as e:
                 if not _is_closed_socket_error(e):
@@ -5624,6 +5975,7 @@ class TCP_Client_Base:  # TCP client class
                     self._log(f"Unsupported message type: {type(message)}")
                     return False
                 client_socket.sendall(data)
+                self._measure_network_speed(data, is_upload=True)
                 return True
             except Exception as e:
                 if not _is_closed_socket_error(e):
@@ -5663,9 +6015,12 @@ class TCP_Client_Base:  # TCP client class
             with self._crypto_lock:
                 channel = self._channels.get(client_socket)
             if channel is None:
-                return client_socket.recv(msg_length)
+                data = client_socket.recv(msg_length)
+                self._measure_network_speed(data, is_upload=False)
+                return data
             data = channel.take(msg_length)
             if data:
+                self._measure_network_speed(data, is_upload=False)
                 return data  # buffered plaintext is served even after a disable
             raw = client_socket.recv(self.recv_messages_chunk_len if channel.secure else msg_length)
             if not raw:
@@ -5677,9 +6032,11 @@ class TCP_Client_Base:  # TCP client class
                 self._crypto_channel_error(client_socket)
                 leftover = channel.drain_plaintext()
                 if leftover:
+                    self._measure_network_speed(leftover, is_upload=False)
                     return leftover  # hand back whatever was already read
                 continue  # framing is off now: keep serving in raw mode
             if plain:
+                self._measure_network_speed(plain, is_upload=False)
                 return plain  # plaintext mode: the line reader gets the bytes
 
     def _send_raw(self, client_socket, text):
@@ -5687,7 +6044,9 @@ class TCP_Client_Base:  # TCP client class
         data = text.strip()
         if not data.endswith("\n"):
             data += "\n"
-        client_socket.sendall(data.encode("utf-8"))
+        encoded = data.encode("utf-8")
+        client_socket.sendall(encoded)
+        self._measure_network_speed(encoded, is_upload=True)
 
     def _crypto_mark_encrypted(self, client_socket, peer_role, peer_pem_path):
         with self._crypto_lock:
@@ -6558,6 +6917,7 @@ class TCP_Client_Base:  # TCP client class
                 file_transfer_client_port,
                 control_socket=self.client_socket,
                 crypto=stamp,
+                fid=client_id,
             )
             self.pfree(file_transfer_client_port)
         except IndexError:
@@ -6573,12 +6933,18 @@ class TCP_Client_Base:  # TCP client class
         pause_fid=None,
         control_socket=None,
         crypto=None,
+        fid=None,
     ):
         """Send one file over a transfer sub-connection.
 
         ``control_socket``/``crypto`` carry the listener's mode stamp
         ("plain" or "enc:<nonce>"): an encrypted leg aborts when the session
         key material is missing rather than downgrading silently.
+
+        ``fid`` is the transfer's id — the caller's own transfer id for a plain
+        send, the relay id for a forwarded upload — and keys this leg in
+        ``file_upload_progress``. None (a leg without a protocol transfer id,
+        such as a public-key push) tracks no progress.
         """
         self._log(f"start to send file: {filename}")
         client_file_socket = None
@@ -6654,6 +7020,7 @@ class TCP_Client_Base:  # TCP client class
         receive_thread = threading.Thread(target=receive_file_transfer_messages, daemon=True)
         receive_thread.start()
         waiting_time = 0
+        progress = None  # this leg's file_upload_progress entry, when tracked
         try:
             while True:
                 if file_receive_data_from_server == self.server_start_file_transfer_sign:
@@ -6686,6 +7053,7 @@ class TCP_Client_Base:  # TCP client class
             self.send_message(client_file_socket, name_len.to_bytes(4, "big"))
             self.send_message(client_file_socket, file_name_encoded)
             self.send_message(client_file_socket, file_size.to_bytes(8, "big"))
+            progress = self._file_progress_start(self.file_upload_progress, fid, file_size)
             with open(filename, "rb") as f:
                 while True:
                     if pause_fid is not None:
@@ -6696,6 +7064,7 @@ class TCP_Client_Base:  # TCP client class
                     if not file_data:
                         break
                     self.send_message(client_file_socket, file_data)
+                    self._file_progress_update(progress, len(file_data), is_upload=True)
             extra_time = (file_size // (100 * 1024 * 1024)) * 10
             timeout = int(30 + extra_time)
             while True:
@@ -6744,6 +7113,8 @@ class TCP_Client_Base:  # TCP client class
             close_socket()
             self._log(f"send error: {e}")
             return False
+        finally:
+            self._file_progress_finish(self.file_upload_progress, fid, progress)
 
     # ---- native in-memory forward (client side) ----------------------------
 
@@ -6890,6 +7261,7 @@ class TCP_Client_Base:  # TCP client class
                 pause_fid=fid,
                 control_socket=self.client_socket,
                 crypto=stamp,
+                fid=fid,
             )
         finally:
             self.pfree(client_port)
@@ -6986,6 +7358,7 @@ class TCP_Client_Base:  # TCP client class
             nonlocal save_path
             filename = None
             full_path = None
+            progress = None  # this leg's file_recv_progress entry, when tracked
             self.send_message(client_file_socket, self.server_start_file_transfer_sign)
             try:
                 name_len_bytes = b""
@@ -7058,6 +7431,9 @@ class TCP_Client_Base:  # TCP client class
                     final_filename = os.path.basename(original_filename)
                 full_path = os.path.join(save_path, final_filename).strip()
                 os.makedirs(os.path.dirname(full_path), exist_ok=True)
+                progress = self._file_progress_start(
+                    self.file_recv_progress, progress_fid, file_size
+                )
                 with open(full_path.strip(), "wb") as f:
                     remaining = file_size
                     while remaining > 0:
@@ -7076,6 +7452,7 @@ class TCP_Client_Base:  # TCP client class
                             )
                         f.write(chunk)
                         remaining -= len(chunk)
+                        self._file_progress_update(progress, len(chunk), is_upload=False)
                 # TOFU first: the ack is only a notification, and a failed
                 # ack send must not skip the key registration (readiness
                 # would never be announced and the handshake hangs)
@@ -7110,6 +7487,8 @@ class TCP_Client_Base:  # TCP client class
             else:
                 close_socket()
                 return None
+            finally:
+                self._file_progress_finish(self.file_recv_progress, progress_fid, progress)
 
         server_file_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_file_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -7117,6 +7496,7 @@ class TCP_Client_Base:  # TCP client class
         file_transfer_server_port = server_file_socket.getsockname()[1]
         command_part = shlex.split(command)
         file_client_id = command_part[len(command_part) - 1]
+        progress_fid = _transfer_fid(command_part)  # keys this leg in file_recv_progress
         destination_path = _parse_destination_path(command_part)
         stamp = self._crypto_transfer_stamp(
             client_socket, force_plain=command_part[0] == "/crypto_pub_key"

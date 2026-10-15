@@ -31,7 +31,9 @@ clients.
             file_transfer_chunk_len: Any=65536,
             is_asynic_clients_io: Any=False,
             is_debug: Any=False,
-            is_print_log: Any=True) -> None:
+            is_print_log: Any=True,
+            is_enable_file_transfer_progress_bar: Any=True,
+            is_enable_real_time_network_speed: Any=True) -> None:
             ...
 
 The TCP Server Setup API is defined in the ``TCP_Server_Base`` class.
@@ -74,6 +76,19 @@ The parameters of the ``__init__`` method are as follows:
 - ``is_print_log``: A flag indicating whether the server logs at all. With
   ``False`` it prints nothing, whatever ``is_debug`` says.
 
+- ``is_enable_file_transfer_progress_bar``: A flag indicating whether every
+  running file transfer is tracked in ``file_recv_progress`` (downloads) and
+  ``file_upload_progress`` (uploads). Each entry is a
+  ``[transferred bytes, total bytes, current speed]`` list keyed by the
+  transfer's fid, and is removed once the transfer ends.
+- ``is_enable_real_time_network_speed``: A flag indicating whether the
+  protocol's real-time network speed is measured. With ``True`` (the default)
+  every send and receive — the control layer and every temporary connection,
+  file transfers included — feeds ``upload_network_speed`` and
+  ``recv_network_speed`` (bytes per second, a rolling average over
+  ``NETWORK_SPEED_WINDOW`` seconds). With ``False`` nothing is measured and
+  every speed value is ``None``.
+
 All parameters have default values:
 
 - ``host``: Default is ``'127.0.0.1'``
@@ -102,6 +117,10 @@ All parameters have default values:
   (``True`` adds the execution-process lines to the command/result lines)
 - ``is_print_log``: Default is ``True``
   (``False`` silences every line the server would print)
+- ``is_enable_file_transfer_progress_bar``: Default is ``True``
+  (``False`` records no transfer progress)
+- ``is_enable_real_time_network_speed``: Default is ``True``
+  (``False`` measures no speed; every speed value is ``None``)
 
 The TCP Server Setup API will initialize all the necessary 
 parameters and resources for the TCP server.

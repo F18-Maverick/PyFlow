@@ -31,6 +31,12 @@ def test_tcp_server_init():
     assert server.recv_messages_chunk_len == 4096  # noqa: PLR2004
     assert server.file_transfer_chunk_len == 65536  # noqa: PLR2004
     assert server.is_custom_keys is None
+    assert server.is_enable_file_transfer_progress_bar is True
+    assert server.is_enable_real_time_network_speed is True
+    assert server.file_recv_progress == {}
+    assert server.file_upload_progress == {}
+    assert server.upload_network_speed is None
+    assert server.recv_network_speed is None
 
 
 # ---- manual port allocation and the /quit handshake -------------------------
@@ -323,3 +329,37 @@ def test_call_extension_functions_rejects_an_unsplittable_command():
     server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
     with pytest.raises(ValueError, match="No closing quotation"):
         server.call_extension_functions('/known "unclosed')
+
+
+# ---- real-time network speed -------------------------------------------------
+
+
+def test_real_time_speed_is_a_rolling_window(monkeypatch):
+    """The speed attributes average only the current window.
+
+    Traffic that stopped cannot keep reporting its old rate, the two
+    directions are measured apart, a str payload counts as its UTF-8 length,
+    and turning measurement off leaves every speed value None.
+    """
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(_connect_tcp.time, "monotonic", lambda: clock["now"])
+    server = TCP_Server_Base(host="127.0.0.1", port=65015, is_extend_command=True)
+    # ten 1000-byte uploads, one per 0.1 s: 10 000 bytes over 0.9 s
+    for step in range(10):
+        clock["now"] = 1000.0 + step / 10
+        server._measure_network_speed(1000, is_upload=True)
+    assert server.upload_network_speed == pytest.approx(10000 / 0.9)
+    assert server.recv_network_speed is None  # the other direction saw no traffic
+    # a 2 s pause, then one 10-byte sample: the old traffic has aged out
+    clock["now"] = 1003.0
+    server._measure_network_speed(10, is_upload=True)
+    assert server.upload_network_speed == pytest.approx(10 / 0.1)
+    # a str payload (é is two bytes) feeds the receive speed
+    clock["now"] = 1004.0
+    server._measure_network_speed("héllo", is_upload=False)
+    assert server.recv_network_speed == pytest.approx(6 / 0.1)
+    # measurement off: nothing is sampled and every speed value is None
+    server.is_enable_real_time_network_speed = False
+    assert server._measure_network_speed(1000, is_upload=True) is None
+    assert server.upload_network_speed is None
+    assert server.recv_network_speed is None
