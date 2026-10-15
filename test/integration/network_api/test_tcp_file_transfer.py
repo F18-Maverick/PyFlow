@@ -165,11 +165,13 @@ def test_transfer_thread_survives_a_stop_before_the_start_sign(pair, tmp_path):
 
     real_send = server.send_message
     stopped_first = threading.Event()
+    transfer_thread = []
 
     def stop_then_send(client_socket, message):
         if message is server.server_start_file_transfer_sign and not stopped_first.is_set():
             # the race under test: the stop lands after the accept and before
             # the transfer thread's start sign
+            transfer_thread.append(threading.current_thread())
             stopped_first.set()
             server.stop()
         return real_send(client_socket, message)
@@ -185,22 +187,18 @@ def test_transfer_thread_survives_a_stop_before_the_start_sign(pair, tmp_path):
         assert wait_until(stopped_first.is_set, timeout=10), (
             "the server-side transfer never reached its start sign"
         )
+        # this test's own thread, not a transfer thread another test left
+        # parked; the excepthook stays installed until it is gone, or its
+        # escape would be missed
+        transfer_thread[0].join(timeout=10)
     finally:
         threading.excepthook = previous_hook
         client.close()
         server.stop()
 
-    def transfer_threads():
-        return [
-            thread
-            for thread in threading.enumerate()
-            if thread.name.endswith("(file_transfer_client_recv)")
-        ]
-
-    assert wait_until(lambda: not transfer_threads(), timeout=10), "the transfer thread never ended"
-    failures = [
-        args for args in escaped if args.thread.name.endswith("(file_transfer_client_recv)")
-    ]
+    thread = transfer_thread[0]
+    assert not thread.is_alive(), "the transfer thread did not end"
+    failures = [args for args in escaped if args.thread is thread]
     assert not failures, (
         f"the transfer thread died with {failures[0].exc_type.__name__}: {failures[0].exc_value}"
     )
