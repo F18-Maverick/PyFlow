@@ -15,7 +15,10 @@
  *     "query length" pattern (out == NULL) returns the required size
  *     in *out_len.
  *   - Buffers returned via **out (PEM strings, seal/open results) are
- *     allocated with malloc(3) and MUST be released with free(3).
+ *     allocated with malloc(3) inside the library and MUST be released
+ *     with pf_crypto_free(): a caller running on another C runtime
+ *     (CPython's pyd/ctypes host on Windows, for example) must not free
+ *     them with its own free(3), which would corrupt the heap.
  *
  * Requires OpenSSL >= 1.1.1. Uses only the EVP high-level API.
  */
@@ -67,6 +70,14 @@ typedef enum {
 
 /* Human-readable description of an error code. Never returns NULL. */
 PF_CRYPTO_API const char *pf_err_string(pf_err_t err);
+
+/*
+ * Releases a buffer the library returned through an **out parameter
+ * (PEM strings, seal/open results). This is the library's own free(3),
+ * so the allocation and the deallocation always run on the same C
+ * runtime; passing NULL is a no-op.
+ */
+PF_CRYPTO_API void pf_crypto_free(void *ptr);
 
 /*
  * Formats the pending OpenSSL error queue into buf (always NUL-terminated,

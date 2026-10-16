@@ -10,10 +10,12 @@ Checks ``transfer_web/.Flow_Web/setup_server.json``:
 
 After the TCP server is up, the lightweight Flask backend serves the
 status page and the client-facing API (``/api/server_info`` etc.) on
-the server's address.  Anonymous visitors also get the landing page
-with the registration and password-reset flows; accounts live in the
-SQLite store ``.Flow_Web/flow_web.db``, and the verification mails are
-sent through the mailbox configured in ``.Flow_Web/email_config.json``.
+the server's address.  Anonymous visitors also get the landing page;
+its registration and password-reset flows exist while a verification
+mailbox is configured (settings in ``.Flow_Web/email_config.json``,
+accounts in the SQLite store ``.Flow_Web/flow_web.db``).  That mailbox
+is also the switch of the client side: with it clients log in with an
+account, without it they connect without any account at all.
 """
 
 import os

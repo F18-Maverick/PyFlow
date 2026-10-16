@@ -27,9 +27,13 @@ clients.
             is_enable_encrypto: Any=True,
             is_custom_keys: Any=None,
             max_mem_buff: Any=2048,
+            recv_messages_chunk_len: Any=4096,
+            file_transfer_chunk_len: Any=65536,
             is_asynic_clients_io: Any=False,
             is_debug: Any=False,
-            is_print_log: Any=True) -> None:
+            is_print_log: Any=True,
+            is_enable_file_transfer_progress_bar: Any=True,
+            is_enable_real_time_network_speed: Any=True) -> None:
             ...
 
 The TCP Server Setup API is defined in the ``TCP_Server_Base`` class.
@@ -58,6 +62,10 @@ The parameters of the ``__init__`` method are as follows:
 - ``max_mem_buff``: The in-memory buffering ceiling of the forward pump,
   given in MiB and stored as bytes (``self.max_mem_buff``); past it the
   uploading peer is told to pause. The default is 2048.
+- ``recv_messages_chunk_len``: The number of bytes read per receive on the
+  control connection, covering commands and messages. The default is 4096.
+- ``file_transfer_chunk_len``: The chunk size in bytes for streaming a file
+  or folder transfer in either direction. The default is 65536 (64 KiB).
 - ``is_asynic_clients_io``: A flag indicating whether clients are served by
   asyncio coroutines on one event loop instead of one thread per client. It
   lifts the ``max_clients`` limit, so a single server can hold thousands of
@@ -67,6 +75,19 @@ The parameters of the ``__init__`` method are as follows:
   with ``True`` it also logs the key steps of the execution process.
 - ``is_print_log``: A flag indicating whether the server logs at all. With
   ``False`` it prints nothing, whatever ``is_debug`` says.
+
+- ``is_enable_file_transfer_progress_bar``: A flag indicating whether every
+  running file transfer is tracked in ``file_recv_progress`` (downloads) and
+  ``file_upload_progress`` (uploads). Each entry is a
+  ``[transferred bytes, total bytes, current speed, file name]`` list keyed by the
+  transfer's fid, and is removed once the transfer ends.
+- ``is_enable_real_time_network_speed``: A flag indicating whether the
+  protocol's real-time network speed is measured. With ``True`` (the default)
+  every send and receive — the control layer and every temporary connection,
+  file transfers included — feeds ``upload_network_speed`` and
+  ``recv_network_speed`` (bytes per second, a rolling average over
+  ``NETWORK_SPEED_WINDOW`` seconds). With ``False`` nothing is measured and
+  every speed value is ``None``.
 
 All parameters have default values:
 
@@ -87,6 +108,8 @@ All parameters have default values:
 - ``is_custom_keys``: Default is ``None`` 
   (a ``[pub_key_path, pvt_key_path]`` list uses a user-supplied keypair
   instead of the default ``~/.ssh`` / generated keys)
+- ``recv_messages_chunk_len``: Default is ``4096``
+- ``file_transfer_chunk_len``: Default is ``65536`` (64 KiB)
 - ``is_asynic_clients_io``: Default is ``False``
   (when ``True``, every accepted connection is served by a coroutine on one
   asyncio event loop, and ``max_clients`` is ignored)
@@ -94,6 +117,10 @@ All parameters have default values:
   (``True`` adds the execution-process lines to the command/result lines)
 - ``is_print_log``: Default is ``True``
   (``False`` silences every line the server would print)
+- ``is_enable_file_transfer_progress_bar``: Default is ``True``
+  (``False`` records no transfer progress)
+- ``is_enable_real_time_network_speed``: Default is ``True``
+  (``False`` measures no speed; every speed value is ``None``)
 
 The TCP Server Setup API will initialize all the necessary 
 parameters and resources for the TCP server.
@@ -389,7 +416,11 @@ The client initiates the exchange by sending a plaintext
 sides then push their public key files over the file-transfer mechanism
 (plaintext) and TOFU-check the received key. Both sides switch to
 encrypted mode only after ``/crypto_ready`` has been received from the
-peer (so plaintext and ciphertext never interleave on a connection). On
+peer (so plaintext and framed traffic never interleave on a connection),
+then each announces frame readiness with a plaintext
+``/crypto_frames_start`` and publishes its ephemeral session ECDH public
+key as a ``/crypto_ecdh_pub`` line inside an RSA frame; frames are sent
+only once both announcements have been seen. On
 later connections the keys are re-exchanged and TOFU-checked again; the
 exchange is never skipped, only the identity check short-circuits for
 known keys. Public-key pushes are only accepted from a connection that
@@ -399,13 +430,34 @@ cannot poison the registry.
 Replay protection
 ^^^^^^^^^^^^^^^^^
 
-The handshake exchanges a random session nonce, and every encrypted line
-on the wire carries it plus a per-connection sequence number:
-``<sender-nonce>|<seq>|<ciphertext>``. The receiver drops a line whose
-nonce does not match the current session (ciphertext replayed from an
+The handshake exchanges a random session nonce, and every encrypted message
+travels in a frame — ``magic | type (1) | body length (4) | body`` with
+``<sender-nonce>|<seq>|`` at the start of the body. Frame type 1 carries a
+small text payload as chunked RSA-OAEP ciphertext (the historic wire
+encoding); type 2 carries everything else, including all binary and file
+data, as a ``pf_ecdh_seal`` blob (AES-256-GCM keyed by the session's
+ephemeral ECDH keypair, with ``<nonce>|<seq>`` bound as AAD). The receiver
+reads the type from the frame instead of inferring the algorithm from the
+payload length, and sequence numbers are per socket and cover both frame
+types. The receiver drops a frame whose
+nonce does not match the current session (replayed from an
 older connection) or whose sequence number is not the expected one
-(ciphertext replayed within the session / out of order); both counters
+(replayed within the session / out of order); both counters
 reset when the socket flips to encrypted mode after a (re-)exchange.
+
+Encrypted transfer connections
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+File and folder transfers, forwarded items and the forward relay run on
+temporary TCP connections. The listening side stamps each leg with its mode
+and a fresh nonce in the port advertisement (``/server_file_transfer_port``,
+``/forward_upload``); with ``is_enable_encrypto`` enabled both sides then
+frame that connection exactly like the control channel, with the same
+session key material, so file contents, names and sizes no longer cross the
+wire in the clear. The public-key pushes themselves stay plaintext by
+construction: they carry the keys the session is built on. A leg whose
+stamp promises encryption is aborted when the session key material is not
+ready rather than silently downgraded.
 
 Decode verification and key rotation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -424,8 +476,12 @@ new key.
 Re-exchanges are circuit-broken: after ``MAX_DECODE_FAILURES`` (3)
 consecutive decode failures on one connection the connection is closed
 instead of re-exchanging, so a garbage-injection or persistent-mismatch
-storm cannot spin the loop forever. A successful decryption resets the
-counter.
+storm cannot spin the loop forever. Genuine peer traffic (messages and
+commands other than the protocol's own handshake/coordination lines)
+resets the counter. Frames the peer had already sent when this side dropped
+out of encrypted mode are stale: they cannot be authenticated any more, so
+they are consumed and dropped — they neither surface as messages nor reset
+the counter.
 
 .. code-block:: python
 
@@ -476,8 +532,10 @@ protocol loop:
     def remove_file_listener(self, listener)
 
 ``add_message_listener`` registers ``listener(client_id, message)``
-for every inbound plain message (lines that do not start with ``/``;
-commands go to the command handlers instead). ``add_file_listener``
+for every inbound line, commands included (``/help``, ``/file ...``,
+the crypto handshake lines, ...), so a listener observes all inbound
+traffic; line dispatch is unaffected, a command still goes to the
+command handlers. ``add_file_listener``
 registers ``listener(client_id, full_path, name, size, command)`` and
 fires after a file uploaded by a client has been fully written to the
 transfer directory (``command`` is the wire command that triggered it,
@@ -505,7 +563,8 @@ is invoked for any message starting with ``/``.
 We support two solutions for command handling:
 inputting a command in the console or
 receiving a command from other clients. You can also call the
-functions defined for each command in the code.
+functions defined for each command in the code via
+`call_extension_functions`.
 
 *Note: You can select the solution which you 
 want to use by changing the args of the 
@@ -555,6 +614,13 @@ defined as:
         where_to_run: Any,
         run_in_thread: Any=False) -> bool:
         ...
+
+    def call_extension_functions(self, command):
+        ...
+
+`call_extension_functions` runs one registered command's handler
+straight from code; the command's first token selects it, exactly as
+it does for a typed line.
 
 The args of the `register_command` function 
 are as follows:
@@ -963,6 +1029,7 @@ are as follows:
 
 4. The server command APIs:
     - `register_command`
+    - `call_extension_functions`
     - `_execute_custom_handler`
     - `submit_task`
     - `create_temporary_server`

@@ -139,6 +139,37 @@ def test_a_corrupted_configuration_leaves_the_service_disabled(tmp_path):
     assert MailService(str(path)).is_enabled() is False
 
 
+def test_disable_removes_the_stored_mailbox(service, tmp_path, monkeypatch):
+    monkeypatch.setattr(service, "_connect", lambda config: FakeSmtp())
+    service.configure(valid_config())
+    path = tmp_path / "email_config.json"
+    assert service.is_enabled() is True
+
+    service.disable()
+    assert service.is_enabled() is False
+    assert service.get_config() is None
+    assert not path.exists()
+    with pytest.raises(ValueError, match="not configured"):
+        service.send_code("alice@example.com", "123456", "login", 300)
+
+    # the switch is idempotent: a second call changes nothing
+    service.disable()
+    assert service.is_enabled() is False
+
+
+def test_disable_keeps_the_service_while_the_file_survives(service, tmp_path, monkeypatch):
+    monkeypatch.setattr(service, "_connect", lambda config: FakeSmtp())
+    service.configure(valid_config())
+    path = tmp_path / "email_config.json"
+    path.unlink()
+    path.mkdir()
+    (path / "blocker").write_text("still here", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="cannot remove"):
+        service.disable()
+    assert service.is_enabled() is True  # the mode never switches silently
+
+
 def test_send_code_delivers_the_code_with_its_purpose(service, monkeypatch):
     session = FakeSmtp()
     monkeypatch.setattr(service, "_connect", lambda config: session)

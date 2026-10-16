@@ -1,150 +1,208 @@
-import builtins
-import io
 import json
+import os
+import shlex
 import socket
+import sys
 import threading
 import time
-from types import SimpleNamespace
+from pathlib import Path
 
+import pytest
+from helpers import free_port, wait_until
 
 import PyFlow.command_control_extension_tcp as ctl
+from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
+
+CMD_LIKE_SHELL = '''"""Echo every input line like cmd.exe does, and run it in one /bin/sh."""
+
+import subprocess
+import sys
+
+shell = subprocess.Popen(["/bin/sh"], stdin=subprocess.PIPE)
+for line in sys.stdin:
+    sys.stdout.write(line)  # cmd.exe prints every line of its piped input
+    sys.stdout.flush()
+    shell.stdin.write(line.encode("utf-8"))
+    shell.stdin.flush()
+shell.stdin.close()
+shell.wait()
+'''
+
+
+class DummySocket:
+    """Collects what a client socket would have received."""
+
+    def __init__(self):
+        self.data = b""
+
+    def sendall(self, b):
+        self.data += b
+
+    def shutdown(self, how):
+        pass
+
+    def close(self):
+        pass
+
+    def sent_tokens(self):
+        """Tokens of the /command line this socket received."""
+        return shlex.split(self.data.decode("utf-8"))
+
+
+def add_dummy_client(server, port):
+    """Register a fake connected client and return its socket."""
+    address = ("127.0.0.1", port)
+    dummy = DummySocket()
+    server.clients[address] = {
+        "socket": dummy,
+        "address": address,
+        "id": "127.0.0.1:{}".format(port),
+        "connected_time": "now",
+    }
+    return dummy
+
+
+def console_batch(commands, address):
+    """Build the /command line a server console would carry for one client."""
+    tokens = [shlex.quote(command) for command in commands] + [shlex.quote(str(address))]
+    return "/command " + " ".join(tokens)
+
+
+def log_of(log_path):
+    """Return the parsed log, or None while the file is missing or mid-write."""
+    try:
+        with open(log_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def entries_of(log_path, command):
+    """Log entries collected for one command so far."""
+    return (log_of(log_path) or {}).get(command, [])
+
+
+def output_bytes(log_path, command):
+    """Bytes of output collected for one command so far."""
+    return sum(
+        len(entry.get("output") or "") + len(entry.get("error") or "")
+        for entry in entries_of(log_path, command)
+    )
+
+
+def finished(log_path, command):
+    """Report whether one command of the batch ended, and with status 0."""
+    return any(
+        entry.get("stream") == "end" and entry.get("returncode") == 0
+        for entry in entries_of(log_path, command)
+    )
+
+
+@pytest.fixture
+def logs_dir(tmp_path, monkeypatch):
+    """Point the extension's log directory at the test's temporary directory."""
+    directory = tmp_path / "logs"
+    directory.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(ctl, "_logs_dir", lambda: str(directory))
+    return directory
+
+
+@pytest.fixture
+def live_pair(tmp_path, monkeypatch, logs_dir):
+    """Run a server and client pair with the control extension loaded."""
+    server_port = free_port()
+    client_port = free_port()
+    address = ("127.0.0.1", client_port)
+    server = TCP_Server_Base(
+        host="127.0.0.1",
+        port=server_port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
+    server.file_transfer_dir = str(tmp_path / "received")
+    monkeypatch.setattr(ctl, "server_instance", server)
+    client = TCP_Client_Base(
+        host="127.0.0.1",
+        port=server_port,
+        client_host="127.0.0.1",
+        client_port=client_port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
+    monkeypatch.setattr(ctl, "client_instance", client)
+    ctl.setup_server_commands(server)
+    ctl.setup_client_commands(client)
+    threading.Thread(target=server.start_TCP_Server, daemon=True).start()
+    threading.Thread(target=client.start_TCP_client, daemon=True).start()
+    try:
+        assert wait_until(lambda: address in server.clients, timeout=20)
+        yield server, client, address
+    finally:
+        client.close()
+        server.stop()
 
 
 def test_command_handler_parsing(server):
-    """Verify server parses /command and forwards to the target client socket.
-
-    NOTE: we force the server.running flag here because tests construct the
-    server via a fixture with is_extend_command=True (no background loop).
-    FIXME: prefer a test-friendly public API to start/mark the server running.
-    """
+    """The server sends one /command line per client, carrying every command."""
     server.running = True
+    dummy = add_dummy_client(server, 12345)
 
-    class DummySocket:
-        def __init__(self):
-            self.data = b""
+    ctl._command_handler(None, ("127.0.0.1", 9999), '/command "echo_test" "(\'127.0.0.1\', 12345)"')
 
-        def sendall(self, b):
-            self.data += b
+    tokens = dummy.sent_tokens()
+    assert tokens[0] == "/command"
+    assert tokens[1] == "('127.0.0.1', 12345)"  # the client, addressed first on the wire
+    assert tokens[2:] == ["echo_test"]
 
-        def shutdown(self, how):
-            pass
 
-        def close(self):
-            pass
+def test_command_handler_sends_every_command_to_every_client(server):
+    """Any number of commands reaches any number of clients, in one batch each."""
+    server.running = True
+    first = add_dummy_client(server, 12345)
+    second = add_dummy_client(server, 12346)
 
-    client_addr = ("127.0.0.1", 12345)
-    dummy = DummySocket()
-
-    # populate only the fields used by the handler
-    server.clients[client_addr] = {
-        "socket": dummy,
-        "address": client_addr,
-        "connected_time": "now",
-    }
-
-    # craft command: /command <cmd> (<client_addr>)
-    # wrap the tuple in quotes so the handler's parser (shlex.split) treats it as one token
-    # and ast.literal_eval inside the handler can parse it
-    cmd = "/command echo_test \"('127.0.0.1', 12345)\""
-
+    cmd = '/command "cd /tmp" "ls ./" "echo done" "(\'127.0.0.1\', 12345)" "(\'127.0.0.1\', 12346)"'
     ctl._command_handler(None, ("127.0.0.1", 9999), cmd)
 
-    assert dummy.data != b""
-    sent = dummy.data.decode("utf-8")
-    assert "/command" in sent
-    assert "echo_test" in sent
-    assert "127.0.0.1" in sent
+    for port, dummy in ((12345, first), (12346, second)):
+        tokens = dummy.sent_tokens()
+        assert tokens[1] == "('127.0.0.1', {})".format(port)
+        assert tokens[2:] == ["cd /tmp", "ls ./", "echo done"]
 
 
-def test_command_handler_server_setup_triggers_file_transfer(server_client, monkeypatch):
-    """Verify server-side setup handler runs the command and triggers file transfer + /command_done."""
-    server, client = server_client
+def test_command_handler_skips_unconnected_client(server, capsys):
+    server.running = True
 
-    # Intercept writes to prevent tests creating log files on disk.
-    # Minimal, deterministic strategy: for any write/append/create open
-    # return an in-memory stream; keep other opens unchanged. Also avoid
-    # directory creation by making makedirs a no-op.
-    orig_open = builtins.open
+    ctl._command_handler(None, ("127.0.0.1", 9999), '/command "ls" "(\'127.0.0.1\', 4242)"')
 
-    def dummy_open(path, mode="r", *a, **kw):
-        if any(m in mode for m in ("w", "a", "x")):
-            return io.StringIO()
-        return orig_open(path, mode, *a, **kw)
+    assert "is not connected, skipped" in capsys.readouterr().out
 
-    monkeypatch.setattr(builtins, "open", dummy_open)
-    monkeypatch.setattr(ctl.os, "makedirs", lambda *a, **k: None)
 
-    # mock subprocess.run to avoid executing real commands
-    monkeypatch.setattr(
-        ctl.subprocess,
-        "run",
-        lambda *a, **kw: SimpleNamespace(stdout="out", stderr="", returncode=0),
+def test_command_handler_requires_command_and_client(server, capsys):
+    server.running = True
+
+    ctl._command_handler(None, ("127.0.0.1", 9999), '/command "ls"')
+    assert "Invalid command format" in capsys.readouterr().out
+
+    ctl._command_handler(None, ("127.0.0.1", 9999), "/command \"('127.0.0.1', 4242)\"")
+    assert "Invalid command format" in capsys.readouterr().out
+
+
+def test_split_commands_and_clients_keeps_address_like_commands():
+    """Only the trailing addresses are clients; everything before them is a command."""
+    commands, clients = ctl._split_commands_and_clients(
+        ["echo ('a', 1)", "ls", "('127.0.0.1', 3000)", "('10.0.0.2', 3001)"]
     )
 
-    calls = {}
-
-    def fake_file_transfer(message, file_folder_abspath=None):
-        calls["file_transfer"] = message
-
-    def fake_send_message(client_socket, message):
-        calls.setdefault("sent", []).append(message)
-
-    monkeypatch.setattr(client, "file_transfer_client_recv_client_start", fake_file_transfer)
-    monkeypatch.setattr(client, "send_message", fake_send_message)
-
-    # construct command that _command_handler_server_setup expects
-    # format: /command <command> <total_num> <client_id> <client_addr>
-    cmd = "/command echo 1 0 ('127.0.0.1', 12345)"
-
-    ctl._command_handler_server_setup(None, ("127.0.0.1", 9999), cmd)
-
-    assert "file_transfer" in calls
-    assert any("/command_done" in m for m in calls.get("sent", []))
+    assert commands == ["echo ('a', 1)", "ls"]
+    assert clients == [("127.0.0.1", 3000), ("10.0.0.2", 3001)]
 
 
-def test_command_done_merges_transferred_logs_into_one_file(server, tmp_path, monkeypatch):
-    server.file_transfer_dir = str(tmp_path / "received")
-    (tmp_path / "received").mkdir()
-    monkeypatch.setattr(ctl.os.path, "dirname", lambda path: str(tmp_path))
-
-    received_file = tmp_path / "received" / "logs_0.json"
-    received_file.write_text(json.dumps({"cmd1": [{"output": "ok"}]}), encoding="utf-8")
-
-    logs_dir = tmp_path / "logs"
-    logs_dir.mkdir()
-    existing_file = logs_dir / "logs_1.json"
-    existing_file.write_text(json.dumps({"cmd1": [{"error": "none"}]}), encoding="utf-8")
-
-    cmd = '/command_done "logs_0.json" "/tmp/logs/logs_0.json"'
-    ctl._command_done_dealing_server(None, ("127.0.0.1", 9999), cmd)
-
-    merged_file = logs_dir / "merged_logs.json"
-    assert merged_file.exists()
-    merged = json.loads(merged_file.read_text(encoding="utf-8"))
-    assert merged["cmd1"][0] == {"output": "ok"}
-    assert merged["cmd1"][1] == {"error": "none"}
-
-
-def test_command_handler_server_setup_subprocess_error(server_client, monkeypatch, capsys):
-    """subprocess.run raising -> returncode -1 and the error is logged."""
-    server, client = server_client
-    import builtins as _b
-
-    orig_open = _b.open
-
-    def dummy_open(path, mode="r", *a, **kw):
-        if any(m in mode for m in ("w", "a", "x")):
-            return io.StringIO()
-        return orig_open(path, mode, *a, **kw)
-
-    monkeypatch.setattr(_b, "open", dummy_open)
-    monkeypatch.setattr(ctl.os, "makedirs", lambda *a, **k: None)
-    monkeypatch.setattr(ctl.subprocess, "run", lambda *a, **kw: (_ for _ in ()).throw(OSError("boom")))
-
-    cmd = "/command echo 1 0 ('127.0.0.1', 12345)"
-    ctl._command_handler_server_setup(None, ("127.0.0.1", 9999), cmd)
-    out = capsys.readouterr().out
-    assert "Dealing the command successfully" in out
+def test_log_filename_is_per_client_address():
+    assert ctl._log_filename_for_address(("127.0.0.1", 3000)) == "logs_127.0.0.1_3000.json"
+    assert ctl._log_filename_for_address(("::1", 3000)) == "logs___1_3000.json"
 
 
 def test_command_handler_server_setup_invalid_format(monkeypatch, capsys):
@@ -152,50 +210,271 @@ def test_command_handler_server_setup_invalid_format(monkeypatch, capsys):
     assert "Invalid command format" in capsys.readouterr().out
 
 
-def test_command_done_moves_log_when_destination_missing(tmp_path, monkeypatch):
-    """destination log absent -> the received log is moved into place."""
-    import shutil
-
-    received = tmp_path / "received"
-    received.mkdir()
-    server_inst = SimpleNamespace(file_transfer_dir=str(received))
-    monkeypatch.setattr(ctl, "server_instance", server_inst)
-    logs_dir = tmp_path / "logs"
-    logs_dir.mkdir()
-    monkeypatch.setattr(ctl.os.path, "dirname", lambda path: str(tmp_path))
-    monkeypatch.setattr(ctl, "_merge_all_logs", lambda d: None)
-
-    received_file = received / "logs_7.json"
-    received_file.write_text(json.dumps({"k": [{"o": "v"}]}), encoding="utf-8")
-
-    cmd = '/command_done "logs_7.json" "/tmp/logs/logs_7.json"'
-    ctl._command_done_dealing_server(None, ("127.0.0.1", 9999), cmd)
-
-    dest = logs_dir / "logs_7.json"
-    assert dest.exists()
-    assert json.loads(dest.read_text(encoding="utf-8")) == {"k": [{"o": "v"}]}
-    assert not received_file.exists()
+def test_command_handler_server_setup_rejects_non_address(client, capsys):
+    ctl._command_handler_server_setup(None, ("127.0.0.1", 9999), '/command "ls" "not-an-address"')
+    assert "is not a client address" in capsys.readouterr().out
 
 
-def test_command_done_handles_move_failure(tmp_path, monkeypatch, capsys):
-    """move failure -> error message is printed, no crash."""
-    received = tmp_path / "received"
-    received.mkdir()
-    server_inst = SimpleNamespace(file_transfer_dir=str(received))
-    monkeypatch.setattr(ctl, "server_instance", server_inst)
-    monkeypatch.setattr(ctl.os.path, "dirname", lambda path: str(tmp_path))
+def test_command_handler_server_setup_without_client_instance(monkeypatch, capsys):
+    monkeypatch.setattr(ctl, "client_instance", None)
+    ctl._command_handler_server_setup(
+        None, ("127.0.0.1", 9999), '/command "(\'127.0.0.1\', 1)" "ls"'
+    )
+    assert "client instance is not set up" in capsys.readouterr().out
 
-    def broken_move(*a, **k):
-        raise OSError("disk full")
 
-    monkeypatch.setattr(ctl.shutil, "move", broken_move)
+def test_command_batch_reports_shell_start_failure(logs_dir, monkeypatch, capsys):
+    """A shell that cannot start is reported, and no log is announced."""
 
-    received_file = received / "logs_9.json"
-    received_file.write_text("{}", encoding="utf-8")
+    def broken_popen(*args, **kwargs):
+        raise OSError("no shell")
 
-    cmd = '/command_done "logs_9.json" "/tmp/logs/logs_9.json"'
-    ctl._command_done_dealing_server(None, ("127.0.0.1", 9999), cmd)
-    assert "ErrorWhileMovingTheLogFile" in capsys.readouterr().out
+    monkeypatch.setattr(ctl.subprocess, "Popen", broken_popen)
+    ctl._CommandBatch(("127.0.0.1", 3000), ["ls"], "peer").run()
+
+    assert "ErrorWhileStartingTheCommandShell" in capsys.readouterr().out
+
+
+def test_command_batch_strips_end_markers_split_across_reads(client, logs_dir, monkeypatch):
+    """Output is logged as it arrives and the marker never reaches the log."""
+    chunks = []
+    announced = []
+
+    def fake_transfer(message, file_folder_abspath=None):
+        chunks.append(json.loads(Path(shlex.split(message)[1]).read_text(encoding="utf-8")))
+        return True
+
+    def fake_send(client_socket, message):
+        announced.append(message)
+
+    monkeypatch.setattr(client, "file_transfer_client_recv_client_start", fake_transfer)
+    monkeypatch.setattr(client, "send_message", fake_send)
+
+    batch = ctl._CommandBatch(("127.0.0.1", 3000), ["ls"], "peer")
+    prefix = ctl._COMMAND_END_MARKER + "abc123"
+    with batch._log_lock:
+        batch._current_command = "ls"
+        batch._current_cmd_id = "1"
+        batch._sentinel_prefix = prefix
+        batch._consume_stdout_locked("partial line\n")
+        batch._consume_stdout_locked(prefix[: len(prefix) - 2])  # marker split in half
+        batch._consume_stdout_locked(prefix[len(prefix) - 2 :] + " 1")
+        batch._consume_stdout_locked("2\n")
+
+    entries = chunks[-1]["ls"]
+    assert [entry["stream"] for entry in entries] == ["stdout", "end"]
+    assert entries[0]["output"] == "partial line\n"
+    assert entries[1]["returncode"] == 12
+    assert announced[-1].startswith('/command_log_chunk "logs_127.0.0.1_3000_chunk1.json"')
+    assert announced[-1].strip().endswith('"logs_127.0.0.1_3000.json"')
+    assert batch._pending == []  # the marker was consumed, not queued as output
+
+
+def test_command_batch_keeps_entries_when_a_chunk_upload_fails(
+    client, logs_dir, monkeypatch, capsys
+):
+    """A chunk the server did not receive goes out with the next one, in order."""
+    attempts = []
+    uploaded = []
+
+    def fake_transfer(message, file_folder_abspath=None):
+        attempts.append(message)
+        if len(attempts) == 1:
+            return False
+        uploaded.append(json.loads(Path(shlex.split(message)[1]).read_text(encoding="utf-8")))
+        return True
+
+    monkeypatch.setattr(client, "file_transfer_client_recv_client_start", fake_transfer)
+    monkeypatch.setattr(client, "send_message", lambda client_socket, message: None)
+
+    batch = ctl._CommandBatch(("127.0.0.1", 3000), ["ls"], "peer")
+    with batch._log_lock:
+        batch._current_command = "ls"
+        batch._current_cmd_id = "1"
+        batch._sentinel_prefix = "never-matches"
+        batch._pending_bytes = ctl._LOG_CHUNK_BYTES
+        batch._consume_stdout_locked("first half\n")
+        batch._maybe_flush_locked()  # the cutoff is reached, but the upload fails
+    assert [entry["output"] for entry in batch._pending] == ["first half\n"]  # kept, not lost
+    assert "was not delivered" in capsys.readouterr().out
+
+    with batch._log_lock:
+        batch._consume_stdout_locked("second half\n")  # crosses the cutoff again
+        batch._maybe_flush_locked()  # and this upload carries both halves
+    assert [entry["output"] for entry in uploaded[-1]["ls"]] == ["first half\n", "second half\n"]
+
+
+def test_command_batch_drops_lines_the_shell_echoes_back(client, logs_dir, monkeypatch, capsys):
+    """Lines a shell echoes from its stdin (cmd.exe) are control lines, not output."""
+    chunks = []
+
+    def fake_transfer(message, file_folder_abspath=None):
+        chunks.append(json.loads(Path(shlex.split(message)[1]).read_text(encoding="utf-8")))
+        return True
+
+    monkeypatch.setattr(client, "file_transfer_client_recv_client_start", fake_transfer)
+    monkeypatch.setattr(client, "send_message", lambda client_socket, message: None)
+
+    marker = ctl._COMMAND_END_MARKER + "abc123"
+    echoed_marker_line = f"echo {marker} %ERRORLEVEL%"
+    batch = ctl._CommandBatch(("127.0.0.1", 3000), ["dir /b"], "peer")
+    batch._echoed_lines.update({"dir /b", echoed_marker_line})  # what _write_stdin records there
+    with batch._log_lock:
+        batch._current_command = "dir /b"
+        batch._current_cmd_id = "1"
+        batch._sentinel_prefix = marker
+        batch._consume_stdout_locked("dir /b\r\n")  # echoed command line
+        assert batch._pending == []
+        batch._consume_stdout_locked(f"echo {marker}")  # echoed marker line, still incomplete
+        assert batch._pending == []
+        batch._consume_stdout_locked(" %ERRORLEVEL%\r\nfile_a.txt\r\n")
+        assert [entry["output"] for entry in batch._pending] == ["file_a.txt\r\n"]
+        batch._consume_stdout_locked(f"{marker} 0\r\n")
+
+    entries = chunks[-1]["dir /b"]
+    assert [entry["stream"] for entry in entries] == ["stdout", "end"]
+    assert entries[0]["output"] == "file_a.txt\r\n"
+    assert entries[1]["returncode"] == 0
+
+
+def test_command_log_chunk_appends_to_the_same_log(server, tmp_path, logs_dir):
+    """Every chunk of a client extends that client's log; nothing is overwritten."""
+    server.file_transfer_dir = str(tmp_path / "received")
+    Path(server.file_transfer_dir).mkdir()
+
+    chunk_1 = Path(server.file_transfer_dir) / "logs_127.0.0.1_3000_chunk1.json"
+    chunk_1.write_text(json.dumps({"ls": [{"output": "first"}]}), encoding="utf-8")
+    ctl._command_log_chunk_dealing_server(
+        None,
+        ("127.0.0.1", 9999),
+        '/command_log_chunk "logs_127.0.0.1_3000_chunk1.json" "logs_127.0.0.1_3000.json"',
+    )
+
+    chunk_2 = Path(server.file_transfer_dir) / "logs_127.0.0.1_3000_chunk2.json"
+    chunk_2.write_text(json.dumps({"ls": [{"output": "second"}]}), encoding="utf-8")
+    ctl._command_log_chunk_dealing_server(
+        None,
+        ("127.0.0.1", 9999),
+        '/command_log_chunk "logs_127.0.0.1_3000_chunk2.json" "logs_127.0.0.1_3000.json"',
+    )
+
+    collected = log_of(logs_dir / "logs_127.0.0.1_3000.json")
+    assert [entry["output"] for entry in collected["ls"]] == ["first", "second"]
+    assert not chunk_1.exists()  # the received copies are consumed, not kept
+    assert not chunk_2.exists()
+
+
+def test_command_log_chunk_without_received_file(server, tmp_path, capsys):
+    server.file_transfer_dir = str(tmp_path / "received")
+    Path(server.file_transfer_dir).mkdir()
+
+    ctl._command_log_chunk_dealing_server(
+        None, ("127.0.0.1", 9999), '/command_log_chunk "gone.json" "logs_x.json"'
+    )
+
+    assert "was not received" in capsys.readouterr().out
+
+
+def test_command_log_chunk_invalid_format(server, capsys):
+    ctl._command_log_chunk_dealing_server(None, ("127.0.0.1", 9999), "/command_log_chunk")
+    assert "Invalid command_log_chunk format" in capsys.readouterr().out
+
+
+def test_command_done_merges_every_collected_log(server, logs_dir, capsys):
+    (logs_dir / "logs_127.0.0.1_3000.json").write_text(
+        json.dumps({"cmd1": [{"output": "ok"}]}), encoding="utf-8"
+    )
+    (logs_dir / "logs_127.0.0.1_3001.json").write_text(
+        json.dumps({"cmd1": [{"error": "none"}]}), encoding="utf-8"
+    )
+
+    ctl._command_done_dealing_server(
+        None, ("127.0.0.1", 9999), '/command_done "logs_127.0.0.1_3000.json"'
+    )
+
+    merged = log_of(logs_dir / "merged_logs.json")
+    assert merged["cmd1"][0] == {"output": "ok"}
+    assert merged["cmd1"][1] == {"error": "none"}
+    assert "Command Done!" in capsys.readouterr().out
+
+
+def test_command_done_invalid_format(server, capsys):
+    ctl._command_done_dealing_server(None, ("127.0.0.1", 9999), "/command_done")
+    assert "Invalid command_done format" in capsys.readouterr().out
+
+
+def test_command_batch_shares_one_shell_between_its_commands(live_pair, logs_dir, tmp_path):
+    """A cd of the first command still applies to the second command of the batch."""
+    _server, _client, address = live_pair
+    (tmp_path / "file_a.txt").write_text("a", encoding="utf-8")
+    log_path = logs_dir / ctl._log_filename_for_address(address)
+    if os.name == "nt":  # cmd quotes with double quotes and lists with dir
+        change_dir = f'cd /d "{tmp_path}"'
+        list_command = "dir /b"
+    else:
+        change_dir = "cd {}".format(shlex.quote(str(tmp_path)))
+        list_command = "ls -1"
+
+    ctl._command_handler(None, ("127.0.0.1", 1), console_batch([change_dir, list_command], address))
+
+    assert wait_until(lambda: finished(log_path, list_command), timeout=30)
+    listing = "".join(entry["output"] for entry in entries_of(log_path, list_command))
+    assert "file_a.txt" in listing  # listed from the directory the batch changed into
+    assert finished(log_path, change_dir)
+    assert wait_until(
+        lambda: (log_of(logs_dir / "merged_logs.json") or {}).get(list_command), timeout=30
+    )
+
+
+def test_command_batch_streams_a_running_command_in_chunks(live_pair, logs_dir, tmp_path, capsys):
+    """A command that keeps producing output is tracked while it still runs."""
+    _server, _client, address = live_pair
+    log_path = logs_dir / ctl._log_filename_for_address(address)
+    if os.name == "nt":  # cmd has no `while`; print a large file, idle, then mark the end
+        big_file = tmp_path / "big.txt"
+        big_file.write_text("0123456789" * 7000, encoding="utf-8")  # 70 KB: over one chunk
+        command = f'type "{big_file}" & ping -n 8 127.0.0.1 > nul & echo tail'
+    else:
+        command = (
+            "i=0; while [ $i -lt 3200 ]; do echo 0123456789012345678901234567890123456789; "
+            "i=$((i+1)); done; sleep 5; echo tail"
+        )
+
+    ctl._command_handler(None, ("127.0.0.1", 1), console_batch([command], address))
+
+    assert wait_until(lambda: output_bytes(log_path, command) >= ctl._LOG_CHUNK_BYTES, timeout=60)
+    running = entries_of(log_path, command)
+    assert [entry for entry in running if entry["stream"] == "stdout"]  # output already collected
+
+    assert wait_until(lambda: finished(log_path, command), timeout=60)
+    assert "tail" in "".join(entry["output"] for entry in entries_of(log_path, command))
+    out = capsys.readouterr().out
+    assert "Log chunk" in out
+    # The output crossed the chunk size while the command was still running, so
+    # the client uploaded a chunk of its own and the chunk that closes the
+    # command is a second one. A client that only uploads when the command
+    # finished delivers a single chunk. The per-delivery notices are counted,
+    # never a wall-clock deadline: the whole round trip (chunk upload, merge on
+    # the server) may outlast the command's idle on a loaded CI runner.
+    delivered = out.count(f"appended to {ctl._log_filename_for_address(address)} on the server")
+    assert delivered >= 2, out
+
+
+def test_call_extension_functions_runs_batches_of_a_live_pair(live_pair, logs_dir):
+    """Both public entry points reach the control extension without a console.
+
+    The server call goes through the console group (the handler a typed line
+    would run) and the client call through the inbound group (the handler a
+    line pushed by the server would run).
+    """
+    server, client, address = live_pair
+    log_path = logs_dir / ctl._log_filename_for_address(address)
+
+    assert server.call_extension_functions(console_batch(["echo from_server"], address)) is None
+    assert wait_until(lambda: finished(log_path, "echo from_server"), timeout=30)
+
+    assert client.call_extension_functions(f'/command "{address}" "echo from_client"') is None
+    assert wait_until(lambda: finished(log_path, "echo from_client"), timeout=30)
 
 
 def test_injectable_setup_registers_commands(server, client):
@@ -204,6 +483,7 @@ def test_injectable_setup_registers_commands(server, client):
     ctl.setup_server_commands(server)
     ctl.setup_client_commands(client)
     assert "/command" in server._custom_handlers[1]  # server console group
+    assert "/command_log_chunk" in server._custom_handlers[0]  # client messages group
     assert "/command_done" in server._custom_handlers[0]  # client messages group
     assert "/command" in client._custom_handlers[0]  # server messages group
 
@@ -252,3 +532,24 @@ def test_client_setup_with_existing_instance_threaded():
         if c is not None:
             c.close()
         s.stop()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="simulates cmd.exe, which Windows already runs")
+def test_command_batch_ignores_the_lines_a_cmd_like_shell_echoes_back(
+    live_pair, logs_dir, tmp_path, monkeypatch
+):
+    """Control lines a shell echoes back (cmd.exe) never reach the log."""
+    shell_script = tmp_path / "cmd_like_shell.py"
+    shell_script.write_text(CMD_LIKE_SHELL, encoding="utf-8")
+    monkeypatch.setattr(ctl, "_shell_argv", lambda: [sys.executable, str(shell_script)])
+    monkeypatch.setattr(ctl, "_shell_echoes_stdin", lambda: True)
+    _server, _client, address = live_pair
+    log_path = logs_dir / ctl._log_filename_for_address(address)
+    command = "echo hello"
+
+    ctl._command_handler(None, ("127.0.0.1", 1), console_batch([command], address))
+
+    assert wait_until(lambda: finished(log_path, command), timeout=30)
+    output = "".join(entry["output"] for entry in entries_of(log_path, command))
+    assert output.strip() == "hello"  # neither the echoed command nor the echoed marker
+    assert ctl._COMMAND_END_MARKER not in output

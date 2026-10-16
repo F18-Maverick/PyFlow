@@ -18,7 +18,20 @@ import pytest
 from helpers import free_port, server_ready, wait_until
 
 from PyFlow.network_api import rsa_crypto
-from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
+from PyFlow.network_api.connect_tcp import (
+    CRYPTO_FRAMES_START,
+    FRAME_MAGIC,
+    FRAME_TYPE_RSA,
+    MAX_DECODE_FAILURES,
+    TCP_Client_Base,
+    TCP_Server_Base,
+)
+
+
+def _frame(frame_type, body):
+    """Build one wire frame exactly like _SecureChannel._wrap does."""
+    return FRAME_MAGIC + bytes([frame_type]) + len(body).to_bytes(4, "big") + body
+
 
 try:
     rsa_crypto.load_library()
@@ -152,7 +165,6 @@ def test_handshake_flips_both_sides_and_stores_keys(tcp_pair):
     assert wait_until(lambda: len(server._encrypted_sockets) == 1, timeout=5)
     assert len(server._encrypted_sockets) == 1
     for role in ("server", "client"):  # local keypairs generated under pvt_key
-
         assert os.path.exists(os.path.join(str(tmp_path / "pvt_key"), f"{role}_priv.pem"))
         assert os.path.exists(os.path.join(str(tmp_path / "pvt_key"), f"{role}_pub.pem"))
     server_reg = _registry_entries(server.crypto)  # the TOFU registry was written on both sides
@@ -160,7 +172,9 @@ def test_handshake_flips_both_sides_and_stores_keys(tcp_pair):
     client_reg = _registry_entries(client.crypto)
     assert len(server_reg) == 1  # this client, keyed by (ip, client port)
     assert len(client_reg) == 1  # the server, keyed by (ip, server port)
-    names = os.listdir(str(tmp_path / "pub_key"))  # exchanged peer keys cached as pem files under each side's pub_key
+    names = os.listdir(
+        str(tmp_path / "pub_key")
+    )  # exchanged peer keys cached as pem files under each side's pub_key
 
     assert "pub_key.json" in names
     assert any(name.startswith("client_") and name.endswith(".pem") for name in names)
@@ -200,13 +214,9 @@ def test_concurrent_encrypted_sends_not_dropped(tcp_pair):
             th.start()
         for th in threads:
             th.join()
-        echoed = wait_until(
-            lambda: buf.getvalue().count("msg send:") >= total, timeout=30
-        )
+        echoed = wait_until(lambda: buf.getvalue().count("msg send:") >= total, timeout=30)
     assert not errors
-    assert echoed, (
-        f"dropped {total - buf.getvalue().count('msg send:')} of {total} messages"
-    )
+    assert echoed, f"dropped {total - buf.getvalue().count('msg send:')} of {total} messages"
 
 
 def test_slow_sender_does_not_reorder_frames(tcp_pair):
@@ -241,13 +251,10 @@ def test_slow_sender_does_not_reorder_frames(tcp_pair):
         t1.join()
         t2.join()
         echoed = wait_until(
-            lambda: "msg send: first" in buf.getvalue()
-            and "msg send: second" in buf.getvalue(),
+            lambda: "msg send: first" in buf.getvalue() and "msg send: second" in buf.getvalue(),
             timeout=10,
         )
-    assert echoed, (
-        f"frame reordering dropped a message; echoes: {buf.getvalue()!r}"
-    )
+    assert echoed, f"frame reordering dropped a message; echoes: {buf.getvalue()!r}"
 
 
 def test_second_connection_passes_tofu(tcp_pair, tmp_path):
@@ -269,7 +276,9 @@ def test_second_connection_passes_tofu(tcp_pair, tmp_path):
     assert client2.connect()
     try:
         assert _wait_flip(client2)
-        assert len(_registry_entries(server.crypto)) == 1  # same key from a (possibly new) source port: accepted, still one entry per peer
+        assert (
+            len(_registry_entries(server.crypto)) == 1
+        )  # same key from a (possibly new) source port: accepted, still one entry per peer
 
         assert len(_registry_entries(client2.crypto)) == 1
         out = _roundtrip(client2, "second connection")
@@ -283,12 +292,16 @@ def test_rotated_client_key_rejected(tcp_pair, tmp_path):
     re-exchange the same endpoint presents a different public key."""
     server, client, _ = tcp_pair
     assert _wait_flip(client)
-    _new_keypair((client.crypto.pub_path, client.crypto.priv_path))  # rotate the client's keypair (as if ~/.ssh was replaced) and reload it
+    _new_keypair(
+        (client.crypto.pub_path, client.crypto.priv_path)
+    )  # rotate the client's keypair (as if ~/.ssh was replaced) and reload it
 
     client.crypto.reload_own_key()
     client.send_message(client.client_socket, "trigger rotation")
     assert _wait_disconnected(client)  # the server rejects the changed key and drops the connection
-    assert len(_registry_entries(server.crypto)) == 1  # the rejected key must not have been recorded
+    assert (
+        len(_registry_entries(server.crypto)) == 1
+    )  # the rejected key must not have been recorded
 
 
 def test_rotated_server_key_rejected(tcp_pair, tmp_path):
@@ -296,11 +309,15 @@ def test_rotated_server_key_rejected(tcp_pair, tmp_path):
     known server endpoint now presents a different public key."""
     server, client, _ = tcp_pair
     assert _wait_flip(client)
-    _new_keypair((server.crypto.pub_path, server.crypto.priv_path))  # rotate the server's keypair and reload it in the running server
+    _new_keypair(
+        (server.crypto.pub_path, server.crypto.priv_path)
+    )  # rotate the server's keypair and reload it in the running server
 
     server.crypto.reload_own_key()
     client.send_message(client.client_socket, "trigger rotation")
-    assert _wait_disconnected(client)  # the client rejects the changed key and closes the connection
+    assert _wait_disconnected(
+        client
+    )  # the client rejects the changed key and closes the connection
 
     assert len(_registry_entries(client.crypto)) == 1
 
@@ -378,39 +395,50 @@ def test_encryption_disabled_is_plaintext(tmp_path):
 
 
 def test_replay_of_old_ciphertext_rejected(tcp_pair):
-    """Replaying an old ciphertext (correct session nonce, stale seq) is
+    """Replaying an old frame (correct session nonce, stale seq) is
     dropped by the receiver and does not disturb the connection."""
     server, client, _ = tcp_pair
     assert _wait_flip(client)
     out = _roundtrip(client, "first message")  # consume seq 0 with a normal message
 
     assert "[server] msg send: first message" in out
-    nonce = client._crypto_my_nonce  # replay a ciphertext carrying seq 0 (already consumed) under the current session nonce
-
-    body = client.crypto.encrypt_for_peer(client._crypto_server_pem_path, "REPLAY_MARKER")
+    nonce = (
+        client._crypto_my_nonce
+    )  # replay a frame carrying seq 0 (already consumed) under the current session nonce
+    body = "{}|0|{}".format(
+        nonce,
+        client.crypto.encrypt_for_peer(client._crypto_server_pem_path, "REPLAY_MARKER"),
+    ).encode("ascii")
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        client._send_raw(client.client_socket, f"{nonce}|0|{body}")
+        client.client_socket.sendall(_frame(FRAME_TYPE_RSA, body))
         client.send_message(client.client_socket, "after replay")
         wait_until(lambda: "msg send: after replay" in buf.getvalue(), timeout=2.0)
     assert "REPLAY_MARKER" not in buf.getvalue()
 
 
 def test_replay_across_sessions_rejected(tcp_pair):
-    """A ciphertext from a previous session (stale nonce) is rejected
-    even at seq 0: the session nonce changes every handshake."""
+    """A frame from a previous session (stale nonce) is rejected even at
+    seq 0: the session nonce changes every handshake."""
     server, client, _ = tcp_pair
     assert _wait_flip(client)
     old_nonce = client._crypto_my_nonce
-    body = client.crypto.encrypt_for_peer(client._crypto_server_pem_path, "OLD_SESSION")
-    client._send_raw(client.client_socket, f"{'a'*32}|0|AAAA")  # force a re-exchange (new nonce): trigger a decode failure on the server with garbage
+    old_frame = _frame(
+        FRAME_TYPE_RSA,
+        "{}|0|{}".format(
+            old_nonce,
+            client.crypto.encrypt_for_peer(client._crypto_server_pem_path, "OLD_SESSION"),
+        ).encode("ascii"),
+    )
+    # force a re-exchange (new nonce): a malformed frame trips a decode failure
+    client.client_socket.sendall(_frame(FRAME_TYPE_RSA, b"garbage"))
     assert _wait_server_reexchanged(server, client)
     assert client.running
     assert client._crypto_my_nonce != old_nonce
-    buf = io.StringIO()  # replay the old-session ciphertext: nonce mismatch -> dropped
+    buf = io.StringIO()  # replay the old-session frame: nonce mismatch -> dropped
 
     with contextlib.redirect_stdout(buf):
-        client._send_raw(client.client_socket, f"{old_nonce}|0|{body}")
+        client.client_socket.sendall(old_frame)
         client.send_message(client.client_socket, "after old session")
         wait_until(lambda: "msg send: after old session" in buf.getvalue(), timeout=2.0)
     assert "OLD_SESSION" not in buf.getvalue()
@@ -448,7 +476,9 @@ def test_unauthenticated_pub_push_ignored(tmp_path, capsys):
     assert wait_until(_saw_ignore_log, timeout=5.0), "server did not report ignoring the push"
     raw.close()
     try:
-        assert len(_registry_entries(server.crypto)) == 0  # no registry entry and no cached key file were created
+        assert (
+            len(_registry_entries(server.crypto)) == 0
+        )  # no registry entry and no cached key file were created
 
         names = os.listdir(str(tmp_path / "pub_key"))
         assert not any(name.endswith(".pem") for name in names)
@@ -459,14 +489,78 @@ def test_unauthenticated_pub_push_ignored(tmp_path, capsys):
 def test_decode_failure_burst_closes_connection(tcp_pair):
     """After MAX_DECODE_FAILURES consecutive decode failures the
     circuit breaker closes the connection instead of re-exchanging
-    forever."""
+    forever.
+
+    Only a frame the server still parses as framed is counted: one that
+    lands after it dropped framing again (mid re-exchange) is stale and is
+    deliberately ignored — and the framed state is the channel's ``secure``
+    flag, which is set after the socket rejoins ``_encrypted_sockets``.
+    Waiting on that flag keeps every injection counted.
+    """
     server, client, _ = tcp_pair
     assert _wait_flip(client)
-    for i in range(3):
-        client._send_raw(client.client_socket, f"{'a'*32}|{i}|AAAA")
-        if not _wait_server_reexchanged(server, client):
-            break  # breaker fired, connection closed
+    sock = _server_sock(server, client)
+
+    def server_framed():
+        channel = server._channels.get(sock)
+        return bool(channel is not None and channel.secure)
+
+    for _ in range(MAX_DECODE_FAILURES):
+        assert wait_until(server_framed, timeout=30), "the server never framed the channel again"
+        client.client_socket.sendall(_frame(FRAME_TYPE_RSA, b"garbage"))
+        # the frame was parsed, counted, and framing dropped again
+        assert wait_until(
+            lambda: not server_framed() or not client.running, timeout=30
+        ), "the malformed frame was not counted by the breaker"
     assert _wait_disconnected(client)
+
+
+def test_stale_frame_coalesced_behind_a_plaintext_line_is_consumed(tcp_pair):
+    """A stale frame that arrives behind a plaintext line in one read is
+    still consumed as a frame, never served as a line.
+
+    Windows loopback regularly coalesces the peer's frames-start line and the
+    frame behind it into one read; serving those frame bytes as a line echoes
+    them as a message and resets the decode-failure streak, so the breaker
+    never trips (that leak made the burst test above fail on Windows CI).
+    """
+    server, client, _ = tcp_pair
+    assert _wait_flip(client)
+    sock = _server_sock(server, client)
+
+    def server_framed():
+        channel = server._channels.get(sock)
+        return bool(channel is not None and channel.secure)
+
+    # one counted failure drops the server's framing and re-exchanges
+    assert wait_until(server_framed, timeout=30)
+    client.client_socket.sendall(_frame(FRAME_TYPE_RSA, b"garbage"))
+    assert wait_until(lambda: not server_framed(), timeout=30)
+
+    # hold the server in the re-exchange window: what lands next is stale
+    real_try_flip = server._crypto_try_server_flip
+    server._crypto_try_server_flip = lambda *args, **kwargs: None
+
+    def streak():
+        with server._crypto_lock:
+            state = server._crypto_state.get(server._crypto_sock_addr.get(sock))
+            return None if state is None else state.get("decode_failures")
+
+    dropped = []  # the channel's own stale-frame notice
+    server._channels[sock]._debug = dropped.append
+    client.client_socket.sendall(
+        CRYPTO_FRAMES_START.encode("utf-8") + b"\n" + _frame(FRAME_TYPE_RSA, b"garbage")
+    )
+
+    assert wait_until(
+        lambda: any("dropped a stale frame" in entry for entry in dropped), timeout=5
+    ), "the stale frame behind the line was not consumed as a frame"
+    assert streak() == 1, "frame bytes echoed as a line reset the decode-failure streak"
+
+    # let the re-exchange settle before the fixture tears down: an in-flight
+    # key push would race the stop (its thread reports an unhandled exception)
+    server._crypto_try_server_flip = real_try_flip
+    assert wait_until(server_framed, timeout=30), "the re-exchange never settled"
 
 
 def test_mode_negotiation_survives_server_announcement_race(tmp_path):
@@ -676,3 +770,155 @@ def test_encrypted_quit_closes_the_session(tcp_pair):
     assert client.send_message(client.client_socket, "/quit") is True
     assert wait_until(lambda: not server.clients, timeout=5), "server kept the encrypted session"
     assert _wait_disconnected(client), "client did not see the server close the connection"
+
+
+def _capture_transfer_raw(instance, monkeypatch):
+    """Record the raw wire bytes and stamps of the transfer legs a peer accepts."""
+    raw = bytearray()
+    stamps = []
+    orig_attach = instance._crypto_attach_transfer_in
+
+    def attach(sock, control_socket, stamp):
+        stamps.append(stamp)
+        channel = orig_attach(sock, control_socket, stamp)
+        if channel is not None:
+            real_feed = channel.feed
+
+            def feed(data, _raw=raw, _feed=real_feed):
+                _raw.extend(data)
+                return _feed(data)
+
+            channel.feed = feed  # capture exactly the bytes handed to the decoder
+        return channel
+
+    monkeypatch.setattr(instance, "_crypto_attach_transfer_in", attach)
+    return raw, stamps
+
+
+def test_encrypted_file_transfer_client_to_server(tcp_pair, tmp_path, monkeypatch):
+    """A file pushed to the server crosses a framed sub-connection: the wire
+    carries ciphertext and the file arrives byte-identical."""
+    server, client, _ = tcp_pair
+    assert _wait_flip(client), "client never flipped to encrypted mode"
+    recv_dir = tmp_path / "server_recv"
+    recv_dir.mkdir()
+    server.file_transfer_dir = str(recv_dir)
+
+    raw, stamps = _capture_transfer_raw(server, monkeypatch)
+    payload = os.urandom(300 * 1024)
+    src = tmp_path / "payload.bin"
+    src.write_bytes(payload)
+
+    server_sock = _server_sock(server, client)
+    server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
+    assert wait_until(lambda: list(client.file_server_port_list), timeout=10)
+    with client.file_transfer_server_port_lock:
+        port, _cid, stamp = client.file_server_port_list[0]
+    assert stamp.startswith("enc:"), f"listener stamped {stamp!r}"
+    assert client.file_transfer_mode(
+        str(src), "127.0.0.1", port, 0, control_socket=client.client_socket, crypto=stamp
+    )
+
+    received = recv_dir / "payload.bin"
+    assert wait_until(
+        lambda: received.exists() and received.stat().st_size == len(payload), timeout=15
+    ), "file was not received"
+    assert received.read_bytes() == payload
+    assert stamps and stamps[0].startswith("enc:"), "the leg was not encrypted"
+    assert raw, "no transfer bytes crossed the wire"
+    assert payload not in raw, "the payload appeared in the clear on the wire"
+
+
+def test_encrypted_file_transfer_server_to_client(tcp_pair, tmp_path, monkeypatch):
+    """The reverse direction (server pushes a file) is framed too."""
+    server, client, _ = tcp_pair
+    assert _wait_flip(client), "client never flipped to encrypted mode"
+    recv_dir = tmp_path / "client_recv"
+    recv_dir.mkdir()
+    client.file_transfer_dir = str(recv_dir)
+
+    raw, stamps = _capture_transfer_raw(client, monkeypatch)
+    payload = os.urandom(300 * 1024)
+    src = tmp_path / "big.bin"
+    src.write_bytes(payload)
+
+    client.file_transfer_client_recv_server_start_thread(
+        "cid", client.client_socket, f"/file {src} 0"
+    )
+    assert wait_until(lambda: list(server.file_server_port_list), timeout=10)
+    with server.file_transfer_server_port_lock:
+        port, _cid, stamp = server.file_server_port_list[0]
+    assert stamp.startswith("enc:"), f"listener stamped {stamp!r}"
+    assert server.file_transfer_mode(
+        str(src),
+        "127.0.0.1",
+        port,
+        0,
+        control_socket=_server_sock(server, client),
+        crypto=stamp,
+    )
+
+    received = recv_dir / "big.bin"
+    assert wait_until(
+        lambda: received.exists() and received.stat().st_size == len(payload), timeout=15
+    ), "file was not received"
+    assert received.read_bytes() == payload
+    assert stamps and stamps[0].startswith("enc:"), "the leg was not encrypted"
+    assert raw and payload not in raw, "the payload appeared in the clear on the wire"
+
+
+def test_encrypted_forward_between_clients(tmp_path, monkeypatch):
+    """A forwarded file crosses the server's framed relay legs and arrives
+    byte-identical; the payload never appears in the clear."""
+    ssh_dir = tmp_path / "ssh"
+    ssh_dir.mkdir()
+    port = free_port()
+    server = TCP_Server_Base(
+        host="127.0.0.1",
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=True,
+    )
+    _redirect_crypto(server.crypto, tmp_path, ssh_dir, "pub_key")
+    threading.Thread(target=server.start_TCP_Server, daemon=True).start()
+    assert server_ready(server), "server did not start"
+    clients = []
+    try:
+        for i in range(2):
+            c = TCP_Client_Base(
+                host="127.0.0.1",
+                port=port,
+                client_host="127.0.0.1",
+                is_extend_command=True,
+                is_input_command_in_console=False,
+                is_enable_encrypto=True,
+            )
+            _redirect_crypto(c.crypto, tmp_path, ssh_dir, f"pub_key_client_{i}")
+            assert c.connect()
+            clients.append(c)
+        sender, receiver = clients
+        recv_dir = tmp_path / "receiver_recv"
+        recv_dir.mkdir()
+        receiver.file_transfer_dir = str(recv_dir)
+        for c in clients:
+            assert wait_until(lambda c=c: c.client_socket in c._encrypted_sockets, timeout=20)
+
+        raw, stamps = _capture_transfer_raw(receiver, monkeypatch)
+        payload = os.urandom(200 * 1024)
+        src = tmp_path / "fwd.bin"
+        src.write_bytes(payload)
+        dest = receiver.client_socket.getsockname()
+        sender._forward_one("file", "", "fwd.bin", str(src), [dest])
+
+        received = recv_dir / "fwd.bin"
+        assert wait_until(
+            lambda: received.exists() and received.stat().st_size == len(payload), timeout=30
+        ), "forwarded file was not received"
+        assert received.read_bytes() == payload
+        assert stamps and stamps[0].startswith("enc:"), "the target leg was not encrypted"
+        assert raw and payload not in raw, "the payload appeared in the clear on the wire"
+    finally:
+        for c in clients:
+            c.close()
+        server.stop()

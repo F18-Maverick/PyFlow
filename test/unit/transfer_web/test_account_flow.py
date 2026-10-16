@@ -1,16 +1,37 @@
 """Registration, password reset, client login and contacts over the web API.
 
-The client-facing half of the server: accounts are registered with a mailed code,
-passwords are reset the same way, web clients log in with a password or a code and
-receive a session token, and the instance list a client receives holds only the
-accounts that accepted it as a contact.
+The public-mode half of the server (a verification mailbox is configured):
+accounts are registered with a mailed code, passwords are reset the same way,
+web clients log in with a password or a code and receive a session token, and
+the instance list a client receives holds only the accounts that accepted it as
+a contact.  Without a mailbox the account flows are closed and clients see
+every other instance; those tests build their own app.
 """
 
+import json
 import threading
 
 import pytest
 
 from PyFlow.transfer_web.web_backend import server_backend
+
+
+# A validated mailbox switches the server into public mode: clients log in.
+# The file is written before the app is built, like a restarted configured
+# server reads it back.
+MAILBOX_CONFIG = {
+    "host": "smtp.example.com",
+    "port": 465,
+    "username": "bot@example.com",
+    "password": "authorization-code",
+    "from": "PyFlow <bot@example.com>",
+    "encryption": "ssl",
+}
+
+
+def write_mailbox(path):
+    """Store a mailbox the server accepts without opening an SMTP connection."""
+    path.write_text(json.dumps(MAILBOX_CONFIG), encoding="utf-8")
 
 
 class FakeTcpServer:
@@ -33,9 +54,10 @@ class FakeTcpServer:
 
 @pytest.fixture
 def web(tmp_path, monkeypatch):
-    """A ServerWebApp with a fake TCP server and a recording mailbox."""
+    """A public-mode ServerWebApp: fake TCP server, mailbox and recording sender."""
     monkeypatch.setattr(server_backend, "FLOW_WEB_DIR", str(tmp_path))
     monkeypatch.setattr(server_backend, "SECRET_KEY_FILE", str(tmp_path / "web_secret_key"))
+    write_mailbox(tmp_path / "email_config.json")
     app = server_backend.ServerWebApp(
         db_path=str(tmp_path / "flow_web.db"),
         mail_config_path=str(tmp_path / "email_config.json"),
@@ -50,6 +72,20 @@ def web(tmp_path, monkeypatch):
         )
 
     monkeypatch.setattr(app.mail, "send_code", record)
+    yield app
+    app.users.close()
+
+
+@pytest.fixture
+def internal_web(tmp_path, monkeypatch):
+    """A ServerWebApp without a mailbox: clients need no accounts at all."""
+    monkeypatch.setattr(server_backend, "SECRET_KEY_FILE", str(tmp_path / "internal_key"))
+    app = server_backend.ServerWebApp(
+        db_path=str(tmp_path / "internal.db"),
+        mail_config_path=str(tmp_path / "internal_mail.json"),
+    )
+    app.app.config.update(TESTING=True)
+    app.server = FakeTcpServer()
     yield app
     app.users.close()
 
@@ -115,6 +151,7 @@ def test_the_public_server_info_and_status_survive_a_running_tcp_server(client, 
         "host": "127.0.0.1",
         "port": 65432,
         "is_enable_encrypto": False,
+        "login_required": True,  # the configured mailbox makes clients log in
     }
     login = client.post("/api/login", json={"identify": "admin", "password": "admin"})
     assert login.status_code == 200
@@ -122,6 +159,58 @@ def test_the_public_server_info_and_status_survive_a_running_tcp_server(client, 
     assert status["running"] is True
     assert status["server_info"]["port"] == 65432
     assert status["clients"] == []
+
+
+def test_without_a_mailbox_server_info_reports_account_free_clients(internal_web):
+    client = internal_web.app.test_client()
+    assert client.get("/api/server_info").get_json()["login_required"] is False
+
+
+def test_without_a_mailbox_the_account_flows_are_closed(internal_web):
+    client = internal_web.app.test_client()
+    cases = [
+        ("post", "/api/register/send_code", {"email": "new@example.com"}),
+        ("post", "/api/register", {"username": "a"}),
+        ("post", "/api/login/send_code", {"identify": "a"}),
+        ("post", "/api/password/send_code", {"identify": "a"}),
+        ("post", "/api/password/reset", {"identify": "a"}),
+        ("post", "/api/client_login", {"identify": "a", "password": "b", "code": "c"}),
+        ("post", "/api/client_verify", {"token": "t"}),
+        ("post", "/api/contacts/search", {"query": "a"}),
+        ("get", "/api/contact_requests", None),
+    ]
+    for method, path, payload in cases:
+        resp = client.get(path) if method == "get" else client.post(path, json=payload)
+        assert resp.status_code == 400, (method, path)
+        assert "client accounts are not enabled" in resp.get_json()["error"], (method, path)
+
+
+def test_without_a_mailbox_clients_see_every_other_instance(internal_web):
+    web = internal_web
+    alice_addr, bob_addr = ("127.0.0.1", 1111), ("127.0.0.1", 2222)
+    alice_socket, bob_socket = object(), object()
+    web.server.clients[alice_addr] = {
+        "socket": alice_socket,
+        "address": alice_addr,
+        "id": "127.0.0.1:1111",
+    }
+    web.server.clients[bob_addr] = {
+        "socket": bob_socket,
+        "address": bob_addr,
+        "id": "127.0.0.1:2222",
+    }
+
+    # no account and no /web_bind: every client sees every other instance
+    assert web._client_list_for(alice_addr) == [
+        {"ip": "127.0.0.1", "port": 2222, "id": "127.0.0.1:2222"}
+    ]
+    assert [c["port"] for c in web._client_list_for(("127.0.0.1", 3333))] == [1111, 2222]
+
+    web._broadcast_clients()
+    pushed = [text for sock, text in web.server.pushes if sock is alice_socket]
+    assert pushed[-1] == (
+        '/web_clients_update [{"ip":"127.0.0.1","port":2222,"id":"127.0.0.1:2222"}]'
+    )
 
 
 def test_registration_mails_a_code_and_creates_the_account(client, web):
@@ -164,9 +253,12 @@ def test_registration_mails_a_code_and_creates_the_account(client, web):
     assert "password" not in user
 
     # the console login accepts the new account, by name and by email
-    assert client.post(
-        "/api/login", json={"identify": "carol", "password": "carols-password"}
-    ).status_code == 200
+    assert (
+        client.post(
+            "/api/login", json={"identify": "carol", "password": "carols-password"}
+        ).status_code
+        == 200
+    )
 
 
 def test_registration_rejects_a_taken_or_malformed_email(client, web):
@@ -177,7 +269,7 @@ def test_registration_rejects_a_taken_or_malformed_email(client, web):
     assert client.post("/api/register/send_code", json={"email": "nope"}).status_code == 400
 
 
-def test_registration_needs_a_mailbox_that_works(tmp_path, monkeypatch):
+def test_registration_is_closed_while_no_mailbox_is_configured(tmp_path, monkeypatch):
     monkeypatch.setattr(server_backend, "SECRET_KEY_FILE", str(tmp_path / "key"))
     app = server_backend.ServerWebApp(
         db_path=str(tmp_path / "flow_web.db"), mail_config_path=str(tmp_path / "mail.json")
@@ -185,7 +277,7 @@ def test_registration_needs_a_mailbox_that_works(tmp_path, monkeypatch):
     app.app.config.update(TESTING=True)
     resp = app.app.test_client().post("/api/register/send_code", json={"email": "a@example.com"})
     assert resp.status_code == 400
-    assert "not configured" in resp.get_json()["error"]
+    assert "client accounts are not enabled" in resp.get_json()["error"]
     app.users.close()
 
 
@@ -200,25 +292,37 @@ def test_password_reset_verifies_the_code_before_storing_the_new_password(client
 
     resp = client.post(
         "/api/password/reset",
-        json={"identify": "carol", "code": "000000" if code != "000000" else "111111",
-              "password": "brand-new-password"},
+        json={
+            "identify": "carol",
+            "code": "000000" if code != "000000" else "111111",
+            "password": "brand-new-password",
+        },
     )
     assert resp.status_code == 400
-    assert client.post(
-        "/api/login", json={"identify": "carol", "password": "carols-password"}
-    ).status_code == 200  # the rejected reset left the old password alone
+    assert (
+        client.post(
+            "/api/login", json={"identify": "carol", "password": "carols-password"}
+        ).status_code
+        == 200
+    )  # the rejected reset left the old password alone
 
     resp = client.post(
         "/api/password/reset",
         json={"identify": "carol", "code": code, "password": "brand-new-password"},
     )
     assert resp.status_code == 200
-    assert client.post(
-        "/api/login", json={"identify": "carol", "password": "carols-password"}
-    ).status_code == 401
-    assert client.post(
-        "/api/login", json={"identify": "carol", "password": "brand-new-password"}
-    ).status_code == 200
+    assert (
+        client.post(
+            "/api/login", json={"identify": "carol", "password": "carols-password"}
+        ).status_code
+        == 401
+    )
+    assert (
+        client.post(
+            "/api/login", json={"identify": "carol", "password": "brand-new-password"}
+        ).status_code
+        == 200
+    )
 
 
 def test_password_reset_rejects_unknown_accounts_and_accounts_without_email(client, web):
@@ -263,9 +367,10 @@ def test_client_login_rejects_a_single_factor(client, web):
     assert "password and the mailed verification code" in only_password.get_json()["error"]
 
     # neither attempt spent the code, so the full pair still works afterwards
-    assert client_login(
-        client, "carol@example.com", password="carols-password", code=code
-    ).status_code == 200
+    assert (
+        client_login(client, "carol@example.com", password="carols-password", code=code).status_code
+        == 200
+    )
 
 
 def test_client_login_rejects_a_wrong_password_or_code(client, web):
@@ -280,17 +385,22 @@ def test_client_login_rejects_a_wrong_password_or_code(client, web):
     assert "invalid account or password" in wrong_password.get_json()["error"]
 
     wrong_code = "000000" if code != "000000" else "111111"
-    assert client_login(
-        client, "carol@example.com", password="carols-password", code=wrong_code
-    ).status_code == 401
+    assert (
+        client_login(
+            client, "carol@example.com", password="carols-password", code=wrong_code
+        ).status_code
+        == 401
+    )
 
     # the code is spent by the successful login only
-    assert client_login(
-        client, "carol@example.com", password="carols-password", code=code
-    ).status_code == 200
-    assert client_login(
-        client, "carol@example.com", password="carols-password", code=code
-    ).status_code == 401  # a code is single use
+    assert (
+        client_login(client, "carol@example.com", password="carols-password", code=code).status_code
+        == 200
+    )
+    assert (
+        client_login(client, "carol@example.com", password="carols-password", code=code).status_code
+        == 401
+    )  # a code is single use
 
 
 def test_client_login_rejects_unknown_accounts(client, web):
@@ -303,14 +413,13 @@ def test_client_verify_checks_the_saved_credentials_against_the_token(client, we
     user = register(client, web, "carol", "carol@example.com")
     assert client.post("/api/login/send_code", json={"identify": "carol"}).status_code == 200
     code = code_for(web, "login", "carol@example.com")
-    token = client_login(
-        client, "carol", password="carols-password", code=code
-    ).get_json()["token"]
+    token = client_login(client, "carol", password="carols-password", code=code).get_json()["token"]
 
     replay = {"token": token, "identify": "carol", "password": "carols-password"}
-    assert client.post("/api/client_verify", json=replay).get_json()["user"]["user_id"] == user[
-        "user_id"
-    ]
+    assert (
+        client.post("/api/client_verify", json=replay).get_json()["user"]["user_id"]
+        == user["user_id"]
+    )
 
     stale = dict(replay, password="an-old-password")
     rejected = client.post("/api/client_verify", json=stale)
@@ -348,12 +457,18 @@ def test_a_client_sees_no_instance_until_the_contact_is_accepted(web):
     assert found["online"] is True
     assert found["relation"] == "none"
 
-    assert admin.post(
-        "/api/contacts/request", json={"token": alice_token, "user_id": found["user_id"]}
-    ).status_code == 200
-    assert admin.post(
-        "/api/contacts/search", json={"token": alice_token, "query": "bob"}
-    ).get_json()["results"][0]["relation"] == "outgoing"
+    assert (
+        admin.post(
+            "/api/contacts/request", json={"token": alice_token, "user_id": found["user_id"]}
+        ).status_code
+        == 200
+    )
+    assert (
+        admin.post("/api/contacts/search", json={"token": alice_token, "query": "bob"}).get_json()[
+            "results"
+        ][0]["relation"]
+        == "outgoing"
+    )
 
     requests = admin.get(f"/api/contact_requests?token={bob_token}").get_json()
     assert [r["user"]["username"] for r in requests["incoming"]] == ["alice"]
@@ -368,14 +483,15 @@ def test_a_client_sees_no_instance_until_the_contact_is_accepted(web):
 
     # both directions now see each other, with the account name attached
     alice_view = web._client_list_for(alice_addr)
-    assert [(c["ip"], c["port"], c["username"]) for c in alice_view] == [
-        ("127.0.0.1", 2222, "bob")
-    ]
+    assert [(c["ip"], c["port"], c["username"]) for c in alice_view] == [("127.0.0.1", 2222, "bob")]
     bob_view = web._client_list_for(bob_addr)
     assert [(c["ip"], c["port"], c["username"]) for c in bob_view] == [("127.0.0.1", 1111, "alice")]
-    assert admin.post(
-        "/api/contacts/search", json={"token": alice_token, "query": "bob"}
-    ).get_json()["results"][0]["relation"] == "contact"
+    assert (
+        admin.post("/api/contacts/search", json={"token": alice_token, "query": "bob"}).get_json()[
+            "results"
+        ][0]["relation"]
+        == "contact"
+    )
 
 
 def test_unbound_or_logged_out_clients_see_nothing(web):
@@ -432,15 +548,17 @@ def test_contacts_endpoints_require_a_valid_token(web):
     assert anonymous.get("/api/contact_requests").status_code == 401
     assert anonymous.post("/api/contacts/search", json={"query": "x"}).status_code == 401
     assert anonymous.post("/api/contacts/request", json={"user_id": "x"}).status_code == 401
-    assert anonymous.post(
-        "/api/contacts/respond", json={"request_id": 1, "accept": True}
-    ).status_code == 401
+    assert (
+        anonymous.post("/api/contacts/respond", json={"request_id": 1, "accept": True}).status_code
+        == 401
+    )
 
     register(anonymous, web, "alice", "alice@example.com")
     token = login_token(anonymous, web, "alice", "alices-password")
-    assert anonymous.post(
-        "/api/contacts/search", json={"token": token, "query": "  "}
-    ).status_code == 400
+    assert (
+        anonymous.post("/api/contacts/search", json={"token": token, "query": "  "}).status_code
+        == 400
+    )
 
 
 def test_contact_requests_are_answered_one_way_only(web):
@@ -456,18 +574,27 @@ def test_contact_requests_are_answered_one_way_only(web):
     requests = admin.get(f"/api/contact_requests?token={bob_token}").get_json()
     request_id = requests["incoming"][0]["id"]
 
-    assert admin.post(
-        "/api/contacts/respond",
-        json={"token": carol_token, "request_id": request_id, "accept": True},
-    ).status_code == 400  # not addressed to carol
-    assert admin.post(
-        "/api/contacts/respond", json={"token": bob_token, "request_id": 4242, "accept": True}
-    ).status_code == 400
+    assert (
+        admin.post(
+            "/api/contacts/respond",
+            json={"token": carol_token, "request_id": request_id, "accept": True},
+        ).status_code
+        == 400
+    )  # not addressed to carol
+    assert (
+        admin.post(
+            "/api/contacts/respond", json={"token": bob_token, "request_id": 4242, "accept": True}
+        ).status_code
+        == 400
+    )
 
-    assert admin.post(
-        "/api/contacts/respond",
-        json={"token": bob_token, "request_id": request_id, "accept": False},
-    ).status_code == 200
+    assert (
+        admin.post(
+            "/api/contacts/respond",
+            json={"token": bob_token, "request_id": request_id, "accept": False},
+        ).status_code
+        == 200
+    )
     assert web.users.are_contacts(alice["user_id"], bob["user_id"]) is False
 
     # adding an account twice is refused once the two are contacts
@@ -484,34 +611,95 @@ def test_contact_requests_are_answered_one_way_only(web):
     assert "already a contact" in again.get_json()["error"]
 
 
-def test_email_config_is_validated_and_the_password_is_not_echoed(client, web, monkeypatch):
-    assert client.post(
-        "/api/login", json={"identify": "admin", "password": "admin"}
-    ).status_code == 200
+def test_email_config_is_validated_and_the_password_is_not_echoed(tmp_path, monkeypatch):
+    """Configuring the mailbox is the switch from internal to public mode."""
+    monkeypatch.setattr(server_backend, "SECRET_KEY_FILE", str(tmp_path / "key"))
+    web = server_backend.ServerWebApp(
+        db_path=str(tmp_path / "config.db"), mail_config_path=str(tmp_path / "config_mail.json")
+    )
+    web.app.config.update(TESTING=True)
+    web.server = FakeTcpServer()
+    client = web.app.test_client()
+    try:
+        assert (
+            client.post("/api/login", json={"identify": "admin", "password": "admin"}).status_code
+            == 200
+        )
 
-    config = {
-        "host": "smtp.example.com",
-        "port": 465,
-        "username": "bot@example.com",
-        "password": "authorization-code",
-        "from": "PyFlow <bot@example.com>",
-        "encryption": "ssl",
+        config = {
+            "host": "smtp.example.com",
+            "port": 465,
+            "username": "bot@example.com",
+            "password": "authorization-code",
+            "from": "PyFlow <bot@example.com>",
+            "encryption": "ssl",
+        }
+        refused = client.post("/api/email_config", json={"config": config})
+        assert refused.status_code == 400  # no such server behind the host name
+        assert client.get("/api/email_config").get_json()["enabled"] is False
+        assert client.get("/api/server_info").get_json()["login_required"] is False
+
+        monkeypatch.setattr(web.mail, "_connect", lambda settings: FakeSession())
+        accepted = client.post("/api/email_config", json={"config": config})
+        assert accepted.status_code == 200, accepted.get_json()
+        assert accepted.get_json()["enabled"] is True
+        assert "password" not in accepted.get_json()["config"]
+
+        stored = client.get("/api/email_config").get_json()
+        assert stored["enabled"] is True
+        assert stored["config"]["host"] == "smtp.example.com"
+        assert "password" not in stored["config"]
+        assert web.mail.is_enabled() is True
+        # the mailbox turns the server public: clients have to log in now
+        assert client.get("/api/server_info").get_json()["login_required"] is True
+    finally:
+        web.users.close()
+
+
+def test_disabling_the_mailbox_switches_back_to_internal_mode(web, client, tmp_path):
+    """The disable route drops the mailbox: clients need no accounts again."""
+    assert (
+        client.post("/api/login", json={"identify": "admin", "password": "admin"}).status_code
+        == 200
+    )
+
+    resp = client.post("/api/email_config/disable")
+    assert resp.status_code == 200
+    assert resp.get_json() == {"ok": True, "enabled": False}
+    assert web.mail.is_enabled() is False
+    assert not (tmp_path / "email_config.json").exists()
+
+    assert client.get("/api/server_info").get_json()["login_required"] is False
+    assert client.post("/api/client_login", json={"identify": "a"}).status_code == 400
+    assert client.get("/api/contact_requests").status_code == 400
+
+    # without accounts, the instance list is the complete one again
+    address = ("127.0.0.1", 1111)
+    web.server.clients[address] = {
+        "socket": object(),
+        "address": address,
+        "id": "127.0.0.1:1111",
     }
-    refused = client.post("/api/email_config", json={"config": config})
-    assert refused.status_code == 400  # no such server behind the host name
-    assert client.get("/api/email_config").get_json()["enabled"] is False
+    assert web._client_list_for(("127.0.0.1", 2222)) == [
+        {"ip": "127.0.0.1", "port": 1111, "id": "127.0.0.1:1111"}
+    ]
 
-    monkeypatch.setattr(web.mail, "_connect", lambda settings: FakeSession())
-    accepted = client.post("/api/email_config", json={"config": config})
-    assert accepted.status_code == 200, accepted.get_json()
-    assert accepted.get_json()["enabled"] is True
-    assert "password" not in accepted.get_json()["config"]
 
-    stored = client.get("/api/email_config").get_json()
-    assert stored["enabled"] is True
-    assert stored["config"]["host"] == "smtp.example.com"
-    assert "password" not in stored["config"]
-    assert web.mail.is_enabled() is True
+def test_a_refused_disable_keeps_the_public_mode(web, client, monkeypatch):
+    """A mailbox that cannot be removed leaves the server in public mode."""
+    assert (
+        client.post("/api/login", json={"identify": "admin", "password": "admin"}).status_code
+        == 200
+    )
+
+    def refuse():
+        raise ValueError("cannot remove the mailbox file")
+
+    monkeypatch.setattr(web.mail, "disable", refuse)
+    resp = client.post("/api/email_config/disable")
+    assert resp.status_code == 400
+    assert "cannot remove" in resp.get_json()["error"]
+    assert client.get("/api/server_info").get_json()["login_required"] is True
 
 
 class FakeSession:

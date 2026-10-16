@@ -21,19 +21,26 @@ Inbound events (plain-text messages and files pushed by the server,
 whether direct sends or client forwards) are captured on the TCP
 client's receive threads through ``TCP_Client_Base``'s
 ``add_message_listener``/``add_file_listener`` APIs, queued here, and
-polled by the frontend via ``/api/events``.
+polled by the frontend via ``/api/events``.  The message listener reports
+every inbound line, protocol commands included; a direct command from
+the server is dropped here, so the queue carries user messages only.
+A file event carries the token of the saved file as well, so the chat can
+link the name to ``/api/open_location``: the route hands the path recorded
+for that token to the file manager of this host.
 
-Accounts: a connected client logs in with a server account before the
-instance list is usable.  A forced login needs both factors — the account
-password and a verification code mailed to the account address — while a
-client that starts again replays the saved credentials and session token
-through ``/api/client_verify``.  ``/api/login`` opens the session, the
-``/api/contacts/*`` and ``/api/contact_requests`` routes proxy the contact
-management to the server, and the session token is sent over TCP with
-``/web_bind`` so the server can push the contact list of that account.  The
-credentials are remembered in ``.Flow_Web/client_login.json``
-(owner-readable only) and the login window is shown whenever no session could
-be restored.
+Accounts: the connected server decides whether its clients need accounts.  A
+server with a verification mailbox is public, so this backend forces the
+account login before the instance list is usable; a server without one is
+internal and everything account-related is skipped — no login window, no
+contacts, and every client sees every other instance.  A forced login needs
+both factors — the account password and a verification code mailed to the
+account address — while a client that starts again replays the saved
+credentials and session token through ``/api/client_verify``.  ``/api/login``
+opens the session, the ``/api/contacts/*`` and ``/api/contact_requests``
+routes proxy the contact management to the server, and the session token is
+sent over TCP with ``/web_bind`` so the server can push the contact list of
+that account.  The credentials are remembered in
+``.Flow_Web/client_login.json`` (owner-readable only).
 """
 
 import json
@@ -90,6 +97,13 @@ FTP_GET_OK_COMMAND = "/ftp_get_ok"
 FTP_ERROR_COMMAND = "/ftp_error"
 UNAUTHORIZED = 401
 
+# Refusal of the account actions while the connected server runs without a
+# verification mailbox: it then serves an internal network and needs no client
+# accounts at all (a client is identified by its connection address).
+CLIENT_ACCOUNTS_OFF = (
+    "client accounts are not enabled on this server (no verification mailbox is configured)"
+)
+
 # Ordered (key, label, type, default, help) for every TCP_Client_Base
 # parameter shown in the startup-configuration UI.
 CLIENT_PARAM_FIELDS = [
@@ -114,7 +128,13 @@ CLIENT_PARAM_FIELDS = [
         True,
         "Wait for the server to be reachable before starting.",
     ),
-    ("max_custom_workers", "Max custom workers", "number", 10, "Maximum custom-command worker threads."),
+    (
+        "max_custom_workers",
+        "Max custom workers",
+        "number",
+        10,
+        "Maximum custom-command worker threads.",
+    ),
     (
         "is_extend_command",
         "Extend command",
@@ -125,8 +145,36 @@ CLIENT_PARAM_FIELDS = [
     ("is_enable_encrypto", "Enable encryption", "bool", True, "RSA-encrypt the TCP channel."),
     ("is_custom_keys", "Custom keys", "text", "", "Optional [pub_key_path, pvt_key_path] pair."),
     ("max_mem_buff", "Max memory buffer (MB)", "number", 2048, "In-memory transfer buffer in MB."),
+    (
+        "recv_messages_chunk_len",
+        "Recv messages chunk len",
+        "number",
+        4096,
+        "Bytes read per receive on the control connection.",
+    ),
+    (
+        "file_transfer_chunk_len",
+        "File transfer chunk len",
+        "number",
+        65536,
+        "Bytes per streamed chunk of a file or folder transfer.",
+    ),
     ("is_debug", "Debug log", "bool", False, "Log execution-process lines as well."),
     ("is_print_log", "Print log", "bool", True, "Log at all; False silences the instance."),
+    (
+        "is_enable_file_transfer_progress_bar",
+        "File transfer progress bar",
+        "bool",
+        True,
+        "Track every running file transfer; the web UI draws its progress bars from it.",
+    ),
+    (
+        "is_enable_real_time_network_speed",
+        "Real-time network speed",
+        "bool",
+        True,
+        "Measure the protocol's current network speed; the web UI shows it.",
+    ),
 ]
 
 
@@ -212,6 +260,27 @@ def _channel_ready(client):
         return client.client_socket in client._encrypted_sockets
 
 
+def _transfer_rows(progress):
+    """JSON rows for one progress store (``fid -> [transferred, total, speed, name]``).
+
+    Returns:
+        list[dict]: One row per running transfer, ordered by file name.
+    """
+    rows = []
+    for fid, entry in list(progress.items()):
+        rows.append(
+            {
+                "fid": fid,
+                "name": entry[3],
+                "transferred": entry[0],
+                "total": entry[1],
+                "speed": entry[2],
+            }
+        )
+    rows.sort(key=lambda row: (row["name"], row["fid"]))
+    return rows
+
+
 class _ServerRequestError(ValueError):
     """Refusal of the server web backend, carrying its HTTP status."""
 
@@ -224,6 +293,72 @@ class _ServerRequestError(ValueError):
         """
         super().__init__(message)
         self.status = status
+
+
+def _reveal_in_file_manager(path):
+    """Show a transferred file or folder in the file manager of this host.
+
+    A file is revealed (selected) inside its folder, a folder is opened
+    directly.  ``path`` comes from this backend's own transfer records, never
+    from the browser.
+
+    Args:
+        path (str): Existing absolute path of a transferred file or folder.
+
+    Raises:
+        OSError: If the desktop could not be asked to show the path.
+    """
+
+    def spawn(argv):
+        subprocess.Popen(
+            argv,
+            close_fds=True,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    path = os.path.abspath(path)
+    if os.name == "nt":  # /select highlights the entry inside its folder
+        # one command line: explorer reads the path from the string it was
+        # started with, and /select with a separate argument is unreliable
+        subprocess.Popen(
+            f'explorer /select,"{path}"',
+            close_fds=True,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        return
+    if sys.platform == "darwin":
+        spawn(["open", "-R", path])
+        return
+    # Linux/BSD: ask a free-desktop file manager to select the entry; a host
+    # without that service gets the containing folder opened by xdg-open.
+    try:
+        shown = subprocess.run(
+            [
+                "dbus-send",
+                "--session",
+                "--dest=org.freedesktop.FileManager1",
+                "--type=method_call",
+                "/org/freedesktop/FileManager1",
+                "org.freedesktop.FileManager1.ShowItems",
+                f"array:string:file://{quote(path)}",
+                "string:",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
+        if shown.returncode == 0:
+            return
+    except (OSError, subprocess.SubprocessError):
+        pass  # no dbus-send, no session bus, or no FileManager1 service
+    spawn(["xdg-open", path if os.path.isdir(path) else os.path.dirname(path)])
 
 
 class ClientWebApp:
@@ -243,8 +378,10 @@ class ClientWebApp:
         self._echo_expect = None  # plain text last sent to the server (echo suppression)
         self._echo_expect_at = 0.0
 
-        # Account session of the connected server: the token/account pair the
-        # TCP connection is bound to, plus the last login outcome.
+        # Account session of the connected server: whether its clients log in
+        # at all (a verification mailbox means public use), the token/account
+        # pair the TCP connection is bound to, plus the last login outcome.
+        self.login_required = True
         self._server_base = ""
         self.session = None
         self._login_error = ""
@@ -256,6 +393,9 @@ class ClientWebApp:
         self._ftp_lock = threading.Lock()
         self._ftp_seq = 0  # request ids for the "ftp" listing/download round trips
         self._ftp_waiters = {}  # request id -> {"event": Event, "reply": tuple | None}
+        self._open_targets = {}  # token -> path recorded for /api/open_location
+        self._open_targets_lock = threading.Lock()
+        self._open_target_seq = 0
         self.app = Flask(
             __name__,
             template_folder=TEMPLATE_DIR,
@@ -395,6 +535,41 @@ class ClientWebApp:
         _command, payload = self._ftp_request(FTP_GET_COMMAND, payload)
         return payload
 
+    def _ftp_transfer_folder(self):
+        """Folder this client saves transfers in when no destination is given.
+
+        Returns:
+            str: Absolute path of the transfer folder of the running TCP
+                client (``PyFlow/network_api/received_files`` by default), or
+                "" while no client is connected.
+        """
+        if self.client is None:
+            return ""
+        return os.path.abspath(self.client.file_transfer_dir)
+
+    def _ftp_arrival_folder(self, destination):
+        """Folder a download with ``destination`` lands in on this host.
+
+        The receiver resolves the destination exactly like this: an absolute
+        one replaces its transfer folder, a relative one is taken under it,
+        and an empty one keeps the folder itself.
+
+        Args:
+            destination (str | None): Folder typed in the download dialog.
+
+        Returns:
+            str: Absolute arrival folder of the entries, for the download
+                feedback; "" while no client is connected.
+        """
+        base = self._ftp_transfer_folder()
+        if not base:
+            return ""
+        if not destination:
+            return base
+        if os.path.isabs(destination):
+            return os.path.abspath(destination)
+        return os.path.abspath(os.path.join(base, destination))
+
     def _register_ftp_commands(self):
         """Register the replies of the web "ftp" share on the TCP client."""
         if self.client is None:
@@ -470,6 +645,48 @@ class ClientWebApp:
             slot["event"].set()
         return None
 
+    # --------------------------------------------------------- file locations
+
+    def _register_open_target(self, path):
+        """Remember one transferred path under an opaque token.
+
+        File messages carry no filesystem paths: the frontend gets the token of
+        the saved file, and ``/api/open_location`` resolves it back to the path
+        this backend recorded.
+
+        Args:
+            path (str): Path of a transferred file or folder.
+
+        Returns:
+            str: Token addressing that path.
+        """
+        with self._open_targets_lock:
+            self._open_target_seq += 1
+            token = str(self._open_target_seq)
+            self._open_targets[token] = os.path.abspath(path)
+            # keep the table as bounded as the event queue it serves
+            while len(self._open_targets) > 1000:
+                self._open_targets.pop(next(iter(self._open_targets)))
+        return token
+
+    def _open_file_location(self, token):
+        """Show the path recorded for one token in this host's file manager.
+
+        Args:
+            token (str): Token returned by `_register_open_target`.
+
+        Raises:
+            ValueError: If the token is unknown or its file is gone.
+            OSError: If the desktop could not be asked to show the path.
+        """
+        with self._open_targets_lock:
+            path = self._open_targets.get(token)
+        if not path:
+            raise ValueError("unknown file location")
+        if not os.path.exists(path):
+            raise ValueError("the file is no longer at its location")
+        _reveal_in_file_manager(path)
+
     # ------------------------------------------------ inbound event handling
 
     def _push_event(self, event):
@@ -483,15 +700,20 @@ class ClientWebApp:
         return self._event_seq
 
     def _on_incoming_message(self, sender, text):
-        """Client receive thread: an inbound plain-text message.
+        """Client receive thread: an inbound line from the server.
 
         ``sender`` is the author's ``"ip:port"`` when another client forwarded
         the message to us (the server relay envelope carries it), or ``None``
         for a direct push from the server. Direct pushes surface under the
         server entry; forwarded ones under the sender's own conversation.
+        The listener reports every line, protocol commands included; a direct
+        command is not chat and is dropped, while an attributed line is a
+        forwarded payload and is kept.
         """
         text = (text or "").strip()
         if not text:
+            return
+        if sender is None and text.startswith("/"):  # protocol command, not chat
             return
         if text.startswith("Welcome!:"):  # connection greeting, not chat
             return
@@ -510,26 +732,23 @@ class ClientWebApp:
         self._push_event(event)
 
     def _on_incoming_file(self, full_path, name, size, command):
-        """Client receive thread: a file pushed by the server was saved."""
+        """Client receive thread: a file pushed by the server was saved.
+
+        The event carries the absolute path of the saved file, so the chat
+        line names exactly where the transfer landed on this host.
+        """
         try:
             cmd_name = (command or "").strip().split(" ", 1)[0].lower()
         except Exception:
             cmd_name = ""
         if cmd_name == "/crypto_pub_key":  # handshake keys are not user data
             return
-        rel = full_path
-        if self.client is not None:
-            try:
-                candidate = os.path.relpath(full_path, self.client.file_transfer_dir)
-                if not candidate.startswith(".."):
-                    rel = candidate
-            except Exception:
-                pass
         event = {
             "type": "file",
             "name": name,
-            "path": rel,
+            "path": full_path,
             "size": size,
+            "open_token": self._register_open_target(full_path),
             "at": time.strftime("%H:%M:%S"),
         }
         # A forwarded file/folder carries the originator's address in the wire
@@ -562,7 +781,11 @@ class ClientWebApp:
         return {}
 
     def start_from_config(self):
-        """Start the TCP client from ``.Flow_Web/setup_client.json`` and log in."""
+        """Start the TCP client from ``.Flow_Web/setup_client.json``.
+
+        The connected server reports whether its clients log in; only then is a
+        saved session replayed, and the login window is only shown then.
+        """
         params = self._load_client_params()
         if not params:
             return
@@ -573,8 +796,10 @@ class ClientWebApp:
                 self._last_address = last
             except ValueError:
                 self._server_base = ""
+        self._refresh_login_requirement()
         self._start_client_from_params(params)
-        self._auto_login()
+        if self.login_required:
+            self._auto_login()
 
     def _normalize_client_params(self, params):
         """Normalize form values into TCP_Client_Base constructor arguments."""
@@ -603,7 +828,10 @@ class ClientWebApp:
         self.client = TCP_Client_Base(**params)
         forward_extension_tcp.setup_client_commands(self.client)
         self.client.register_command(
-            "/web_clients_update", self._on_clients_update, where_to_run="server", run_in_thread=True
+            "/web_clients_update",
+            self._on_clients_update,
+            where_to_run="server",
+            run_in_thread=True,
         )
         self.client.add_message_listener(self._on_incoming_message)
         self._register_ftp_commands()
@@ -677,6 +905,34 @@ class ClientWebApp:
         if result.get("ok") is False:
             raise ValueError(result.get("error") or "the server refused the request")
         return result
+
+    def _refresh_login_requirement(self):
+        """Ask the connected server whether its clients have to log in.
+
+        The server derives the answer from its verification mailbox: a
+        configured SMTP service means public-network use, where every client
+        logs in; without one the server is internal and clients work without
+        accounts.  A server that cannot be asked keeps the last known answer,
+        so the login window is only skipped once it was confirmed.
+        """
+        if not self._server_base:
+            return
+        try:
+            info = self._server_request("/api/server_info")
+        except ValueError:
+            return
+        self.login_required = bool(info.get("login_required", True))
+
+    def _require_accounts(self):
+        """Refuse an account action while the connected server needs no accounts.
+
+        Returns:
+            tuple | None: ``(response, 400)`` while the server is internal,
+                ``None`` while its clients identify with accounts.
+        """
+        if not self.login_required:
+            return jsonify({"ok": False, "error": CLIENT_ACCOUNTS_OFF}), 400
+        return None
 
     def _save_login_file(self, identify, password, token):
         """Store the credentials used to log in to this server.
@@ -799,15 +1055,13 @@ class ClientWebApp:
 
     def _bind_account(self):
         """Bind the TCP connection to the logged-in account of the session."""
-        if self.session is None or self._bind_ack:
+        if not self.login_required or self.session is None or self._bind_ack:
             return
         with self._bind_lock:
             if self._bind_pending:
                 return
             self._bind_pending = True
-        threading.Thread(
-            target=self._bind_loop, args=(self.session["token"],), daemon=True
-        ).start()
+        threading.Thread(target=self._bind_loop, args=(self.session["token"],), daemon=True).start()
 
     def _bind_loop(self, token):
         """Send ``/web_bind`` once a second until the server acknowledged it."""
@@ -847,6 +1101,9 @@ class ClientWebApp:
         Returns:
             tuple: Flask response of the request.
         """
+        err = self._require_accounts()
+        if err is not None:
+            return err
         if self.session is None:
             return jsonify({"ok": False, "error": "login required"}), 401
         token = self.session["token"]
@@ -876,21 +1133,21 @@ class ClientWebApp:
 
         @app.get("/")
         def index():
-            if self.connected:
-                if self.session is None:
-                    self._auto_login()
-                if self.session is not None:
-                    return render_template(
-                        "client_main.html", mode="client", user=self.session["user"]
-                    )
-                return render_template(
-                    "client_login.html",
-                    identify=self._saved_identify,
-                    login_error=self._login_error,
-                    server_address=self._server_base,
-                )
+            if not self.connected:
+                return render_template("client_connect.html", last_address=_last_server_address())
+            self._refresh_login_requirement()
+            if not self.login_required:
+                # Internal server: clients need no accounts, straight to the tool.
+                return render_template("client_main.html", mode="client", user=None)
+            if self.session is None:
+                self._auto_login()
+            if self.session is not None:
+                return render_template("client_main.html", mode="client", user=self.session["user"])
             return render_template(
-                "client_connect.html", last_address=_last_server_address()
+                "client_login.html",
+                identify=self._saved_identify,
+                login_error=self._login_error,
+                server_address=self._server_base,
             )
 
         @app.get("/config")
@@ -946,6 +1203,7 @@ class ClientWebApp:
             host = info.get("host")
             port = int(info.get("port"))
             is_enable_encrypto = bool(info.get("is_enable_encrypto", True))
+            self.login_required = bool(info.get("login_required", True))
             self._last_address = address
             self._server_base = base
             self._forget_session()
@@ -954,7 +1212,8 @@ class ClientWebApp:
             except Exception as e:
                 traceback.print_exc()
                 return jsonify({"ok": False, "error": f"failed to start TCP client: {e}"}), 500
-            self._auto_login()
+            if self.login_required:
+                self._auto_login()
             return jsonify({"ok": True, "server_info": self.server_info})
 
         @app.post("/api/save_config")
@@ -989,22 +1248,31 @@ class ClientWebApp:
                 self._bind_account()
             return jsonify(
                 {
-                    "connected": self.connected
-                    and self.client is not None
-                    and self.client.running,
+                    "connected": self.connected and self.client is not None and self.client.running,
                     "server_info": self.server_info,
                     "clients": self._clients_snapshot(),
                     "own_address": self._own_address(),
                     "pid": os.getpid(),
-                    "logged_in": self.session is not None,
-                    "user": self.session["user"] if self.session else None,
+                    "logged_in": self.login_required and self.session is not None,
+                    "user": self.session["user"]
+                    if (self.login_required and self.session)
+                    else None,
+                    "login_required": self.login_required,
                     "server_address": self._server_base,
                 }
             )
 
+        @app.get("/api/transfers")
+        def api_transfers():
+            """Live transfer progress and network speeds (polled by the UI)."""
+            return jsonify(self._transfers_payload())
+
         @app.post("/api/login")
         def api_login():
             """Log the web client in with the account password and a mailed code."""
+            err = self._require_accounts()
+            if err is not None:
+                return err
             data = request.get_json(force=True)
             identify = str(data.get("identify") or "").strip()
             password = str(data.get("password") or "")
@@ -1032,6 +1300,9 @@ class ClientWebApp:
         @app.post("/api/login/send_code")
         def api_login_send_code():
             """Ask the server to mail a login code to one account."""
+            err = self._require_accounts()
+            if err is not None:
+                return err
             data = request.get_json(force=True)
             identify = str(data.get("identify") or "").strip()
             if not identify:
@@ -1134,7 +1405,15 @@ class ClientWebApp:
                     threading.Thread(
                         target=self._forward_file, args=(path, addr, destination), daemon=True
                     ).start()
-            return jsonify({"ok": True})
+            return jsonify(
+                {
+                    "ok": True,
+                    "open_items": [
+                        {"name": os.path.basename(path), "token": self._register_open_target(path)}
+                        for path in saved
+                    ],
+                }
+            )
 
         @app.post("/api/send_folder")
         def api_send_folder():
@@ -1168,6 +1447,25 @@ class ClientWebApp:
                 threading.Thread(
                     target=self._forward_folder, args=(root, addr, destination), daemon=True
                 ).start()
+            return jsonify(
+                {
+                    "ok": True,
+                    "open_items": [
+                        {"name": os.path.basename(root), "token": self._register_open_target(root)}
+                    ],
+                }
+            )
+
+        @app.post("/api/open_location")
+        def api_open_location():
+            """Open the location of a transferred file in this host's file manager."""
+            data = request.get_json(silent=True) or {}
+            try:
+                self._open_file_location(str(data.get("token") or ""))
+            except ValueError as e:
+                return jsonify({"ok": False, "error": str(e)}), 404
+            except OSError as e:
+                return jsonify({"ok": False, "error": f"cannot open the file manager: {e}"}), 500
             return jsonify({"ok": True})
 
         @app.post("/api/run_extension")
@@ -1207,7 +1505,11 @@ class ClientWebApp:
                 listing = self._ftp_list(str(payload.get("path") or ""))
             except _ServerRequestError as e:
                 return jsonify({"ok": False, "error": str(e)}), e.status
-            return jsonify({"ok": True, "listing": listing})
+            # ``default_folder`` tells the dialog where an empty destination
+            # sends the download, so the choice is never a guess.
+            return jsonify(
+                {"ok": True, "listing": listing, "default_folder": self._ftp_transfer_folder()}
+            )
 
         @app.post("/api/ftp/download")
         def api_ftp_download():
@@ -1220,7 +1522,10 @@ class ClientWebApp:
                 result = self._ftp_download([str(entry) for entry in wanted], destination)
             except _ServerRequestError as e:
                 return jsonify({"ok": False, "error": str(e)}), e.status
-            return jsonify({"ok": True, **result})
+            # ``folder`` names the arrival folder of the started download.
+            return jsonify(
+                {"ok": True, "folder": self._ftp_arrival_folder(destination), **result}
+            )
 
         @app.get("/api/extensions_ui")
         def api_get_extensions_ui():
@@ -1260,6 +1565,29 @@ class ClientWebApp:
                 return jsonify({"ok": False, "error": str(e)}), 400
             threading.Thread(target=self._restart, daemon=True).start()
             return jsonify({"ok": True, "restarting": True})
+
+    def _transfers_payload(self):
+        """Snapshot the running transfers and the network speeds of the client."""
+        client = self.client
+        if client is None:
+            return {
+                "ok": True,
+                "progress_enabled": False,
+                "speed_enabled": False,
+                "upload_network_speed": None,
+                "recv_network_speed": None,
+                "uploading": [],
+                "downloading": [],
+            }
+        return {
+            "ok": True,
+            "progress_enabled": bool(client.is_enable_file_transfer_progress_bar),
+            "speed_enabled": bool(client.is_enable_real_time_network_speed),
+            "upload_network_speed": client.upload_network_speed,
+            "recv_network_speed": client.recv_network_speed,
+            "uploading": _transfer_rows(client.file_upload_progress),
+            "downloading": _transfer_rows(client.file_recv_progress),
+        }
 
     # ------------------------------------------------------------------- run
 

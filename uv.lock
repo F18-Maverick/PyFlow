@@ -602,10 +602,20 @@ wheels = [
 
 [[package]]
 name = "pyflow-net"
-version = "1.0.0"
+version = "1.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "flask" },
+]
+
+[package.optional-dependencies]
+docs = [
+    { name = "deep-translator" },
+    { name = "polib" },
+    { name = "sphinx", version = "8.1.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "sphinx", version = "9.0.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "sphinx", version = "9.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "sphinx-intl" },
 ]
 
 [package.dev-dependencies]
@@ -621,7 +631,14 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "flask", specifier = ">=3.0" }]
+requires-dist = [
+    { name = "deep-translator", marker = "extra == 'docs'" },
+    { name = "flask", specifier = ">=3.0" },
+    { name = "polib", marker = "extra == 'docs'" },
+    { name = "sphinx", marker = "extra == 'docs'", specifier = ">=8.1.3" },
+    { name = "sphinx-intl", marker = "extra == 'docs'", specifier = ">=2.3.2" },
+]
+provides-extras = ["docs"]
 
 [package.metadata.requires-dev]
 dev = [

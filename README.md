@@ -12,7 +12,7 @@ PyFlow is a high-level network protocol offering APIs and web apps, both of whic
 
 - **TCP server / client** — message exchange, custom commands, file transfer, commands extension API and port allocation over a single control channel (`PyFlow/network_api/connect_tcp.py`).
 - **UDP communication** — connectionless messaging (`PyFlow/network_api/connect_udp.py`).
-- **Encrypted TCP channel** — RSA-OAEP message encryption with a TOFU (trust-on-first-use) peer-key registry, session nonces and sequence numbers against replay, and a circuit breaker against re-exchange storms. See [docs/Crypto](docs/source/Crypto/Crypto.rst) and the encrypted-channel sections of the TCP API docs.
+- **Encrypted TCP channel** — after a plaintext key handshake every message and every file/folder/forward transfer connection is framed and encrypted (RSA-OAEP for small text payloads, ECDH-keyed AES-256-GCM for everything else, file data included), with a TOFU (trust-on-first-use) peer-key registry, session nonces and sequence numbers against replay, and a circuit breaker against re-exchange storms. See [docs/Crypto](docs/source/Crypto/Crypto.rst) and the encrypted-channel sections of the TCP API docs.
 - **C/OpenSSL cryptography library** — `libcrypto_api` provides RSA-OAEP, ECDH (P-256/384/521), HKDF-SHA256 and AES-256-GCM with a stable C API (`pf_*` prefix) usable from C, CMake or pkg-config.
 - **Multi-instance launcher** — `python -m PyFlow` (package entry point backed by `PyFlow/flow_setup.py`) starts one or more server/client instances from a CLI, an interactive prompt, or a `setup.json` configuration file.
 - **Extension protocols** — `command_control_extension_tcp.py` (remote command execution with log collection) and `forward_extension_tcp.py` (upload-then-push forwarding of files/folders to multiple destinations; plain-message forwarding `forward_send_msg` is native to the TCP layer, not part of this extension) plug into any instance via `setup_*_commands()`; `flow_setup.py` loads them automatically for every instance whose `setup.json` config sets `is_extend_command=True`, and starts instances in a background thread when `is_input_command_in_console=False`. Extension files can also be registered persistently with `flow_setup.py --add` / `--delete` (kept in `PyFlow/added_extensions.json` and loaded on every launch by `add_extension.py`).
@@ -170,8 +170,9 @@ uv run python PyFlow/transfer_web/setup_client.py
 ```
 
 Visitors of the server's web address get a white landing page (the
-addresses clients should connect to) with **Login**, **Register** and
-**Change password** buttons; the startup-configuration page, the status
+addresses clients should connect to) with a **Login** button, plus
+**Register** and **Change password** while a verification mailbox is
+configured; the startup-configuration page, the status
 page and the web APIs behind them need a session. Accounts live in the
 SQLite database `PyFlow/transfer_web/.Flow_Web/flow_web.db`: username,
 email, a PBKDF2-SHA256 password record and a unique 8-character user ID
@@ -186,35 +187,49 @@ or load/extend extension protocols; regular users get the status page
 with message/file/folder sending. `/api/server_info` stays public, as web
 clients query it before they connect.
 
-Registration, password change and code-based client login are verified by
-email: an administrator fills in the outgoing mailbox (host, port,
-account, authorization code, sender and encryption) in the
-startup-configuration page, the settings are checked against the real
-SMTP server before they are stored in
-`PyFlow/transfer_web/.Flow_Web/email_config.json`, and only then is the
-verification mail service started. Codes are valid for 5 minutes, one
-code may be requested per minute, and the send button counts the minute
-down. Without a working mailbox nobody can register or reset a password;
-the seeded administrator can still log in and configure one.
+The verification mailbox decides how clients connect: with it the server is
+meant for public networks, without it the server serves an internal network.
+An administrator fills in the outgoing mailbox (host, port, account,
+authorization code, sender and encryption) in the startup-configuration
+page, the settings are checked against the real SMTP server before they are
+stored in `PyFlow/transfer_web/.Flow_Web/email_config.json`, and only then
+is the verification mail service started: registration, password reset and
+every client login are then verified by email. Codes are valid for 5
+minutes, one code may be requested per minute, and the send button counts
+the minute down. The same card offers **Disable Mail Service**, which removes
+the stored mailbox and switches the server back to internal mode. While no
+mailbox is configured, no account is needed on the client side at all: no
+registration, no password reset, no client login — clients connect and use the
+tool directly, and only the console administrator logs in to administer the
+server.
 
 On first run the server launcher opens the startup-configuration page
 showing every `TCP_Server_Base` parameter with its default; the saved
 config lives in `PyFlow/transfer_web/.Flow_Web/setup_server.json` (same
 shape as `setup.json`). Once the TCP server is up, the server's web
 backend serves a status page and a client-facing API
-(`/api/server_info` returns the TCP address/port). The client launcher
-asks for the server address (an `http`/`https` domain or a bare IP) and
-connects through the server's web backend; it then asks the account to log
-in (username/email, the account password and a verification code mailed to
-the account address — both factors are required) and stores the password and
-the session token in `PyFlow/transfer_web/.Flow_Web/client_login.json`, so
-every reload logs the client in again until **Log out** deletes that file.
+(`/api/server_info` returns the TCP address/port and whether clients have to
+log in). The client launcher asks for the server address (an `http`/`https`
+domain or a bare IP) and connects through the server's web backend. A server
+that asks for accounts makes the client log in (username/email, the account
+password and a verification code mailed to the account address — both
+factors are required) and stores the password and the session token in
+`PyFlow/transfer_web/.Flow_Web/client_login.json`, so every reload logs the
+client in again until **Log out** deletes that file; an internal server
+skips the login window and the client's account buttons (**Contacts**,
+**Requests**, **User info**, **Log out**) do not appear.
 Both pages show a sidebar of connected instances and message/file/folder
-sending (client-to-client sends are forwarded through the server); a web
-client sees only the accounts it is a contact of. Contacts are added with
+sending (client-to-client sends are forwarded through the server); on a
+public server a web client sees only its contacts, while internal clients
+see every connected instance. Contacts are added with
 the **Contacts** button (search by user ID, username or email); the other
 side answers the request in its **Requests** list, and only after both
 accounts accepted each other does the contact appear in the sidebar.
+Every file or folder message links the transferred name: clicking it asks the
+backend that recorded the transfer to open that location in the file manager
+of its host — a received file is revealed inside its arrival folder, a sent
+one opens the staged copy in `uploads/`. The browser only ever carries the
+opaque token of the record, never a filesystem path.
 Extension protocols are loaded by the client page and by administrators on
 the server page. The web tool keeps its remaining state in the same
 `.Flow_Web/` directory: `setup_client.json` (last client startup

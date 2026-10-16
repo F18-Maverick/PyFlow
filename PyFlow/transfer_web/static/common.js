@@ -24,7 +24,7 @@
     connected: false,
     target: null, // "server" | [ip, port]
     extensions: [], // [{name, icon, command}]
-    conversations: {}, // targetKey -> [{dir: "in"|"out"|"sys", text}]
+    conversations: {}, // targetKey -> [{dir: "in"|"out"|"sys", text, links}]
     eventId: 0, // last inbound event id consumed from /api/events
   };
 
@@ -97,6 +97,51 @@
     );
   }
 
+  /* ---------------- file locations ---------------- */
+
+  /* Ask the backend that recorded a transfer to open its file location.
+   *
+   * A file/folder message carries an opaque token, never a filesystem path:
+   * the backend resolves the token back to the path it saved and hands that
+   * path to the file manager of the host running the backend.
+   */
+  async function openLocation(token, name) {
+    try {
+      await api("/api/open_location", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+      });
+      toast("Opening the location of " + name + " on this host", "ok");
+    } catch (e) {
+      toast("Cannot open the file location: " + e.message, "err");
+    }
+  }
+
+  /* Fill one message element with its text, turning every linked file name into
+   * an anchor; names are matched in the order the message lists them. */
+  function renderMessageBody(el, m) {
+    const links = m.links || [];
+    let cursor = 0;
+    links.forEach((link) => {
+      const at = m.text.indexOf(link.name, cursor);
+      if (at < 0) return; // the text does not list this name: keep it plain
+      if (at > cursor) el.appendChild(document.createTextNode(m.text.slice(cursor, at)));
+      const anchor = document.createElement("a");
+      anchor.className = "file-link";
+      anchor.href = "#";
+      anchor.textContent = link.name;
+      anchor.title = "Open the location of this file on the host running the backend";
+      anchor.addEventListener("click", (e) => {
+        e.preventDefault();
+        openLocation(link.token, link.name);
+      });
+      el.appendChild(anchor);
+      cursor = at + link.name.length;
+    });
+    if (cursor < m.text.length) el.appendChild(document.createTextNode(m.text.slice(cursor)));
+  }
+
   /* ---------------- sidebar ---------------- */
 
   function renderSidebar() {
@@ -139,8 +184,13 @@
       const empty = document.createElement("div");
       empty.className = "empty-hint";
       empty.style.padding = "16px 8px";
-      empty.textContent =
-        MODE === "client" ? "No contact is connected" : "No clients connected";
+      if (MODE === "server") {
+        empty.textContent = "No clients connected";
+      } else if (window.WEB_USER == null) {
+        empty.textContent = "No other client is connected";
+      } else {
+        empty.textContent = "No contact is connected";
+      }
       list.appendChild(empty);
     }
   }
@@ -211,7 +261,12 @@
         addMessage("in", from + ev.text, target);
       } else if (ev.type === "file") {
         const size = fmtSize(ev.size);
-        addMessage("in", from + "file received: " + ev.name + " (" + size + ") -> " + ev.path, target);
+        addMessage(
+          "in",
+          from + "file received: " + ev.name + " (" + size + ") -> " + ev.path,
+          target,
+          ev.open_token ? [{ name: ev.name, token: ev.open_token }] : []
+        );
         toast("File received: " + ev.name + " (" + size + ")", "ok");
       }
     });
@@ -251,10 +306,10 @@
     }
   }
 
-  function addMessage(dir, text, target) {
+  function addMessage(dir, text, target, links) {
     const key = targetKey(target || state.target);
     if (!state.conversations[key]) state.conversations[key] = [];
-    state.conversations[key].push({ dir, text });
+    state.conversations[key].push({ dir, text, links: links || [] });
     if (key === targetKey(state.target)) renderConversation();
   }
 
@@ -281,7 +336,7 @@
     msgs.forEach((m) => {
       const el = document.createElement("div");
       el.className = "msg " + m.dir;
-      el.textContent = m.text;
+      renderMessageBody(el, m);
       area.appendChild(el);
     });
     area.scrollTop = area.scrollHeight;
@@ -366,11 +421,18 @@
         fd.append("files", f, folderMode ? f.webkitRelativePath || f.name : f.name);
       });
       try {
-        await api("/api/" + (folderMode ? "send_folder" : "send_file"), { method: "POST", body: fd });
+        const data = await api("/api/" + (folderMode ? "send_folder" : "send_file"), {
+          method: "POST",
+          body: fd,
+        });
         const label = folderMode
           ? (files[0].webkitRelativePath || files[0].name).split("/")[0]
           : files.map((f) => f.name).join(", ");
-        addMessage("out", (folderMode ? "folder sent: " : "file sent: ") + label, target);
+        const links = (data.open_items || []).map((item) => ({
+          name: item.name,
+          token: item.token,
+        }));
+        addMessage("out", (folderMode ? "folder sent: " : "file sent: ") + label, target, links);
         toast("Transfer started", "ok");
         closeModal(backdrop);
       } catch (e) {
@@ -534,6 +596,95 @@
     });
   }
 
+  /* ---------------- transfers (progress bars + speed readout) ---------------- */
+
+  /* "1.2 MB/s"; an off measurement renders as a dash instead of a zero. */
+  function fmtSpeed(bps) {
+    if (bps == null || isNaN(bps)) return "—";
+    return fmtSize(bps) + "/s";
+  }
+
+  function transferPercent(row) {
+    if (!row.total) return 0;
+    return Math.max(0, Math.min(100, Math.round((row.transferred / row.total) * 100)));
+  }
+
+  /* One row: arrow + file name, percentage, bar, "done / total · speed".
+   *
+   * The name comes from the peer that started the transfer, so every part is
+   * built with DOM text nodes instead of markup: a crafted name must never
+   * reach an attribute or a tag position. */
+  function renderTransferRow(row, dir) {
+    const pct = transferPercent(row);
+    const el = document.createElement("div");
+    el.className = "transfer-row";
+
+    const head = document.createElement("div");
+    head.className = "transfer-head";
+    const name = document.createElement("span");
+    name.className = "tname";
+    name.textContent = (dir === "up" ? "↑ " : "↓ ") + row.name;
+    name.title = row.name;
+    const pctEl = document.createElement("span");
+    pctEl.className = "tpct";
+    pctEl.textContent = pct + "%";
+    head.appendChild(name);
+    head.appendChild(pctEl);
+
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    const fill = document.createElement("div");
+    fill.className = "bar-fill " + dir;
+    fill.style.width = pct + "%";
+    bar.appendChild(fill);
+
+    const meta = document.createElement("div");
+    meta.className = "transfer-meta";
+    meta.textContent =
+      fmtSize(row.transferred) + " / " + fmtSize(row.total) + " · " + fmtSpeed(row.speed);
+
+    el.appendChild(head);
+    el.appendChild(bar);
+    el.appendChild(meta);
+    return el;
+  }
+
+  /* Poll the backend for the running transfers and the live speeds. */
+  async function refreshTransfers() {
+    let data;
+    try {
+      data = await api("/api/transfers");
+    } catch (e) {
+      return; // offline, or a backend without the endpoint
+    }
+    const speed = $("net-speed");
+    if (speed) {
+      if (data.speed_enabled) {
+        speed.innerHTML =
+          "&#8593; " + fmtSpeed(data.upload_network_speed) +
+          " &middot; &#8595; " + fmtSpeed(data.recv_network_speed);
+      } else {
+        speed.textContent = "speed off";
+      }
+      speed.classList.toggle("off", !data.speed_enabled);
+    }
+    const panel = $("transfer-panel");
+    if (!panel) return;
+    const rows = [];
+    if (data.progress_enabled) {
+      (data.downloading || []).forEach((row) => rows.push([row, "down"]));
+      (data.uploading || []).forEach((row) => rows.push([row, "up"]));
+    }
+    panel.hidden = !rows.length;
+    panel.innerHTML = "";
+    if (!rows.length) return;
+    const title = document.createElement("div");
+    title.className = "transfer-title";
+    title.textContent = "Transfers (" + rows.length + ")";
+    panel.appendChild(title);
+    rows.forEach((entry) => panel.appendChild(renderTransferRow(entry[0], entry[1])));
+  }
+
   /* ---------------- init ---------------- */
 
   async function loadExtensions() {
@@ -578,8 +729,10 @@
     loadExtensions();
     refreshStatus();
     refreshEvents();
+    refreshTransfers();
     setInterval(refreshStatus, 2000);
     setInterval(refreshEvents, 2000);
+    setInterval(refreshTransfers, 500);
   }
 
   if (document.readyState === "loading") {

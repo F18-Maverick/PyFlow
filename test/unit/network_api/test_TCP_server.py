@@ -2,7 +2,11 @@
 
 import errno
 
-from PyFlow.network_api.connect_tcp import TCP_Server_Base, _is_closed_socket_error
+from PyFlow.network_api.connect_tcp import (
+    CommandNotFoundError,
+    TCP_Server_Base,
+    _is_closed_socket_error,
+)
 
 
 def test_is_closed_socket_error_covers_teardown_signals():
@@ -24,7 +28,15 @@ def test_tcp_server_init():
     assert server.port == 65002  # noqa: PLR2004
     assert callable(server.start_TCP_Server)
     assert server.is_enable_encrypto is True
+    assert server.recv_messages_chunk_len == 4096  # noqa: PLR2004
+    assert server.file_transfer_chunk_len == 65536  # noqa: PLR2004
     assert server.is_custom_keys is None
+    assert server.is_enable_file_transfer_progress_bar is True
+    assert server.is_enable_real_time_network_speed is True
+    assert server.file_recv_progress == {}
+    assert server.file_upload_progress == {}
+    assert server.upload_network_speed is None
+    assert server.recv_network_speed is None
 
 
 # ---- manual port allocation and the /quit handshake -------------------------
@@ -250,3 +262,104 @@ def test_dead_holders_are_reclaimed_from_the_port_record():
     finally:
         server.free_port()
 
+
+# ---- call_extension_functions ----------------------------------------------
+
+
+def test_call_extension_functions_runs_a_console_command_from_code():
+    """A command registered for the console runs from code, line unchanged."""
+    server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
+    seen = []
+    server.register_command(
+        "/mycmd", lambda sock, addr, cmd: seen.append((sock, addr, cmd)) or "done", "client"
+    )
+
+    assert server.call_extension_functions("/mycmd hello world") == "done"
+    # a direct call names no peer, so the handler gets the None context
+    assert seen == [(None, None, "/mycmd hello world")]
+
+
+def test_call_extension_functions_finds_the_inbound_group_case_insensitively():
+    """A handler for the lines clients send is reachable by its name too."""
+    server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
+    seen = []
+    server.register_command("/inbound", lambda sock, addr, cmd: seen.append(cmd), "server")
+
+    server.call_extension_functions("/INBOUND x y")
+
+    assert seen == ["/INBOUND x y"]
+
+
+def test_call_extension_functions_prefers_the_console_group():
+    """The console group wins a name both groups register."""
+    server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
+    server.register_command("/dup", lambda sock, addr, cmd: "console", "client")
+    server.register_command("/dup", lambda sock, addr, cmd: "inbound", "server")
+
+    assert server.call_extension_functions("/dup") == "console"
+
+
+def test_call_extension_functions_runs_synchronously():
+    """``run_in_thread`` belongs to the dispatch paths, not to a direct call."""
+    server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
+    seen = []
+    server.register_command(
+        "/slow", lambda sock, addr, cmd: seen.append(cmd), "client", run_in_thread=True
+    )
+
+    server.call_extension_functions("/slow now")
+
+    assert seen == ["/slow now"]  # finished before the call returned
+
+
+def test_call_extension_functions_rejects_unregistered_commands():
+    """An unknown first token raises, and the message names the line."""
+    server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
+    server.register_command("/known", lambda sock, addr, cmd: None, "client")
+
+    with pytest.raises(CommandNotFoundError) as exc:
+        server.call_extension_functions("/ghost arg")
+    assert "/ghost arg" in str(exc.value)
+    with pytest.raises(CommandNotFoundError):  # an empty line selects nothing
+        server.call_extension_functions("   ")
+
+
+def test_call_extension_functions_rejects_an_unsplittable_command():
+    """A line whose quoting cannot be parsed is a caller error, not a lookup miss."""
+    server = TCP_Server_Base(host="127.0.0.1", port=65002, is_extend_command=True)
+    with pytest.raises(ValueError, match="No closing quotation"):
+        server.call_extension_functions('/known "unclosed')
+
+
+# ---- real-time network speed -------------------------------------------------
+
+
+def test_real_time_speed_is_a_rolling_window(monkeypatch):
+    """The speed attributes average only the current window.
+
+    Traffic that stopped cannot keep reporting its old rate, the two
+    directions are measured apart, a str payload counts as its UTF-8 length,
+    and turning measurement off leaves every speed value None.
+    """
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(_connect_tcp.time, "monotonic", lambda: clock["now"])
+    server = TCP_Server_Base(host="127.0.0.1", port=65015, is_extend_command=True)
+    # ten 1000-byte uploads, one per 0.1 s: 10 000 bytes over 0.9 s
+    for step in range(10):
+        clock["now"] = 1000.0 + step / 10
+        server._measure_network_speed(1000, is_upload=True)
+    assert server.upload_network_speed == pytest.approx(10000 / 0.9)
+    assert server.recv_network_speed is None  # the other direction saw no traffic
+    # a 2 s pause, then one 10-byte sample: the old traffic has aged out
+    clock["now"] = 1003.0
+    server._measure_network_speed(10, is_upload=True)
+    assert server.upload_network_speed == pytest.approx(10 / 0.1)
+    # a str payload (é is two bytes) feeds the receive speed
+    clock["now"] = 1004.0
+    server._measure_network_speed("héllo", is_upload=False)
+    assert server.recv_network_speed == pytest.approx(6 / 0.1)
+    # measurement off: nothing is sampled and every speed value is None
+    server.is_enable_real_time_network_speed = False
+    assert server._measure_network_speed(1000, is_upload=True) is None
+    assert server.upload_network_speed is None
+    assert server.recv_network_speed is None

@@ -59,7 +59,7 @@ PF_CRYPTO_API pf_err_t pf_ecdh_keypair_generate(const char *curve,
                                                 pf_ecdh_keypair_t **out_kp);
 
 /* Export the public key as a PEM SubjectPublicKeyInfo string
- * (caller frees with free(3)). */
+ * (release with pf_crypto_free). */
 PF_CRYPTO_API pf_err_t pf_ecdh_pub_to_pem(const pf_ecdh_keypair_t *kp, char **out_pem);
 
 /* Parse a peer public key from PEM. Verifies the point is on the curve. */
@@ -93,8 +93,8 @@ PF_CRYPTO_API pf_err_t pf_ecdh_derive_key(const pf_ecdh_keypair_t *self,
  * HKDF (random 16-byte salt, info = both public keys in byte-sorted
  * canonical order) and produces the format described at the top of
  * this file. aad (optional, may be NULL/0) is authenticated but not
- * encrypted. On success *out_buf is malloc'd (free with free(3)).
- * Empty plaintext (plain_len == 0) is permitted.
+ * encrypted. On success *out_buf is malloc'd (release with
+ * pf_crypto_free). Empty plaintext (plain_len == 0) is permitted.
  */
 PF_CRYPTO_API pf_err_t pf_ecdh_seal(const pf_ecdh_keypair_t *self,
                                     const pf_ecdh_pubkey_t *peer,

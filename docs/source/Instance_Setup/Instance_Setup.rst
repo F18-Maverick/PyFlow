@@ -238,14 +238,15 @@ carries ``host``, ``port``, ``max_clients``, ``port_add_step``,
 ``is_hand_alloc_port``, ``is_input_command_in_console``,
 ``max_custom_workers``, ``is_extend_command``,
 ``is_enable_encrypto``, ``is_custom_keys``, ``max_mem_buff``,
+``recv_messages_chunk_len``, ``file_transfer_chunk_len``,
 ``is_asynic_clients_io``, ``is_debug`` and ``is_print_log``;
 the client entry carries ``host``, ``client_host``, ``port``,
 ``client_port``, ``timeout``, ``port_add_step``,
 ``max_thread_num``, ``is_input_command_in_console``,
 ``is_wait_server``, ``max_custom_workers``,
 ``is_extend_command``, ``is_enable_encrypto``,
-``is_custom_keys``, ``max_mem_buff``, ``is_debug`` and
-``is_print_log``.
+``is_custom_keys``, ``max_mem_buff``, ``recv_messages_chunk_len``,
+``file_transfer_chunk_len``, ``is_debug`` and ``is_print_log``.
 
 Custom Parameters
 -----------------

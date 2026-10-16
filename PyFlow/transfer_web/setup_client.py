@@ -5,10 +5,12 @@ Starts a lightweight Flask backend on 127.0.0.1 and opens the connect
 UI in the browser.  The user enters the server address (an http/https
 domain or a bare IP); the backend asks the server's web backend for the
 TCP server address/port, starts the TCP client, and keeps the backend
-running to relay the user's frontend actions.  The account of the server
-logs in from the same backend: saved credentials in
-``.Flow_Web/client_login.json`` are replayed on every start, and the
-login window appears whenever no session could be restored.
+running to relay the user's frontend actions.  A server that needs accounts
+(a verification mailbox is configured) makes the same backend log in: saved
+credentials in ``.Flow_Web/client_login.json`` are replayed on every start,
+and the login window appears whenever no session could be restored.  A
+server without a mailbox needs no accounts, so the login window and the
+account controls are skipped.
 """
 
 import os

@@ -20,8 +20,8 @@ The design follows a **two-phase handshake** pattern:
    transfer the actual file data (metadata + payload).
 
 All file transfers use **stream-oriented reading/writing**
-with fixed-size chunks
-(65536 bytes, hardcoded in both directions) to avoid
+with a configurable chunk size
+(``file_transfer_chunk_len``, 65536 bytes by default, in both directions) to avoid
 blocking and to handle large
 files efficiently.
 
@@ -91,7 +91,8 @@ is connected:
 - Send the filename encoded in UTF-8.
 - Send the file size as an 8-byte unsigned integer
   (big-endian).
-- Send the file content in 65536-byte chunks until EOF.
+- Send the file content in ``file_transfer_chunk_len``-byte chunks
+  (65536 by default) until EOF.
 - Wait for the completion acknowledgement
   (``server_received_file_data_sign``) with a dynamic
   timeout (base 30 seconds
@@ -459,7 +460,8 @@ machinery:
 
 1. The forwarding client streams the file with the
    standard file-transfer
-   byte stream (metadata header + 65536-byte chunks) to a
+   byte stream (metadata header + ``file_transfer_chunk_len``-byte chunks,
+   default 65536) to a
    transfer socket on the
    server.
 2. The server acts as a pure relay: it reads the stream
@@ -632,6 +634,46 @@ gracefully. The
 ``error_sign`` is sent if possible, and the transfer
 socket is closed.
 
+.. _transfer-progress-and-speed:
+
+Transfer Progress and Network Speed
+-----------------------------------
+
+Both classes record every running file transfer:
+
+- ``file_recv_progress`` — the files being received (downloads);
+- ``file_upload_progress`` — the files being sent (uploads).
+
+The keys are the transfers' fids: the transfer id the sender stamps on the
+transfer command (``/file <path> <id>``), which also identifies the relay leg
+of a forwarded file. The protocol-internal public-key push is not tracked.
+Each value is a four-item list:
+
+- ``[0]``: bytes transferred so far;
+- ``[1]``: total size of the file, in bytes;
+- ``[2]``: the current network speed of that direction — ``None`` until the
+  transfer has moved its first chunk, and while
+  ``is_enable_real_time_network_speed`` is ``False``;
+- ``[3]``: name of the file being transferred.
+
+An entry appears when a transfer starts and is removed when it ends, so the
+stores hold exactly the transfers that are in flight at that moment (iterate
+over a copy while transfers are running). With
+``is_enable_file_transfer_progress_bar`` set to ``False`` no entry is ever
+recorded.
+
+``is_enable_real_time_network_speed`` (``True`` by default) measures the
+protocol's current traffic — the control layer and every temporary
+connection, file transfers included — into ``upload_network_speed`` and
+``recv_network_speed`` (bytes per second, a rolling average over
+``NETWORK_SPEED_WINDOW`` seconds). With the flag ``False`` nothing is
+sampled and every speed value is ``None``.
+
+The web tool (``transfer_web``) reads these stores: both backends serve
+``/api/transfers`` (the rows plus the two speed attributes), and the shared
+frontend renders the live speed readout in the topbar and one progress bar per
+running transfer.
+
 .. _related-apis:
 
 Related API Definitions
@@ -713,7 +755,7 @@ file to disk.
 .. code-block:: python
 
     def file_transfer_mode(
-        self, filename, server_address, server_port, client_port, pause_fid=None)
+        self, filename, server_address, server_port, client_port, pause_fid=None, fid=None)
 
 Low-level send function that connects to the receiver and transmits the file.
 
@@ -781,7 +823,7 @@ Low-level receive function on the client side.
 .. code-block:: python
 
     def file_transfer_mode(
-        self, filename, server_address, server_port, client_port, pause_fid=None)
+        self, filename, server_address, server_port, client_port, pause_fid=None, fid=None)
 
 Low‑level send function on the client side (identical to server's version).
 

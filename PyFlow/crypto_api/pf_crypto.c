@@ -5,6 +5,7 @@
 #include "pf_crypto.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <openssl/err.h>
@@ -34,6 +35,10 @@ const char *pf_err_string(pf_err_t err) {
         return "unknown error";
     }
     return kErrStrings[err];
+}
+
+void pf_crypto_free(void *ptr) {
+    free(ptr);
 }
 
 typedef struct {

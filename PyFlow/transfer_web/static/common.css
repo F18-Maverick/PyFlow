@@ -292,6 +292,16 @@ a { color: var(--accent); }
 .msg.in { align-self: flex-start; background: var(--bg-3); }
 .msg.sys { align-self: center; background: transparent; color: var(--text-dim); font-size: 12px; }
 
+/* a file name in a chat message opens its location through the backend */
+.msg .file-link {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.msg .file-link:hover { color: var(--warn); }
+
 .empty-hint {
   margin: auto;
   color: var(--text-dim);
@@ -515,3 +525,76 @@ select:focus { border-color: var(--accent); }
 
 .toast.err { border-color: var(--err); color: var(--err); }
 .toast.ok { border-color: var(--ok); color: var(--ok); }
+
+/* ---------- transfers (progress panel + speed readout) ---------- */
+
+.main-topbar .net-speed {
+  font-size: 12px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.main-topbar .net-speed.off { opacity: 0.55; }
+
+.transfer-panel {
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+  padding: 8px 14px 10px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.transfer-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.transfer-row { margin-bottom: 9px; }
+.transfer-row:last-child { margin-bottom: 0; }
+
+.transfer-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.transfer-head .tname {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-head .tpct {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.transfer-row .bar {
+  height: 6px;
+  background: var(--bg-3);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 4px 0;
+}
+
+.transfer-row .bar-fill {
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: 3px;
+  transition: width 0.25s ease;
+}
+
+.transfer-row .bar-fill.up { background: var(--ok); }
+
+.transfer-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
