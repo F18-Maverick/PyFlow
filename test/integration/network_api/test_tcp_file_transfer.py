@@ -4,11 +4,12 @@ import os
 import threading
 import time
 import shlex
+from pathlib import Path
 
 import pytest
 
 
-from helpers import free_port, server_ready, wait_until
+from helpers import free_port, isolate_instance_files, server_ready, wait_until
 
 from PyFlow.network_api.connect_tcp import (
     TCP_Client_Base,
@@ -19,15 +20,14 @@ from unittest.mock import MagicMock
 
 
 def _isolate_log_files(instance, log_dir, name):
-    """Keep an instance's message/event logs out of the shared project directory.
+    """Keep an instance's logs and transfer progress file out of the project dir.
 
-    Every instance defaults to the same ``messages_log.json`` /
-    ``events_log.json`` under the project directory: concurrent writers then
-    race on the same temp file and the losing flush is dropped with
-    "log file update failed".
+    Every instance defaults to the same files under the project directory:
+    concurrent writers then race on the same temp file and the losing flush is
+    dropped with "log file update failed", and a fresh instance would read the
+    interrupted transfers another test left behind.
     """
-    instance.messages_log_file = str(log_dir / f"{name}_messages_log.json")
-    instance.events_log_file = str(log_dir / f"{name}_events_log.json")
+    isolate_instance_files(instance, Path(log_dir), name)
 
 
 @pytest.fixture
@@ -807,11 +807,11 @@ def test_multiple_file_multiple_client_console_command(pair, tmp_path):
 def test_file_progress_and_speed_are_tracked(pair, tmp_path):
     """A running transfer is tracked in the progress stores of both sides.
 
-    The uploader is held before its first data chunk (pause_fid), so the
+    The uploader is held before its first data chunk (`pause_trans`), so the
     in-flight state — the entry at zero bytes with the full size — is observed
     deterministically; after the transfer the entries are gone, while the
-    captured lists show every byte was folded in and the speed slots hold live
-    values.
+    captured lists show every byte was folded in, the peer slot holds the
+    transfer's original peer and the speed slots hold live values.
     """
     server, client, _ = pair
     server_recv = tmp_path / "server_recv"
@@ -823,16 +823,18 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
     fid = 4242
 
     server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-    server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} {fid}")
+    client_id = "%s:%s" % client.client_socket.getsockname()
+    server.file_transfer_server_recv_server_start_thread(
+        client_id, server_sock, f"/file {src} {fid}"
+    )
     server_port = _wait_port(client)
     assert server_port is not None
 
-    with client._forward_pause_cond:
-        client._forward_pause[fid] = True
+    assert client.pause_trans(fid) is False  # armed before the leg exists
     sender = threading.Thread(
         target=client.file_transfer_mode,
         args=(str(src), "127.0.0.1", server_port, 0),
-        kwargs={"pause_fid": fid, "fid": fid},
+        kwargs={"fid": fid, "peer": (server.host, server.port)},
         daemon=True,
     )
     sender.start()
@@ -847,11 +849,13 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
         upload_entry = client.file_upload_progress[fid]
         assert recv_entry[:2] == [0, len(payload)]
         assert upload_entry[:2] == [0, len(payload)]
-        assert recv_entry[3] == "upload.bin" and upload_entry[3] == "upload.bin"
+        # the local path of each side, and the transfer's original peer
+        assert recv_entry[3] == str(server_recv / "upload.bin")
+        assert upload_entry[3] == str(src)
+        assert recv_entry[4] == client.client_socket.getsockname()
+        assert upload_entry[4] == (server.host, server.port)
     finally:
-        with client._forward_pause_cond:
-            client._forward_pause[fid] = False
-            client._forward_pause_cond.notify_all()
+        client.start_trans(fid)
         sender.join(timeout=15)
     assert not sender.is_alive(), "the upload did not finish"
 
@@ -871,14 +875,12 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
     assert server.recv_network_speed > 0
     assert client.upload_network_speed > 0
 
-
 def test_download_progress_and_speed_are_tracked(pair, tmp_path):
     """The reverse direction is tracked too: the server uploads, the client
     downloads, and both progress stores follow the same fid.
 
-    The server-side pause gate is created by the test because no server-side
-    caller passes ``pause_fid`` (only forward uploads use the pause); the send
-    loop reads both attributes like the client's.
+    The server-side pause uses the same public API as the client's: any
+    outbound transfer is held by the fid it runs under.
     """
     server, client, recv_dir = pair
     src = tmp_path / "download.bin"
@@ -895,12 +897,11 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
     server_port = _wait_port(server)
     assert server_port is not None
 
-    server._forward_pause = {fid: True}
-    server._forward_pause_cond = threading.Condition()
+    assert server.pause_trans(fid) is False  # armed before the leg exists
     sender = threading.Thread(
         target=server.file_transfer_mode,
         args=(str(src), "127.0.0.1", server_port, 0),
-        kwargs={"pause_fid": fid, "fid": fid},
+        kwargs={"fid": fid, "peer": client.client_socket.getsockname()},
         daemon=True,
     )
     sender.start()
@@ -915,11 +916,12 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
         upload_entry = server.file_upload_progress[fid]
         assert recv_entry[:2] == [0, len(payload)]
         assert upload_entry[:2] == [0, len(payload)]
-        assert recv_entry[3] == "download.bin" and upload_entry[3] == "download.bin"
+        assert recv_entry[3] == str(recv_dir / "download.bin")
+        assert upload_entry[3] == str(src)
+        assert recv_entry[4] == (server.host, server.port)
+        assert upload_entry[4] == client.client_socket.getsockname()
     finally:
-        with server._forward_pause_cond:
-            server._forward_pause[fid] = False
-            server._forward_pause_cond.notify_all()
+        server.start_trans(fid)
         sender.join(timeout=15)
     assert not sender.is_alive(), "the download did not finish"
 
@@ -981,12 +983,11 @@ def test_file_progress_and_speed_can_be_disabled(tmp_path):
         server_port = _wait_port(client)
         assert server_port is not None
 
-        with client._forward_pause_cond:
-            client._forward_pause[fid] = True
+        client.pause_trans(fid)  # the pause works with tracking off too
         sender = threading.Thread(
             target=client.file_transfer_mode,
             args=(str(src), "127.0.0.1", server_port, 0),
-            kwargs={"pause_fid": fid, "fid": fid},
+            kwargs={"fid": fid, "peer": (server.host, server.port)},
             daemon=True,
         )
         sender.start()
@@ -999,9 +1000,7 @@ def test_file_progress_and_speed_can_be_disabled(tmp_path):
             assert server.file_recv_progress == {}
             assert client.file_upload_progress == {}
         finally:
-            with client._forward_pause_cond:
-                client._forward_pause[fid] = False
-                client._forward_pause_cond.notify_all()
+            client.start_trans(fid)
             sender.join(timeout=15)
         assert not sender.is_alive(), "the upload did not finish"
 
