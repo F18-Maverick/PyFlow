@@ -255,8 +255,15 @@ def test_upload_resumes_after_a_reconnect(tmp_path):
             f.write(payload[:half])
 
         # a fault drops the control connection; the client reconnects on its
-        # own and the server drives the resume from the bytes on disk
-        client.client_socket.shutdown(2)
+        # own and the server drives the resume from the bytes on disk. The
+        # dead session's socket is closed by the reconnect (a socket that is
+        # merely shut down keeps the configured client port, which the second
+        # bind cannot take on Windows).
+        dead_socket = client.client_socket
+        dead_socket.shutdown(2)
+        assert wait_until(lambda: dead_socket.fileno() == -1, timeout=20), (
+            "the reconnect did not release the dead session's socket"
+        )
         assert wait_until(lambda: server.clients.get(client_addr) is not None, timeout=20), (
             "the client did not come back"
         )

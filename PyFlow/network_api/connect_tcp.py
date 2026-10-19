@@ -9334,6 +9334,28 @@ class TCP_Client_Base:  # TCP client class
             self.client_socket.close()
         self._log("connection closed")
 
+    def _release_client_socket(self):
+        """Close the socket a finished session left behind.
+
+        An auto-reconnect binds the configured ``client_port`` again, and a
+        socket that was only shut down still holds it: Windows refuses the
+        second bind with ``WSAEADDRINUSE`` until the old socket is closed.
+        """
+        sock = self.client_socket
+        if sock is None:
+            return
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass  # peer already gone
+        try:
+            sock.close()
+        except OSError:
+            pass
+        with self._crypto_lock:
+            self._channels.pop(sock, None)
+            self._encrypted_sockets.discard(sock)
+
     def start_TCP_client(self):  # start client
         """Connect to the server and start the client loop.
 
@@ -9355,6 +9377,10 @@ class TCP_Client_Base:  # TCP client class
                     return  # close() won the race with the connection attempt
                 if not self.is_auto_reconnect:
                     sys.exit(1)
+                # a dead socket still holds the configured client port: the
+                # next attempt must be able to bind it again (Windows refuses
+                # the second bind otherwise)
+                self._release_client_socket()
                 self._log("reconnect in 1 second...")
                 time.sleep(1)
                 continue
@@ -9370,5 +9396,6 @@ class TCP_Client_Base:  # TCP client class
             if self._stopped or not self.is_auto_reconnect:
                 self.close()
                 return
+            self._release_client_socket()
             self._log("connection lost, reconnecting in 1 second...")
             time.sleep(1)
