@@ -41,6 +41,7 @@ import time
 import copy
 import shlex
 import socket
+import struct  # SO_LINGER's (l_onoff, l_linger) pair, for abortive closes
 import selectors
 import secrets
 import traceback
@@ -1990,7 +1991,7 @@ class TCP_Server_Base:  # TCP server class
             if channel is not None and channel.secure:
                 return True
             time.sleep(0.05)
-        self._log("resume: control channel is not framed yet, transfers kept for the next reconnect")
+        self._log("resume: control channel not framed yet, transfers kept for the next reconnect")
         return False
 
     def alloc_port(self, port_add_step, port_range_num):
@@ -4114,7 +4115,7 @@ class TCP_Server_Base:  # TCP server class
                     # bytes that are already on disk and the sender continues
                     full_path = resume_entry[3]
                     final_filename = os.path.basename(full_path)
-                    resume_from = resume_entry[0]  # the offset the sender was asked to continue from
+                    resume_from = resume_entry[0]  # the offset the sender was asked for
                     if resume_from <= 0 or resume_from > file_size:
                         resume_from = 0  # not this file's offset: start it over
                 else:
@@ -4210,7 +4211,7 @@ class TCP_Server_Base:  # TCP server class
                     keep=(
                         not finished_ok
                         and progress is not None
-                        and progress[4] is not None  # an interrupted transfer with a peer can be resumed
+                        and progress[4] is not None  # resumable: it has a peer
                     ),
                 )
                 self._release_transfer_socket(progress_fid, client_file_socket)
@@ -4794,7 +4795,7 @@ class TCP_Server_Base:  # TCP server class
                     not file_sent
                     and not source_missing
                     and progress is not None
-                    and progress[4] is not None  # an interrupted transfer with a peer can be resumed
+                    and progress[4] is not None  # resumable: it has a peer
                 ),
             )
             self._release_transfer_socket(fid, client_file_socket)
@@ -6757,7 +6758,7 @@ class TCP_Client_Base:  # TCP client class
             if channel is not None and channel.secure:
                 return True
             time.sleep(0.05)
-        self._log("resume: control channel is not framed yet, transfers kept for the next reconnect")
+        self._log("resume: control channel not framed yet, transfers kept for the next reconnect")
         return False
 
     def alloc_port(self, port_add_step, port_range_num):
@@ -7156,7 +7157,20 @@ class TCP_Client_Base:  # TCP client class
                     pass
                 else:
                     self.local_address = (self.client_host, self.client_port)
-                    self.client_socket.bind(self.local_address)
+                    try:
+                        self.client_socket.bind(self.local_address)
+                    except OSError as e:
+                        # the configured port is not ours to take right now (a
+                        # session that just ended can keep it, in TIME_WAIT on
+                        # Windows): connect anyway, from an OS-assigned port.
+                        # The interrupted transfers of the previous session
+                        # are matched by address, so they stay stored until a
+                        # reconnect that can use the configured port again.
+                        self._log(
+                            f"client port {self.client_port} is not available ({e}); "
+                            f"connecting from an OS-assigned port instead"
+                        )
+                        self.local_address = None
                 self.client_socket.connect((self.host, self.port))
                 if self._stopped:
                     # close() arrived while the socket was connecting: stay
@@ -8522,7 +8536,7 @@ class TCP_Client_Base:  # TCP client class
                     not file_sent
                     and not source_missing
                     and progress is not None
-                    and progress[4] is not None  # an interrupted transfer with a peer can be resumed
+                    and progress[4] is not None  # resumable: it has a peer
                 ),
             )
             self._release_transfer_socket(fid, client_file_socket)
@@ -9149,7 +9163,7 @@ class TCP_Client_Base:  # TCP client class
                     # bytes that are already on disk and the sender continues
                     full_path = resume_entry[3]
                     final_filename = os.path.basename(full_path)
-                    resume_from = resume_entry[0]  # the offset the sender was asked to continue from
+                    resume_from = resume_entry[0]  # the offset the sender was asked for
                 else:
                     if file_name:
                         final_filename = file_name.strip()
@@ -9237,7 +9251,7 @@ class TCP_Client_Base:  # TCP client class
                     keep=(
                         not finished_ok
                         and progress is not None
-                        and progress[4] is not None  # an interrupted transfer with a peer can be resumed
+                        and progress[4] is not None  # resumable: it has a peer
                     ),
                 )
                 self._release_transfer_socket(progress_fid, client_file_socket)
@@ -9337,17 +9351,24 @@ class TCP_Client_Base:  # TCP client class
     def _release_client_socket(self):
         """Close the socket a finished session left behind.
 
-        An auto-reconnect binds the configured ``client_port`` again, and a
-        socket that was only shut down still holds it: Windows refuses the
-        second bind with ``WSAEADDRINUSE`` until the old socket is closed.
+        An auto-reconnect binds the configured ``client_port`` again, so the
+        dead session's socket must go away completely: it is closed abortively
+        (``SO_LINGER`` on with a zero timeout, which the TCP stack turns into a
+        RST and which skips ``TIME_WAIT`` entirely). A socket that only gets
+        shut down keeps the port, and an ordinary close leaves the local port
+        in ``TIME_WAIT`` — Windows then refuses to bind or connect from it
+        again (``WSAEADDRINUSE``) for the whole two-minute delay.
+
+        The receive thread of that session has already ended when this runs, so
+        nothing needs the shutdown a graceful close would perform.
         """
         sock = self.client_socket
         if sock is None:
             return
         try:
-            sock.shutdown(socket.SHUT_RDWR)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
         except OSError:
-            pass  # peer already gone
+            pass  # not a real socket any more
         try:
             sock.close()
         except OSError:

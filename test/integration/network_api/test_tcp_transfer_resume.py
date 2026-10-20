@@ -11,6 +11,7 @@ session or loaded from the persisted file exactly as a disconnect leaves it.
 import json
 import os
 import shlex
+import socket
 import threading
 import time
 
@@ -254,18 +255,24 @@ def test_upload_resumes_after_a_reconnect(tmp_path):
         with open(partial, "wb") as f:  # what an interrupted transfer leaves behind
             f.write(payload[:half])
 
-        # a fault drops the control connection; the client reconnects on its
-        # own and the server drives the resume from the bytes on disk. The
-        # dead session's socket is closed by the reconnect (a socket that is
-        # merely shut down keeps the configured client port, which the second
-        # bind cannot take on Windows).
+        # a fault drops the control connection: the server's side goes away,
+        # the way a crash looks to the client. The client's own release then
+        # aborts the dead session (shutdown + linger-0 close), which keeps its
+        # configured port out of TIME_WAIT: the reconnect must be able to take
+        # the same port back (Windows refuses it otherwise) and the server must
+        # match the stored transfer to the same peer address.
         dead_socket = client.client_socket
-        dead_socket.shutdown(2)
+        server_side = server.clients[client_addr]["socket"]
+        server_side.shutdown(2)  # a read blocked in the server only wakes on a shutdown
+        server_side.close()
         assert wait_until(lambda: dead_socket.fileno() == -1, timeout=20), (
             "the reconnect did not release the dead session's socket"
         )
         assert wait_until(lambda: server.clients.get(client_addr) is not None, timeout=20), (
             "the client did not come back"
+        )
+        assert client.client_socket.getsockname() == client_addr, (
+            "the client came back from a different port"
         )
 
         def got():
@@ -535,6 +542,43 @@ def test_download_resumes_over_the_encrypted_channel(tmp_path):
         assert wait_until(lambda: fid not in client.file_recv_progress, timeout=10)
         assert wait_until(lambda: fid not in server.file_upload_progress, timeout=10)
     finally:
+        if client is not None:
+            client.close()
+        server.stop()
+
+
+def test_client_connects_when_its_configured_port_is_taken(tmp_path):
+    """A configured client port that is held elsewhere does not stop the client.
+
+    The port can be stuck after a session ends (TIME_WAIT on Windows), so the
+    client must still connect — from an OS-assigned port — instead of never
+    coming back.
+    """
+    server = _start_server(tmp_path)
+    holder = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    taken = free_port()
+    holder.bind(("127.0.0.1", taken))  # no SO_REUSEADDR: the bind must fail
+    client = None
+    try:
+        client = TCP_Client_Base(
+            host="127.0.0.1",
+            port=server.port,
+            client_host="127.0.0.1",
+            client_port=taken,
+            is_extend_command=True,
+            is_input_command_in_console=False,
+            is_enable_encrypto=False,
+        )
+        _isolate(client, tmp_path, "client")
+        assert client.connect(), "the client did not connect around the taken port"
+        assert client.client_socket.getsockname()[1] != taken, (
+            "the client reported the port it could not bind"
+        )
+        assert wait_until(
+            lambda: server.clients.get(client.client_socket.getsockname()) is not None
+        ), "the server never saw the client"
+    finally:
+        holder.close()
         if client is not None:
             client.close()
         server.stop()

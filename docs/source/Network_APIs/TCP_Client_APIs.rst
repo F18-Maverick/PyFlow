@@ -95,7 +95,10 @@ Every parameter has default values:
 - ``host``: Default is ``None`` (must be provided before connecting)
 - ``client_host``: Default is ``'127.0.0.1'``
 - ``port``: Default is ``65432``
-- ``client_port``: Default is ``None`` (OS assigns ephemeral port)
+- ``client_port``: Default is ``None`` (OS assigns ephemeral port). A
+  configured port that cannot be bound — a session that just ended can hold
+  it in the operating system's ``TIME_WAIT`` — is reported and the connection
+  is made from an OS-assigned port instead.
 - ``timeout``: Default is ``None``
 - ``port_add_step``: Default is ``1``
 - ``max_thread_num``: Default is ``10``
@@ -125,7 +128,9 @@ Every parameter has default values:
   (``False`` measures no speed; every speed value is ``None``)
 - ``is_auto_reconnect``: Default is ``False``
   (``True`` makes `start_TCP_client` reconnect after the connection drops and
-  resume the interrupted transfers, see :ref:`transfer-pause-and-reconnect`)
+  resume the interrupted transfers, see :ref:`transfer-pause-and-reconnect`.
+  The dead session's socket is closed abortively first, so a configured
+  ``client_port`` can be bound again — Windows refuses it otherwise)
 
 The TCP Client Setup API will initialize all the necessary 
 parameters and resources for the TCP client.
