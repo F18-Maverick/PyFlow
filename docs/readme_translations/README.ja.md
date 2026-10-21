@@ -12,7 +12,7 @@ PyFlowは、拡張可能なインターフェースやその他の機能とと�
 
 - **TCPサーバー/クライアント** —単一の制御チャネル（`PyFlow/network_api/connect_tcp.py`）を介したメッセージ交換、カスタムコマンド、ファイル転送、コマンド拡張API、およびポート割り当て。
 - **UDP通信** —コネクションレスメッセージング（`PyFlow/network_api/connect_udp.py`）。
-- **暗号化されたTCPチャネル** — TOFU （ trust - on - first - use ）ピアキーレジストリ、セッションナンス、リプレイに対するシーケンス番号、再交換ストームに対するサーキットブレーカーを使用したRSA - OAEPメッセージ暗号化。[docs/Crypto](docs/source/Crypto/Crypto.rst)およびTCP APIドキュメントの暗号化されたチャネルセクションを参照してください。
+- **Encrypted TCP channel** — after a plaintext key handshake every message and every file/folder/forward transfer connection is framed and encrypted (RSA-OAEP for small text payloads, ECDH-keyed AES-256-GCM for everything else, file data included), with a TOFU (trust-on-first-use) peer-key registry, session nonces and sequence numbers against replay, and a circuit breaker against re-exchange storms. See [docs/Crypto](docs/source/Crypto/Crypto.rst) and the encrypted-channel sections of the TCP API docs.
 - **C/OpenSSL暗号ライブラリ** — `libcrypto_api`は、RSA - OAEP、ECDH （ P -256/384/521 ）、HKDF - SHA 256、およびAES -256 - GCMに、C、CMake、またはpkg - configから使用できる安定したC API （`pf_*`プレフィックス）を提供します。
 - **マルチインスタンスランチャー** — `python -m PyFlow`（`PyFlow/flow_setup.py`がサポートするパッケージエントリポイント）は、CLI、インタラクティブプロンプト、または`setup.json`構成ファイルから1つ以上のサーバー/クライアントインスタンスを開始します。
 - **Extension protocols** — `command_control_extension_tcp.py` (remote command execution with log collection) and `forward_extension_tcp.py` (upload-then-push forwarding of files/folders to multiple destinations; plain-message forwarding `forward_send_msg` is native to the TCP layer, not part of this extension) plug into any instance via `setup_*_commands()`; `flow_setup.py` loads them automatically for every instance whose `setup.json` config sets `is_extend_command=True`, and starts instances in a background thread when `is_input_command_in_console=False`. Extension files can also be registered persistently with `flow_setup.py --add` / `--delete` (kept in `PyFlow/added_extensions.json` and loaded on every launch by `add_extension.py`).
@@ -153,17 +153,17 @@ uv run python PyFlow/transfer_web/setup_server.py
 uv run python PyFlow/transfer_web/setup_client.py
 ```
 
-サーバーのWebアドレスの訪問者は、**ログイン**、**登録**および**パスワード変更**ボタンを使用して、白いランディングページ（クライアントが接続するアドレス）を取得します。スタートアップコンフィギュレーションページ、ステータスページ、およびその背後にあるWeb APIにはセッションが必要です。アカウントはSQLiteデータベース`PyFlow/transfer_web/.Flow_Web/flow_web.db`に存在します：ユーザー名、メールアドレス、PBKDF 2 - SHA 256パスワードレコード、および他のユーザーが検索する一意の8文字のユーザーID。最初の実行は、 administrator `admin`/`admin`（レガシー`users.json`は一度インポートされ、名前が変更されます）。その正確なペアがまだ使用されている間、ログインすると、サーバーがパブリックネットワークに公開される前に、**ユーザー名とパスワードを変更するための目立つ警告がポップアップ表示されます**、またはそれに到達できる誰でも管理できます。管理者は、ユーザー（`Users`サイドバーにあり、ユーザーIDが一覧表示されます）を管理し、スタートアップ構成を変更したり、ロード/拡張したりできるのは管理者のみです。 拡張プロトコル。通常のユーザーは、メッセージ/ファイル/フォルダを送信するステータスページを取得します。`/api/server_info`は、Webクライアントが接続する前にクエリを実行するため、公開されたままになります。
+Visitors of the server's web address get a white landing page (the addresses clients should connect to) with a **Login** button, plus **Register** and **Change password** while a verification mailbox is configured; the startup-configuration page, the status page and the web APIs behind them need a session. Accounts live in the SQLite database `PyFlow/transfer_web/.Flow_Web/flow_web.db`: username, email, a PBKDF2-SHA256 password record and a unique 8-character user ID that other users search by. The first run seeds the administrator `admin` / `admin` (a legacy `users.json` is imported once and renamed); while that exact pair is still in use, a login pops up a prominent warning to change the username and password **before** the server is exposed to a public network, or anyone who can reach it can administer it. Administrators manage users (`Users` in the sidebar, which lists the user IDs) and are the only ones who can change the startup configuration or load/extend extension protocols; regular users get the status page with message/file/folder sending. `/api/server_info` stays public, as web clients query it before they connect.
 
-登録、パスワード変更、コードベースのクライアントログインは電子メールで検証されます。管理者はスタートアップ構成ページに送信メールボックス（ホスト、ポート、アカウント、認証コード、送信者、暗号化）を入力し、設定は`PyFlow/transfer_web/.Flow_Web/email_config.json`に保存される前に実際のSMTPサーバーと照合され、検証メールサービスが開始されます。コードは5分間有効です。1分に1つのコードがリクエストされる場合があります。 送信ボタンは分をカウントします。作業メールボックスがなければ、誰もパスワードを登録またはリセットすることはできません。シードされた管理者はログインしてパスワードを設定することができます。
+The verification mailbox decides how clients connect: with it the server is meant for public networks, without it the server serves an internal network. An administrator fills in the outgoing mailbox (host, port, account, authorization code, sender and encryption) in the startup-configuration page, the settings are checked against the real SMTP server before they are stored in `PyFlow/transfer_web/.Flow_Web/email_config.json`, and only then is the verification mail service started: registration, password reset and every client login are then verified by email. Codes are valid for 5 minutes, one code may be requested per minute, and the send button counts the minute down. The same card offers **Disable Mail Service**, which removes the stored mailbox and switches the server back to internal mode. While no mailbox is configured, no account is needed on the client side at all: no registration, no password reset, no client login — clients connect and use the tool directly, and only the console administrator logs in to administer the server.
 
-最初に実行すると、サーバーランチャーは、デフォルトですべての`TCP_Server_Base`パラメーターを表示するスタートアップコンフィギュレーションページを開きます。保存された構成は`PyFlow/transfer_web/.Flow_Web/setup_server.json`（`setup.json`と同じ形状）にあります。TCPサーバーが起動すると、サーバーのWebバックエンドはステータスページを提供し、クライアント側のAPI （`/api/server_info`はTCPアドレス/ポートを返します）を提供します。クライアントランチャーは、サーバーアドレス（`http`/`https`ドメインまたはベアIP ）を要求し、サーバーのWebバックエンドを介して接続します。次に、 アカウントにログインし（ユーザー名/メールアドレス、アカウントパスワード、およびアカウントアドレスに郵送された確認コード—両方の要素が必要です）、パスワードとセッショントークンを`PyFlow/transfer_web/.Flow_Web/client_login.json`に保存するため、**ログアウト**がそのファイルを削除するまで、すべてのリロードがクライアントを再度ログインさせます。両方のページには、接続されたインスタンスとメッセージ/ファイル/フォルダ送信のサイドバーが表示されます（クライアントからクライアントへの送信はサーバーを介して転送されます）。Webクライアントは、 取引先責任者であるアカウント。連絡先は、**連絡先**ボタン（ユーザーID、ユーザー名、またはメールアドレスで検索）で追加されます。相手側は、**リクエスト**リストでリクエストに応答し、両方のアカウントが互いに承認した後にのみ、連絡先がサイドバーに表示されます。拡張プロトコルは、クライアントページとサーバーページの管理者によって読み込まれます。ウェブツールは、残りの状態を同じ`.Flow_Web/`ディレクトリに保持します：`setup_client.json`（最後に クライアント起動構成）、`client_last_server.json`（接続ページによって提供される最後のサーバーアドレス）、`client_extensions_ui.json`/`server_extensions_ui.json`（拡張UI状態）、および`uploads/`ステージングディレクトリ。
+On first run the server launcher opens the startup-configuration page showing every `TCP_Server_Base` parameter with its default; the saved config lives in `PyFlow/transfer_web/.Flow_Web/setup_server.json` (same shape as `setup.json`). Once the TCP server is up, the server's web backend serves a status page and a client-facing API (`/api/server_info` returns the TCP address/port and whether clients have to log in). The client launcher asks for the server address (an `http`/`https` domain or a bare IP) and connects through the server's web backend. A server that asks for accounts makes the client log in (username/email, the account password and a verification code mailed to the account address — both factors are required) and stores the password and the session token in `PyFlow/transfer_web/.Flow_Web/client_login.json`, so every reload logs the client in again until **Log out** deletes that file; an internal server skips the login window and the client's account buttons (**Contacts**, **Requests**, **User info**, **Log out**) do not appear. Both pages show a sidebar of connected instances and message/file/folder sending (client-to-client sends are forwarded through the server); on a public server a web client sees only its contacts, while internal clients see every connected instance. Contacts are added with the **Contacts** button (search by user ID, username or email); the other side answers the request in its **Requests** list, and only after both accounts accepted each other does the contact appear in the sidebar. Every file or folder message links the transferred name: clicking it asks the backend that recorded the transfer to open that location in the file manager of its host — a received file is revealed inside its arrival folder, a sent one opens the staged copy in `uploads/`. The browser only ever carries the opaque token of the record, never a filesystem path. Extension protocols are loaded by the client page and by administrators on the server page. The web tool keeps its remaining state in the same `.Flow_Web/` directory: `setup_client.json` (last client startup configuration), `client_last_server.json` (last server address offered by the connect page), `client_extensions_ui.json` / `server_extensions_ui.json` (extension UI state) and an `uploads/` staging directory.
 
-サーバーページには、`"ftp"`共有もあります（管理者のみ）。これはFTPプロトコルではありません。サーバーホストの1つのフォルダを参照し、プロトコル自身の`/file`および`/file_folder`転送を介して、チェックされたエントリをクライアントに渡します。共有フォルダーはスタートアップ構成（`web.ftp_root`/`setup_server.json`）に保持されているため、再起動すると引き続き提供されます。クライアントのブラウズダイアログには、オプションの**Download to**フォルダーがあります。エントリはクライアントホスト上にあり、 フィールドが空のままの場合、デフォルトの転送フォルダ（`PyFlow/network_api/received_files`）。
+The server page also offers a `"ftp"` share (administrator-only). It is not the FTP protocol: it browses one folder of the server host and hands the ticked entries to clients over the protocol's own `/file` and `/file_folder` transfers. The shared folder is kept in the startup configuration (`web.ftp_root` of `setup_server.json`), so a restart keeps serving it. The client's browse dialog takes an optional **Download to** folder: the entries land there on the client host, and in the default transfer folder (`PyFlow/network_api/received_files`) when the field is left empty.
 
 ### `setup.json`
 
-事前に書かれた`setup.json`はランチャーによって表彰されます：
+A pre-written `setup.json` is honoured by the launcher:
 
 ```json
 {
@@ -175,7 +175,7 @@ uv run python PyFlow/transfer_web/setup_client.py
 }
 ```
 
-### プログラマティックな使用
+### Programmatic use
 
 ```python
 from PyFlow.network_api.connect_tcp import TCP_Server_Base, TCP_Client_Base
@@ -184,29 +184,29 @@ server = TCP_Server_Base(host="127.0.0.1", port=12345, is_extend_command=True)
 client = TCP_Client_Base(host="127.0.0.1", port=12345, is_extend_command=True)
 ```
 
-デフォルトでは、両端は暗号化されたチャネル（`is_enable_encrypto=True`）を有効にします。キーは解析可能な場合は`~/.ssh/id_rsa`から来ます。そうでなければ、RSA -2048ペアが`PyFlow/network_api/.Flow/pvt_key/`に生成され、ピアキーが交換され、すべての接続でTOFUチェックされます（`PyFlow/network_api/.Flow/pub_key/pub_key.json`）。`is_custom_keys`と完全なハンドシェイクについては、TCP APIドキュメントを参照してください。
+By default both ends enable the encrypted channel (`is_enable_encrypto=True`): keys come from `~/.ssh/id_rsa` when parseable, otherwise an RSA-2048 pair is generated into `PyFlow/network_api/.Flow/pvt_key/`, and peer keys are exchanged and TOFU-checked on every connection (`PyFlow/network_api/.Flow/pub_key/pub_key.json`). See the TCP API docs for `is_custom_keys` and the full handshake.
 
-## テスト
+## Testing
 
 ```bash
 uv run pytest                       # full Python suite
 ctest --test-dir build       # C library tests
 ```
 
-`libcrypto_api`が構築されていない場合、暗号化されたチャネルテスト（`test/unit/network_api/test_crypto_rsa.py`、`test/integration/network_api/test_crypto_tcp.py`）は自動的にスキップされます。他のすべては関係なく実行されます。CIは、UbuntuとWindowsの両方でPython 3.10-3.14でスイートを実行します。また、フリースレッド（非GIL ） 3.14ビルドも渡します。
+The encrypted-channel tests (`test/unit/network_api/test_crypto_rsa.py`, `test/integration/network_api/test_crypto_tcp.py`) are skipped automatically when `libcrypto_api` has not been built; everything else runs regardless. CI runs the suite on Python 3.10–3.14, on both Ubuntu and Windows; it also passes on the free-threaded (no-GIL) 3.14 build.
 
-## ドキュメンテーション
+## Documentation
 
-スフィンクスのソースは`docs/source/`（`ja`/`ko`/`ru`/`zh_CN`/`zh_TW`カタログが`docs/source/locale/`の英語のソース）にあり、`docs/`はビルドラッパーを保持しています。次のものを使用してHTMLドキュメントを作成します。
+Sphinx sources live in `docs/source/` (English source with `ja`/`ko`/`ru`/`zh_CN`/`zh_TW` catalogues under `docs/source/locale/`); `docs/` holds the build wrappers. Build the HTML docs with:
 
 ```bash
 make -C docs html          # docs/Makefile; docs/make.bat html does the same on Windows
 uv run python -m sphinx -b html docs/source build/sphinx_doc   # equivalent, explicit paths
 ```
 
-`docs/reBuild.sh`で翻訳（ gettextの抽出、新しい文字列の機械翻訳、`.mo`のコンパイル）を再構築します。スクリプトはそのインタプリタで`source/batch_translate_po.py`を呼び出すため、`pyproject.toml`（`sphinx`、`sphinx-intl`、`polib`、`deep-translator`）と`PATH`の`python3.14`実行可能ファイルからのドキュメント/翻訳依存関係が必要です。`docs/_build/html/<lang>`の下で言語ごとに1つのHTMLツリーを書き込みます。ドキュメントを読む`docs/readthedocs_build.sh`は、既存のカタログのみをコンパイルし、単一のHTMLツリーを構築するプレビルドステップとして実行されます rTD出力ディレクトリ。
+Rebuild the translations (extract gettext, machine-translate new strings, compile `.mo`) with `docs/reBuild.sh`; it needs the documentation/translation dependencies from `pyproject.toml` (`sphinx`, `sphinx-intl`, `polib`, `deep-translator`) and a `python3.14` executable on `PATH`, because the script calls `source/batch_translate_po.py` with that interpreter. It writes one HTML tree per language under `docs/_build/html/<lang>`. Read the Docs runs `docs/readthedocs_build.sh` as its pre-build step, which only compiles the existing catalogues and builds the single HTML tree for the RTD output directory.
 
-## ライセンス
+## License
 
 [GPL-3.0](LICENSE)
 

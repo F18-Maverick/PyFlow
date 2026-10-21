@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-01 18:19+0800\n"
+"POT-Creation-Date: 2026-10-20 09:30+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -18,12 +18,12 @@ msgstr ""
 "Generated-By: Babel 2.18.0\n"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:3
-#: b4877074f48944ef95449bad6b451f04
+#: 552b0fbec3774a638b0029ce5fd72949
 msgid "Flow Setup Launcher"
 msgstr "流程设置启动器"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:5
-#: 745aff08935b4042b2885b7f10d524f1
+#: 31952c3324264ea28368c7725796ff63
 #, fuzzy
 msgid ""
 "The ``flow_setup.py`` script is a launcher for the TCP server/client "
@@ -36,12 +36,12 @@ msgstr ""
 "服务器/客户端框架的启动器。它允许您以交互方式或通过命令行参数快速生成单个服务器或客户端实例。每个启动的实例都在单独的终端窗口（或无头系统上的后台进程）中运行。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:13
-#: 5cfe71ed904f4f24bef1210b411ee40d
+#: c8f9652279de42bb983523a15048596e
 msgid "Features"
 msgstr "特征"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:15
-#: d5544e89cd884c938e1bfed52fdaf35a
+#: 2bd321903dd94d9985805a44d9ef3d94
 #, fuzzy
 msgid ""
 "**Interactive mode** – step-by-step creation of server and client "
@@ -50,7 +50,7 @@ msgid ""
 msgstr "**交互模式** – 逐步创建服务器或客户端实例。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:18
-#: a3239003782944f1aceb438c4b164657
+#: df9cbf9e1d024f9386a4b6278c82249e
 #, fuzzy
 msgid ""
 "**Command-line mode** – launch one server or one client with all "
@@ -58,14 +58,14 @@ msgid ""
 msgstr "**命令行模式** – 在一个命令中使用所有参数启动。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:20
-#: 6c36fb284a4b4984bd220e047e26ed37
+#: b3406e8f62894233be438b7988e444da
 msgid ""
 "**Web-tool mode** – ``--web_server`` / ``--web_client`` start the browser"
 " UI of the ``transfer_web`` web tool."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:22
-#: 1a357d61f62b41dd91e150d24c323a98
+#: e359866c167e4e7ca5bf0791fd471ac4
 msgid ""
 "**Extension registration** – ``--add`` / ``--delete`` register or "
 "unregister extension protocol files; the registered files are loaded on "
@@ -73,7 +73,7 @@ msgid ""
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:25
-#: 0deeeb0bc12644eaab437361d69dbe77
+#: 5f7cba6df26144e9840d140f94065b33
 #, fuzzy
 msgid ""
 "**Persistent configuration** – stores the latest instance definitions in "
@@ -84,7 +84,7 @@ msgstr ""
 "将最新的实例定义存储在“setup.json”（与脚本相同的目录）中。每种类型（服务器/客户端）仅保留一个配置，该配置在每次更新时都会被覆盖。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:29
-#: 0b60fca4ab384444a03750dcb790150f
+#: b93809688cb74986ac64e4baceb9f0f6
 msgid ""
 "**Multiple instances** – the ``servers`` and ``clients`` lists may hold "
 "any number of entries. Adding an entry identical to an existing one of "
@@ -92,7 +92,7 @@ msgid ""
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:33
-#: af8b8bdd4c994728a0bf4a7b358976b7
+#: be9bc008af594306be21e731d6aefee3
 #, fuzzy
 msgid ""
 "**Cross-platform** – supports Windows (cmd), Linux (gnome-terminal, "
@@ -103,7 +103,7 @@ msgstr ""
 "(Terminal.app)。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:36
-#: 4696d04613af4a1ea055df8be236adc3
+#: 57005cb0d04f47b2a8f10ad0bc9c7b43
 #, fuzzy
 msgid ""
 "**Complete parameter support** – all parameters accepted by "
@@ -114,22 +114,22 @@ msgstr ""
 "接受的所有参数都可以存储在``setup.json`` 中以进行微调。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:41
-#: 343fcd49c74b4cfd9d351f93c60e59bc
+#: 2ff27919a6f64e8fb610158de5ffdf69
 msgid "Usage"
 msgstr "用法"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:44
-#: 7e39ebc551894366b757ddfb5c406753
+#: dddde4f2d7084bc48efa1296cfd3f22c
 msgid "Interactive Mode"
 msgstr "互动模式"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:46
-#: 5f7b3715a9524fa2a0aed70bbefc5008
+#: f060e64959674f52b223bbc4b01d568c
 msgid "Run the script without any arguments:"
 msgstr "不带任何参数运行脚本："
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:52
-#: a17a608e2ac24987b6c4a428acd770e9
+#: 6bb60d44328244d4ab20f3ae5ba2b827
 msgid ""
 "When ``setup.json`` already exists, the launcher first asks whether to "
 "overwrite it, and the interactive collection itself asks whether the "
@@ -137,7 +137,7 @@ msgid ""
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:56
-#: 7fe4792645644307bf450194c2d98fa7
+#: d247a8d3c3f1430c8dfa6dccad66da0a
 msgid ""
 "``setup.json exists. Overwrite configuration data? (Y/N):`` – ``N`` "
 "launches every stored instance and exits; ``Y`` (or no existing file) "
@@ -145,7 +145,7 @@ msgid ""
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:59
-#: e60cbc55c5834e8ab8ce55e696159e9a
+#: 96169445a67545178cdd4b68ce5faae3
 msgid ""
 "``Delete or change existing instances or configs? (Y/N):`` – asked only "
 "when stored instances exist. ``Y`` opens the instance editor (see below);"
@@ -153,23 +153,23 @@ msgid ""
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:63
-#: eaf7134992f44c58aa4181664a3bc638
+#: 80847dcc3e404a779b2e693cf8de50d5
 #, fuzzy
 msgid "``Choose the type (0 for Server, 1 for Client)``."
 msgstr "选择类型（0 表示服务器，1 表示客户端）。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:64
-#: 6a5569dd541a4043802c5d85f125db64
+#: cebc8ba62d1a48a69d8019c3862dc18b
 msgid "Enter the bind address and port (``host:port``)."
 msgstr "输入绑定地址和端口（``host:port``）。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:65
-#: e70e2b6322a04c748193e1cec4b0ee2c
+#: 4311b66e1b974b4596f2693908ba3109
 msgid "If Client, also enter the server address and port to connect to."
 msgstr "如果是客户端，还需输入要连接的服务器地址和端口。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:67
-#: df73da29736d4b878bef8427a95945aa
+#: 3a5cff8b854c40939873ad57b060d9c3
 msgid ""
 "Decide whether to add another instance. An entry that already exists in "
 "the list is not added again; a new one is appended, so several instances "
@@ -177,14 +177,14 @@ msgid ""
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:71
-#: 8e0df08f751f46deb43ba1006ed04b20
+#: 7c893e0f8399455ba1b14d9c796d75a8
 msgid ""
 "After editing, the launcher asks ``Add new instances? (Y/N)`` before "
 "returning to the add flow."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:74
-#: 237874cb10d040cf86074695574daf32
+#: 49c58d9bb0b1440485f3cbecdb2843d6
 msgid ""
 "When the editor is left with changes, ``setup.json`` is rewritten with "
 "every instance, and all stored instances (reused plus newly added) are "
@@ -192,97 +192,97 @@ msgid ""
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:79
-#: c81a1dba5f224291a56257375f84a1a0
+#: a1e74fd1f7f04e548b268c3dc0d6763e
 msgid "Global commands"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:81
-#: 8247157dfc0b4a32aa9ae300813386c6
+#: b8ede51e5254499e9dd613bc93db15ca
 msgid ""
 "The following words can be typed at **every** prompt, including field-"
 "value prompts:"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:85
-#: 720b396d65c547fa845910a437a48236
+#: b5cd8be69a40420a89cf7ad69631cd45
 msgid "Command"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:85
-#: c29ffb659bf3446490bc9eaac6f2e7ea
+#: c2b850e77d9b44559be9b25d93611a70
 msgid "Effect"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:87
-#: 7702fd6a612347919c73ec35852a4622
+#: 7bb925846a36488d945c3442889d83c0
 msgid "``Help``"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:87
-#: 886877e3eb7d407fa62b16a4fc968f62
+#: 200a2a3be7ea46b291882aef0b8d9031
 msgid "Print the usage text of the current prompt."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:89
-#: c569666357334b05ba4189c122bbeaaf
+#: a6ce48cd04e04b3ea42ad16e04e37359
 msgid "``Fix_Config``"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:89
-#: 0a5c8bdb9c1d4f7eb8a41fce85acf0b4
+#: fcd62172378d4da498de2a21a03f97a0
 msgid "Jump to the instance editor (or, inside it, save and return to the list)."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:92
-#: 7702fd6a612347919c73ec35852a4622
+#: 7bb925846a36488d945c3442889d83c0
 #, fuzzy
 msgid "``Setup``"
 msgstr "`` --setup_num ``"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:92
-#: afc6f0adaafd49009ee96e36393060cd
+#: 0bdae3cd584e464ab526840aa032e3a4
 msgid ""
 "Launch every instance configured in ``setup.json`` and exit the setup "
 "program."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:95
-#: cc2a8285cba3495db468d5f007f3ecfc
+#: 85343de947b74e3b97e4c59109ebcd9e
 msgid "``Add_Extension``"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:95
-#: a6c3fac6c8f44d75a7a266bae3c54729
+#: 6b8af44d732b4673afbc2f9cbec357d3
 msgid "Prompt for extension file path(s) and register them."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:97
-#: 4febe01e668f4cc1aa1b92e328780ebe
+#: a35baf4ca7d949eba92cf6c6279c9cd2
 msgid "``Delete_Extension``"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:97
-#: 5e54a7238b604a5fbe930ff4c5fd05d5
+#: d6f9495c1ad046d5877eb8159799ae88
 msgid "Prompt for registered extension path(s) to remove."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:99
-#: 88bb1def13564b809d980ac0d7f22832
+#: 7c985bf621ba4fbeaa8f25042d47ed95
 msgid "``Quit``"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:99
-#: 22644327258c472aab543baf2ee08784
+#: 18f32c4c66094837a84906ba56ef236d
 msgid "Exit the setup program immediately."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:103
-#: 34bd8aa59f064b5b9c6323a01278a409
+#: 1dc7b46c0e3047d2885573cc4f55e7c6
 msgid "Instance editor"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:105
-#: 5832e770c51e4e61b0a372086616ad57
+#: 021cb4d2e2234dff8a9b206826926e33
 msgid ""
 "The editor is reached by typing ``Fix_Config`` (at any prompt) or by "
 "answering ``Y`` to the \"Delete or change existing instances\" question. "
@@ -295,37 +295,37 @@ msgid ""
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:115
-#: 36e871e8b76b4e6f8ab3d41c6e58e053
+#: be9f3fe33bf943419ada71d457c635e1
 msgid "Vim-style commands:"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:117
-#: bf18c8047500461486e3bc05c6154ecc
+#: f11526b8f13f4f6eabba91f7543c7120
 msgid "``:w`` – write ``setup.json`` without leaving the editor."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:118
-#: e723d0258ef143079a508676b8d418db
+#: 39e34a4760354d78b87a8e050029e197
 msgid "``:wq`` – write ``setup.json`` and leave the editor."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:119
-#: 8e54b99375e441308cd3dc8ec4cd5d3a
+#: 740d1745df7841a59959dbdab98a73b4
 msgid "``:q`` – leave; refused while there are unsaved changes."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:120
-#: 32cdc0d2f2f34602a77b692202f56b24
+#: 944a89864f5c46c488287ee0740d83d5
 msgid "``:q!`` – leave and discard all changes."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:121
-#: 7360415b19b04c13ab167e500f3437ac
+#: 927b5a52f9454d65af949f5cc188e33d
 msgid "``Quit`` – exit the setup program immediately."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:123
-#: aea22c0686c64df8bc842a51fbd2d67e
+#: d4163489911a454f9e4fd1b6cdd1de5a
 msgid ""
 "Inside the config editor, ``j``/``k`` move between fields, ``Esc`` or "
 "``back`` returns to the list, and a field index or ``Enter`` edits the "
@@ -336,170 +336,170 @@ msgid ""
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:132
-#: 720b396d65c547fa845910a437a48236
+#: b5cd8be69a40420a89cf7ad69631cd45
 msgid "Command‑line Mode"
 msgstr "命令行模式"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:134
-#: 19ffa2fc838a441786de354b2a574153
+#: d798ec606de2454da5f10e9d0a7e677c
 msgid "Use the following options:"
 msgstr "使用以下选项："
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:137
-#: c6dc291839964e119fb50574caedfd9c
+#: 4d5c1aebbede473c8598cbc45f8deb20
 msgid "Option"
 msgstr "选项"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:137
-#: 4a498223c2cb4e45914dcd53bb7f2f12
+#: a50ba126b168482997fae00497252fd4
 msgid "Description"
 msgstr "描述"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:139
-#: 649f1c33bb9d4afa89d1796bef081ddf
+#: 7755904907ee46f6a34144360ed876f7
 #, python-brace-format
 msgid "``--type {0,1}``"
 msgstr "`` --type {0,1} ``"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:139
-#: f0793c0f15584b42bc66b82e672854b5
+#: 0175b3fbf31e44829a685a07be420436
 msgid ""
 "0 = Server, 1 = Client. Required for a plain command-line launch; without"
 " it the launcher runs interactively."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:143
-#: 984f0a2d64024749ae1cfb521b9866d2
+#: 7cc185b424ee489282d9d85571d54fae
 msgid "``--setup_addr_port``"
 msgstr "`` --setup_addr_port ``"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:143
-#: 58e47d807455460fb6e76d76b836bc30
+#: b7962f6d3a194e3eb91915d5681a2b7b
 #, fuzzy
 msgid "Bind address and port (e.g. ``127.0.0.1:8000``). Required with ``--type``."
 msgstr "输入绑定地址和端口（``host:port``）。"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:147
-#: 31efc70f958b4608b07bc24eb1ec633b
+#: 388a3dd952ac47a78598792ef7d587bc
 msgid "``--connect_addr_port``"
 msgstr "`` --connect_addr_port ``"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:147
-#: 041b4144717b4f54ad1b24d06726293b
+#: 7d96425a64374a36a457a9167fc6d39c
 msgid ""
 "Server address and port to connect to. Required for Client; rejected in "
 "Server mode."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:150
-#: 7702fd6a612347919c73ec35852a4622
+#: 7bb925846a36488d945c3442889d83c0
 msgid "``--setup_num``"
 msgstr "`` --setup_num ``"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:150
-#: 139258adce2844a28d57733bb973ec1e
+#: 26698837fb26457ba9674e8ccf0cf881
 msgid ""
 "Number of instances to launch. Only 1 is allowed; a larger value is "
 "accepted but ignored with a warning."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:154
-#: 984f0a2d64024749ae1cfb521b9866d2
+#: 7cc185b424ee489282d9d85571d54fae
 msgid "``--web_server``"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:154
-#: 108977e4c89b442488c39cad5378e8e5
+#: 9b1821de6d0f4c4d9af6c4e47eab4e5d
 msgid ""
 "Launch the ``transfer_web`` server tool (browser UI) instead of a TCP "
 "instance."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:157
-#: 984f0a2d64024749ae1cfb521b9866d2
+#: 7cc185b424ee489282d9d85571d54fae
 msgid "``--web_client``"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:157
-#: 99410d7adbc749e2bee7ff014945d19b
+#: 91fa396110c94aa9a29f0a569763e030
 msgid ""
 "Launch the ``transfer_web`` client tool (browser UI) instead of a TCP "
 "instance."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:160
-#: 5de4064738ce4d529c9df9d1da98a556
+#: 118dce4ec3934bd4b5bb6e7b1aa31bf0
 msgid "``--add PATH [PATH ...]``"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:160
-#: be6adb7451d84f9f934044d2891cc4db
+#: 2a630e280d3040d6a78cd865dd3e2ae7
 msgid "Register extension protocol file(s), then exit."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:163
-#: 58e2f444f8394dd5a5c41b400675c736
+#: c505cbcf44104e6799bfcb83251c2f72
 msgid "``--delete PATH [PATH ...]``"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:163
-#: 638774f6e42549ad88f930e50a2c3cad
+#: 74b797d0ddf046d3b1dda4eea01013b7
 msgid "Unregister extension protocol file(s), then exit."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:167
-#: e9b3cc31339a4f318337e8c68cc61fd5
+#: 54c5d51b3cb841ceaefda13a7613a8ae
 msgid ""
 "A command-line launch replaces ``setup.json`` with the single launching "
 "instance, so any other stored instance is dropped."
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:171
-#: 327a63e83b8f4df9af4a5e6a32e2ce6e
+#: 99952fa68b694654b82a309a26419152
 msgid "Examples"
 msgstr "示例"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:173
-#: c03b73272d554d1a885a04e6470d43c9
+#: 9c77e76f40a940e99e754d27e3bc1b05
 msgid "**Launch a single server** on ``127.0.0.1:8000``:"
 msgstr "**在“127.0.0.1:8000”上启动单个服务器**："
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:179
-#: 69edc9f7ea534c00bdaab2a4c84ef2cf
+#: 37df8730dce9408a87ba48b775eb2b0a
 msgid ""
 "**Launch a client** bound to port ``9000``, connecting to a server at "
 "``127.0.0.1:8000``:"
 msgstr "**启动绑定到端口“9000”的客户端**，连接到“127.0.0.1:8000”的服务器："
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:186
-#: afc6f0adaafd49009ee96e36393060cd
+#: 0bdae3cd584e464ab526840aa032e3a4
 msgid "**Launch from an existing configuration** (if ``setup.json`` is present):"
 msgstr "**从现有配置启动**（如果存在“setup.json”）："
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:193
-#: f2fd3c19413a4e6abb4b18037a347443
+#: 0538ca5ad181412c9136f318be43dfa0
 msgid "**Launch the web tool** instead of a TCP instance:"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:200
-#: 71feceacd5b94bd98ce1973f45c16df1
+#: 4a43a3b821764068aaa05c153037208f
 msgid "**Register an extension protocol file**:"
 msgstr ""
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:207
-#: 00dff5a17f42419585f498c51f7fcc97
+#: ff45af42eb7d4d3faa8640a18bfd61f6
 msgid "Configuration File"
 msgstr "配置文件"
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:209
-#: e723d0258ef143079a508676b8d418db
+#: 39e34a4760354d78b87a8e050029e197
 msgid ""
 "The script writes a file named ``setup.json`` in the same directory. Its "
 "structure is:"
 msgstr "该脚本在同一目录中写入一个名为“setup.json”的文件。其结构为："
 
 #: ../../source/Instance_Setup/Instance_Setup.rst:233
-#: 82c31bcb59fc481eaa532d1a0696ed8d
+#: b0129978b1a9468188663a40126df876
 msgid ""
 "**Both lists may contain any number of objects.** Every entry is "
 "completed with the default value of each parameter that the entry does "
@@ -508,21 +508,23 @@ msgid ""
 "``max_file_transfer_thread_num``, ``is_hand_alloc_port``, "
 "``is_input_command_in_console``, ``max_custom_workers``, "
 "``is_extend_command``, ``is_enable_encrypto``, ``is_custom_keys``, "
-"``max_mem_buff``, ``is_asynic_clients_io``, ``is_debug`` and "
+"``max_mem_buff``, ``recv_messages_chunk_len``, "
+"``file_transfer_chunk_len``, ``is_asynic_clients_io``, ``is_debug`` and "
 "``is_print_log``; the client entry carries ``host``, ``client_host``, "
 "``port``, ``client_port``, ``timeout``, ``port_add_step``, "
 "``max_thread_num``, ``is_input_command_in_console``, ``is_wait_server``, "
 "``max_custom_workers``, ``is_extend_command``, ``is_enable_encrypto``, "
-"``is_custom_keys``, ``max_mem_buff``, ``is_debug`` and ``is_print_log``."
+"``is_custom_keys``, ``max_mem_buff``, ``recv_messages_chunk_len``, "
+"``file_transfer_chunk_len``, ``is_debug`` and ``is_print_log``."
 msgstr ""
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:251
-#: 8ffd3b4e6719464cbd48a2b20d5764f2
+#: ../../source/Instance_Setup/Instance_Setup.rst:252
+#: 8731a083a201487bb579beb4a238a0db
 msgid "Custom Parameters"
 msgstr "自定义参数"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:253
-#: 284b4f1899d94269a530dec33958d0c8
+#: ../../source/Instance_Setup/Instance_Setup.rst:254
+#: 8910f94645f54874893c20f724780cbd
 msgid ""
 "You may edit ``setup.json`` by hand (or change the same fields in the "
 "instance editor) to give any parameter accepted by ``TCP_Server_Base`` or"
@@ -534,21 +536,21 @@ msgid ""
 "``setup.json`` from that, so hand-written extra keys are lost."
 msgstr ""
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:264
-#: 3746b90215c84dc38c8ca2bb20d396f6
+#: ../../source/Instance_Setup/Instance_Setup.rst:265
+#: c62b1bfe8ceb40f8865a34ac87b4ba18
 msgid "Extension Protocols and Startup Mode"
 msgstr "扩展协议和启动模式"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:266
-#: 4c6e6cc80e9c4ce3afe79fad55a2815a
+#: ../../source/Instance_Setup/Instance_Setup.rst:267
+#: e6a7dcb4ea184e828e6667ae6505d872
 msgid ""
 "Two extension protocols ship with the launcher and are loaded "
 "automatically for every instance whose ``setup.json`` entry sets "
 "``is_extend_command=True``:"
 msgstr "启动器附带两个扩展协议，并为每个“setup.json”条目设置“is_extend_command=True”的实例自动加载："
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:270
-#: 2d05270538524347899b403011286dcc
+#: ../../source/Instance_Setup/Instance_Setup.rst:271
+#: 7159f768fc9a4ac199bfe0a4d8478fba
 #, fuzzy
 msgid ""
 "``command_control_extension_tcp.py`` – remote command execution with per-"
@@ -556,8 +558,8 @@ msgid ""
 "completion report)."
 msgstr "``command_control_extension_tcp.py`` – 远程命令"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:273
-#: 1540ce3848be4d519034dd90e1d27fdd
+#: ../../source/Instance_Setup/Instance_Setup.rst:274
+#: d2d277053c74470abc949b891493a5f0
 #, fuzzy
 msgid ""
 "``forward_extension_tcp.py`` – forwarding messages, files, multiple "
@@ -569,24 +571,24 @@ msgstr ""
 "使用每个客户端日志收集执行（``/command``）。 -``forward_extension_tcp.py`` - "
 "将消息、文件、多个文件、文件夹和多个文件夹转发到任意数量的目标客户端（``/send_msg_forward``、``/file_forward``、``/multiple_file_forward``、``/folder_forward``、``/multiple_folder_forward``）。"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:281
-#: 92e914da56f1402e85ef75819caf5b3f
+#: ../../source/Instance_Setup/Instance_Setup.rst:282
+#: a8194174e5fd4dcf87ede716eaada9a4
 msgid ""
 "Plain-message forwarding is native to the TCP protocol (no extension "
 "needed): the client-only command ``/forward_send_msg`` relays messages to"
 " the listed destination clients through the server."
 msgstr "纯消息转发是TCP协议的原生（不需要扩展） ：仅客户端命令``/forward_send_msg ``通过服务器将消息中继到列出的目标客户端。"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:286
-#: 836d703843ed4940a42f3b7a0c36b78e
+#: ../../source/Instance_Setup/Instance_Setup.rst:287
+#: 98297b76f3404736b92b6c507726a50a
 #, fuzzy
 msgid ""
 "With ``is_extend_command=False`` (the default) the raw TCP protocol is "
 "started without these two built-in extensions."
 msgstr "使用“is_extend_command=False”（默认）仅启动原始 TCP 协议。"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:289
-#: 3849c157ba79441e8406bcf9a4fc7695
+#: ../../source/Instance_Setup/Instance_Setup.rst:290
+#: fbbe2f02d9174359baca2c685704b475
 msgid ""
 "Independently of ``is_extend_command``, every launch also loads the "
 "extension protocol files registered in ``PyFlow/added_extensions.json`` "
@@ -594,15 +596,15 @@ msgid ""
 "``add_extension.load_registered_extensions``."
 msgstr ""
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:295
-#: fef96f9c96c64f6690b54175c7e7830d
+#: ../../source/Instance_Setup/Instance_Setup.rst:296
+#: 9b5ab0319a9843f1b39721d3a96d1777
 msgid ""
 "The ``is_input_command_in_console`` flag selects how the instance is "
 "started:"
 msgstr "``is_input_command_in_console`` 标志选择实例的启动方式："
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:298
-#: 407ae406135b42b3a6efd4ba5242b296
+#: ../../source/Instance_Setup/Instance_Setup.rst:299
+#: 1ec730c995b1454da1b208331d9ca8fe
 #, fuzzy
 msgid ""
 "``True`` (default) – the instance's own start method "
@@ -612,8 +614,8 @@ msgstr ""
 "`` True `` （默认） – `` START_TCP_SERVER () ``/`` START_TCP_CLIENT () "
 "``被直接调用，控制台输入循环在其自己的线程中运行。"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:301
-#: 1e10d27ee5c04d69ac9de20031a68b31
+#: ../../source/Instance_Setup/Instance_Setup.rst:302
+#: 3cfb2eba312943cea85388f4e9faf40d
 #, fuzzy
 msgid ""
 "``False`` – the instance is started in a background thread and the "
@@ -623,8 +625,8 @@ msgstr ""
 "直接调用“start_TCP_client()”，控制台输入循环在其自己的线程中运行。 -``False`` - "
 "实例在后台线程中运行，启动器使进程保持活动状态，直到实例停止（对于无头部署很有用）。"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:305
-#: 3743e0549b4449008324f68e282a0d81
+#: ../../source/Instance_Setup/Instance_Setup.rst:306
+#: 3b3482fa903f4afd81234e588a229c1f
 #, fuzzy
 msgid ""
 "Both extensions also expose injectable registration "
@@ -639,48 +641,48 @@ msgstr ""
 "is_input_command_in_console=True)`` /``server_setup(instance=None, "
 "is_input_command_in_console=True)`` 接受现有实例，因此可以加载多个扩展从代码到同一个实例。"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:314
-#: 34bd8aa59f064b5b9c6323a01278a409
+#: ../../source/Instance_Setup/Instance_Setup.rst:315
+#: 1dc7b46c0e3047d2885573cc4f55e7c6
 msgid "Internal Operation"
 msgstr "内部运作"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:316
-#: 4ca266ef495b4a61bce44251b65f8c91
+#: ../../source/Instance_Setup/Instance_Setup.rst:317
+#: 8870bc6b731d40a095a40faed0c8f16d
 #, fuzzy
 msgid ""
 "Each instance is launched in a new terminal window (or background "
 "process)."
 msgstr "每个实例都在新的终端窗口中启动"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:318
-#: 2b6246012ce84ec0945a9245b208ae95
+#: ../../source/Instance_Setup/Instance_Setup.rst:319
+#: 13c720a93ba54e8ca330fce3a078bb5b
 #, fuzzy
 msgid ""
 "The configuration is passed via a temporary JSON file to avoid shell "
 "escaping issues."
 msgstr "配置通过临时 JSON 传递"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:320
-#: e40392b9adef407ca3ade4bf2d252190
+#: ../../source/Instance_Setup/Instance_Setup.rst:321
+#: 9566eb3cb70e4b77bcbdb584f7e0b6fc
 #, fuzzy
 msgid ""
 "If an instance fails to start, the error is displayed and the window "
 "pauses for inspection."
 msgstr "显示并且窗口暂停以进行检查。"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:324
-#: 2d7f7f35978a449995958b44730759d3
+#: ../../source/Instance_Setup/Instance_Setup.rst:325
+#: 5f0f0f6a41384356986a1182f14a0a4c
 msgid "Requirements"
 msgstr "要求"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:326
-#: ddf48eb8fc2d48f9adbc38a39965ec22
+#: ../../source/Instance_Setup/Instance_Setup.rst:327
+#: 49ceb74e41104b00971cd9edecef08ae
 #, fuzzy
 msgid "Python 3.10+"
 msgstr "Python 3.6+"
 
-#: ../../source/Instance_Setup/Instance_Setup.rst:327
-#: 9bc8a330f1384ade97e4ee55efa58e6b
+#: ../../source/Instance_Setup/Instance_Setup.rst:328
+#: 1d80811611c944f9bf772364ab45d1e4
 msgid ""
 "The ``PyFlow.network_api.connect_tcp`` module must be importable (the "
 "script imports ``TCP_Server_Base`` and ``TCP_Client_Base`` from there)."
@@ -783,4 +785,27 @@ msgstr ""
 
 #~ msgid "and ``TCP_Client_Base`` from there)."
 #~ msgstr "和来自那里的“TCP_Client_Base”）。"
+
+#~ msgid ""
+#~ "**Both lists may contain any number "
+#~ "of objects.** Every entry is completed"
+#~ " with the default value of each "
+#~ "parameter that the entry does not "
+#~ "set. The stored server entry therefore"
+#~ " carries ``host``, ``port``, ``max_clients``, "
+#~ "``port_add_step``, ``port_range_num``, "
+#~ "``max_file_transfer_thread_num``, ``is_hand_alloc_port``, "
+#~ "``is_input_command_in_console``, ``max_custom_workers``, "
+#~ "``is_extend_command``, ``is_enable_encrypto``, "
+#~ "``is_custom_keys``, ``max_mem_buff``, "
+#~ "``is_asynic_clients_io``, ``is_debug`` and "
+#~ "``is_print_log``; the client entry carries "
+#~ "``host``, ``client_host``, ``port``, "
+#~ "``client_port``, ``timeout``, ``port_add_step``, "
+#~ "``max_thread_num``, ``is_input_command_in_console``, "
+#~ "``is_wait_server``, ``max_custom_workers``, "
+#~ "``is_extend_command``, ``is_enable_encrypto``, "
+#~ "``is_custom_keys``, ``max_mem_buff``, ``is_debug`` "
+#~ "and ``is_print_log``."
+#~ msgstr ""
 

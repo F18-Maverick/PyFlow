@@ -6,207 +6,231 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: PyFlow\n"
+"Project-Id-Version:  PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-26 22:43+0800\n"
+"POT-Creation-Date: 2026-10-20 09:30+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Generated-By: Babel 2.10.3\n"
+"Generated-By: Babel 2.18.0\n"
 
 #: ../../source/api/PyFlow.transfer_web.web_backend.mail_service.rst:2
-#: 86d4061dc1f542ac95555aa2deab1101
+#: ffcd351a76b74899a0105947d1049e12
 msgid "PyFlow.transfer\\_web.web\\_backend.mail\\_service module"
 msgstr "PyFlow.transfer \\_web.web \\_backend.mail \\_サービスモジュール"
 
-#: 99f2cb604d5c450c9cda427b22b2c8cb
-#: PyFlow.transfer_web.web_backend.mail_service:1 of
+#: PyFlow.transfer_web.web_backend.mail_service:1
+#: c6f6b5571d954e7b986a3355033cd30c of
 msgid "SMTP delivery of account verification codes for the web tool."
 msgstr "Webツールのアカウント認証コードのSMTP配信。"
 
-#: 1d2a4d079f6c44f182332c5b44d0705a
+#: 9764afd408ca43ce829f03d7d4ca675b
 #: PyFlow.transfer_web.web_backend.mail_service:3 of
+#, fuzzy
 msgid ""
-"The administrator configures the outgoing mailbox from the server's startup-"
-"configuration page.  The settings are validated with a real SMTP login and "
-"only then written to ``.Flow_Web/email_config.json``; while no validated "
-"configuration is present the service refuses to send, so a server can never "
-"silently drop verification codes."
+"The administrator configures the outgoing mailbox from the server's "
+"startup-configuration page.  The settings are validated with a real SMTP "
+"login and only then written to ``.Flow_Web/email_config.json``; while no "
+"validated configuration is present the service refuses to send, so a "
+"server can never silently drop verification codes.  The same page takes "
+"the mailbox away again (`disable`), which switches the server back to "
+"internal use."
 msgstr ""
 "管理者は、サーバーのスタートアップ構成ページから送信メールボックスを構成します。設定は実際のSMTPログインで検証され、''.Flow_Web/email_config.json"
 " "
 "''にのみ書き込まれます。検証された構成は存在しませんが、サービスは送信を拒否するため、サーバーは検証コードをサイレントでドロップすることはできません。"
 
-#: PyFlow.transfer_web.web_backend.mail_service.normalize_config:1
-#: e0597ff2442b43dd87c4efaef6c574c5 of
+#: 5fdca457edd340eab7c9f05558a37dc5
+#: PyFlow.transfer_web.web_backend.mail_service.normalize_config:1 of
 msgid "Validate untrusted SMTP settings and return them in canonical form."
 msgstr "信頼できないSMTP設定を検証し、正規の形式で返します。"
 
 #: ../../source/api/PyFlow.transfer_web.web_backend.mail_service.rst
-#: 069dae5e8fb0426e897adc279499319b 4c58519a459f4b9486f0a571939d4834
-#: 83045ebe35d54d76b13e40961c070d4f eb5501cac4f240b19f2d4f5e5443e3c6
+#: 1cad23766791477aa6fb46051363ef81 73b1f3a5025140ec8701e976293f7af0
+#: 817b9cde77bb4327ad3b9f8356d27f4c a9b0b41ab3fd438c8cb2551b61e1af31
 msgid "Parameters"
 msgstr "パラメーター"
 
-#: 14138866fd924a0083c8e6562b3860ff
+#: 1b2b400edc914a76977297cb9ef6da5d
 #: PyFlow.transfer_web.web_backend.mail_service.normalize_config:3 of
 msgid ""
-"Settings with ``host``, ``port``, ``username``, ``password``, ``from`` and "
-"``encryption`` keys. ``from`` defaults to the username and ``encryption`` to"
-" ``DEFAULT_ENCRYPTION``."
+"Settings with ``host``, ``port``, ``username``, ``password``, ``from`` "
+"and ``encryption`` keys. ``from`` defaults to the username and "
+"``encryption`` to ``DEFAULT_ENCRYPTION``."
 msgstr ""
 "'' host ''、'' port ''、'' username ''、'' password ''、'' from '' and '' "
-"encryption '' keys .'' from '' defaults to the username and '' encryption ''"
-" to '' DEFAULT_ENCRYPTION ''."
+"encryption '' keys .'' from '' defaults to the username and '' encryption"
+" '' to '' DEFAULT_ENCRYPTION ''."
 
 #: ../../source/api/PyFlow.transfer_web.web_backend.mail_service.rst
-#: 170588e452e5431e815fad88a5b5537b 887b6607974c4ea8b99b628ea3efbf45
-#: a16996418f0e4e5ab58b7244ded5e63b c0463031a23c4f799b6a8217f31cc1b1
+#: 097b6a08fc5548d1a5a4568b07bf4326 1388175dc5e64a8eb1a99affd4807d9f
+#: 334d15f3b1264e0b8abfc34e8fee985e 8f894b6967fd4867b82c726e85c83dc9
 msgid "Returns"
 msgstr "返品"
 
-#: PyFlow.transfer_web.web_backend.mail_service.normalize_config:8
-#: dafcbdb3cccc40fa89a38363dd5680b0 of
+#: 4695369c64494340bb98d06f4029f854
+#: PyFlow.transfer_web.web_backend.mail_service.normalize_config:8 of
 msgid ""
 "The same settings with a string host, an integer port, a lowercase     "
 "encryption mode and an explicit sender."
 msgstr "文字列ホスト、整数ポート、小文字の暗号化モード、および明示的な送信者と同じ設定です。"
 
-#: PyFlow.transfer_web.web_backend.mail_service.normalize_config:10
-#: a68a2cdaeea44ccdb70c8e49efbcb5dd of
+#: 5c191d5d632a4a71a814aa300592c904
+#: PyFlow.transfer_web.web_backend.mail_service.normalize_config:10 of
 msgid "The same settings with a string host, an integer port, a lowercase"
 msgstr "文字列ホスト、整数ポート、小文字で同じ設定"
 
-#: 2bd9bb82ad2749df9c60df8271733a8c
-#: PyFlow.transfer_web.web_backend.mail_service.normalize_config:11 of
+#: PyFlow.transfer_web.web_backend.mail_service.normalize_config:11
+#: f98ed07dd1474127973e40ea5d133476 of
 msgid "encryption mode and an explicit sender."
 msgstr "暗号化モードと明示的な送信者。"
 
 #: ../../source/api/PyFlow.transfer_web.web_backend.mail_service.rst
-#: 24fb33faf10542c7a1d5bcd8bc20e135 53904db2f0da42c6ac410c40a9e555a0
-#: 59876b786ae244308cb80d0e15975404 a636a96a44754c789c671d6e95914aea
+#: 2ceb9aabd15149e2a74ab44ffc0e7e3b 4f9ea7be9a9d4179b3371b7ffaaf9c64
+#: 75ab32112eb54385b832e99cc66c0f3b 951ba3e6400f48c2baaffe4aceb25ae3
 msgid "Return type"
 msgstr "戻り値"
 
 #: ../../source/api/PyFlow.transfer_web.web_backend.mail_service.rst
-#: 4375f894dabe4fd49e5d470f602e7e4e 669fcb172313407fa0df09ca10280e22
-#: 9ce7848878e44efba62bd42bd640bdeb
+#: 051ee4ae623e4c52aca28e50c43a8659 6c5929a2e83444a0b5026560f2c5af02
+#: 7d5aee61dcaa450790fdaa12bda90f1c b717337ce24a4644a8684f6c14ced1d5
 msgid "Raises"
 msgstr "レイズ"
 
-#: PyFlow.transfer_web.web_backend.mail_service.normalize_config:14
-#: f6db2cc04ccd4bc0a06c34c8d5d00b29 of
+#: 8e1b87a14fc44d6383f43b22bdb71770
+#: PyFlow.transfer_web.web_backend.mail_service.normalize_config:14 of
 msgid "If a setting is missing, malformed or out of range."
 msgstr "設定が欠落している、形式が正しくない、または範囲外の場合。"
 
-#: PyFlow.transfer_web.web_backend.mail_service.MailService:1
-#: a46df3ad1b4d47838e7d86646e5e45d4 of
+#: 9104ff2767b4468db4119f0de6103975
+#: PyFlow.transfer_web.web_backend.mail_service.MailService:1 of
 msgid "SMTP client delivering verification codes."
 msgstr "SMTPクライアントが検証コードを配信します。"
 
 #: PyFlow.transfer_web.web_backend.mail_service.MailService:3
-#: a6a714e990194ee9b2c023afa0423ec6 of
+#: b29996ad41f1488f8540e22a48f131fa of
 msgid ""
-"The stored configuration is read on construction, so a validated mailbox is "
-"available again after a restart."
+"The stored configuration is read on construction, so a validated mailbox "
+"is available again after a restart."
 msgstr "保存された構成は構築時に読み取られるため、再起動後に検証されたメールボックスが再び使用可能になります。"
 
-#: 906ef645c3f0431c8d4f44bb661e3119
+#: 67ba292bfc8c40ee863f2bf892ff74cb
 #: PyFlow.transfer_web.web_backend.mail_service.MailService.__init__:1 of
 msgid "Create the service and load the stored configuration."
 msgstr "サービスを作成し、格納された構成を読み込みます。"
 
-#: 886b800f093c4d758d14028b4233d623
-#: PyFlow.transfer_web.web_backend.mail_service.MailService.__init__:3 of
+#: PyFlow.transfer_web.web_backend.mail_service.MailService.__init__:3
+#: f7b0ac874bc34b408853f868c5c1a9cd of
 msgid ""
 "JSON file holding the SMTP settings; defaults to "
 "``.Flow_Web/email_config.json``."
 msgstr "SMTP設定を保持するJSONファイル。デフォルトは''.Flow_Web/email_config.json ''です。"
 
-#: 10490a10be734ca58da591842794088d
-#: PyFlow.transfer_web.web_backend.mail_service.MailService.is_enabled:1 of
+#: PyFlow.transfer_web.web_backend.mail_service.MailService.is_enabled:1
+#: cdbf836d9e9c4e2a948458972edbfbae of
 msgid "Report whether a validated configuration lets codes be sent."
 msgstr "検証された構成がコードを送信できるかどうかを報告します。"
 
-#: PyFlow.transfer_web.web_backend.mail_service.MailService.is_enabled:3
-#: a19f7729857a4995be526dded313b07d of
+#: 6f529ae442fb4a4ba2e0fd72533d0e29
+#: PyFlow.transfer_web.web_backend.mail_service.MailService.is_enabled:3 of
 msgid "True when the SMTP settings were validated and stored."
 msgstr "SMTP設定が検証され、保存された場合はtrueです。"
 
-#: 646e8fd83be4421ab0d3b4d38fe2b1c8
+#: 93c564a9ccd64ebca089cbd00f434f9e
 #: PyFlow.transfer_web.web_backend.mail_service.MailService.get_config:1 of
 msgid "Return the validated SMTP settings."
 msgstr "検証されたSMTP設定を返します。"
 
-#: 1728b9dc41484d35851721b141e661be
+#: 83356ba5ccea4bceae862cc0934959cf
 #: PyFlow.transfer_web.web_backend.mail_service.MailService.get_config:3 of
 msgid ""
 "Copy of the stored settings, or ``None`` while the     service is not "
 "configured."
 msgstr "保存された設定のコピー、またはサービスが構成されていない間の「なし」。"
 
-#: PyFlow.transfer_web.web_backend.mail_service.MailService.get_config:5
-#: cb61516a7cac473fa2ab322e29340899 of
+#: 77ff24f402974e8681e2273634e17e4c
+#: PyFlow.transfer_web.web_backend.mail_service.MailService.get_config:5 of
 msgid "Copy of the stored settings, or ``None`` while the"
 msgstr "保存されている設定のコピー、または"
 
-#: PyFlow.transfer_web.web_backend.mail_service.MailService.get_config:6
-#: ba7116251d3b4ce7b97a3e79808c4415 of
+#: 383ba8fc4ed940f38097d10bfbc8ff84
+#: PyFlow.transfer_web.web_backend.mail_service.MailService.get_config:6 of
 msgid "service is not configured."
 msgstr "サービスが設定されていません。"
 
 #: PyFlow.transfer_web.web_backend.mail_service.MailService.configure:1
-#: a2161943624d40a39a45564117df6d9e of
+#: c7110be43ff548edb573b0b645e49ef5 of
 msgid "Validate SMTP settings, store them and start the sending service."
 msgstr "SMTP設定を検証し、保存して、送信サービスを開始します。"
 
-#: 8d8686cd5b9b46d295719719f9b29929
+#: 99385960778b4785bb73f4db98d2dada
 #: PyFlow.transfer_web.web_backend.mail_service.MailService.configure:3 of
 msgid "Settings accepted by `normalize_config`."
 msgstr "`normalize_config`によって受け入れられた設定。"
 
-#: 5aa35eba13e04367b7f99d754176a39d
-#: PyFlow.transfer_web.web_backend.mail_service.MailService.configure:6 of
+#: PyFlow.transfer_web.web_backend.mail_service.MailService.configure:6
+#: d801399842874f19943e8d2eb6dd6e6d of
 msgid "The validated settings as stored."
 msgstr "保存されている検証済みの設定。"
 
 #: PyFlow.transfer_web.web_backend.mail_service.MailService.configure:9
-#: ab75660bdd60437dbb05953445043ce0 of
+#: c4c8574eb0634811a9fd71b2e00233a9 of
 msgid ""
 "If a setting is missing or malformed, or the server     refuses the "
 "connection or the login."
 msgstr "設定が欠落しているか、形式が正しくない場合、またはサーバーが接続またはログインを拒否した場合。"
 
-#: 4ebf6576a62643d9910acdfba3fcd799
+#: 5c332d9d6242449f97b7bddbe36a20cd
+#: PyFlow.transfer_web.web_backend.mail_service.MailService.disable:1 of
+msgid "Remove the stored mailbox so no verification code can be sent."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.mail_service.MailService.disable:3
+#: bc6f8bbf1f0047cebea68882e633945d of
+msgid ""
+"This is the switch back to internal mode: with no mailbox the server "
+"serves its clients without accounts again."
+msgstr ""
+
+#: PyFlow.transfer_web.web_backend.mail_service.MailService.disable:6
+#: f669f3bdc1f44730a90a6127ff7db331 of
+msgid ""
+"If the stored file cannot be removed; the service then     keeps its "
+"settings and stays enabled."
+msgstr ""
+
+#: 7b942af00fc54d9d836170d61972977e
 #: PyFlow.transfer_web.web_backend.mail_service.MailService.send_code:1 of
 msgid "Send one verification code by email."
 msgstr "認証コードを1つメールで送信します。"
 
-#: 8f04bd37dc8b4483af595c5e66f8fbf4
+#: 6cdc276558b54671b93a8a839f34a682
 #: PyFlow.transfer_web.web_backend.mail_service.MailService.send_code:3 of
 msgid "Recipient address."
 msgstr "受信者の住所"
 
-#: 57f0544cdf234e00b9f03da47566354f
+#: 60f83153ebac42eeb7ba36ed193d0eb1
 #: PyFlow.transfer_web.web_backend.mail_service.MailService.send_code:5 of
 msgid "Verification code to deliver."
 msgstr "お届けする認証コード。"
 
-#: 627ee080c93e46679b0eb1dea17640f6
+#: 25f348d2347c4274a624e6d13eb6dfd3
 #: PyFlow.transfer_web.web_backend.mail_service.MailService.send_code:7 of
-msgid "\"register\", \"login\" or \"reset_password\"; decides the wording of the message."
+msgid ""
+"\"register\", \"login\" or \"reset_password\"; decides the wording of the"
+" message."
 msgstr "\"register \",\" login \"or\" reset_password \";メッセージの文言を決定します。"
 
-#: 6733b65d0a2347e1918c983503394f49
-#: PyFlow.transfer_web.web_backend.mail_service.MailService.send_code:10 of
+#: PyFlow.transfer_web.web_backend.mail_service.MailService.send_code:10
+#: f16d610fc9f14559af45cddea444add9 of
 msgid "Code lifetime in seconds, stated in the message."
 msgstr "メッセージに記載されている秒単位のコードライフタイム。"
 
-#: PyFlow.transfer_web.web_backend.mail_service.MailService.send_code:13
-#: ce7cf70f7a2d4deca8256ada1fc9b63d of
-msgid ""
-"If the service is not configured, or the message cannot     be delivered."
+#: 134b78c9128942938629dd61e9048916
+#: PyFlow.transfer_web.web_backend.mail_service.MailService.send_code:13 of
+msgid "If the service is not configured, or the message cannot     be delivered."
 msgstr "サービスが設定されていない場合、またはメッセージを配信できない場合。"
+

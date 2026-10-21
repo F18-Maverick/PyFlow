@@ -6,9 +6,9 @@
 #, fuzzy
 msgid ""
 msgstr ""
-"Project-Id-Version: PyFlow\n"
+"Project-Id-Version:  PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-01 18:19+0800\n"
+"POT-Creation-Date: 2026-10-20 09:30+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,45 +17,45 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: ../../source/Crypto/Crypto.rst:2 bb50e4f310ea43d9ba55e4b367ed7740
+#: ../../source/Crypto/Crypto.rst:2 9878b2fb3d9d4d6ba3cd00002ed6f0b7
 msgid "C/OpenSSL Crypto Module"
 msgstr "C/OpenSSL 暗号化モジュール"
 
-#: ../../source/Crypto/Crypto.rst:4 2838c629d37d42ef92dbabeab8d33801
+#: ../../source/Crypto/Crypto.rst:4 aa824d3e127240b0928431af3dd8c831
 #, fuzzy
 msgid ""
-"The ``PyFlow/crypto_api`` directory contains PyFlow's C/OpenSSL cryptography"
-" library. The library is independent from the Python runtime and is built "
-"from the repository root with CMake."
+"The ``PyFlow/crypto_api`` directory contains PyFlow's C/OpenSSL "
+"cryptography library. The library is independent from the Python runtime "
+"and is built from the repository root with CMake."
 msgstr ""
-"``src/crypto_api`` ディレクトリには、ServSpy の C/OpenSSL 暗号化ライブラリが含まれています。このライブラリは "
-"Python ランタイムから独立しており、CMake を使用してリポジトリ ルートから構築されます。"
+"``src/crypto_api`` ディレクトリには、ServSpy の C/OpenSSL 暗号化ライブラリが含まれています。このライブラリは"
+" Python ランタイムから独立しており、CMake を使用してリポジトリ ルートから構築されます。"
 
-#: ../../source/Crypto/Crypto.rst:8 2c028ead37a24eb98321135f22f3673d
+#: ../../source/Crypto/Crypto.rst:8 294667df2a20495887126b808c7d9706
 msgid "The module provides:"
 msgstr "このモジュールは以下を提供します。"
 
-#: ../../source/Crypto/Crypto.rst:10 e290cfffb80140899093170eda086e61
+#: ../../source/Crypto/Crypto.rst:10 472d4f3082db42f198b7f13fdbf041f2
 msgid "RSA-OAEP encryption and decryption with SHA-256."
 msgstr "RSA-OAEP 暗号化および SHA-256 による復号化。"
 
-#: ../../source/Crypto/Crypto.rst:11 125f1968eba34f6896b44b6406f0e6c2
+#: ../../source/Crypto/Crypto.rst:11 0eb3f7206503452ca2229a1d7c323390
 msgid "ECDH key agreement on P-256, P-384, and P-521."
 msgstr "P-256、P-384、および P-521 に関する ECDH 鍵合意。"
 
-#: ../../source/Crypto/Crypto.rst:12 cee735932767478e95a96b9a59ddcdd2
+#: ../../source/Crypto/Crypto.rst:12 ab0be16cfbca493a88c6eb4a2ef1bb07
 msgid "HKDF-SHA256 session-key derivation."
 msgstr "HKDF-SHA256 セッションキーの導出。"
 
-#: ../../source/Crypto/Crypto.rst:13 7d211e9cf2e64cab9b79c0173805334e
+#: ../../source/Crypto/Crypto.rst:13 56667bb7a4554c1b8efc918c9593f950
 msgid "AES-256-GCM authenticated encryption for ECDH sessions."
 msgstr "ECDH セッションの AES-256-GCM 認証暗号化。"
 
-#: ../../source/Crypto/Crypto.rst:14 d345fd729851496c82017971bdb55276
+#: ../../source/Crypto/Crypto.rst:14 8de85fb1a2f843ea91d0aa30df0a00c7
 msgid "PEM key persistence and structured error reporting."
 msgstr "PEM キーの永続性と構造化されたエラー レポート。"
 
-#: ../../source/Crypto/Crypto.rst:16 d86187e532624ac49492cca1b064a89b
+#: ../../source/Crypto/Crypto.rst:16 564b1d414738498791d9083f279330fe
 msgid ""
 "The library version is 1.0.0 (``PF_CRYPTO_VERSION_MAJOR`` / "
 "``PF_CRYPTO_VERSION_MINOR`` / ``PF_CRYPTO_VERSION_PATCH`` and "
@@ -65,31 +65,31 @@ msgstr ""
 "PF_CRYPTO_VERSION_MINOR ''/'' PF_CRYPTO_VERSION_PATCH ''および'' "
 "PF_CRYPTO_VERSION_STRING ''）です。"
 
-#: ../../source/Crypto/Crypto.rst:20 5e6c65799ec14fd8b67034bd1b3beb07
+#: ../../source/Crypto/Crypto.rst:20 10fda1fcea98430a8924fdfa8bbce2fa
 #, fuzzy
 msgid "The public headers are located in ``PyFlow/crypto_api/include``:"
 msgstr "パブリックヘッダーは ``src/crypto_api/include`` にあります。"
 
-#: ../../source/Crypto/Crypto.rst:22 87305d509fc94f5186438e34d9583987
+#: ../../source/Crypto/Crypto.rst:22 86168d67fc8047ba8d4c61b2b9e23caf
 #, fuzzy
 msgid "``pf_crypto.h`` - common errors, OpenSSL diagnostics, and HKDF."
 msgstr "``ss_crypto.h`` - 一般的なエラー、OpenSSL 診断、および HKDF。"
 
-#: ../../source/Crypto/Crypto.rst:23 5d221a05e5034eccadaec2206256a2af
+#: ../../source/Crypto/Crypto.rst:23 ddfd841fba4b4045bb3fc84419010fe7
 #, fuzzy
 msgid "``pf_rsa.h`` - RSA key and encryption APIs."
 msgstr "``ss_rsa.h`` - RSA キーおよび暗号化 API。"
 
-#: ../../source/Crypto/Crypto.rst:24 e10e899ebf934a18a686d225d3f967d9
+#: ../../source/Crypto/Crypto.rst:24 eb2168817ac54389a35e194a444250f4
 #, fuzzy
 msgid "``pf_ecdh.h`` - ECDH key agreement and seal/open APIs."
 msgstr "``ss_ecdh.h`` - ECDH 鍵合意およびシール/オープン API。"
 
-#: ../../source/Crypto/Crypto.rst:27 09186509365444d4ac1ce145d76bcd28
+#: ../../source/Crypto/Crypto.rst:27 43fa12b668bb4dc389f2bbd9edaf9187
 msgid "Build"
 msgstr "建てる"
 
-#: ../../source/Crypto/Crypto.rst:29 ae41004303f342d2ac3e302fe5ff9b40
+#: ../../source/Crypto/Crypto.rst:29 35019410fade4c18b07d32d37c05ba0d
 msgid ""
 "The module requires OpenSSL 1.1.1 or newer and CMake 3.16 or newer. On "
 "Debian or Ubuntu, install the build dependencies with:"
@@ -97,126 +97,131 @@ msgstr ""
 "このモジュールには、OpenSSL 1.1.1 以降および CMake 3.16 以降が必要です。 Debian または Ubuntu "
 "では、次のコマンドを使用してビルドの依存関係をインストールします。"
 
-#: ../../source/Crypto/Crypto.rst:37 7c534481ca81453b89692a8758bbeba0
+#: ../../source/Crypto/Crypto.rst:37 3834ad9e83c24331b03d264103f5cdad
 msgid ""
-"Installing the Python package builds it automatically: ``setup.py`` compiles"
-" the three sources and installs the result inside the package "
-"(``PyFlow/_crypto_api.cpython-3XX-<platform>.so``), so ``pip install pyflow-"
-"net`` needs only a C compiler and the OpenSSL development headers."
+"Installing the Python package builds it automatically: ``setup.py`` "
+"compiles the three sources and installs the result inside the package "
+"(``PyFlow/_crypto_api.cpython-3XX-<platform>.so``), so ``pip install "
+"pyflow-net`` needs only a C compiler and the OpenSSL development headers."
 msgstr ""
 "Pythonパッケージをインストールすると、自動的にビルドされます。'' setup.py "
-"''は3つのソースをコンパイルし、パッケージ内に結果をインストールします('' PyFlow "
-"/_crypto_api.cpython-3XX-.so<platform> '')。したがって、'' pip install pyflow - net"
-" ''はCコンパイラとOpenSSL開発ヘッダーのみを必要とします。"
+"''は3つのソースをコンパイルし、パッケージ内に結果をインストールします('' PyFlow /_crypto_api.cpython-"
+"3XX-.so<platform> '')。したがって、'' pip install pyflow - net "
+"''はCコンパイラとOpenSSL開発ヘッダーのみを必要とします。"
 
-#: ../../source/Crypto/Crypto.rst:42 6abf3a2d83804b73b1bfd45add4322d8
+#: ../../source/Crypto/Crypto.rst:42 a72fb95d5d114cdca29347b18e2c1253
 msgid ""
-"Build it from the repository root with CMake when the C test suite or the C "
-"API itself is wanted:"
+"Build it from the repository root with CMake when the C test suite or the"
+" C API itself is wanted:"
 msgstr "CテストスイートまたはC API自体が必要な場合に、CMakeを使用してリポジトリルートからビルドします。"
 
-#: ../../source/Crypto/Crypto.rst:51 6fbb49d9124649f1b387de2f0377a4af
+#: ../../source/Crypto/Crypto.rst:51 96617bb44be2438ebbde9e9f750b3e09
 msgid ""
 "``ctest --test-dir`` was added in CMake 3.20; with the 3.16 minimum the "
 "equivalent is ``ctest --output-on-failure`` run from inside ``build/``."
 msgstr ""
-"'' ctest -- test - dir ''はCMake 3.20で追加されました。3.16の最小値では、'' ctest -- output -"
-" on - failure ''は'' build /''の内部から実行されます。"
+"'' ctest -- test - dir ''はCMake 3.20で追加されました。3.16の最小値では、'' ctest -- "
+"output - on - failure ''は'' build /''の内部から実行されます。"
 
-#: ../../source/Crypto/Crypto.rst:54 f42772e265ad4248b11c37141f4fb6e8
+#: ../../source/Crypto/Crypto.rst:54 244b7aff35aa4272a121b9fbbadae117
 #, fuzzy
 msgid ""
-"The C test suite lives in ``test/crypto_api/`` (``test_hkdf``, ``test_rsa``,"
-" ``test_ecdh``). It is built only when ``CRYPTO_API_BUILD_TESTS`` (default "
-"``ON``) and ``BUILD_TESTING`` are both enabled, and then runs together with "
-"the library."
+"The C test suite lives in ``test/crypto_api/`` (``test_hkdf``, "
+"``test_rsa``, ``test_ecdh``). It is built only when "
+"``CRYPTO_API_BUILD_TESTS`` (default ``ON``) and ``BUILD_TESTING`` are "
+"both enabled, and then runs together with the library."
 msgstr ""
-"C テストスイートは ``test/crypto_api/`` (``test_hkdf``、``test_rsa``、``test_ecdh``) "
-"に存在し、ライブラリと一緒に構築および実行されます。"
+"C テストスイートは ``test/crypto_api/`` "
+"(``test_hkdf``、``test_rsa``、``test_ecdh``) に存在し、ライブラリと一緒に構築および実行されます。"
 
-#: ../../source/Crypto/Crypto.rst:59 ed6b92c776ca441ab8629088ecd973bc
+#: ../../source/Crypto/Crypto.rst:59 30ea804b8270411f8793908bdc7a2a97
 #, fuzzy
 msgid ""
-"The library is built as a shared object (``libcrypto_api.so``) so it can be "
-"loaded from Python: ``PyFlow/network_api/rsa_crypto.py`` is a ctypes binding"
-" used by the TCP layer to encrypt messages with RSA-OAEP (see the "
-"``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
-"binding also implements the TCP layer's anti-MITM identity check (TOFU): "
-"peer public keys are exchanged on every connection, recorded under the "
-"peer's ``(ip, port)`` in ``network_api/.Flow/pub_key/pub_key.json`` with the"
-" SHA-256 of the received PEM text, and a changed key for a recorded endpoint"
-" rejects the connection; a key already known under another endpoint is "
-"accepted and re-registered under the new one. The encryption state machine "
-"is bounded: three consecutive decode failures trip a circuit breaker "
-"(``MAX_DECODE_FAILURES`` in ``connect_tcp.py``) that stops re-keying, and a "
-"key that is stale or rotated makes the TCP layer reload its own key and re-"
-"exchange. The binding looks for the library via ``ctypes.util.find_library``"
-" and then next to the repository root in ``build/`` (``libcrypto_api.so``, "
+"The library is built as a shared object (``libcrypto_api.so``) so it can "
+"be loaded from Python: ``PyFlow/network_api/rsa_crypto.py`` is a ctypes "
+"binding used by the TCP layer. It exposes the RSA-OAEP message encryption"
+" and the ECDH/AES-256-GCM sealing (``EcdhKeyPair`` / ``EcdhPubKey`` / "
+"``hkdf_sha256``) that the framed TCP channel uses for its bulk and file "
+"transfer payloads (see the ``TCP_Server_APIs`` / ``TCP_Client_APIs`` "
+"encrypted channel sections). The binding also implements the TCP layer's "
+"anti-MITM identity check (TOFU): endpoint rejects the connection; a key "
+"already known under another endpoint is accepted and re-registered under "
+"the new one. The encryption state machine is bounded: three consecutive "
+"decode failures trip a circuit breaker (``MAX_DECODE_FAILURES`` in "
+"``connect_tcp.py``) that stops re-keying, and a key that is stale or "
+"rotated makes the TCP layer reload its own key and re-exchange. The "
+"binding looks for the library via ``ctypes.util.find_library`` and then "
+"next to the repository root in ``build/`` (``libcrypto_api.so``, "
 "``libcrypto_api.dylib``, ``libcrypto_api.dll`` and "
 "``build/Release/crypto_api.dll``)."
 msgstr ""
 "このライブラリは共有オブジェクト (``libcrypto_api.so``) として構築されているため、Python からロードできます。 "
-"``src/network_api/rsa_crypto.py`` は、RSA-OAEP でメッセージを暗号化するために TCP 層によって使用される "
-"ctypes バインディングです (``TCP_Server_APIs`` / ``TCP_Client_APIs`` "
+"``src/network_api/rsa_crypto.py`` は、RSA-OAEP でメッセージを暗号化するために TCP "
+"層によって使用される ctypes バインディングです (``TCP_Server_APIs`` / ``TCP_Client_APIs`` "
 "暗号化チャネルのセクションを参照)。このバインディングは、TCP 層の反 MITM ID チェック (TOFU) "
 "も実装します。ピアの公開鍵は接続ごとに交換され、ピアの ``(ip, port)'' の "
 "``network_api/.Flow/pub_key/pub_key.json`` に SHA-256 "
-"で記録され、記録されたエンドポイントの変更されたキーは接続を拒否します。バインディングは ``ctypes.util.find_library`` "
-"を介して、およびリポジトリ ルートの隣の ``build/`` 内でライブラリを検索します。"
+"で記録され、記録されたエンドポイントの変更されたキーは接続を拒否します。バインディングは ``ctypes.util.find_library``"
+" を介して、およびリポジトリ ルートの隣の ``build/`` 内でライブラリを検索します。"
 
-#: ../../source/Crypto/Crypto.rst:77 ad993af85f8f45f5a3661448f69961bf
+#: ../../source/Crypto/Crypto.rst:77 9594680fce33464f9ff9cb9590bb5d0a
 msgid ""
 "The build produces the SOVERSIONed names ``libcrypto_api.so.1`` / "
 "``libcrypto_api.so.1.0.0`` plus the ``libcrypto_api.so`` loader symlink."
 msgstr ""
-"ビルドは、SOVERSION形式の名前'' libcrypto_api.so.1 ''/'' libcrypto_api.so.1.0.0 ''と'' "
-"libcrypto_api.so ''ローダーのシンボリックリンクを生成します。"
+"ビルドは、SOVERSION形式の名前'' libcrypto_api.so.1 ''/'' libcrypto_api.so.1.0.0 "
+"''と'' libcrypto_api.so ''ローダーのシンボリックリンクを生成します。"
 
-#: ../../source/Crypto/Crypto.rst:80 7ea41df5c6644e8197d587e03642123f
+#: ../../source/Crypto/Crypto.rst:80 80c24657a4c9445088459fff264379b2
 #, fuzzy
 msgid ""
-"CMake install rules export the ``crypto_api`` library, its public headers, "
-"and a CMake package configuration. All CMake content sits at the repository "
-"root: the CMake package template and the pkg-config template are "
-"``cmake/crypto_apiConfig.cmake.in`` and ``crypto_api.pc.in``. Consumers use "
-"the CMake target ``crypto_api::crypto_api`` (or "
+"CMake install rules export the ``crypto_api`` library, its public "
+"headers, and a CMake package configuration. All CMake content sits at the"
+" repository root: the CMake package template and the pkg-config template "
+"are ``cmake/crypto_apiConfig.cmake.in`` and ``crypto_api.pc.in``. "
+"Consumers use the CMake target ``crypto_api::crypto_api`` (or "
 "``find_package(crypto_api)``, ``SameMajorVersion`` compatible), or pkg-"
-"config module ``crypto_api`` (``-lcrypto_api`` for linking, ``-lcrypto`` as "
-"a private dependency)."
+"config module ``crypto_api`` (``-lcrypto_api`` for linking, ``-lcrypto`` "
+"as a private dependency)."
 msgstr ""
 "CMake インストール ルールは、「crypto_api」 ライブラリ、そのパブリック ヘッダー、および CMake "
-"パッケージ構成をエクスポートします。すべての CMake コンテンツはリポジトリ ルートにあります。CMake パッケージ テンプレートと pkg-"
-"config テンプレートは ``cmake/crypto_apiConfig.cmake.in`` と ``crypto_api.pc.in`` "
-"です。"
+"パッケージ構成をエクスポートします。すべての CMake コンテンツはリポジトリ ルートにあります。CMake パッケージ テンプレートと "
+"pkg-config テンプレートは ``cmake/crypto_apiConfig.cmake.in`` と "
+"``crypto_api.pc.in`` です。"
 
-#: ../../source/Crypto/Crypto.rst:89 0d7e08f1e07445dfa77b47a85a25def7
+#: ../../source/Crypto/Crypto.rst:89 dccd3901c8024859b9a9753e818d6692
 msgid "Common API"
 msgstr "共通API"
 
-#: ../../source/Crypto/Crypto.rst:91 1c9b38b493964582875d168e61ccf829
+#: ../../source/Crypto/Crypto.rst:91 c1b71e19c8f6422eabd99bd0997daae8
 msgid ""
 "Most public functions return ``pf_err_t``; ``PF_OK`` indicates success. "
-"Functions that report a size or a string instead have their own return type "
-"(``pf_err_string`` returns ``const char *``, ``pf_crypto_openssl_errors`` "
-"returns ``void``, ``pf_rsa_ciphertext_len`` and ``pf_rsa_max_plaintext_len``"
-" return ``size_t``, and the ``*_free`` functions return ``void``). Use "
-"``pf_err_string`` to convert an error code to readable text and "
-"``pf_crypto_openssl_errors`` to retrieve the pending OpenSSL error queue."
+"Functions that report a size or a string instead have their own return "
+"type (``pf_err_string`` returns ``const char *``, "
+"``pf_crypto_openssl_errors`` returns ``void``, ``pf_rsa_ciphertext_len`` "
+"and ``pf_rsa_max_plaintext_len`` return ``size_t``, and the ``*_free`` "
+"functions return ``void``). Use ``pf_err_string`` to convert an error "
+"code to readable text and ``pf_crypto_openssl_errors`` to retrieve the "
+"pending OpenSSL error queue."
 msgstr ""
 "ほとんどのパブリック関数は'' pf_err_t ''を返します。'' PF_OK "
 "''は成功を示します。代わりに、サイズまたは文字列を報告する関数には、独自の戻り値の型があります('' pf_err_string ''は'' "
 "const char *''を返し、'' pf_crypto_openssl_errors ''は'' void ''を返し、'' "
-"pf_rsa_ciphertext_len ''と'' pf_rsa_max_plaintext_len ''は'' size_t ''を返し、''*_"
-" free ''関数は'' void ''を返します)。'' pf_err_string ''を使用して、エラーコードを読み取り可能なテキストに変換し、"
-" '' pf_crypto_openssl_errors ''は、保留中のOpenSSLエラーキューを取得します。"
+"pf_rsa_ciphertext_len ''と'' pf_rsa_max_plaintext_len ''は'' size_t "
+"''を返し、''*_ free ''関数は'' void ''を返します)。'' pf_err_string "
+"''を使用して、エラーコードを読み取り可能なテキストに変換し、 '' pf_crypto_openssl_errors "
+"''は、保留中のOpenSSLエラーキューを取得します。"
 
-#: ../../source/Crypto/Crypto.rst:114 07ac67f777704ad9822023430f0109c4
+#: ../../source/Crypto/Crypto.rst:114 67ae5556635e43a487c38bf8011e1c5b
 #, fuzzy
 msgid ""
 "The library uses caller-provided output buffers for fixed-size results. "
 "Functions that return allocated buffers document that the caller must "
-"release them with ``free``. Opaque key handles must be released with their "
-"corresponding ``*_free`` function. HKDF output is capped at "
+"release them with ``pf_crypto_free`` — the library's own ``free``, so the"
+" allocation and the deallocation always run on the same C runtime (a host"
+" such as CPython on Windows may use a different one, and freeing across "
+"runtimes corrupts the heap). Opaque key handles must be released with "
+"their corresponding ``*_free`` function. HKDF output is capped at "
 "``PF_CRYPTO_HKDF_SHA256_MAX_OUT`` (8160 bytes) by both "
 "``pf_crypto_hkdf_sha256`` and ``pf_ecdh_derive_key``."
 msgstr ""
@@ -224,117 +229,118 @@ msgstr ""
 "``free`` でバッファを解放する必要があることが文書化されています。不透明なキーハンドルは、対応する ``*_free`` "
 "関数を使用して解放する必要があります。"
 
-#: ../../source/Crypto/Crypto.rst:122 619e39d223d54a48ba983a3b30bd7d9d
+#: ../../source/Crypto/Crypto.rst:125 69248ac47e7e47f18e953dee857db239
 msgid "RSA API"
 msgstr "RSA API"
 
-#: ../../source/Crypto/Crypto.rst:124 5eeaa87820f941dd8e171c973269036e
+#: ../../source/Crypto/Crypto.rst:127 a770dcc04e2c42d1be50fe30d298df4b
 #, fuzzy
 msgid ""
-"RSA keys are generated with ``pf_rsa_keygen``. The implementation uses RSA-"
-"OAEP with SHA-256 for encryption and decryption. Key sizes from 2048 to "
-"16384 bits are accepted; 2048, 3072, or 4096 bits are recommended."
+"RSA keys are generated with ``pf_rsa_keygen``. The implementation uses "
+"RSA-OAEP with SHA-256 for encryption and decryption. Key sizes from 2048 "
+"to 16384 bits are accepted; 2048, 3072, or 4096 bits are recommended."
 msgstr ""
 "RSA キーは ``ss_rsa_keygen`` で生成されます。この実装では、暗号化と復号化に SHA-256 を備えた RSA-OAEP "
 "を使用します。 2048 ～ 16384 ビットのキー サイズが受け入れられます。 2048、3072、または 4096 ビットが推奨されます。"
 
-#: ../../source/Crypto/Crypto.rst:148 f85a46b466ef47ee9d195f439ba3b153
+#: ../../source/Crypto/Crypto.rst:151 e7b876b8fb354b2da45d3c13f50ededf
 msgid ""
-"The first encryption call with ``out == NULL`` queries the required output "
-"size; ``pf_rsa_decrypt`` supports the same query pattern. RSA encryption is "
-"binary-safe (it accepts an explicit input length, embedded NUL bytes "
-"included) and rejects inputs longer than the value returned by "
+"The first encryption call with ``out == NULL`` queries the required "
+"output size; ``pf_rsa_decrypt`` supports the same query pattern. RSA "
+"encryption is binary-safe (it accepts an explicit input length, embedded "
+"NUL bytes included) and rejects inputs longer than the value returned by "
 "``pf_rsa_max_plaintext_len`` with ``PF_ERR_INVALID_ARG``. "
-"``pf_rsa_ciphertext_len`` returns the ciphertext size for a key (equal to "
-"its modulus size in bytes), and ``pf_rsa_key_free`` releases a key handle."
+"``pf_rsa_ciphertext_len`` returns the ciphertext size for a key (equal to"
+" its modulus size in bytes), and ``pf_rsa_key_free`` releases a key "
+"handle."
 msgstr ""
 "'' out == NULL ''の最初の暗号化呼び出しは、必要な出力サイズをクエリします。'' pf_rsa_decrypt "
-"''は、同じクエリパターンをサポートしています。RSA暗号化はバイナリセーフ（明示的な入力長を受け入れ、埋め込まれたNULバイトを含む）であり、'' "
-"pf_rsa_max_plaintext_len ''が'' PF_ERR_INVALID_ARG ''で返す値よりも長い入力を拒否します。'' "
-"pf_rsa_ciphertext_len ''は、キーの暗号文サイズ（バイト単位の係数サイズに等しい）を返し、 '' pf_rsa_key_free "
-"''はキーハンドルを解放します。"
+"''は、同じクエリパターンをサポートしています。RSA暗号化はバイナリセーフ（明示的な入力長を受け入れ、埋め込まれたNULバイトを含む）であり、''"
+" pf_rsa_max_plaintext_len ''が'' PF_ERR_INVALID_ARG ''で返す値よりも長い入力を拒否します。''"
+" pf_rsa_ciphertext_len ''は、キーの暗号文サイズ（バイト単位の係数サイズに等しい）を返し、 '' "
+"pf_rsa_key_free ''はキーハンドルを解放します。"
 
-#: ../../source/Crypto/Crypto.rst:156 ff9d2472cf614dd0827d0887f195ed43
+#: ../../source/Crypto/Crypto.rst:159 6af957980305426e915b3f62d9eb1ed4
 msgid "Public and private keys can be stored as PEM files:"
 msgstr "公開キーと秘密キーは PEM ファイルとして保存できます。"
 
-#: ../../source/Crypto/Crypto.rst:167 a3f163de660b4d49a36a8aedead555da
+#: ../../source/Crypto/Crypto.rst:170 6bf9df3c51d540b69680723a4845de2d
 msgid "ECDH API"
 msgstr "ECDH API"
 
-#: ../../source/Crypto/Crypto.rst:169 4535e8f410a742f38d32ff53d404c37b
+#: ../../source/Crypto/Crypto.rst:172 3c69950828364df49bbf0b37313f9987
 #, fuzzy
 msgid ""
-"ECDH key pairs are created with ``pf_ecdh_keypair_generate``. The supported "
-"curve names are:"
+"ECDH key pairs are created with ``pf_ecdh_keypair_generate``. The "
+"supported curve names are:"
 msgstr "ECDH キーペアは ``ss_ecdh_keypair_generate`` で作成されます。サポートされている曲線名は次のとおりです。"
 
-#: ../../source/Crypto/Crypto.rst:172 9624f8475c8d4618a7054e7c18ae5e1f
+#: ../../source/Crypto/Crypto.rst:175 6a4d2171568847d4984c8705818c4bf9
 msgid "``PF_ECDH_CURVE_P256``"
 msgstr "「PF_ECDH_CURVE_P256」"
 
-#: ../../source/Crypto/Crypto.rst:173 4585a2433d684621a5f90805b74cef6c
+#: ../../source/Crypto/Crypto.rst:176 c0da017a21dc46ed93b3da0727454dc3
 msgid "``PF_ECDH_CURVE_P384``"
 msgstr "「PF_ECDH_CURVE_P384」"
 
-#: ../../source/Crypto/Crypto.rst:174 14dde8ddd1b44ae1a4cb64179caa5aa5
+#: ../../source/Crypto/Crypto.rst:177 b2019f9f782b48dc85c5e3b24647fd94
 msgid "``PF_ECDH_CURVE_P521``"
 msgstr "「PF_ECDH_CURVE_P521」"
 
-#: ../../source/Crypto/Crypto.rst:176 43b77941f20d44958205bea666a208d5
+#: ../../source/Crypto/Crypto.rst:179 0962e1bca8da48d1835cbe8facb8a0ea
 #, fuzzy
 msgid ""
-"An unknown curve name returns ``PF_ERR_UNSUPPORTED``, and ``NULL`` selects "
-"P-256. Public keys are exchanged as PEM SubjectPublicKeyInfo strings. Parsed"
-" peer keys are checked to lie on the curve before use."
+"An unknown curve name returns ``PF_ERR_UNSUPPORTED``, and ``NULL`` "
+"selects P-256. Public keys are exchanged as PEM SubjectPublicKeyInfo "
+"strings. Parsed peer keys are checked to lie on the curve before use."
 msgstr "公開キーは、PEM SubjectPublicKeyInfo 文字列として交換されます。解析されたピアキーは使用前にチェックされます。"
 
-#: ../../source/Crypto/Crypto.rst:200 ac2db67c049d4f55a2fc2f9972c6d57c
+#: ../../source/Crypto/Crypto.rst:203 c5c15560992c48beb7637c19a517f07f
 #, fuzzy
 msgid ""
-"The higher-level ``pf_ecdh_seal`` and ``pf_ecdh_open`` APIs are recommended "
-"for application payloads. They derive an AES-256-GCM key with HKDF-SHA256 "
-"from a random 16-byte salt and bind both public keys (in byte-sorted "
-"canonical order) as the HKDF ``info``, so the same key pair always agrees "
-"regardless of call order and a peer using a different key pair fails "
-"authentication. They authenticate optional AAD."
+"The higher-level ``pf_ecdh_seal`` and ``pf_ecdh_open`` APIs are "
+"recommended for application payloads. They derive an AES-256-GCM key with"
+" HKDF-SHA256 from a random 16-byte salt and bind both public keys (in "
+"byte-sorted canonical order) as the HKDF ``info``, so the same key pair "
+"always agrees regardless of call order and a peer using a different key "
+"pair fails authentication. They authenticate optional AAD."
 msgstr ""
 "アプリケーションのペイロードには、より高レベルの ``ss_ecdh_seal`` および ``ss_ecdh_open`` API "
-"が推奨されます。これらは、HKDF-SHA256 を使用して AES-256-GCM キーを取得し、ランダム ソルトと IV を含めて、オプションの "
-"AAD を認証します。"
+"が推奨されます。これらは、HKDF-SHA256 を使用して AES-256-GCM キーを取得し、ランダム ソルトと IV "
+"を含めて、オプションの AAD を認証します。"
 
-#: ../../source/Crypto/Crypto.rst:207 70a8e3f511f34359974c9152d60500b2
+#: ../../source/Crypto/Crypto.rst:210 f794a8f7227443e381d5337e9fe95677
 #, fuzzy
 msgid "The ``pf_ecdh_seal`` output format is:"
 msgstr "`ss_ecdh_seal` の出力形式は次のとおりです。"
 
-#: ../../source/Crypto/Crypto.rst:213 28f1933678854354b8ef357adcfdd380
+#: ../../source/Crypto/Crypto.rst:216 ee4a7ea6853249a7a137f949e3b9d7cc
 #, fuzzy
 msgid ""
-"The fixed overhead is ``PF_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty plaintext "
-"is allowed. A failed tag check returns ``PF_ERR_AUTH_FAILED`` and no "
-"plaintext is returned. On success the output buffer is ``malloc``-ed and the"
-" caller frees it."
+"The fixed overhead is ``PF_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty "
+"plaintext is allowed. A failed tag check returns ``PF_ERR_AUTH_FAILED`` "
+"and no plaintext is returned. On success the output buffer is "
+"``malloc``-ed and the caller releases it with ``pf_crypto_free``."
 msgstr ""
 "固定オーバーヘッドは ``SS_ECDH_SEAL_OVERHEAD`` (44 バイト) "
 "です。空の平文は許可されます。タグチェックが失敗すると「SS_ERR_AUTH_FAILED」が返され、平文は返されません。"
 
-#: ../../source/Crypto/Crypto.rst:218 9a7c6cc7b5a94e5fac26bc6802310183
+#: ../../source/Crypto/Crypto.rst:221 212039cbe4b74827b643af47aaaf9970
 msgid ""
 "ECDH key pairs can be persisted with ``pf_ecdh_keypair_write_priv`` and "
-"``pf_ecdh_keypair_read_priv`` (PKCS#8 PEM, optionally passphrase-protected "
-"with AES-256-CBC); ``pf_ecdh_keypair_free`` and ``pf_ecdh_pubkey_free`` "
-"release the handles."
+"``pf_ecdh_keypair_read_priv`` (PKCS#8 PEM, optionally passphrase-"
+"protected with AES-256-CBC); ``pf_ecdh_keypair_free`` and "
+"``pf_ecdh_pubkey_free`` release the handles."
 msgstr ""
-"ECDHキーペアは、'' pf_ecdh_keypair_write_priv ''および'' pf_ecdh_keypair_read_priv "
-"''（ PKCS # 8 PEM、オプションでAES -256 - CBCでパスフレーズ保護）で永続化できます。'' "
+"ECDHキーペアは、'' pf_ecdh_keypair_write_priv ''および'' pf_ecdh_keypair_read_priv"
+" ''（ PKCS # 8 PEM、オプションでAES -256 - CBCでパスフレーズ保護）で永続化できます。'' "
 "pf_ecdh_keypair_free ''および'' pf_ecdh_pubkey_free ''はハンドルを解放します。"
 
-#: ../../source/Crypto/Crypto.rst:224 7f05214ee91a478581014c39643d7bfb
+#: ../../source/Crypto/Crypto.rst:227 a84d53d68554474fbb2beaa2146cee86
 msgid "Security Notes"
 msgstr "セキュリティに関する注意事項"
 
-#: ../../source/Crypto/Crypto.rst:226 a6482f5940d1469088bb376b1d25d31c
+#: ../../source/Crypto/Crypto.rst:229 5e398f6a7ace4aeea29bcd40e75a59b1
 msgid ""
 "ECDH provides key agreement, but it does not authenticate public-key "
 "ownership by itself. Public keys must be exchanged over an authenticated "
@@ -343,27 +349,28 @@ msgstr ""
 "ECDH "
 "は鍵の合意を提供しますが、それ自体では公開鍵の所有権を認証しません。公開キーは、認証されたチャネルを介して交換されるか、外部の署名/証明書メカニズムを使用して検証される必要があります。"
 
-#: ../../source/Crypto/Crypto.rst:230 fb49962bd1f0474c91610fa9dd020584
+#: ../../source/Crypto/Crypto.rst:233 df43fe66482c4e0fb896ab598ce43c7d
 #, fuzzy
 msgid ""
-"Private key files may be protected with a passphrase: ``pf_rsa_write_priv`` "
-"and ``pf_ecdh_keypair_write_priv`` encrypt the PKCS#8 PEM with AES-256-CBC "
-"when a passphrase is given, and the matching read function needs the same "
-"passphrase. Applications should restrict their file permissions and avoid "
-"logging passphrases, private keys, or plaintext session keys."
+"Private key files may be protected with a passphrase: "
+"``pf_rsa_write_priv`` and ``pf_ecdh_keypair_write_priv`` encrypt the "
+"PKCS#8 PEM with AES-256-CBC when a passphrase is given, and the matching "
+"read function needs the same passphrase. Applications should restrict "
+"their file permissions and avoid logging passphrases, private keys, or "
+"plaintext session keys."
 msgstr ""
 "秘密キー ファイルはパスフレーズで保護できます。アプリケーションはファイルのアクセス許可を制限し、パスフレーズ、秘密キー、または平文のセッション "
 "キーのログ記録を避ける必要があります。"
 
-#: ../../source/Crypto/Crypto.rst:238 e09bc96e058a4b14b135a1430b8a3ad9
+#: ../../source/Crypto/Crypto.rst:241 02cb264ad6c747d29b37bfa1f1cc6362
 msgid "Error Handling"
 msgstr "エラー処理"
 
-#: ../../source/Crypto/Crypto.rst:240 8246aab2cf7d4913a7345684940c9220
+#: ../../source/Crypto/Crypto.rst:243 60786ad51ea444da97922957e670ea90
 msgid "The main error codes are:"
 msgstr "主なエラーコードは次のとおりです。"
 
-#: ../../source/Crypto/Crypto.rst:242 45059d6bf45c42c2bc8e8c6f023836f4
+#: ../../source/Crypto/Crypto.rst:245 8c1b057428f2445889d1159d6636b097
 msgid ""
 "``PF_ERR_INVALID_ARG`` - NULL argument, illegal length or bad parameter "
 "combination (e.g. out-of-range RSA key size, a NULL salt/info with a non-"
@@ -372,64 +379,72 @@ msgstr ""
 "'' PF_ERR_INVALID_ARG '' - "
 "NULL引数、不正な長さ、または不正なパラメータの組み合わせ（例：範囲外のRSAキーサイズ、長さがゼロでないNULLソルト/INFO、またはキーが許可するよりも長い平文）。"
 
-#: ../../source/Crypto/Crypto.rst:245 daed84defdb64065849a0ef880b22eea
+#: ../../source/Crypto/Crypto.rst:248 27e26e555ee24ce68ab7943b4117a57d
 #, fuzzy
 msgid "``PF_ERR_NOMEM`` - allocation failure."
 msgstr "``SS_ERR_NOMEM`` - 割り当て失敗。"
 
-#: ../../source/Crypto/Crypto.rst:246 788a5b4b06714adcab5aeb36b81757e4
+#: ../../source/Crypto/Crypto.rst:249 2b3828e4bfa04329a60b479be7f0dfe5
 #, fuzzy
 msgid "``PF_ERR_OPENSSL`` - OpenSSL operation failure."
 msgstr "``SS_ERR_IO`` - ファイル操作の失敗。"
 
-#: ../../source/Crypto/Crypto.rst:247 0e06a2169f5d445cab788910aaee188a
+#: ../../source/Crypto/Crypto.rst:250 2c3c9ab09d294be8911f4fb31c335db6
 #, fuzzy
 msgid "``PF_ERR_IO`` - file operation failure."
 msgstr "``SS_ERR_IO`` - ファイル操作の失敗。"
 
-#: ../../source/Crypto/Crypto.rst:248 0d1b17cc4e744efd891efe2d292f6dd8
+#: ../../source/Crypto/Crypto.rst:251 a928f8b90e154bdaa43ef4e4ee7d578d
 #, fuzzy
 msgid ""
-"``PF_ERR_PARSE`` - malformed PEM/DER input or wrong private-key passphrase."
+"``PF_ERR_PARSE`` - malformed PEM/DER input or wrong private-key "
+"passphrase."
 msgstr "``SS_ERR_PARSE`` - 不正な形式の PEM/DER 入力または間違った秘密鍵パスフレーズ。"
 
-#: ../../source/Crypto/Crypto.rst:249 8d5f6adfe3b24ecebb6ed2d84cece394
+#: ../../source/Crypto/Crypto.rst:252 9cd41d63123d49caa946160465dda70f
 #, fuzzy
 msgid "``PF_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient."
 msgstr "``SS_ERR_BUFFER_TOO_SMALL`` - 呼び出し元の出力バッファが不十分です。"
 
-#: ../../source/Crypto/Crypto.rst:250 7a88e3913e8948edbcf645b5097b47b3
+#: ../../source/Crypto/Crypto.rst:253 78532f0a764249178076a4adcc032f7f
 #, fuzzy
 msgid "``PF_ERR_AUTH_FAILED`` - AES-GCM authentication failed."
 msgstr "``SS_ERR_AUTH_FAILED`` - AES-GCM 認証が失敗しました。"
 
-#: ../../source/Crypto/Crypto.rst:251 1182998c4b164675a840d89b3a8e994b
+#: ../../source/Crypto/Crypto.rst:254 5e5f5421333e4382ae5e700d7570648b
 #, fuzzy
 msgid "``PF_ERR_UNSUPPORTED`` - unsupported curve or key type."
 msgstr "``SS_ERR_UNSUPPORTED`` - サポートされていないカーブまたはキー タイプ。"
 
-#: ../../source/Crypto/Crypto.rst:252 0af6413bc92a46a48a1ea044a6b4f05b
+#: ../../source/Crypto/Crypto.rst:255 d1fea86be03940d097132b112b6f14f2
 #, fuzzy
 msgid "``PF_ERR_DECRYPT`` - RSA decryption failed."
 msgstr "``SS_ERR_DECRYPT`` - RSA 復号化に失敗しました。"
 
-#: ../../source/Crypto/Crypto.rst:254 b425983151054505a243c1d65c68a2b8
+#: ../../source/Crypto/Crypto.rst:257 9b1c2b2d3f48459bbedee21c92aafe31
 msgid "For detailed OpenSSL diagnostics:"
 msgstr "詳細な OpenSSL 診断については、以下を参照してください。"
 
 #~ msgid ""
-#~ "The library is built as a shared object (``libcrypto_api.so``) so it can be "
-#~ "loaded from Python: ``src/network_api/rsa_crypto.py`` is a ctypes binding "
-#~ "used by the TCP layer to encrypt messages with RSA-OAEP (see the "
-#~ "``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). The "
-#~ "binding looks for the library via ``ctypes.util.find_library`` and in "
-#~ "``build/`` next to the repository root."
+#~ "The library is built as a shared"
+#~ " object (``libcrypto_api.so``) so it can"
+#~ " be loaded from Python: "
+#~ "``src/network_api/rsa_crypto.py`` is a ctypes "
+#~ "binding used by the TCP layer to"
+#~ " encrypt messages with RSA-OAEP (see"
+#~ " the ``TCP_Server_APIs`` / ``TCP_Client_APIs``"
+#~ " encrypted channel sections). The binding"
+#~ " looks for the library via "
+#~ "``ctypes.util.find_library`` and in ``build/`` "
+#~ "next to the repository root."
 #~ msgstr ""
-#~ "このライブラリは共有オブジェクト (``libcrypto_api.so``) として構築されているため、Python からロードできます。 "
-#~ "``src/network_api/rsa_crypto.py`` は、RSA-OAEP でメッセージを暗号化するために TCP 層によって使用される "
-#~ "ctypes バインディングです (``TCP_Server_APIs`` / ``TCP_Client_APIs`` "
-#~ "暗号化チャネルのセクションを参照)。バインディングは ``ctypes.util.find_library`` を介して、およびリポジトリ ルートの隣の"
-#~ " ``build/`` でライブラリを検索します。"
+#~ "このライブラリは共有オブジェクト (``libcrypto_api.so``) "
+#~ "として構築されているため、Python からロードできます。 "
+#~ "``src/network_api/rsa_crypto.py`` は、RSA-OAEP "
+#~ "でメッセージを暗号化するために TCP 層によって使用される ctypes "
+#~ "バインディングです (``TCP_Server_APIs`` / ``TCP_Client_APIs``"
+#~ " 暗号化チャネルのセクションを参照)。バインディングは ``ctypes.util.find_library`` "
+#~ "を介して、およびリポジトリ ルートの隣の ``build/`` でライブラリを検索します。"
 
 #~ msgid "``SS_ECDH_CURVE_P256``"
 #~ msgstr "「SS_ECDH_CURVE_P256」"
@@ -447,22 +462,30 @@ msgstr "詳細な OpenSSL 診断については、以下を参照してくださ
 #~ msgstr "リポジトリのルートからビルドします。"
 
 #~ msgid ""
-#~ "All public functions return ``pf_err_t``. ``PF_OK`` indicates success. Use "
-#~ "``pf_err_string`` to convert an error code to readable text and "
-#~ "``pf_crypto_openssl_errors`` to retrieve the pending OpenSSL error queue."
+#~ "All public functions return ``pf_err_t``. "
+#~ "``PF_OK`` indicates success. Use "
+#~ "``pf_err_string`` to convert an error "
+#~ "code to readable text and "
+#~ "``pf_crypto_openssl_errors`` to retrieve the "
+#~ "pending OpenSSL error queue."
 #~ msgstr ""
-#~ "すべてのパブリック関数は ``ss_err_t`` を返します。 ``SS_OK`` は成功を示します。 ``ss_err_string`` "
-#~ "を使用してエラーコードを読み取り可能なテキストに変換し、 ``ss_crypto_openssl_errors`` を使用して保留中の OpenSSL "
+#~ "すべてのパブリック関数は ``ss_err_t`` を返します。 ``SS_OK`` "
+#~ "は成功を示します。 ``ss_err_string`` を使用してエラーコードを読み取り可能なテキストに変換し、"
+#~ " ``ss_crypto_openssl_errors`` を使用して保留中の OpenSSL "
 #~ "エラーキューを取得します。"
 
 #~ msgid ""
-#~ "The first encryption call with ``out == NULL`` queries the required output "
-#~ "size. RSA encryption is binary-safe and accepts an explicit input length. "
-#~ "The maximum plaintext size is returned by ``pf_rsa_max_plaintext_len``."
+#~ "The first encryption call with ``out "
+#~ "== NULL`` queries the required output"
+#~ " size. RSA encryption is binary-safe"
+#~ " and accepts an explicit input "
+#~ "length. The maximum plaintext size is"
+#~ " returned by ``pf_rsa_max_plaintext_len``."
 #~ msgstr ""
-#~ "``out == NULL`` を指定した最初の暗号化呼び出しは、必要な出力サイズをクエリします。 RSA "
-#~ "暗号化はバイナリセーフであり、明示的な入力長を受け入れます。平文の最大サイズは ``ss_rsa_max_plaintext_len`` "
-#~ "によって返されます。"
+#~ "``out == NULL`` を指定した最初の暗号化呼び出しは、必要な出力サイズをクエリします。"
+#~ " RSA 暗号化はバイナリセーフであり、明示的な入力長を受け入れます。平文の最大サイズは "
+#~ "``ss_rsa_max_plaintext_len`` によって返されます。"
 
 #~ msgid "``PF_ERR_INVALID_ARG`` - invalid pointer or length."
 #~ msgstr "``SS_ERR_INVALID_ARG`` - 無効なポインタまたは長さです。"
+

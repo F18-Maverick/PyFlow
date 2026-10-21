@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow \n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-09-26 22:43+0800\n"
+"POT-Creation-Date: 2026-10-20 09:30+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: ru\n"
@@ -18,30 +18,32 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Generated-By: Babel 2.10.3\n"
+"Generated-By: Babel 2.18.0\n"
 
 #: ../../source/api/PyFlow.transfer_web.setup_client.rst:2
-#: 8379b786205a4447995cf82b275ee87a
+#: 09f60d1b11ac4e92b480fa6284489970
 msgid "PyFlow.transfer\\_web.setup\\_client module"
 msgstr ""
 
-#: 8412539bd9af49e8976ccf5c028061d4 PyFlow.transfer_web.setup_client:1 of
+#: 2f786e174934474a93c6498878a68612 PyFlow.transfer_web.setup_client:1 of
 msgid "PyFlow TCP client web launcher."
 msgstr ""
 
-#: PyFlow.transfer_web.setup_client:3 d2ed4df91a474301aee43eaf09e1ac87 of
+#: 24fa9f33454d4afc9d15c80a0299922d PyFlow.transfer_web.setup_client:3 of
 msgid ""
 "Starts a lightweight Flask backend on 127.0.0.1 and opens the connect UI "
 "in the browser.  The user enters the server address (an http/https domain"
 " or a bare IP); the backend asks the server's web backend for the TCP "
 "server address/port, starts the TCP client, and keeps the backend running"
-" to relay the user's frontend actions.  The account of the server logs in"
-" from the same backend: saved credentials in "
-"``.Flow_Web/client_login.json`` are replayed on every start, and the "
-"login window appears whenever no session could be restored."
+" to relay the user's frontend actions.  A server that needs accounts (a "
+"verification mailbox is configured) makes the same backend log in: saved "
+"credentials in ``.Flow_Web/client_login.json`` are replayed on every "
+"start, and the login window appears whenever no session could be "
+"restored.  A server without a mailbox needs no accounts, so the login "
+"window and the account controls are skipped."
 msgstr ""
 
-#: PyFlow.transfer_web.setup_client.main:1 fd5a9b075a2a4b9a97dbad26743e0403 of
+#: PyFlow.transfer_web.setup_client.main:1 ca4ce7c686c84b44ae429e4de15b9afd of
 msgid "Start the client web backend and serve its UI."
 msgstr ""
 
@@ -56,5 +58,23 @@ msgstr ""
 #~ " TCP client, and keeps the backend"
 #~ " running to relay the user's frontend"
 #~ " actions."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "Starts a lightweight Flask backend on"
+#~ " 127.0.0.1 and opens the connect UI"
+#~ " in the browser.  The user enters "
+#~ "the server address (an http/https domain"
+#~ " or a bare IP); the backend "
+#~ "asks the server's web backend for "
+#~ "the TCP server address/port, starts the"
+#~ " TCP client, and keeps the backend"
+#~ " running to relay the user's frontend"
+#~ " actions.  The account of the server"
+#~ " logs in from the same backend: "
+#~ "saved credentials in ``.Flow_Web/client_login.json``"
+#~ " are replayed on every start, and "
+#~ "the login window appears whenever no "
+#~ "session could be restored."
 #~ msgstr ""
 

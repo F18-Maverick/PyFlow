@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version:  PyFlow\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-01 18:19+0800\n"
+"POT-Creation-Date: 2026-10-20 09:30+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,11 +17,11 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Generated-By: Babel 2.18.0\n"
 
-#: ../../source/Crypto/Crypto.rst:2 bb50e4f310ea43d9ba55e4b367ed7740
+#: ../../source/Crypto/Crypto.rst:2 9878b2fb3d9d4d6ba3cd00002ed6f0b7
 msgid "C/OpenSSL Crypto Module"
 msgstr "Крипто-модуль C/OpenSSL"
 
-#: ../../source/Crypto/Crypto.rst:4 2838c629d37d42ef92dbabeab8d33801
+#: ../../source/Crypto/Crypto.rst:4 aa824d3e127240b0928431af3dd8c831
 #, fuzzy
 msgid ""
 "The ``PyFlow/crypto_api`` directory contains PyFlow's C/OpenSSL "
@@ -32,62 +32,62 @@ msgstr ""
 "C/OpenSSL ServSpy. Библиотека независима от среды выполнения Python и "
 "собирается из корня репозитория с помощью CMake."
 
-#: ../../source/Crypto/Crypto.rst:8 2c028ead37a24eb98321135f22f3673d
+#: ../../source/Crypto/Crypto.rst:8 294667df2a20495887126b808c7d9706
 msgid "The module provides:"
 msgstr "Модуль обеспечивает:"
 
-#: ../../source/Crypto/Crypto.rst:10 e290cfffb80140899093170eda086e61
+#: ../../source/Crypto/Crypto.rst:10 472d4f3082db42f198b7f13fdbf041f2
 msgid "RSA-OAEP encryption and decryption with SHA-256."
 msgstr "Шифрование и дешифрование RSA-OAEP с помощью SHA-256."
 
-#: ../../source/Crypto/Crypto.rst:11 125f1968eba34f6896b44b6406f0e6c2
+#: ../../source/Crypto/Crypto.rst:11 0eb3f7206503452ca2229a1d7c323390
 msgid "ECDH key agreement on P-256, P-384, and P-521."
 msgstr "Ключевое соглашение ECDH по P-256, P-384 и P-521."
 
-#: ../../source/Crypto/Crypto.rst:12 cee735932767478e95a96b9a59ddcdd2
+#: ../../source/Crypto/Crypto.rst:12 ab0be16cfbca493a88c6eb4a2ef1bb07
 msgid "HKDF-SHA256 session-key derivation."
 msgstr "Получение сеансового ключа HKDF-SHA256."
 
-#: ../../source/Crypto/Crypto.rst:13 7d211e9cf2e64cab9b79c0173805334e
+#: ../../source/Crypto/Crypto.rst:13 56667bb7a4554c1b8efc918c9593f950
 msgid "AES-256-GCM authenticated encryption for ECDH sessions."
 msgstr "Шифрование с аутентификацией AES-256-GCM для сеансов ECDH."
 
-#: ../../source/Crypto/Crypto.rst:14 d345fd729851496c82017971bdb55276
+#: ../../source/Crypto/Crypto.rst:14 8de85fb1a2f843ea91d0aa30df0a00c7
 msgid "PEM key persistence and structured error reporting."
 msgstr "Сохранение ключей PEM и структурированные отчеты об ошибках."
 
-#: ../../source/Crypto/Crypto.rst:16 d86187e532624ac49492cca1b064a89b
+#: ../../source/Crypto/Crypto.rst:16 564b1d414738498791d9083f279330fe
 msgid ""
 "The library version is 1.0.0 (``PF_CRYPTO_VERSION_MAJOR`` / "
 "``PF_CRYPTO_VERSION_MINOR`` / ``PF_CRYPTO_VERSION_PATCH`` and "
 "``PF_CRYPTO_VERSION_STRING`` in ``pf_crypto.h``)."
 msgstr ""
 
-#: ../../source/Crypto/Crypto.rst:20 5e6c65799ec14fd8b67034bd1b3beb07
+#: ../../source/Crypto/Crypto.rst:20 10fda1fcea98430a8924fdfa8bbce2fa
 #, fuzzy
 msgid "The public headers are located in ``PyFlow/crypto_api/include``:"
 msgstr "Публичные заголовки расположены в ``src/crypto_api/include``:"
 
-#: ../../source/Crypto/Crypto.rst:22 87305d509fc94f5186438e34d9583987
+#: ../../source/Crypto/Crypto.rst:22 86168d67fc8047ba8d4c61b2b9e23caf
 #, fuzzy
 msgid "``pf_crypto.h`` - common errors, OpenSSL diagnostics, and HKDF."
 msgstr "``ss_crypto.h`` — распространенные ошибки, диагностика OpenSSL и HKDF."
 
-#: ../../source/Crypto/Crypto.rst:23 5d221a05e5034eccadaec2206256a2af
+#: ../../source/Crypto/Crypto.rst:23 ddfd841fba4b4045bb3fc84419010fe7
 #, fuzzy
 msgid "``pf_rsa.h`` - RSA key and encryption APIs."
 msgstr "``ss_rsa.h`` — ключ RSA и API шифрования."
 
-#: ../../source/Crypto/Crypto.rst:24 e10e899ebf934a18a686d225d3f967d9
+#: ../../source/Crypto/Crypto.rst:24 eb2168817ac54389a35e194a444250f4
 #, fuzzy
 msgid "``pf_ecdh.h`` - ECDH key agreement and seal/open APIs."
 msgstr "``ss_ecdh.h`` — соглашение о ключах ECDH и API-интерфейсы печати/открытия."
 
-#: ../../source/Crypto/Crypto.rst:27 09186509365444d4ac1ce145d76bcd28
+#: ../../source/Crypto/Crypto.rst:27 43fa12b668bb4dc389f2bbd9edaf9187
 msgid "Build"
 msgstr "Строить"
 
-#: ../../source/Crypto/Crypto.rst:29 ae41004303f342d2ac3e302fe5ff9b40
+#: ../../source/Crypto/Crypto.rst:29 35019410fade4c18b07d32d37c05ba0d
 msgid ""
 "The module requires OpenSSL 1.1.1 or newer and CMake 3.16 or newer. On "
 "Debian or Ubuntu, install the build dependencies with:"
@@ -95,7 +95,7 @@ msgstr ""
 "Для модуля требуется OpenSSL 1.1.1 или новее и CMake 3.16 или новее. В "
 "Debian или Ubuntu установите зависимости сборки с помощью:"
 
-#: ../../source/Crypto/Crypto.rst:37 7c534481ca81453b89692a8758bbeba0
+#: ../../source/Crypto/Crypto.rst:37 3834ad9e83c24331b03d264103f5cdad
 msgid ""
 "Installing the Python package builds it automatically: ``setup.py`` "
 "compiles the three sources and installs the result inside the package "
@@ -103,19 +103,19 @@ msgid ""
 "pyflow-net`` needs only a C compiler and the OpenSSL development headers."
 msgstr ""
 
-#: ../../source/Crypto/Crypto.rst:42 6abf3a2d83804b73b1bfd45add4322d8
+#: ../../source/Crypto/Crypto.rst:42 a72fb95d5d114cdca29347b18e2c1253
 msgid ""
 "Build it from the repository root with CMake when the C test suite or the"
 " C API itself is wanted:"
 msgstr ""
 
-#: ../../source/Crypto/Crypto.rst:51 6fbb49d9124649f1b387de2f0377a4af
+#: ../../source/Crypto/Crypto.rst:51 96617bb44be2438ebbde9e9f750b3e09
 msgid ""
 "``ctest --test-dir`` was added in CMake 3.20; with the 3.16 minimum the "
 "equivalent is ``ctest --output-on-failure`` run from inside ``build/``."
 msgstr ""
 
-#: ../../source/Crypto/Crypto.rst:54 f42772e265ad4248b11c37141f4fb6e8
+#: ../../source/Crypto/Crypto.rst:54 244b7aff35aa4272a121b9fbbadae117
 #, fuzzy
 msgid ""
 "The C test suite lives in ``test/crypto_api/`` (``test_hkdf``, "
@@ -127,27 +127,26 @@ msgstr ""
 "``test_rsa``, ``test_ecdh``) и собирается и запускается вместе с "
 "библиотекой."
 
-#: ../../source/Crypto/Crypto.rst:59 ed6b92c776ca441ab8629088ecd973bc
+#: ../../source/Crypto/Crypto.rst:59 30ea804b8270411f8793908bdc7a2a97
 #, fuzzy
 msgid ""
 "The library is built as a shared object (``libcrypto_api.so``) so it can "
 "be loaded from Python: ``PyFlow/network_api/rsa_crypto.py`` is a ctypes "
-"binding used by the TCP layer to encrypt messages with RSA-OAEP (see the "
-"``TCP_Server_APIs`` / ``TCP_Client_APIs`` encrypted channel sections). "
-"The binding also implements the TCP layer's anti-MITM identity check "
-"(TOFU): peer public keys are exchanged on every connection, recorded "
-"under the peer's ``(ip, port)`` in "
-"``network_api/.Flow/pub_key/pub_key.json`` with the SHA-256 of the "
-"received PEM text, and a changed key for a recorded endpoint rejects the "
-"connection; a key already known under another endpoint is accepted and "
-"re-registered under the new one. The encryption state machine is bounded:"
-" three consecutive decode failures trip a circuit breaker "
-"(``MAX_DECODE_FAILURES`` in ``connect_tcp.py``) that stops re-keying, and"
-" a key that is stale or rotated makes the TCP layer reload its own key "
-"and re-exchange. The binding looks for the library via "
-"``ctypes.util.find_library`` and then next to the repository root in "
-"``build/`` (``libcrypto_api.so``, ``libcrypto_api.dylib``, "
-"``libcrypto_api.dll`` and ``build/Release/crypto_api.dll``)."
+"binding used by the TCP layer. It exposes the RSA-OAEP message encryption"
+" and the ECDH/AES-256-GCM sealing (``EcdhKeyPair`` / ``EcdhPubKey`` / "
+"``hkdf_sha256``) that the framed TCP channel uses for its bulk and file "
+"transfer payloads (see the ``TCP_Server_APIs`` / ``TCP_Client_APIs`` "
+"encrypted channel sections). The binding also implements the TCP layer's "
+"anti-MITM identity check (TOFU): endpoint rejects the connection; a key "
+"already known under another endpoint is accepted and re-registered under "
+"the new one. The encryption state machine is bounded: three consecutive "
+"decode failures trip a circuit breaker (``MAX_DECODE_FAILURES`` in "
+"``connect_tcp.py``) that stops re-keying, and a key that is stale or "
+"rotated makes the TCP layer reload its own key and re-exchange. The "
+"binding looks for the library via ``ctypes.util.find_library`` and then "
+"next to the repository root in ``build/`` (``libcrypto_api.so``, "
+"``libcrypto_api.dylib``, ``libcrypto_api.dll`` and "
+"``build/Release/crypto_api.dll``)."
 msgstr ""
 "Библиотека создана как общий объект (``libcrypto_api.so``), поэтому ее "
 "можно загрузить из Python: ``src/network_api/rsa_crypto.py`` — это "
@@ -161,13 +160,13 @@ msgstr ""
 "соединение. Привязка ищет библиотеку через ``ctypes.util.find_library`` и"
 " в ``build/`` рядом с корнем репозитория."
 
-#: ../../source/Crypto/Crypto.rst:77 ad993af85f8f45f5a3661448f69961bf
+#: ../../source/Crypto/Crypto.rst:77 9594680fce33464f9ff9cb9590bb5d0a
 msgid ""
 "The build produces the SOVERSIONed names ``libcrypto_api.so.1`` / "
 "``libcrypto_api.so.1.0.0`` plus the ``libcrypto_api.so`` loader symlink."
 msgstr ""
 
-#: ../../source/Crypto/Crypto.rst:80 7ea41df5c6644e8197d587e03642123f
+#: ../../source/Crypto/Crypto.rst:80 80c24657a4c9445088459fff264379b2
 #, fuzzy
 msgid ""
 "CMake install rules export the ``crypto_api`` library, its public "
@@ -184,11 +183,11 @@ msgstr ""
 " находится в корне репозитория: шаблон пакета CMake и шаблон pkg-config —"
 " это ``cmake/crypto_apiConfig.cmake.in`` и ``crypto_api.pc.in``."
 
-#: ../../source/Crypto/Crypto.rst:89 0d7e08f1e07445dfa77b47a85a25def7
+#: ../../source/Crypto/Crypto.rst:89 dccd3901c8024859b9a9753e818d6692
 msgid "Common API"
 msgstr "Общий API"
 
-#: ../../source/Crypto/Crypto.rst:91 1c9b38b493964582875d168e61ccf829
+#: ../../source/Crypto/Crypto.rst:91 c1b71e19c8f6422eabd99bd0997daae8
 msgid ""
 "Most public functions return ``pf_err_t``; ``PF_OK`` indicates success. "
 "Functions that report a size or a string instead have their own return "
@@ -200,12 +199,15 @@ msgid ""
 "pending OpenSSL error queue."
 msgstr ""
 
-#: ../../source/Crypto/Crypto.rst:114 07ac67f777704ad9822023430f0109c4
+#: ../../source/Crypto/Crypto.rst:114 67ae5556635e43a487c38bf8011e1c5b
 #, fuzzy
 msgid ""
 "The library uses caller-provided output buffers for fixed-size results. "
 "Functions that return allocated buffers document that the caller must "
-"release them with ``free``. Opaque key handles must be released with "
+"release them with ``pf_crypto_free`` — the library's own ``free``, so the"
+" allocation and the deallocation always run on the same C runtime (a host"
+" such as CPython on Windows may use a different one, and freeing across "
+"runtimes corrupts the heap). Opaque key handles must be released with "
 "their corresponding ``*_free`` function. HKDF output is capped at "
 "``PF_CRYPTO_HKDF_SHA256_MAX_OUT`` (8160 bytes) by both "
 "``pf_crypto_hkdf_sha256`` and ``pf_ecdh_derive_key``."
@@ -216,11 +218,11 @@ msgstr ""
 "освободить их со статусом «свободно». Непрозрачные дескрипторы клавиш "
 "должны быть освобождены с помощью соответствующей функции ``*_free``."
 
-#: ../../source/Crypto/Crypto.rst:122 619e39d223d54a48ba983a3b30bd7d9d
+#: ../../source/Crypto/Crypto.rst:125 69248ac47e7e47f18e953dee857db239
 msgid "RSA API"
 msgstr "API RSA"
 
-#: ../../source/Crypto/Crypto.rst:124 5eeaa87820f941dd8e171c973269036e
+#: ../../source/Crypto/Crypto.rst:127 a770dcc04e2c42d1be50fe30d298df4b
 #, fuzzy
 msgid ""
 "RSA keys are generated with ``pf_rsa_keygen``. The implementation uses "
@@ -231,7 +233,7 @@ msgstr ""
 "RSA-OAEP с SHA-256 для шифрования и дешифрования. Принимаются размеры "
 "ключей от 2048 до 16384 бит; Рекомендуется 2048, 3072 или 4096 бит."
 
-#: ../../source/Crypto/Crypto.rst:148 f85a46b466ef47ee9d195f439ba3b153
+#: ../../source/Crypto/Crypto.rst:151 e7b876b8fb354b2da45d3c13f50ededf
 msgid ""
 "The first encryption call with ``out == NULL`` queries the required "
 "output size; ``pf_rsa_decrypt`` supports the same query pattern. RSA "
@@ -243,15 +245,15 @@ msgid ""
 "handle."
 msgstr ""
 
-#: ../../source/Crypto/Crypto.rst:156 ff9d2472cf614dd0827d0887f195ed43
+#: ../../source/Crypto/Crypto.rst:159 6af957980305426e915b3f62d9eb1ed4
 msgid "Public and private keys can be stored as PEM files:"
 msgstr "Открытые и закрытые ключи можно хранить в виде файлов PEM:"
 
-#: ../../source/Crypto/Crypto.rst:167 a3f163de660b4d49a36a8aedead555da
+#: ../../source/Crypto/Crypto.rst:170 6bf9df3c51d540b69680723a4845de2d
 msgid "ECDH API"
 msgstr "ECDH API"
 
-#: ../../source/Crypto/Crypto.rst:169 4535e8f410a742f38d32ff53d404c37b
+#: ../../source/Crypto/Crypto.rst:172 3c69950828364df49bbf0b37313f9987
 #, fuzzy
 msgid ""
 "ECDH key pairs are created with ``pf_ecdh_keypair_generate``. The "
@@ -260,19 +262,19 @@ msgstr ""
 "Пары ключей ECDH создаются с помощью ss_ecdh_keypair_generate. "
 "Поддерживаемые имена кривых:"
 
-#: ../../source/Crypto/Crypto.rst:172 9624f8475c8d4618a7054e7c18ae5e1f
+#: ../../source/Crypto/Crypto.rst:175 6a4d2171568847d4984c8705818c4bf9
 msgid "``PF_ECDH_CURVE_P256``"
 msgstr "``PF_ECDH_CURVE_P256``"
 
-#: ../../source/Crypto/Crypto.rst:173 4585a2433d684621a5f90805b74cef6c
+#: ../../source/Crypto/Crypto.rst:176 c0da017a21dc46ed93b3da0727454dc3
 msgid "``PF_ECDH_CURVE_P384``"
 msgstr "``PF_ECDH_CURVE_P384``"
 
-#: ../../source/Crypto/Crypto.rst:174 14dde8ddd1b44ae1a4cb64179caa5aa5
+#: ../../source/Crypto/Crypto.rst:177 b2019f9f782b48dc85c5e3b24647fd94
 msgid "``PF_ECDH_CURVE_P521``"
 msgstr "``PF_ECDH_CURVE_P521``"
 
-#: ../../source/Crypto/Crypto.rst:176 43b77941f20d44958205bea666a208d5
+#: ../../source/Crypto/Crypto.rst:179 0962e1bca8da48d1835cbe8facb8a0ea
 #, fuzzy
 msgid ""
 "An unknown curve name returns ``PF_ERR_UNSUPPORTED``, and ``NULL`` "
@@ -282,7 +284,7 @@ msgstr ""
 "Открытые ключи передаются в виде строк PEM subjectPublicKeyInfo. "
 "Разобранные ключи одноранговых узлов проверяются перед использованием."
 
-#: ../../source/Crypto/Crypto.rst:200 ac2db67c049d4f55a2fc2f9972c6d57c
+#: ../../source/Crypto/Crypto.rst:203 c5c15560992c48beb7637c19a517f07f
 #, fuzzy
 msgid ""
 "The higher-level ``pf_ecdh_seal`` and ``pf_ecdh_open`` APIs are "
@@ -297,24 +299,24 @@ msgstr ""
 "AES-256-GCM с помощью HKDF-SHA256, включают случайную соль и IV и "
 "аутентифицируют дополнительный AAD."
 
-#: ../../source/Crypto/Crypto.rst:207 70a8e3f511f34359974c9152d60500b2
+#: ../../source/Crypto/Crypto.rst:210 f794a8f7227443e381d5337e9fe95677
 #, fuzzy
 msgid "The ``pf_ecdh_seal`` output format is:"
 msgstr "Формат вывода ss_ecdh_seal:"
 
-#: ../../source/Crypto/Crypto.rst:213 28f1933678854354b8ef357adcfdd380
+#: ../../source/Crypto/Crypto.rst:216 ee4a7ea6853249a7a137f949e3b9d7cc
 #, fuzzy
 msgid ""
 "The fixed overhead is ``PF_ECDH_SEAL_OVERHEAD`` (44 bytes). Empty "
 "plaintext is allowed. A failed tag check returns ``PF_ERR_AUTH_FAILED`` "
 "and no plaintext is returned. On success the output buffer is "
-"``malloc``-ed and the caller frees it."
+"``malloc``-ed and the caller releases it with ``pf_crypto_free``."
 msgstr ""
 "Фиксированные служебные данные составляют ``SS_ECDH_SEAL_OVERHEAD`` (44 "
 "байта). Допускается пустой открытый текст. Неудачная проверка тега "
 "возвращает ``SS_ERR_AUTH_FAILED`` и открытый текст не возвращается."
 
-#: ../../source/Crypto/Crypto.rst:218 9a7c6cc7b5a94e5fac26bc6802310183
+#: ../../source/Crypto/Crypto.rst:221 212039cbe4b74827b643af47aaaf9970
 msgid ""
 "ECDH key pairs can be persisted with ``pf_ecdh_keypair_write_priv`` and "
 "``pf_ecdh_keypair_read_priv`` (PKCS#8 PEM, optionally passphrase-"
@@ -322,11 +324,11 @@ msgid ""
 "``pf_ecdh_pubkey_free`` release the handles."
 msgstr ""
 
-#: ../../source/Crypto/Crypto.rst:224 7f05214ee91a478581014c39643d7bfb
+#: ../../source/Crypto/Crypto.rst:227 a84d53d68554474fbb2beaa2146cee86
 msgid "Security Notes"
 msgstr "Примечания по безопасности"
 
-#: ../../source/Crypto/Crypto.rst:226 a6482f5940d1469088bb376b1d25d31c
+#: ../../source/Crypto/Crypto.rst:229 5e398f6a7ace4aeea29bcd40e75a59b1
 msgid ""
 "ECDH provides key agreement, but it does not authenticate public-key "
 "ownership by itself. Public keys must be exchanged over an authenticated "
@@ -337,7 +339,7 @@ msgstr ""
 "по аутентифицированному каналу или проверяться с помощью внешнего "
 "механизма подписи/сертификата."
 
-#: ../../source/Crypto/Crypto.rst:230 fb49962bd1f0474c91610fa9dd020584
+#: ../../source/Crypto/Crypto.rst:233 df43fe66482c4e0fb896ab598ce43c7d
 #, fuzzy
 msgid ""
 "Private key files may be protected with a passphrase: "
@@ -352,37 +354,37 @@ msgstr ""
 "регистрации парольных фраз, закрытых ключей или ключей сеанса в виде "
 "открытого текста."
 
-#: ../../source/Crypto/Crypto.rst:238 e09bc96e058a4b14b135a1430b8a3ad9
+#: ../../source/Crypto/Crypto.rst:241 02cb264ad6c747d29b37bfa1f1cc6362
 msgid "Error Handling"
 msgstr "Обработка ошибок"
 
-#: ../../source/Crypto/Crypto.rst:240 8246aab2cf7d4913a7345684940c9220
+#: ../../source/Crypto/Crypto.rst:243 60786ad51ea444da97922957e670ea90
 msgid "The main error codes are:"
 msgstr "Основные коды ошибок:"
 
-#: ../../source/Crypto/Crypto.rst:242 45059d6bf45c42c2bc8e8c6f023836f4
+#: ../../source/Crypto/Crypto.rst:245 8c1b057428f2445889d1159d6636b097
 msgid ""
 "``PF_ERR_INVALID_ARG`` - NULL argument, illegal length or bad parameter "
 "combination (e.g. out-of-range RSA key size, a NULL salt/info with a non-"
 "zero length, or a plaintext longer than the key allows)."
 msgstr ""
 
-#: ../../source/Crypto/Crypto.rst:245 daed84defdb64065849a0ef880b22eea
+#: ../../source/Crypto/Crypto.rst:248 27e26e555ee24ce68ab7943b4117a57d
 #, fuzzy
 msgid "``PF_ERR_NOMEM`` - allocation failure."
 msgstr "``SS_ERR_NOMEM`` - ошибка выделения."
 
-#: ../../source/Crypto/Crypto.rst:246 788a5b4b06714adcab5aeb36b81757e4
+#: ../../source/Crypto/Crypto.rst:249 2b3828e4bfa04329a60b479be7f0dfe5
 #, fuzzy
 msgid "``PF_ERR_OPENSSL`` - OpenSSL operation failure."
 msgstr "``SS_ERR_IO`` - сбой файловой операции."
 
-#: ../../source/Crypto/Crypto.rst:247 0e06a2169f5d445cab788910aaee188a
+#: ../../source/Crypto/Crypto.rst:250 2c3c9ab09d294be8911f4fb31c335db6
 #, fuzzy
 msgid "``PF_ERR_IO`` - file operation failure."
 msgstr "``SS_ERR_IO`` - сбой файловой операции."
 
-#: ../../source/Crypto/Crypto.rst:248 0d1b17cc4e744efd891efe2d292f6dd8
+#: ../../source/Crypto/Crypto.rst:251 a928f8b90e154bdaa43ef4e4ee7d578d
 #, fuzzy
 msgid ""
 "``PF_ERR_PARSE`` - malformed PEM/DER input or wrong private-key "
@@ -391,29 +393,29 @@ msgstr ""
 "``SS_ERR_PARSE`` — неверный ввод PEM/DER или неверная парольная фраза "
 "закрытого ключа."
 
-#: ../../source/Crypto/Crypto.rst:249 8d5f6adfe3b24ecebb6ed2d84cece394
+#: ../../source/Crypto/Crypto.rst:252 9cd41d63123d49caa946160465dda70f
 #, fuzzy
 msgid "``PF_ERR_BUFFER_TOO_SMALL`` - caller output buffer is insufficient."
 msgstr ""
 "``SS_ERR_BUFFER_TOO_SMALL`` - буфер вывода вызывающего абонента "
 "недостаточен."
 
-#: ../../source/Crypto/Crypto.rst:250 7a88e3913e8948edbcf645b5097b47b3
+#: ../../source/Crypto/Crypto.rst:253 78532f0a764249178076a4adcc032f7f
 #, fuzzy
 msgid "``PF_ERR_AUTH_FAILED`` - AES-GCM authentication failed."
 msgstr "``SS_ERR_AUTH_FAILED`` — аутентификация AES-GCM не удалась."
 
-#: ../../source/Crypto/Crypto.rst:251 1182998c4b164675a840d89b3a8e994b
+#: ../../source/Crypto/Crypto.rst:254 5e5f5421333e4382ae5e700d7570648b
 #, fuzzy
 msgid "``PF_ERR_UNSUPPORTED`` - unsupported curve or key type."
 msgstr "``SS_ERR_UNSUPPORTED`` - неподдерживаемый тип кривой или ключа."
 
-#: ../../source/Crypto/Crypto.rst:252 0af6413bc92a46a48a1ea044a6b4f05b
+#: ../../source/Crypto/Crypto.rst:255 d1fea86be03940d097132b112b6f14f2
 #, fuzzy
 msgid "``PF_ERR_DECRYPT`` - RSA decryption failed."
 msgstr "``SS_ERR_DECRYPT`` — расшифровка RSA не удалась."
 
-#: ../../source/Crypto/Crypto.rst:254 b425983151054505a243c1d65c68a2b8
+#: ../../source/Crypto/Crypto.rst:257 9b1c2b2d3f48459bbedee21c92aafe31
 msgid "For detailed OpenSSL diagnostics:"
 msgstr "Для подробной диагностики OpenSSL:"
 
