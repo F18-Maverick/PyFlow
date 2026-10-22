@@ -59,13 +59,11 @@ def _process_is_alive(pid):
     """Report whether the process recorded in a port-range entry still runs.
 
     Args:
-        pid (int | None): Process id from the record; ``None`` (a record written
-            before pids were stored) counts as alive so it is never dropped just
-            for lacking one.
+        pid (int | None): Process id from the record; ``None`` (a record written before pids were stored) counts as alive so it is never dropped just for lacking one.
 
     Returns:
-        bool: True when the process exists, or when that cannot be determined
-            (keeping an entry is harmless, dropping a live one is not).
+    bool: True when the process exists, or when that cannot be determined
+                (keeping an entry is harmless, dropping a live one is not).
     """
     if not isinstance(pid, int) or pid <= 0:
         return True
@@ -103,7 +101,7 @@ def _port_record_stale(entry):
         entry (dict): One record entry (``server_port_info`` / ``client_port_info``).
 
     Returns:
-        bool: True when the entry can be reclaimed.
+    bool: True when the entry can be reclaimed.
     """
     pid = entry.get("pid")
     if pid is None:  # pre-pid record: keep the older rule
@@ -112,12 +110,22 @@ def _port_record_stale(entry):
 
 
 def _is_closed_socket_error(exc):
-    """True when the error means a socket that is already closed
+    """Return true when the error means a socket that is already closed.
+
+    True when the error means a socket that is already closed
+
     (EBADF / ENOTSOCK, Windows winsock WSAENOTSOCK 10038, ECONNRESET /
-    EPIPE from a peer that dropped the connection, or the "connection
-    error" RuntimeError raised by send_message after the instance
-    stopped): the normal teardown signal between a closing thread and a
-    receive thread, not a fault worth a traceback."""
+        EPIPE from a peer that dropped the connection, or the "connection
+        error" RuntimeError raised by send_message after the instance
+        stopped): the normal teardown signal between a closing thread and a
+        receive thread, not a fault worth a traceback.
+
+    Args:
+        exc (object): Value used by the operation.
+
+    Returns:
+        bool | object: Result produced by the operation.
+    """
     if isinstance(exc, RuntimeError) and str(exc) == "connection error":
         return True
     return isinstance(exc, OSError) and exc.errno in (
@@ -155,8 +163,8 @@ def _wait_writable(client_socket, timeout):
         timeout (float): Maximum seconds to wait. Must be > 0.
 
     Raises:
-        TimeoutError: If the socket stays unwritable for ``timeout`` seconds.
-        OSError: If the socket is closed or cannot be polled.
+    TimeoutError: If the socket stays unwritable for ``timeout`` seconds.
+            OSError: If the socket is closed or cannot be polled.
     """
     with selectors.DefaultSelector() as selector:
         selector.register(client_socket, selectors.EVENT_WRITE)
@@ -172,8 +180,14 @@ def _log_merge_lock(path):
     """Return this process's lock for the log at ``path``.
 
     Shared by every merge of that file in this process (see
-    `_publish_json_log`), so threads of one program never interleave their
-    read-merge-publish.
+        `_publish_json_log`), so threads of one program never interleave their
+        read-merge-publish.
+
+    Args:
+        path (str): Value used by the operation.
+
+    Returns:
+        object: Result produced by the operation.
     """
     with _LOG_MERGE_LOCKS_LOCK:
         return _LOG_MERGE_LOCKS.setdefault(os.path.abspath(path), threading.RLock())
@@ -183,8 +197,14 @@ def _log_content(path):
     """Read the exact bytes of the log at ``path``, or None when it is absent.
 
     `_publish_json_log` compares the content it read against this before it
-    replaces the file: any publish by another process changes the bytes (an
-    entry is always added), so a match means nothing was published in between.
+        replaces the file: any publish by another process changes the bytes (an
+        entry is always added), so a match means nothing was published in between.
+
+    Args:
+        path (str): Value used by the operation.
+
+    Returns:
+        NoneType | object: Result produced by the operation.
     """
     try:
         with open(path, "rb") as f:
@@ -197,10 +217,16 @@ def _read_json_log(path):
     """Parse the JSON log at ``path``: ``(data, content)``.
 
     ``({}, None)`` while the file does not exist. A log that is empty (a
-    publish cut short) or carries a trailing fragment (a crash, or a publish
-    by the versions that shared one ``.tmp`` path) is read up to its first
-    document: what is left is dropped, and the next publish rewrites the file
-    without it, so a broken log cannot poison every later flush.
+        publish cut short) or carries a trailing fragment (a crash, or a publish
+        by the versions that shared one ``.tmp`` path) is read up to its first
+        document: what is left is dropped, and the next publish rewrites the file
+        without it, so a broken log cannot poison every later flush.
+
+    Args:
+        path (str): Value used by the operation.
+
+    Returns:
+        list | tuple: Result produced by the operation.
     """
     content = _log_content(path)
     if content is None:
@@ -219,21 +245,21 @@ def _publish_json_log(path, snapshot, record_key):
     """Merge one snapshot into the JSON log at ``path``.
 
     The file is read, merged and published back atomically (``os.replace``),
-    so a reader never sees a truncated or partial log.
+        so a reader never sees a truncated or partial log.
 
-    Two writers must not lose each other's entries, which is what one shared
-    ``<path>.tmp`` used to produce: one of them renamed a half-written file
-    into place, the log no longer parsed (``Extra data``) and every later
-    flush was dropped. Hence, per writer:
+        Two writers must not lose each other's entries, which is what one shared
+        ``<path>.tmp`` used to produce: one of them renamed a half-written file
+        into place, the log no longer parsed (``Extra data``) and every later
+        flush was dropped. Hence, per writer:
 
-    * the temp file carries this writer's pid and thread id, so two writers
-      can never truncate or rename each other's file into place;
-    * ``_log_merge_lock`` serialises the merges of this process — several
-      instances in one program (or one test session) sharing a log lose
-      nothing;
-    * a merge whose file changed under it — another *process* published since
-      this writer read it — is redone from the new content instead of
-      clobbering that process's entries.
+        * the temp file carries this writer's pid and thread id, so two writers
+          can never truncate or rename each other's file into place;
+        * ``_log_merge_lock`` serialises the merges of this process — several
+          instances in one program (or one test session) sharing a log lose
+          nothing;
+        * a merge whose file changed under it — another *process* published since
+          this writer read it — is redone from the new content instead of
+          clobbering that process's entries.
 
     Args:
         path (str): JSON log file to merge into.
@@ -241,7 +267,7 @@ def _publish_json_log(path, snapshot, record_key):
         record_key (callable): Maps one socket to its key in the log.
 
     Raises:
-        RuntimeError: When every attempt lost the race to another writer.
+    RuntimeError: When every attempt lost the race to another writer.
     """
     with _log_merge_lock(path):
         for _ in range(LOG_MERGE_ATTEMPTS):
@@ -266,34 +292,52 @@ def _publish_json_log(path, snapshot, record_key):
 
 
 def _log_line(enabled, parts):
-    """Print one command/result line when ``is_print_log`` allows it."""
+    """Print one command/result line when ``is_print_log`` allows it.
+
+    Args:
+        enabled (bool): Value used by the operation.
+        parts (list | dict): Value used by the operation.
+    """
     if enabled:
         print(*parts)
 
 
 def _debug_line(enabled, is_debug, parts):
-    """Print one execution-process line; needs ``is_print_log`` and ``is_debug``."""
+    """Print one execution-process line; needs ``is_print_log`` and ``is_debug``.
+
+    Args:
+        enabled (bool): Value used by the operation.
+        is_debug (bool): Value used by the operation.
+        parts (list | dict): Value used by the operation.
+    """
     if enabled and is_debug:
         print(*parts)
 
 
 def _parse_destination_path(command_part):
     """Extract the trailing destination directory from a received transfer
+
     command, or None when the command carries no destination.
 
-    ``<id>`` is the file-client id appended by the sender; ``<addr>`` is a
-    quoted client address tuple. The destination (when present) is the token
-    before ``<id>``, except for folder-creation commands, which carry no id
-    and put the destination last:
+        ``<id>`` is the file-client id appended by the sender; ``<addr>`` is a
+        quoted client address tuple. The destination (when present) is the token
+        before ``<id>``, except for folder-creation commands, which carry no id
+        and put the destination last:
 
-      /file <src> <id>
-      /file <src> <dest> <id>
-      /file <src> <addr> <id>
-      /file <src> <addr> <dest> <id>
-      /file_folder <rel>            folder creation, default location
-      /file_folder <rel> <dest>     folder creation with destination
-      /file_folder <rel> <file> <id>
-      /file_folder <rel> <file> <dest> <id>
+          /file <src> <id>
+          /file <src> <dest> <id>
+          /file <src> <addr> <id>
+          /file <src> <addr> <dest> <id>
+          /file_folder <rel>            folder creation, default location
+          /file_folder <rel> <dest>     folder creation with destination
+          /file_folder <rel> <file> <id>
+          /file_folder <rel> <file> <dest> <id>
+
+    Args:
+        command_part (object): Value used by the operation.
+
+    Returns:
+        NoneType | object: Result produced by the operation.
     """
     if len(command_part) < 3:
         return None
@@ -313,10 +357,16 @@ def _transfer_fid(command_part):
     """Return the fid a sender stamped on its transfer command, or None.
 
     Every user transfer command ends with the sender's transfer id
-    (``/file <path> <id>``, ``/file_folder <rel> <file> [<dest>] <id>``); it
-    keys that leg in ``file_recv_progress``/``file_upload_progress``. The
-    protocol-internal ``/crypto_pub_key`` push reports None: it is no user
-    file transfer.
+        (``/file <path> <id>``, ``/file_folder <rel> <file> [<dest>] <id>``); it
+        keys that leg in ``file_recv_progress``/``file_upload_progress``. The
+        protocol-internal ``/crypto_pub_key`` push reports None: it is no user
+        file transfer.
+
+    Args:
+        command_part (object): Value used by the operation.
+
+    Returns:
+        NoneType | object: Result produced by the operation.
     """
     if command_part and command_part[0] == "/crypto_pub_key":
         return None
@@ -329,8 +379,11 @@ def _transfer_fid(command_part):
 def _peer_from_text(text):
     """Parse an ``"ip:port"`` peer string into an ``(ip, port)`` tuple.
 
+    Args:
+        text (object): Value used by the operation.
+
     Returns:
-        tuple | None: The peer tuple, or None when the text carries none.
+    tuple | None: The peer tuple, or None when the text carries none.
     """
     if not text:
         return None
@@ -346,8 +399,11 @@ def _peer_from_text(text):
 def _peer_from_json(value):
     """Parse a persisted ``[ip, port]`` peer into an ``(ip, port)`` tuple.
 
+    Args:
+        value (object): Value used by the operation.
+
     Returns:
-        tuple | None: The peer tuple, or None when the value is not a peer.
+    tuple | None: The peer tuple, or None when the value is not a peer.
     """
     if isinstance(value, (list, tuple)) and len(value) == 2:
         try:
@@ -361,14 +417,14 @@ def _resume_offset_for(entry):
     """Bytes of an interrupted transfer's file already on the receiver's disk.
 
     The length of the partial file is what the sender is asked to continue
-    from, so a missing (or unreadable) partial file restarts the transfer from
-    its first byte.
+        from, so a missing (or unreadable) partial file restarts the transfer from
+        its first byte.
 
     Args:
         entry (list): Progress entry ``[received, total, speed, path, peer]``.
 
     Returns:
-        int: Byte offset to continue from.
+    int: Byte offset to continue from.
     """
     try:
         size = os.path.getsize(entry[3])
@@ -383,8 +439,13 @@ def _resume_offset_for(entry):
 def parse_resume_command(command):
     """Split a ``/resume_trans <fid> <offset>`` line.
 
-    Returns:
-        tuple | None: ``(fid, offset)``, or None when the line is malformed.
+        Args:
+            command (str): Wire line in ``/resume_trans <fid> <offset>`` format;
+                ``fid`` and ``offset`` must be integers.
+
+        Returns:
+            tuple | None: ``(fid, offset)``, or None when the line is malformed.
+        
     """
     try:
         parts = shlex.split(command)
@@ -399,7 +460,14 @@ def parse_resume_command(command):
 
 
 def _pause_command_fid(command):
-    """Return the fid of a ``/pause_trans``/``/start_trans`` line, or None."""
+    """Return the fid of a ``/pause_trans``/``/start_trans`` line, or None.
+
+    Args:
+        command (object): Value used by the operation.
+
+    Returns:
+        NoneType | object: Result produced by the operation.
+    """
     try:
         return int(shlex.split(command)[1])
     except (IndexError, ValueError):
@@ -410,16 +478,16 @@ def _open_transfer_target(path, offset):
     """Open a transfer's destination file, ready to write from ``offset``.
 
     A resumed transfer continues a partial file: the file is opened for
-    update and positioned at the byte the sender continues from, so a late or
-    duplicated chunk overwrites its own place instead of corrupting the
-    stream. A fresh transfer (offset 0) truncates the file.
+        update and positioned at the byte the sender continues from, so a late or
+        duplicated chunk overwrites its own place instead of corrupting the
+        stream. A fresh transfer (offset 0) truncates the file.
 
     Args:
         path (str): Destination path of the transfer.
         offset (int): Byte offset the incoming stream starts at.
 
     Returns:
-        file: Open binary file positioned at ``offset``.
+    file: Open binary file positioned at ``offset``.
     """
     if offset <= 0:
         return open(path, "wb")
@@ -432,9 +500,15 @@ def _open_transfer_target(path, offset):
 def parse_forward_resume_command(command):
     """Split a ``/forward_resume <addr> <fid> <offset>`` line.
 
-    Returns:
-        tuple | None: ``(target, fid, offset)``, or None when the line is
-            malformed.
+        Args:
+            command (str): Wire line with a two-item tuple address, transfer ID,
+                and byte offset; the address host must be a string and both values
+                must be integers.
+
+        Returns:
+            tuple | None: ``(target, fid, offset)``, or None when the line is
+                malformed.
+        
     """
     try:
         parts = shlex.split(command)
@@ -632,7 +706,14 @@ class _FrameError(Exception):
 
 
 def _pem_body_of(pem):
-    """Return the one-line base64 body of a PEM text (armor lines dropped)."""
+    """Return the one-line base64 body of a PEM text (armor lines dropped).
+
+    Args:
+        pem (object): Value used by the operation.
+
+    Returns:
+        object: Result produced by the operation.
+    """
     body = "".join(
         line.strip() for line in pem.splitlines() if line and not line.startswith("-----")
     )
@@ -640,7 +721,14 @@ def _pem_body_of(pem):
 
 
 def _pem_text_of(body):
-    """Rebuild a standard PEM text from its one-line base64 body."""
+    """Rebuild a standard PEM text from its one-line base64 body.
+
+    Args:
+        body (object): Value used by the operation.
+
+    Returns:
+        object: Result produced by the operation.
+    """
     lines = [body[i : i + 64] for i in range(0, len(body), 64)]
     return "-----BEGIN PUBLIC KEY-----\n" + "\n".join(lines) + "\n-----END PUBLIC KEY-----\n"
 
@@ -650,7 +738,14 @@ class _CryptoUnavailable(Exception):
 
 
 def _stamp_nonce(stamp):
-    """Parse a transfer mode stamp ("plain" / "enc:<nonce>") -> nonce or None."""
+    """Parse a transfer mode stamp ("plain" / "enc:<nonce>") -> nonce or None.
+
+    Args:
+        stamp (object): Value used by the operation.
+
+    Returns:
+        NoneType | object: Result produced by the operation.
+    """
     if stamp and stamp.startswith("enc:"):
         nonce = stamp[4:].strip()
         return nonce or None
@@ -658,10 +753,19 @@ def _stamp_nonce(stamp):
 
 
 def _crypto_is_protocol_line(message):
-    """True for the protocol's own handshake/coordination lines.
+    """Return true for the protocol's own handshake/coordination lines.
+
+    True for the protocol's own handshake/coordination lines.
 
     These must not reset the decode-failure streak: a re-exchange (and the
-    transfer-port coordination it needs) is not genuine peer traffic."""
+        transfer-port coordination it needs) is not genuine peer traffic.
+
+    Args:
+        message (object): Value used by the operation.
+
+    Returns:
+        bool | object: Result produced by the operation.
+    """
     if message.startswith("/crypto"):
         return True
     return message.startswith(("/server_file_transfer_port", "/forward_upload"))
@@ -688,6 +792,11 @@ class _CryptoSession:
         self.peer_ecdh_event = threading.Event()
 
     def ensure_ecdh(self):
+        """Handle the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         with self.lock:
             if self.ecdh is None:
                 self.ecdh = rsa_crypto.EcdhKeyPair()
@@ -702,6 +811,14 @@ class _CryptoSession:
             self.peer_ecdh_event.clear()
 
     def set_peer_ecdh_b64(self, body):
+        """Handle the operation.
+
+        Args:
+            body (object): Value used by the operation.
+
+        Returns:
+            bool: Result produced by the operation.
+        """
         try:
             peer = rsa_crypto.EcdhPubKey.from_pem(_pem_text_of(body.strip()))
         except Exception:
@@ -713,14 +830,27 @@ class _CryptoSession:
         return True
 
     def peer_ecdh_pub(self, timeout=0):
-        """The peer's ECDH public key, or None (waits up to ``timeout``)."""
+        """Return the peer's ECDH public key, or None (waits up to ``timeout``).
+
+        The peer's ECDH public key, or None (waits up to ``timeout``).
+
+        Args:
+            timeout (float): Value used by the operation.
+
+        Returns:
+            NoneType | object: Result produced by the operation.
+        """
         if not self.peer_ecdh_event.wait(timeout=max(0.0, timeout)):
             return None
         with self.lock:
             return self.peer_ecdh
 
     def publish_pub(self, channel):
-        """Send our session ECDH public key once frames are allowed both ways."""
+        """Send our session ECDH public key once frames are allowed both ways.
+
+        Args:
+            channel (object): Value used by the operation.
+        """
         if channel is None or not channel.claim_ecdh_pub_send():
             return
         try:
@@ -734,8 +864,15 @@ class _CryptoSession:
         """Mode+nonce announced to a transfer connector ("plain"/"enc:<nonce>").
 
         Encrypted only when this side's channel flipped and both sides hold
-        the session ECDH material; key pushes force plaintext because they
-        carry the public keys themselves.
+                the session ECDH material; key pushes force plaintext because they
+                carry the public keys themselves.
+
+        Args:
+            channel (object): Value used by the operation.
+            force_plain (bool): Value used by the operation.
+
+        Returns:
+            object | str: Result produced by the operation.
         """
         if force_plain or self.rsa is None or channel is None or not channel.secure:
             return "plain"
@@ -750,8 +887,19 @@ class _CryptoSession:
         """Channel for a stamped transfer leg, or None when it stays plaintext.
 
         Raises `_CryptoUnavailable` when the stamp says encrypted but the
-        session key material is not ready: the caller aborts the transfer
-        instead of silently downgrading it.
+                session key material is not ready: the caller aborts the transfer
+                instead of silently downgrading it.
+
+        Args:
+            sock (object): Value used by the operation.
+            control_channel (object): Value used by the operation.
+            stamp (object): Value used by the operation.
+
+        Returns:
+            NoneType | object: Result produced by the operation.
+
+        Raises:
+            _CryptoUnavailable: When the operation cannot complete.
         """
         nonce = _stamp_nonce(stamp)
         if nonce is None:
@@ -770,11 +918,24 @@ class _CryptoSession:
 
 
 def _connector_transfer_crypto(session, control_channel, stamp):
-    """(session, peer_pem_path, nonce) for a connector-side transfer leg.
+    """Return (session, peer_pem_path, nonce) for a connector-side transfer leg.
+
+    (session, peer_pem_path, nonce) for a connector-side transfer leg.
 
     Returns None for a plaintext leg; raises `_CryptoUnavailable` when the
-    stamp promises encryption but the session key material is missing, so the
-    caller aborts the transfer instead of downgrading it silently.
+        stamp promises encryption but the session key material is missing, so the
+        caller aborts the transfer instead of downgrading it silently.
+
+    Args:
+        session (object): Value used by the operation.
+        control_channel (object): Value used by the operation.
+        stamp (object): Value used by the operation.
+
+    Returns:
+        NoneType | list | tuple: Result produced by the operation.
+
+    Raises:
+        _CryptoUnavailable: When the operation cannot complete.
     """
     nonce = _stamp_nonce(stamp)
     if nonce is None:
@@ -789,7 +950,15 @@ def _connector_transfer_crypto(session, control_channel, stamp):
 
 
 def _enable_connector_channel(sock, crypto):
-    """Framing channel for a freshly connected transfer socket, or None."""
+    """Framing channel for a freshly connected transfer socket, or None.
+
+    Args:
+        sock (object): Value used by the operation.
+        crypto (object): Value used by the operation.
+
+    Returns:
+        NoneType | object: Result produced by the operation.
+    """
     if crypto is None:
         return None
     session, peer_pem_path, nonce = crypto
@@ -808,8 +977,14 @@ def _magic_tail_len(buf):
     """Length of the proper ``FRAME_MAGIC`` prefix ``buf`` ends with (0..2).
 
     A magic split across reads is held, never served as plaintext: the bytes
-    behind it belong to a frame, and frame bytes are not line traffic (see
-    `_SecureChannel.feed`).
+        behind it belong to a frame, and frame bytes are not line traffic (see
+        `_SecureChannel.feed`).
+
+    Args:
+        buf (object): Value used by the operation.
+
+    Returns:
+        int | object: Result produced by the operation.
     """
     for length in range(len(FRAME_MAGIC) - 1, 0, -1):
         if buf.endswith(FRAME_MAGIC[:length]):
@@ -867,7 +1042,13 @@ class _SecureChannel:
         self._plain = bytearray()  # decrypted bytes ready for the reader
 
     def enable(self, local_nonce, peer_nonce, peer_pem_path=None):
-        """Start speaking frames (flip completed on both sides)."""
+        """Start speaking frames (flip completed on both sides).
+
+        Args:
+            local_nonce (object): Value used by the operation.
+            peer_nonce (object): Value used by the operation.
+            peer_pem_path (str): Value used by the operation.
+        """
         with self._lock:
             self.local_nonce = local_nonce
             self.peer_nonce = peer_nonce
@@ -883,8 +1064,9 @@ class _SecureChannel:
         """Drop back to raw mode (decode failure or peer re-exchange).
 
         The next handshake must announce frame readiness again, so the
-        peer-ready flag is cleared with the mode, and the owner's secure-socket
-        set is updated through ``on_disable``."""
+                peer-ready flag is cleared with the mode, and the owner's secure-socket
+                set is updated through ``on_disable``.
+        """
         with self._lock:
             was_secure = self.secure
             self.secure = False
@@ -898,14 +1080,23 @@ class _SecureChannel:
                 pass
 
     def note_peer_frames_ready(self):
-        """The peer announced it may receive frames."""
+        """Return the peer announced it may receive frames.
+
+        The peer announced it may receive frames.
+        """
         with self._lock:
             self.peer_frames_ready = True
             if self.secure:
                 self.frames_allowed.set()
 
     def claim_ecdh_pub_send(self):
-        """True exactly once per session, when the peer can receive frames."""
+        """Return true exactly once per session, when the peer can receive frames.
+
+        True exactly once per session, when the peer can receive frames.
+
+        Returns:
+            bool: Result produced by the operation.
+        """
         with self._lock:
             if self.ecdh_pub_sent or not self.frames_allowed.is_set():
                 return False
@@ -918,10 +1109,17 @@ class _SecureChannel:
         """Frame and send one payload (str or bytes) on this socket.
 
         ``force_rsa`` is used for the ECDH public-key line, which must travel
-        in an RSA frame even if it is longer than the single-block limit (an
-        ECDH frame would be circular: the peer key it needs is this payload).
+                in an RSA frame even if it is longer than the single-block limit (an
+                ECDH frame would be circular: the peer key it needs is this payload).
 
-        Raises on failure; the caller logs and reports the send failure.
+                Raises on failure; the caller logs and reports the send failure.
+
+        Args:
+            payload (bytes | str): Value used by the operation.
+            force_rsa (bool): Value used by the operation.
+
+        Raises:
+            RuntimeError: When the operation cannot complete.
         """
         if isinstance(payload, str):
             data = payload.encode("utf-8")
@@ -945,6 +1143,14 @@ class _SecureChannel:
                 self._sendall(self._ecdh_frame(chunk, peer))
 
     def _rsa_frame(self, text_bytes):
+        """Handle the operation.
+
+        Args:
+            text_bytes (bytes | str): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         with self._lock:
             nonce = self.local_nonce or ""
             seq = self.send_seq
@@ -957,6 +1163,15 @@ class _SecureChannel:
         return self._wrap(FRAME_TYPE_RSA, body)
 
     def _ecdh_frame(self, chunk, peer):
+        """Handle the operation.
+
+        Args:
+            chunk (bytes | str): Value used by the operation.
+            peer (tuple): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         with self._lock:
             nonce = self.local_nonce or ""
             seq = self.send_seq
@@ -967,6 +1182,15 @@ class _SecureChannel:
 
     @staticmethod
     def _wrap(frame_type, body):
+        """Handle the operation.
+
+        Args:
+            frame_type (object): Value used by the operation.
+            body (object): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         return FRAME_MAGIC + bytes([frame_type]) + len(body).to_bytes(4, "big") + body
 
     # -- receive path --------------------------------------------------------
@@ -975,17 +1199,23 @@ class _SecureChannel:
         """Parse received socket bytes; returns the bytes for the line reader.
 
         While the channel is framed every byte is parsed into the plaintext
-        buffer and an empty result comes back; while it is not, plaintext
-        bytes are returned for the line reader. Frame bytes are consumed in
-        both modes: a peer that has not processed a re-exchange yet keeps
-        sending frames after this side dropped framing, and such a stale
-        frame cannot be authenticated any more — its bytes must never reach
-        the line reader, which would echo them as a message and reset the
-        decode-failure streak.
+                buffer and an empty result comes back; while it is not, plaintext
+                bytes are returned for the line reader. Frame bytes are consumed in
+                both modes: a peer that has not processed a re-exchange yet keeps
+                sending frames after this side dropped framing, and such a stale
+                frame cannot be authenticated any more — its bytes must never reach
+                the line reader, which would echo them as a message and reset the
+                decode-failure streak.
 
-        The parse shares the channel lock with ``enable``/``disable``, so a
-        flip that lands while the caller's read was in flight still
-        classifies the bytes by the state of that moment.
+                The parse shares the channel lock with ``enable``/``disable``, so a
+                flip that lands while the caller's read was in flight still
+                classifies the bytes by the state of that moment.
+
+        Args:
+            data (bytes | str): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
         """
         with self._lock:
             self._raw += data
@@ -995,8 +1225,11 @@ class _SecureChannel:
         """Parse everything buffered; returns the bytes for the line reader.
 
         Must be called under the channel lock. A ``disable`` performed while
-        parsing (the peer's re-exchange line) is honoured: the bytes behind
-        it belong to the peer's raw stream and are returned as such.
+                parsing (the peer's re-exchange line) is honoured: the bytes behind
+                it belong to the peer's raw stream and are returned as such.
+
+        Returns:
+            object: Result produced by the operation.
         """
         plain = bytearray()
         while self._raw:
@@ -1027,7 +1260,13 @@ class _SecureChannel:
         """Consume one whole frame; False when more bytes are needed.
 
         A framed channel decrypts the body; a raw one drops it, because the
-        session keys were torn down with the framing.
+                session keys were torn down with the framing.
+
+        Returns:
+            bool: Result produced by the operation.
+
+        Raises:
+            _FrameError: When the operation cannot complete.
         """
         if len(self._raw) < FRAME_HEADER_LEN:
             return False
@@ -1053,6 +1292,12 @@ class _SecureChannel:
         """Pass known plaintext protocol lines through; drop anything else.
 
         Returns False when the line is not complete yet.
+
+        Returns:
+            bool: Result produced by the operation.
+
+        Raises:
+            _FrameError: When the operation cannot complete.
         """
         nl = self._raw.find(b"\n")
         if nl < 0:
@@ -1077,7 +1322,14 @@ class _SecureChannel:
         return True
 
     def _split_prefix(self, body):
-        """Split ``<nonce>|<seq>|`` off a frame body -> (nonce, seq) or None."""
+        """Split ``<nonce>|<seq>|`` off a frame body -> (nonce, seq) or None.
+
+        Args:
+            body (object): Value used by the operation.
+
+        Returns:
+            NoneType | list | tuple: Result produced by the operation.
+        """
         first = body.find(b"|")
         if first < 0:
             return None
@@ -1092,7 +1344,17 @@ class _SecureChannel:
         return nonce, seq, body[second + 1 :]
 
     def _check_replay(self, nonce, seq):
-        """True when the frame is fresh; a stale/duplicate frame is dropped."""
+        """Return true when the frame is fresh; a stale/duplicate frame is dropped.
+
+        True when the frame is fresh; a stale/duplicate frame is dropped.
+
+        Args:
+            nonce (object): Value used by the operation.
+            seq (object): Value used by the operation.
+
+        Returns:
+            bool: Result produced by the operation.
+        """
         if nonce != self.peer_nonce:
             self._debug("crypto: replay dropped (nonce mismatch)")
             return False
@@ -1106,6 +1368,14 @@ class _SecureChannel:
         return True
 
     def _decode_rsa(self, body):
+        """Handle the operation.
+
+        Args:
+            body (object): Value used by the operation.
+
+        Raises:
+            _FrameError: When the operation cannot complete.
+        """
         parts = self._split_prefix(body)
         if parts is None:
             raise _FrameError("malformed RSA frame")
@@ -1122,6 +1392,14 @@ class _SecureChannel:
         self._plain += plain.encode("utf-8") if isinstance(plain, str) else bytes(plain)
 
     def _decode_ecdh(self, body):
+        """Handle the operation.
+
+        Args:
+            body (object): Value used by the operation.
+
+        Raises:
+            _FrameError: When the operation cannot complete.
+        """
         parts = self._split_prefix(body)
         if parts is None:
             raise _FrameError("malformed ECDH frame")
@@ -1140,7 +1418,14 @@ class _SecureChannel:
         self._plain += plain
 
     def take(self, n):
-        """Up to ``n`` plaintext bytes; empty when none are buffered."""
+        """Up to ``n`` plaintext bytes; empty when none are buffered.
+
+        Args:
+            n (int): Value used by the operation.
+
+        Returns:
+            bytes | object: Result produced by the operation.
+        """
         with self._lock:
             if not self._plain:
                 return b""
@@ -1152,10 +1437,13 @@ class _SecureChannel:
         """Bytes the line reader still gets after framing failed.
 
         The decrypted buffer plus the plaintext already buffered with the
-        frame that failed — the peer's re-exchange line, for example. Frame
-        bytes stay in the channel, where the stale-frame drop consumes them:
-        they must not be served as a line, and the channel may still need
-        them to resynchronise.
+                frame that failed — the peer's re-exchange line, for example. Frame
+                bytes stay in the channel, where the stale-frame drop consumes them:
+                they must not be served as a line, and the channel may still need
+                them to resynchronise.
+
+        Returns:
+            object: Result produced by the operation.
         """
         with self._lock:
             plain = bytearray(self._plain)
@@ -1178,16 +1466,15 @@ def _custom_handler_for(command, handlers):
 
     Args:
         command (str): Command line whose first token names the handler.
-        handlers (list): The ``[{}, {}]`` registry, the console group and the
-            inbound group.
+        handlers (list): The ``[{}, {}]`` registry, the console group and the inbound group.
 
     Returns:
-        callable: The registered handler; with both groups registering the
-            name, the console group wins.
+    callable: The registered handler; with both groups registering the
+                name, the console group wins.
 
     Raises:
-        CommandNotFoundError: If neither group registers the first token.
-        ValueError: If ``command`` cannot be split (unbalanced quotes).
+    CommandNotFoundError: If neither group registers the first token.
+            ValueError: If ``command`` cannot be split (unbalanced quotes).
     """
     cmd_parts = shlex.split(command.strip())
     cmd_name = cmd_parts[0].lower() if cmd_parts else ""
@@ -1318,6 +1605,7 @@ class TCP_Server_Base:  # TCP server class
                 second, averaged over ``NETWORK_SPEED_WINDOW`` seconds). With
                 False nothing is measured and every speed value is None.
                 Defaults to True.
+
         Raises:
             OSError: If the ``.Flow`` directories or ``decode_command_table.json``
                 cannot be created or read.
@@ -1494,20 +1782,18 @@ class TCP_Server_Base:  # TCP server class
         """Fold just-sent/received traffic into the real-time speed estimate.
 
         Every send and receive sample feeds this — control messages, file data
-        and relay traffic alike — so the speed attributes describe the
-        instance's current traffic as a rolling average over
-        ``NETWORK_SPEED_WINDOW`` seconds.
+                and relay traffic alike — so the speed attributes describe the
+                instance's current traffic as a rolling average over
+                ``NETWORK_SPEED_WINDOW`` seconds.
 
         Args:
-            payload (bytes | str | int): Bytes just written or read; a str
-                counts as its UTF-8 length, an int is a byte count already.
-            is_upload (bool): True for sent bytes (``upload_network_speed``),
-                False for received ones (``recv_network_speed``).
+            payload (bytes | str | int): Bytes just written or read; a str counts as its UTF-8 length, an int is a byte count already.
+            is_upload (bool): True for sent bytes (``upload_network_speed``), False for received ones (``recv_network_speed``).
 
         Returns:
-            float | None: The refreshed speed in bytes per second, or None when
-                ``is_enable_real_time_network_speed`` is False; both speed
-                attributes are None then.
+        float | None: The refreshed speed in bytes per second, or None when
+                        ``is_enable_real_time_network_speed`` is False; both speed
+                        attributes are None then.
         """
         if not self.is_enable_real_time_network_speed:
             self.upload_network_speed = None
@@ -1551,25 +1837,17 @@ class TCP_Server_Base:  # TCP server class
         """Register one file transfer in a progress store.
 
         Args:
-            progress_dict (dict): ``self.file_recv_progress`` for an inbound
-                transfer, ``self.file_upload_progress`` for an outbound one.
-            fid (int | None): The transfer's fid; None tracks nothing (a leg
-                without a protocol transfer id, such as a key push).
+            progress_dict (dict): ``self.file_recv_progress`` for an inbound transfer, ``self.file_upload_progress`` for an outbound one.
+            fid (int | None): The transfer's fid; None tracks nothing (a leg without a protocol transfer id, such as a key push).
             total_bytes (int): Size of the file being transferred.
-            path (str): Local path of the file: the source of an outbound
-                transfer, the file being written for an inbound one.
-            peer (tuple | None): ``(ip, port)`` of the transfer's original
-                peer — the sender for an inbound transfer, the receiver for an
-                outbound one. A forwarded transfer stores the original peer on
-                both sides, never the relay; None marks a leg that cannot be
-                resumed (there is no peer to continue it with).
-            initial (int): Bytes already transferred when the leg starts; a
-                resumed transfer continues a partially transferred file.
+            path (str): Local path of the file: the source of an outbound transfer, the file being written for an inbound one.
+            peer (tuple | None): ``(ip, port)`` of the transfer's original peer — the sender for an inbound transfer, the receiver for an outbound one. A forwarded transfer stores the original peer on both sides, never the relay; None marks a leg that cannot be resumed (there is no peer to continue it with).
+            initial (int): Bytes already transferred when the leg starts; a resumed transfer continues a partially transferred file.
 
         Returns:
-            list | None: The ``[transferred, total, speed, path, peer]`` entry
-                the transfer updates, or None when tracking is off
-                (``is_enable_file_transfer_progress_bar`` False, or no fid).
+        list | None: The ``[transferred, total, speed, path, peer]`` entry
+                        the transfer updates, or None when tracking is off
+                        (``is_enable_file_transfer_progress_bar`` False, or no fid).
         """
         if fid is None or not self.is_enable_file_transfer_progress_bar:
             return None
@@ -1583,13 +1861,9 @@ class TCP_Server_Base:  # TCP server class
         """Fold one transferred chunk into a progress entry.
 
         Args:
-            entry (list | None): Entry from `_file_progress_start`, or None
-                when the transfer is not tracked.
+            entry (list | None): Entry from `_file_progress_start`, or None when the transfer is not tracked.
             byte_count (int): Bytes of the chunk just sent or received.
-            is_upload (bool): True for sent chunks, False for received ones.
-
-        The speed slot mirrors the live measurement, so it stays None while
-        ``is_enable_real_time_network_speed`` is False.
+            is_upload (bool): True for sent chunks, False for received ones. The speed slot mirrors the live measurement, so it stays None while ``is_enable_real_time_network_speed`` is False.
         """
         if entry is None:
             return
@@ -1600,17 +1874,16 @@ class TCP_Server_Base:  # TCP server class
         """Drop a finished transfer's progress entry, or keep it for a resume.
 
         A newer transfer may already hold the same fid (transfer ids are reused
-        as transfers end), so only this transfer's own entry is dropped. With
-        ``keep`` True an interrupted transfer keeps its entry — and the partial
-        file that entry points at — so the reconnect logic can continue it
-        (`resume_transfers`); the entry then lives until the transfer ends.
+                as transfers end), so only this transfer's own entry is dropped. With
+                ``keep`` True an interrupted transfer keeps its entry — and the partial
+                file that entry points at — so the reconnect logic can continue it
+                (`resume_transfers`); the entry then lives until the transfer ends.
 
         Args:
             progress_dict (dict): Store the entry belongs to.
             fid (int | None): Transfer id the entry is keyed by.
             entry (list | None): Entry to drop; None tracks nothing.
-            keep (bool): Keep the entry (and persist the stores) instead of
-                dropping it. Defaults to False.
+            keep (bool): Keep the entry (and persist the stores) instead of dropping it. Defaults to False.
         """
         if entry is None:
             return
@@ -1634,11 +1907,19 @@ class TCP_Server_Base:  # TCP server class
         """Return the JSON-ready form of every transfer still in play.
 
         Returns:
-            dict: ``{"upload": ..., "download": ..., "relays": ...}``; fids
-                are string keys and every peer is an ``[ip, port]`` list.
+        dict: ``{"upload": ..., "download": ..., "relays": ...}``; fids
+                        are string keys and every peer is an ``[ip, port]`` list.
         """
 
         def entries(store):
+            """Handle the operation.
+
+            Args:
+                store (list | dict): Value used by the operation.
+
+            Returns:
+                list | tuple: Result produced by the operation.
+            """
             return {
                 str(fid): [
                     entry[0],
@@ -1674,12 +1955,12 @@ class TCP_Server_Base:  # TCP server class
         """Write the transfer stores to the protocol's ``.Flow`` directory.
 
         Every in-flight transfer — uploads, downloads, and the relay records a
-        disconnected forward is resumed from — is written to
-        ``server_file_trans_progress.json`` when a connection drops, and the
-        file is what the reconnect logic reads back. Once nothing is left to
-        transfer the file is emptied; it is only rewritten while it exists, so
-        a run without an interrupted transfer never creates it. A write
-        failure is logged, never raised.
+                disconnected forward is resumed from — is written to
+                ``server_file_trans_progress.json`` when a connection drops, and the
+                file is what the reconnect logic reads back. Once nothing is left to
+                transfer the file is emptied; it is only rewritten while it exists, so
+                a run without an interrupted transfer never creates it. A write
+                failure is logged, never raised.
         """
         snapshot = self._transfer_progress_snapshot()
         with self._transfer_progress_lock:
@@ -1701,12 +1982,12 @@ class TCP_Server_Base:  # TCP server class
         """Read the persisted interrupted transfers back into the stores.
 
         Every entry read back keeps the bytes it had already transferred, so
-        the reconnect logic can ask the sender to continue from there; every
-        relay record comes back so a disconnected forward can be routed again.
-        Entries a live transfer (or a relay) already owns are left alone.
+                the reconnect logic can ask the sender to continue from there; every
+                relay record comes back so a disconnected forward can be routed again.
+                Entries a live transfer (or a relay) already owns are left alone.
 
         Returns:
-            int: Number of transfer entries and relay records restored.
+        int: Number of transfer entries and relay records restored.
         """
         with self._transfer_progress_lock:
             try:
@@ -1758,12 +2039,11 @@ class TCP_Server_Base:  # TCP server class
 
         Args:
             fid (int): Relay fid, or one of its per-target transfer ids.
-            peer (tuple | None): Restrict to the writer serving this peer;
-                None addresses every writer of the relay.
+            peer (tuple | None): Restrict to the writer serving this peer; None addresses every writer of the relay.
 
         Returns:
-            tuple: ``(relay, [targets])``; ``(None, [])`` when no live relay
-                writer matches.
+        tuple: ``(relay, [targets])``; ``(None, [])`` when no live relay
+                        writer matches.
         """
         with self._forward_relays_lock:
             relay = self._forward_relays.get(fid)
@@ -1779,8 +2059,13 @@ class TCP_Server_Base:  # TCP server class
     def _mark_transfer_pause(self, fid, paused, peer=None):
         """Set or clear one transfer's pause switch (see `pause_trans`).
 
+        Args:
+            fid (int): Value used by the operation.
+            paused (bool): Value used by the operation.
+            peer (tuple): Value used by the operation.
+
         Returns:
-            bool: True when a live relay writer or outbound leg was found.
+        bool: True when a live relay writer or outbound leg was found.
         """
         relay, targets = self._forward_relay_targets(fid, peer)
         if targets:
@@ -1835,14 +2120,24 @@ class TCP_Server_Base:  # TCP server class
         return self._mark_transfer_pause(fid, False, peer)
 
     def _register_transfer_socket(self, fid, sock):
-        """Record the socket of a leg, so a dead session can be cleared out."""
+        """Record the socket of a leg, so a dead session can be cleared out.
+
+        Args:
+            fid (int): Value used by the operation.
+            sock (object): Value used by the operation.
+        """
         if fid is None:
             return
         with self._transfer_progress_lock:
             self._active_transfer_sockets[fid] = sock
 
     def _release_transfer_socket(self, fid, sock):
-        """Forget a leg's socket once the leg is over (its own, not a newer one's)."""
+        """Forget a leg's socket once the leg is over (its own, not a newer one's).
+
+        Args:
+            fid (int): Value used by the operation.
+            sock (object): Value used by the operation.
+        """
         if fid is None:
             return
         with self._transfer_progress_lock:
@@ -1853,16 +2148,14 @@ class TCP_Server_Base:  # TCP server class
         """Close the legs a peer's previous session left behind.
 
         A peer that (re)connects proves that the legs of its earlier session
-        are over: their sockets are shut down so the stored transfers can be
-        resumed without two legs writing the same transfer.
+                are over: their sockets are shut down so the stored transfers can be
+                resumed without two legs writing the same transfer.
 
         Args:
-            peer (tuple | None): Restrict to the legs whose progress entry
-                names this ``(ip, port)``; None clears every leg of the
-                instance (a fresh session replaces all of them).
+            peer (tuple | None): Restrict to the legs whose progress entry names this ``(ip, port)``; None clears every leg of the instance (a fresh session replaces all of them).
 
         Returns:
-            int: Number of legs closed.
+        int: Number of legs closed.
         """
         stale = []
         for store in (self.file_upload_progress, self.file_recv_progress):
@@ -1927,8 +2220,11 @@ class TCP_Server_Base:  # TCP server class
         """Block a sending leg while its fid is marked paused.
 
         Runs before every chunk so ``/pause_trans`` stops the stream without
-        closing the transfer; the wait ends when the leg is resumed, when the
-        instance stops, or when the fid is not paused at all.
+                closing the transfer; the wait ends when the leg is resumed, when the
+                instance stops, or when the fid is not paused at all.
+
+        Args:
+            fid (int): Value used by the operation.
         """
         if fid is None:
             return
@@ -1946,8 +2242,8 @@ class TCP_Server_Base:  # TCP server class
             timeout (float): Seconds to wait.
 
         Returns:
-            tuple | None: ``(port, stamp)`` announced for this fid, or None
-                when the announcement does not arrive in time.
+        tuple | None: ``(port, stamp)`` announced for this fid, or None
+                        when the announcement does not arrive in time.
         """
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -1963,7 +2259,11 @@ class TCP_Server_Base:  # TCP server class
         return None
 
     def _forget_transfer_port(self, fid):
-        """Drop pending port announcements of a fid an older session left behind."""
+        """Drop pending port announcements of a fid an older session left behind.
+
+        Args:
+            fid (int): Value used by the operation.
+        """
         if fid is None:
             return
         with self.file_transfer_server_port_lock:
@@ -1975,12 +2275,16 @@ class TCP_Server_Base:  # TCP server class
         """Wait until a control channel may carry framed protocol lines.
 
         The reconnect flows run right after a session is established, when the
-        crypto handshake may still be completing; a resume line sent then would
-        travel plaintext and be dropped by the peer's framing guard. Without
-        encryption there is nothing to wait for.
+                crypto handshake may still be completing; a resume line sent then would
+                travel plaintext and be dropped by the peer's framing guard. Without
+                encryption there is nothing to wait for.
+
+        Args:
+            control_socket (socket.socket): Value used by the operation.
+            timeout (float): Value used by the operation.
 
         Returns:
-            bool: True when the channel speaks frames (or encryption is off).
+        bool: True when the channel speaks frames (or encryption is off).
         """
         if not self.is_enable_encrypto or self.crypto is None:
             return True
@@ -2378,6 +2682,12 @@ class TCP_Server_Base:  # TCP server class
                 pass
 
     def _notify_message_received(self, client_id, message):
+        """Handle the operation.
+
+        Args:
+            client_id (object): Value used by the operation.
+            message (object): Value used by the operation.
+        """
         with self._event_listeners_lock:
             listeners = list(self._message_listeners)
         for listener in listeners:
@@ -2388,6 +2698,15 @@ class TCP_Server_Base:  # TCP server class
                 self._log_exc()
 
     def _notify_file_received(self, client_id, full_path, name, size, command):
+        """Handle the operation.
+
+        Args:
+            client_id (object): Value used by the operation.
+            full_path (str): Value used by the operation.
+            name (object): Value used by the operation.
+            size (int): Value used by the operation.
+            command (object): Value used by the operation.
+        """
         with self._event_listeners_lock:
             listeners = list(self._file_listeners)
         for listener in listeners:
@@ -2401,8 +2720,14 @@ class TCP_Server_Base:  # TCP server class
         """Serializable key for a sender socket (its peer address).
 
         Forwarded records already carry the originator's address as a
-        string and are used as-is; a socket that cannot answer
-        ``getpeername`` (already closed) falls back to its repr.
+                string and are used as-is; a socket that cannot answer
+                ``getpeername`` (already closed) falls back to its repr.
+
+        Args:
+            sock (object): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
         """
         if isinstance(sock, str):
             return sock
@@ -2416,20 +2741,33 @@ class TCP_Server_Base:  # TCP server class
         """Capture the log key of ``sock`` while it is known to be alive.
 
         A record stays buffered after its connection goes away, and the
-        flush that persists it must still file it under the sender's
-        address: by then the closed socket no longer answers
-        ``getpeername`` and would be logged as ``str(sock)``. The key is
-        forgotten once nothing is buffered under it any more (see
-        ``_flush_dict_locked``).
+                flush that persists it must still file it under the sender's
+                address: by then the closed socket no longer answers
+                ``getpeername`` and would be logged as ``str(sock)``. The key is
+                forgotten once nothing is buffered under it any more (see
+                ``_flush_dict_locked``).
+
+        Args:
+            sock (object): Value used by the operation.
         """
         with self._socket_keys_lock:
             if sock not in self._socket_keys:
                 self._socket_keys[sock] = self._socket_key(sock)
 
     def _record_key(self, sock):
-        """The JSON-log key for ``sock``: the address captured when it was
+        """Return the JSON-log key for ``sock``: the address captured when it was.
+
+        The JSON-log key for ``sock``: the address captured when it was
+
         recorded, or the live peer address for a socket inserted without a
-        record."""
+                record.
+
+        Args:
+            sock (object): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         key = self._socket_keys.get(sock)
         if key is not None:
             return key
@@ -2439,8 +2777,12 @@ class TCP_Server_Base:  # TCP server class
         """Store one inbound plain-text message under the sender's socket.
 
         External code reads ``messages_dict`` (or the JSON log) instead of
-        registering a message listener. The entry is ``[content, timestamp]``
-        with the timestamp of arrival.
+                registering a message listener. The entry is ``[content, timestamp]``
+                with the timestamp of arrival.
+
+        Args:
+            sock (object): Value used by the operation.
+            content (object): Value used by the operation.
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with self._messages_dict_lock:
@@ -2456,10 +2798,14 @@ class TCP_Server_Base:  # TCP server class
         """Store one inbound command as an event under the sender's socket.
 
         The event content is the original wire command from the peer (file
-        transfers, folder transfers, extension commands, ...). External code
-        reads ``events_dict`` (or the JSON log) instead of registering a
-        listener. File-transfer events get their completion timestamp via
-        ``_update_event_timestamp``.
+                transfers, folder transfers, extension commands, ...). External code
+                reads ``events_dict`` (or the JSON log) instead of registering a
+                listener. File-transfer events get their completion timestamp via
+                ``_update_event_timestamp``.
+
+        Args:
+            sock (object): Value used by the operation.
+            command (object): Value used by the operation.
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with self._events_dict_lock:
@@ -2473,8 +2819,13 @@ class TCP_Server_Base:  # TCP server class
         """Stamp the completion time onto the recorded event for ``command``.
 
         File transfers finish on a worker thread after the receive thread
-        recorded the command, so the event's timestamp is refreshed here with
-        the moment the transfer actually completed.
+                recorded the command, so the event's timestamp is refreshed here with
+                the moment the transfer actually completed.
+
+        Args:
+            sock (object): Value used by the operation.
+            command (object): Value used by the operation.
+            timestamp (object): Value used by the operation.
         """
         with self._events_dict_lock:
             entries = self.events_dict.get(sock)
@@ -2488,10 +2839,17 @@ class TCP_Server_Base:  # TCP server class
         """Return the command to record as an event.
 
         The wire command is recorded verbatim whenever it is available. When
-        this end cannot see the original command (a transfer relayed by the
-        server, or a protocol-internal control line), splice a readable
-        command from the available parts so the event still identifies the
-        transfer.
+                this end cannot see the original command (a transfer relayed by the
+                server, or a protocol-internal control line), splice a readable
+                command from the available parts so the event still identifies the
+                transfer.
+
+        Args:
+            command (object): Value used by the operation.
+            **parts (list | dict): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
         """
         if command:
             return command
@@ -2508,7 +2866,14 @@ class TCP_Server_Base:  # TCP server class
 
     def _flush_dict_locked(self, d, size_attr, path):
         """Flush ``d`` (socket -> [[content, ts], ...]) into its JSON log and
-        clear it. The caller must hold the dict's lock."""
+
+        clear it. The caller must hold the dict's lock.
+
+        Args:
+            d (list | dict): Value used by the operation.
+            size_attr (object): Value used by the operation.
+            path (str): Value used by the operation.
+        """
         if not d:
             return
         snapshot = dict(d)
@@ -2522,12 +2887,14 @@ class TCP_Server_Base:  # TCP server class
                     self._socket_keys.pop(sock, None)
 
     def _flush_messages_dict(self):
+        """Handle the operation."""
         with self._messages_dict_lock:
             self._flush_dict_locked(
                 self.messages_dict, "_messages_dict_size", self.messages_log_file
             )
 
     def _flush_events_dict(self):
+        """Handle the operation."""
         with self._events_dict_lock:
             self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
 
@@ -2535,10 +2902,14 @@ class TCP_Server_Base:  # TCP server class
         """Merge ``snapshot`` into the JSON log at ``path`` (append per socket).
 
         Publishes through `_publish_json_log`: a temp file named after this
-        writer, and an optimistic re-merge when another instance published in
-        between, so concurrent flushes of several instances sharing one log
-        neither corrupt nor lose each other. A failure is logged, never raised
-        into the caller.
+                writer, and an optimistic re-merge when another instance published in
+                between, so concurrent flushes of several instances sharing one log
+                neither corrupt nor lose each other. A failure is logged, never raised
+                into the caller.
+
+        Args:
+            path (str): Value used by the operation.
+            snapshot (list | dict): Value used by the operation.
         """
         try:
             _publish_json_log(path, snapshot, self._record_key)
@@ -2590,6 +2961,7 @@ class TCP_Server_Base:  # TCP server class
         stop_event = threading.Event()
 
         def server_loop():
+            """Handle the operation."""
             while not stop_event.is_set():
                 try:
                     server_socket.settimeout(1.0)
@@ -2629,6 +3001,7 @@ class TCP_Server_Base:  # TCP server class
         stop_event = threading.Event()
 
         def receiver():
+            """Handle the operation."""
             while not stop_event.is_set():
                 try:
                     client_sock.settimeout(1.0)
@@ -2730,8 +3103,15 @@ class TCP_Server_Base:  # TCP server class
         """Per-socket lock serialising encrypt+send for one connection.
 
         A control socket's `_SecureChannel` shares this exact lock object, so
-        a frame write can never interleave with a raw write on the same
-        socket (and vice versa) during the flip."""
+                a frame write can never interleave with a raw write on the same
+                socket (and vice versa) during the flip.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         with self._crypto_lock:
             lock = self._crypto_send_locks.get(client_socket)
             if lock is None:
@@ -2805,10 +3185,10 @@ class TCP_Server_Base:  # TCP server class
             data (bytes): Payload to write in full.
 
         Raises:
-            OSError: If the socket write fails or the peer closed the
-                connection.
-            TimeoutError: If a non-blocking socket stays unwritable for
-                ``SEND_WAIT_TIMEOUT`` seconds.
+        OSError: If the socket write fails or the peer closed the
+                        connection.
+                    TimeoutError: If a non-blocking socket stays unwritable for
+                        ``SEND_WAIT_TIMEOUT`` seconds.
         """
         if not self.is_asynic_clients_io:  # blocking socket: a single sendall is enough
             client_socket.sendall(data)
@@ -2825,7 +3205,12 @@ class TCP_Server_Base:  # TCP server class
             view = view[sent:]
 
     def _send_raw(self, client_socket, text):
-        """Send a plaintext crypto-protocol message, bypassing encryption."""
+        """Send a plaintext crypto-protocol message, bypassing encryption.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+            text (object): Value used by the operation.
+        """
         data = text.strip()
         if not data.endswith("\n"):
             data += "\n"
@@ -2834,12 +3219,28 @@ class TCP_Server_Base:  # TCP server class
         self._measure_network_speed(encoded, is_upload=True)
 
     def _crypto_mark_encrypted(self, client_socket, peer_role, peer_pem_path):
+        """Handle the operation.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+            peer_role (object): Value used by the operation.
+            peer_pem_path (str): Value used by the operation.
+        """
         with self._crypto_lock:
             self._encrypted_sockets.add(client_socket)
             self._crypto_peer[client_socket] = (peer_role, peer_pem_path)
 
     def _crypto_session_for(self, client_address):
-        """The crypto session of one client address (created on demand)."""
+        """Get or create the crypto session for a client address.
+
+        The crypto session of one client address (created on demand).
+
+        Args:
+            client_address (tuple): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         with self._crypto_lock:
             session = self._crypto_sessions.get(client_address)
             if session is None and self.crypto is not None:
@@ -2848,7 +3249,16 @@ class TCP_Server_Base:  # TCP server class
             return session
 
     def _crypto_control_state(self, client_socket):
-        """(session, channel) of one control socket; (None, None) when unknown."""
+        """Return (session, channel) of one control socket; (None, None) when unknown.
+
+        (session, channel) of one control socket; (None, None) when unknown.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+
+        Returns:
+            list | tuple: Result produced by the operation.
+        """
         with self._crypto_lock:
             addr = self._crypto_sock_addr.get(client_socket)
             session = self._crypto_sessions.get(addr) if addr is not None else None
@@ -2856,7 +3266,11 @@ class TCP_Server_Base:  # TCP server class
         return session, channel
 
     def _crypto_after_flip(self, client_socket):
-        """Announce frame readiness (plaintext) and publish the session ECDH key."""
+        """Announce frame readiness (plaintext) and publish the session ECDH key.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+        """
         _session, channel = self._crypto_control_state(client_socket)
         if channel is None:
             return
@@ -2868,20 +3282,41 @@ class TCP_Server_Base:  # TCP server class
         self._crypto_publish_ecdh_pub(client_socket)
 
     def _crypto_publish_ecdh_pub(self, client_socket):
-        """Send our session ECDH public key once frames are allowed both ways."""
+        """Send our session ECDH public key once frames are allowed both ways.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+        """
         session, channel = self._crypto_control_state(client_socket)
         if session is not None:
             session.publish_pub(channel)
 
     def _crypto_transfer_stamp(self, control_socket, force_plain=False):
-        """Mode+nonce a listener announces to a transfer connector."""
+        """Mode+nonce a listener announces to a transfer connector.
+
+        Args:
+            control_socket (socket.socket): Value used by the operation.
+            force_plain (bool): Value used by the operation.
+
+        Returns:
+            object | str: Result produced by the operation.
+        """
         session, channel = self._crypto_control_state(control_socket)
         if session is None:
             return "plain"
         return session.transfer_stamp(channel, force_plain)
 
     def _crypto_attach_transfer_in(self, sock, control_socket, stamp):
-        """Framing channel for an accepted transfer socket (listener side)."""
+        """Framing channel for an accepted transfer socket (listener side).
+
+        Args:
+            sock (object): Value used by the operation.
+            control_socket (socket.socket): Value used by the operation.
+            stamp (object): Value used by the operation.
+
+        Returns:
+            NoneType | object: Result produced by the operation.
+        """
         session, control_channel = self._crypto_control_state(control_socket)
         if session is None:
             return None
@@ -2893,7 +3328,16 @@ class TCP_Server_Base:  # TCP server class
         return channel
 
     def _crypto_attach_transfer_out(self, sock, control_socket, stamp):
-        """Framing channel for a connected transfer socket (connector side)."""
+        """Framing channel for a connected transfer socket (connector side).
+
+        Args:
+            sock (object): Value used by the operation.
+            control_socket (socket.socket): Value used by the operation.
+            stamp (object): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         session, control_channel = self._crypto_control_state(control_socket)
         crypto = _connector_transfer_crypto(session, control_channel, stamp)
         channel = _enable_connector_channel(sock, crypto)
@@ -2904,14 +3348,25 @@ class TCP_Server_Base:  # TCP server class
         return channel
 
     def _crypto_drop_channel(self, sock):
-        """Forget a finished transfer socket's channel."""
+        """Forget a finished transfer socket's channel.
+
+        Args:
+            sock (object): Value used by the operation.
+        """
         with self._crypto_lock:
             self._channels.pop(sock, None)
             self._encrypted_sockets.discard(sock)
 
     @staticmethod
     def _new_crypto_state(force=False):
-        """Fresh per-connection crypto handshake state."""
+        """Fresh per-connection crypto handshake state.
+
+        Args:
+            force (bool): Value used by the operation.
+
+        Returns:
+            dict: Result produced by the operation.
+        """
         return {
             "force": force,
             "peer_nonce": None,
@@ -2969,8 +3424,15 @@ class TCP_Server_Base:  # TCP server class
                 return plain  # plaintext mode: the line reader gets the bytes
 
     def _crypto_channel_error(self, client_socket):
-        """A frame failed to decode: re-exchange on a control socket, close a
-        transfer socket (its leg has no handshake to recover with)."""
+        """Handle a frame decode failure on a control or transfer socket.
+
+        A frame failed to decode: re-exchange on a control socket, close a
+
+        transfer socket (its leg has no handshake to recover with).
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+        """
         with self._crypto_lock:
             is_control = client_socket in self._crypto_sock_addr
         if is_control:
@@ -2983,7 +3445,13 @@ class TCP_Server_Base:  # TCP server class
             pass
 
     def _crypto_note_healthy(self, client_socket):
-        """A frame decoded cleanly: reset the streak that feeds the breaker."""
+        """Reset the decode-failure count after a valid frame.
+
+        A frame decoded cleanly: reset the streak that feeds the breaker.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+        """
         with self._crypto_lock:
             addr = self._crypto_sock_addr.get(client_socket)
             state = self._crypto_state.get(addr) if addr is not None else None
@@ -2992,12 +3460,16 @@ class TCP_Server_Base:  # TCP server class
 
     def _crypto_on_decode_failure(self, client_socket):
         """Decryption failed (stale/wrong key): drop encryption, reload
+
         our own key and ask the peer to re-exchange public keys.
 
-        A circuit breaker closes the connection after
-        ``MAX_DECODE_FAILURES`` consecutive failures on one connection,
-        so a garbage-injection or persistent-mismatch storm cannot spin
-        the re-exchange loop forever.
+                A circuit breaker closes the connection after
+                ``MAX_DECODE_FAILURES`` consecutive failures on one connection,
+                so a garbage-injection or persistent-mismatch storm cannot spin
+                the re-exchange loop forever.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
         """
         with self._crypto_lock:
             channel = self._channels.get(client_socket)
@@ -3053,20 +3525,37 @@ class TCP_Server_Base:  # TCP server class
                 self._log_exc()
 
     def _crypto_drop_secure(self, client_socket):
-        """Framing stopped: keep the secure-socket set and peer map truthful."""
+        """Framing stopped: keep the secure-socket set and peer map truthful.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+        """
         with self._crypto_lock:
             self._encrypted_sockets.discard(client_socket)
             self._crypto_peer.pop(client_socket, None)
 
     @staticmethod
     def _crypto_fresh_nonce():
+        """Handle the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         return secrets.token_hex(16)
 
     def _crypto_on_client_hello(self, client_socket, client_address, client_nonce, force):
         """Server side of /crypto_key_exchange: record the client's
+
         session nonce, reply that we need its public key (every
-        connection re-exchanges), then wait for it and announce
-        readiness."""
+                connection re-exchanges), then wait for it and announce
+                readiness.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+            client_address (tuple): Value used by the operation.
+            client_nonce (object): Value used by the operation.
+            force (bool): Value used by the operation.
+        """
         self.crypto.ensure_keys()
         my_nonce = self._crypto_fresh_nonce()
         with self._crypto_lock:
@@ -3088,8 +3577,14 @@ class TCP_Server_Base:  # TCP server class
 
     def _crypto_try_server_flip(self, client_socket, state):
         """Flip the socket to framed encryption once the peer key passed the
+
         TOFU check and both sides announced readiness (no plaintext/framed
-        interleaving)."""
+                interleaving).
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+            state (object): Value used by the operation.
+        """
         # no send may interleave with the flip
         with self._crypto_get_send_lock(client_socket):
             with self._crypto_lock:
@@ -3112,8 +3607,15 @@ class TCP_Server_Base:  # TCP server class
 
     def _crypto_wait_server_ready(self, client_socket, client_address, state):
         """Wait until the client's public key arrived and passed the
+
         TOFU check, then announce readiness. The socket flips to
-        encrypted mode only when the client's /crypto_ready arrives too."""
+                encrypted mode only when the client's /crypto_ready arrives too.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+            client_address (tuple): Value used by the operation.
+            state (object): Value used by the operation.
+        """
         with self._crypto_lock:
             peer_pub_event = state.get("peer_pub_event")
         if peer_pub_event is None or not peer_pub_event.wait(timeout=60):
@@ -3134,7 +3636,16 @@ class TCP_Server_Base:  # TCP server class
 
     def _crypto_push_pub_to_client(self, client_socket, client_address):
         """Push our public key file to the client via the file-transfer
-        mechanism (server is the sender)."""
+
+        mechanism (server is the sender).
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+            client_address (tuple): Value used by the operation.
+
+        Returns:
+            bool: Result produced by the operation.
+        """
         while True:  # serialise pushes: wait for an in-flight push instead of silently skipping it
             with self._crypto_lock:
                 if client_socket not in self._crypto_push_active:
@@ -3183,10 +3694,16 @@ class TCP_Server_Base:  # TCP server class
 
     def _crypto_store_received_pub(self, full_path, peer_role, client_address):
         """TOFU-check a public key received via the file-transfer
+
         mechanism and cache it under the peer endpoint.
 
-        The check runs ``verify_peer_pub`` against ``pub_key.json``; on
-        failure the peer connection is rejected and dropped.
+                The check runs ``verify_peer_pub`` against ``pub_key.json``; on
+                failure the peer connection is rejected and dropped.
+
+        Args:
+            full_path (str): Value used by the operation.
+            peer_role (object): Value used by the operation.
+            client_address (tuple): Value used by the operation.
         """
         if self.crypto is None:
             return
@@ -3308,11 +3825,19 @@ class TCP_Server_Base:  # TCP server class
         """Read up to ``recv_messages_chunk_len`` plaintext bytes from one accepted client.
 
         Mirrors `receive_message` for the asyncio path: framed bytes are
-        decrypted off the event loop (RSA/ECDH are CPU-bound) and served from
-        the channel's buffer; a socket without a channel is read raw. As in
-        `receive_message`, the channel classifies what the read returned, so a
-        flip that landed during the read never leaks frame bytes into the line
-        reader."""
+                decrypted off the event loop (RSA/ECDH are CPU-bound) and served from
+                the channel's buffer; a socket without a channel is read raw. As in
+                `receive_message`, the channel classifies what the read returned, so a
+                flip that landed during the read never leaks frame bytes into the line
+                reader.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+            loop (object): Value used by the operation.
+
+        Returns:
+            bytes | object: Result produced by the operation.
+        """
         while True:
             with self._crypto_lock:
                 channel = self._channels.get(client_socket)
@@ -3340,8 +3865,12 @@ class TCP_Server_Base:  # TCP server class
         """Serve one accepted client until it disconnects, as a coroutine.
 
         The socket is read through the event loop while the line dispatch and
-        every write run on worker threads, so a blocking command handler,
-        listener or peer cannot stall the other connections.
+                every write run on worker threads, so a blocking command handler,
+                listener or peer cannot stall the other connections.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+            client_address (tuple): Value used by the operation.
         """
         loop = asyncio.get_running_loop()
         client_id = self._register_client(client_socket, client_address)
@@ -3391,7 +3920,7 @@ class TCP_Server_Base:  # TCP server class
             client_address (tuple): Peer ``(ip, port)``.
 
         Returns:
-            str: Client id, ``"<ip>:<port>"``.
+        str: Client id, ``"<ip>:<port>"``.
         """
         client_id = f"{client_address[0]}:{client_address[1]}"
         with self.client_lock:  # add new client
@@ -3433,8 +3962,8 @@ class TCP_Server_Base:  # TCP server class
             client_id (str): Client id used in the console log.
 
         Returns:
-            bool: True when the peer was greeted, False when it was already gone
-                (the caller closes the connection either way).
+        bool: True when the peer was greeted, False when it was already gone
+                        (the caller closes the connection either way).
         """
         welcome_msg = f"Welcome!: {client_id}\n"  # send welcome message
         try:
@@ -3482,7 +4011,7 @@ class TCP_Server_Base:  # TCP server class
             message (str): One line with its newline removed.
 
         Returns:
-            str | None: Response for that client, or None when none is due.
+        str | None: Response for that client, or None when none is due.
         """
         if not _crypto_is_protocol_line(message):
             # genuine peer traffic: reset the streak that feeds the breaker
@@ -3792,13 +4321,21 @@ class TCP_Server_Base:  # TCP server class
         """Relay plain messages to every reachable destination client.
 
         Server side of the client-only ``/forward_send_msg`` command (typed on
-        a client console and relayed here over the wire). Every message is
-        wrapped in a ``/send_msg_from <addr> <payload>`` envelope carrying the
-        originator's address so receivers can attribute it. The messages are
-        recorded under the originator's socket (``sock``), exactly as if the
-        originator had sent them to the server. Destinations that are
-        unreachable -- or the server itself, which is never in the client
-        table -- are skipped and the rest are still served.
+                a client console and relayed here over the wire). Every message is
+                wrapped in a ``/send_msg_from <addr> <payload>`` envelope carrying the
+                originator's address so receivers can attribute it. The messages are
+                recorded under the originator's socket (``sock``), exactly as if the
+                originator had sent them to the server. Destinations that are
+                unreachable -- or the server itself, which is never in the client
+                table -- are skipped and the rest are still served.
+
+        Args:
+            sock (object): Value used by the operation.
+            addr (tuple): Value used by the operation.
+            cmd (object): Value used by the operation.
+
+        Returns:
+            NoneType: Result produced by the operation.
         """
         parts = shlex.split(cmd)
         items, addrs = parse_forward_items_and_addrs(parts[1:])
@@ -3908,6 +4445,17 @@ class TCP_Server_Base:  # TCP server class
         return True
 
     def _execute_custom_handler(self, handler, command, client_socket=None, client_address=None):
+        """Handle the operation.
+
+        Args:
+            handler (callable): Value used by the operation.
+            command (object): Value used by the operation.
+            client_socket (socket.socket): Value used by the operation.
+            client_address (tuple): Value used by the operation.
+
+        Returns:
+            NoneType | object: Result produced by the operation.
+        """
         try:
             result = handler(client_socket, client_address, command)
             if result is not None:
@@ -3931,6 +4479,13 @@ class TCP_Server_Base:  # TCP server class
     def file_folder_transfer_server_recv_server_start_thread(  # start a file folder server thread on server
         self, command, client_id, client_socket
     ):
+        """Start a server-side folder receive operation.
+
+        Args:
+            command (object): Value used by the operation.
+            client_id (object): Value used by the operation.
+            client_socket (socket.socket): Value used by the operation.
+        """
         command_part = shlex.split(command)
         relative_folder_path = command_part[1]
         # >= 4 tokens means a file transfer (/file_folder <rel> <file> [<dest>] <id>);
@@ -3946,6 +4501,13 @@ class TCP_Server_Base:  # TCP server class
     def file_transfer_server_recv_server_start_thread(  # start a file server thread on server
         self, client_id, client_socket, command
     ):
+        """Start a server-side file receive operation.
+
+        Args:
+            client_id (object): Value used by the operation.
+            client_socket (socket.socket): Value used by the operation.
+            command (object): Value used by the operation.
+        """
         file_transfer_server_recv_server_start_thread = threading.Thread(
             target=self.file_transfer_server_recv_server_start,
             args=(client_id, client_socket, command),
@@ -3956,6 +4518,15 @@ class TCP_Server_Base:  # TCP server class
     def file_transfer_server_recv_server_start(  # deal with file transfer request server on server from client and receive file from client
         self, client_id, client_socket, command, new_save_path=None, file_name=None
     ):
+        """Receive a file sent by a connected client.
+
+        Args:
+            client_id (object): Value used by the operation.
+            client_socket (socket.socket): Value used by the operation.
+            command (object): Value used by the operation.
+            new_save_path (str): Value used by the operation.
+            file_name (str): Value used by the operation.
+        """
         file_transfer_server_port = self.palloc()
         self.file_transfer_mode_recv(
             self.host,
@@ -3983,14 +4554,20 @@ class TCP_Server_Base:  # TCP server class
     ):
         """Receive one file over a transfer sub-connection.
 
-        ``peer`` is the transfer's original sender (the sender for an inbound
-        transfer, never a relay): it is stored with the progress entry so a
-        later reconnect can ask that peer to continue the file.
+        Args:
+            server_file_address (str): Local address for the transfer listener.
+            server_file_port (int): Local port for the transfer listener.
+            client_socket (socket.socket): Sender's control socket.
+            client_id (str): Sender identifier in ``"ip:port"`` form.
+            new_save_path (str | None): Relative directory for folder contents.
+            file_name (str | None): Destination filename, when specified.
+            command (str): Wire command that initiated the transfer.
+            peer (tuple | None): Original sender ``(ip, port)`` for resuming.
+            resume_entry (list | None): Saved progress entry for a resumed file.
 
-        ``resume_entry`` continues an interrupted transfer: the listener
-        announces itself, asks the sender to continue from the bytes already
-        on disk (``RESUME_LINE``) and appends the incoming chunks to the
-        partial file instead of truncating it.
+        Returns:
+            None | bool: None after starting or finishing; False when a resume request
+                cannot be sent.
         """
         file_running = True
         client_file_socket = None
@@ -3998,6 +4575,7 @@ class TCP_Server_Base:  # TCP server class
         save_path = None
 
         def close_socket():
+            """Handle the operation."""
             nonlocal file_running
             nonlocal client_file_socket
             nonlocal server_file_socket
@@ -4007,6 +4585,7 @@ class TCP_Server_Base:  # TCP server class
             server_file_socket.close()
 
         def setting_file_save_path():
+            """Handle the operation."""
             nonlocal save_path
             save_path = self.file_transfer_dir
             if new_save_path or destination_path:
@@ -4028,6 +4607,11 @@ class TCP_Server_Base:  # TCP server class
             return None
 
         def file_transfer_client_recv(client_id):
+            """Handle the operation.
+
+            Args:
+                client_id (object): Value used by the operation.
+            """
             nonlocal file_running
             nonlocal client_file_socket
             nonlocal server_file_socket
@@ -4279,6 +4863,11 @@ class TCP_Server_Base:  # TCP server class
             server_file_socket.close()
 
     def diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(self, message):
+        """Send grouped files and folders to their listed clients.
+
+        Args:
+            message (object): Value used by the operation.
+        """
         command_part = shlex.split(message)
         del command_part[0]
         # optional destination directory is the last argument, after the
@@ -4362,6 +4951,11 @@ class TCP_Server_Base:  # TCP server class
                 )
 
     def multiple_file_multiple_client_transfer_server_recv_client_start(self, message):
+        """Send requested files or folders to each listed client.
+
+        Args:
+            message (object): Value used by the operation.
+        """
         command_part = shlex.split(message)
         command_type = command_part[0]
         del command_part[0]
@@ -4424,6 +5018,11 @@ class TCP_Server_Base:  # TCP server class
                     self._log(f"start to send folder command: {folder_transfer_command_message}")
 
     def folder_file_transfer_server_recv_client_start(self, message):
+        """Send a folder's contents to one connected client.
+
+        Args:
+            message (object): Value used by the operation.
+        """
         command_part = shlex.split(message)
         folder_path = command_part[1]
         if command_part[-1].startswith("(") and command_part[-1].endswith(")"):
@@ -4439,6 +5038,12 @@ class TCP_Server_Base:  # TCP server class
         base_path = os.path.dirname(folder_path)
 
         def get_relative_path(base_path, abs_path):
+            """Handle the operation.
+
+            Args:
+                base_path (str): Value used by the operation.
+                abs_path (str): Value used by the operation.
+            """
             base = os.path.normpath(base_path)
             abs_ = os.path.normpath(abs_path)
             common = os.path.commonpath([base, abs_])
@@ -4451,6 +5056,13 @@ class TCP_Server_Base:  # TCP server class
             return "/" + rel
 
         def send_folder_transfer_command(folder_path, file_name=None, abspath=None):
+            """Handle the operation.
+
+            Args:
+                folder_path (str): Value used by the operation.
+                file_name (str): Value used by the operation.
+                abspath (str): Value used by the operation.
+            """
             folder_transfer_command_message = "/file_folder {}".format(shlex.quote(folder_path))
             if file_name:
                 each_file_transfer_command_message = "/file_folder {} {} {}".format(
@@ -4471,6 +5083,13 @@ class TCP_Server_Base:  # TCP server class
                 self._log(f"start to send folder command: {folder_transfer_command_message}")
 
         def start_file_transfer_with_limit(rel_dir, file, root):
+            """Handle the operation.
+
+            Args:
+                rel_dir (str): Value used by the operation.
+                file (str): Value used by the operation.
+                root (object): Value used by the operation.
+            """
             cmd = "/file_folder {} {} {}".format(
                 shlex.quote(rel_dir), shlex.quote(file), shlex.quote(str(client_addr))
             )
@@ -4478,6 +5097,7 @@ class TCP_Server_Base:  # TCP server class
                 cmd += " {}".format(shlex.quote(destination_path))
 
             def limited_transfer():
+                """Handle the operation."""
                 self.file_semaphore.acquire()
                 try:
                     self.file_transfer_server_recv_client_start(cmd, root)
@@ -4489,6 +5109,7 @@ class TCP_Server_Base:  # TCP server class
             self._log(f"start to send file: {cmd} (limit {self.max_file_transfer_thread_num})")
 
         def get_all_files_in_folder():
+            """Handle the operation."""
             for root, dirs, files in os.walk(folder_path):
                 rel_dir = get_relative_path(base_path, root)
                 if root != folder_path:
@@ -4502,6 +5123,12 @@ class TCP_Server_Base:  # TCP server class
         get_all_files_in_folder()
 
     def file_transfer_server_recv_client_start_thread(self, message, file_folder_abspath=None):
+        """Start a thread to send a file or folder item to a client.
+
+        Args:
+            message (object): Value used by the operation.
+            file_folder_abspath (str): Value used by the operation.
+        """
         file_transfer_server_recv_client_start_thread = threading.Thread(
             target=self.file_transfer_server_recv_client_start,
             args=(message, file_folder_abspath),
@@ -4510,6 +5137,12 @@ class TCP_Server_Base:  # TCP server class
         file_transfer_server_recv_client_start_thread.start()
 
     def file_transfer_server_recv_client_start(self, message, file_folder_abspath):
+        """Send a file or folder item to the addressed connected client.
+
+        Args:
+            message (object): Value used by the operation.
+            file_folder_abspath (str): Value used by the operation.
+        """
         client_id = None
         command_part = shlex.split(message)
         # optional destination directory comes after the client address tuple
@@ -4589,27 +5222,26 @@ class TCP_Server_Base:  # TCP server class
     ):
         """Send one file over a transfer sub-connection.
 
-        ``control_socket``/``crypto`` carry the listener's mode stamp
-        ("plain" or "enc:<nonce>"): an encrypted leg aborts when the session
-        key material is missing rather than downgrading silently.
+        Args:
+            filename (str): Source file path.
+            server_address (str): Transfer listener address.
+            server_port (int): Transfer listener port.
+            client_port (int): Local port to bind for the transfer.
+            control_socket (socket.socket | None): Control socket carrying the mode stamp.
+            crypto (str | None): ``"plain"`` or encrypted transfer stamp.
+            fid (int | None): Transfer ID used for progress and pause tracking.
+            peer (tuple | None): Original receiver ``(ip, port)`` for resuming.
+            resume_offset (int): Byte offset to resume from; defaults to zero.
 
-        ``fid`` is the transfer's id — the caller's own transfer id for a plain
-        send, the relay id for a forwarded upload — and keys this leg in
-        ``file_upload_progress``; every leg with a fid can be paused with
-        ``/pause_trans`` for that fid. None (a leg without a protocol transfer
-        id, such as a public-key push) tracks no progress.
-
-        ``peer`` is the transfer's original receiver (never a relay): it is
-        stored with the progress entry so a later reconnect can be resumed.
-        ``resume_offset`` continues an interrupted transfer from the byte the
-        receiver already holds: the file is read from there instead of its
-        first byte.
+        Returns:
+            bool: True when the receiver acknowledges the file; otherwise False.
         """
         self._log(f"start to send file: {filename}")
         client_file_socket = None
         reset_time = 0
 
         def close_socket():
+            """Handle the operation."""
             nonlocal file_running
             nonlocal client_file_socket
             file_running = False
@@ -4645,6 +5277,7 @@ class TCP_Server_Base:  # TCP server class
         file_receive_data_from_server = ""
 
         def receive_file_transfer_messages():
+            """Handle the operation."""
             nonlocal file_running
             nonlocal client_file_socket
             nonlocal file_receive_data_from_server
@@ -4866,9 +5499,16 @@ class TCP_Server_Base:  # TCP server class
     def _resume_receive_leg(self, control_socket, peer_addr, fid, entry, command):
         """Receive the rest of one interrupted transfer, appending to its file.
 
+        Args:
+            control_socket (socket.socket): Value used by the operation.
+            peer_addr (tuple): Value used by the operation.
+            fid (int): Value used by the operation.
+            entry (object): Value used by the operation.
+            command (object): Value used by the operation.
+
         Returns:
-            bool: True when the sender was asked to continue, False when the
-                request could not be sent.
+        bool: True when the sender was asked to continue, False when the
+                        request could not be sent.
         """
         self._log(f"resume: continuing transfer {fid} with {peer_addr} into {entry[3]}")
         entry[0] = _resume_offset_for(entry)  # the offset the sender is asked for
@@ -4931,7 +5571,17 @@ class TCP_Server_Base:  # TCP server class
         return True
 
     def _run_resume_send_leg(self, path, peer_addr, port, stamp, control_socket, fid, offset):
-        """Run one resumed sending leg on its own thread."""
+        """Run one resumed sending leg on its own thread.
+
+        Args:
+            path (str): Value used by the operation.
+            peer_addr (tuple): Value used by the operation.
+            port (int): Value used by the operation.
+            stamp (object): Value used by the operation.
+            control_socket (socket.socket): Value used by the operation.
+            fid (int): Value used by the operation.
+            offset (int): Value used by the operation.
+        """
         client_port = self.palloc()
         try:
             self.file_transfer_mode(
@@ -4952,8 +5602,16 @@ class TCP_Server_Base:  # TCP server class
         """Route one client's ``/resume_trans`` to the transfer it names.
 
         The fid identifies either this server's own outbound leg to that
-        client, or a target leg of a forward relay — the relay record then
-        names the originator, which is asked to re-forward to this client.
+                client, or a target leg of a forward relay — the relay record then
+                names the originator, which is asked to re-forward to this client.
+
+        Args:
+            client_address (tuple): Value used by the operation.
+            fid (int): Value used by the operation.
+            offset (int): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
         """
         with self._forward_relays_lock:
             record = self._forward_resume_records.get(fid)
@@ -4972,9 +5630,17 @@ class TCP_Server_Base:  # TCP server class
         """Ask a forwarded transfer's originator to continue it for one target.
 
         The server only relays: the record of the dead relay names the
-        originating client, which re-drives the item to this target from the
-        offset the target already holds (``/forward_resume``). An originator
-        that is not back yet gets the request as soon as it reconnects.
+                originating client, which re-drives the item to this target from the
+                offset the target already holds (``/forward_resume``). An originator
+                that is not back yet gets the request as soon as it reconnects.
+
+        Args:
+            record (object): Value used by the operation.
+            target_addr (object): Value used by the operation.
+            offset (int): Value used by the operation.
+
+        Returns:
+            bool | object: Result produced by the operation.
         """
         originator = record.get("originator")
         originator_fid = record.get("fid")
@@ -5003,7 +5669,11 @@ class TCP_Server_Base:  # TCP server class
         return self.send_message(info["socket"], request)
 
     def _flush_pending_relay_resumes(self, client_address):
-        """Send the forwarded-resume requests that waited for this originator."""
+        """Send the forwarded-resume requests that waited for this originator.
+
+        Args:
+            client_address (tuple): Value used by the operation.
+        """
         with self._forward_relays_lock:
             pending = self._pending_relay_resumes.pop(tuple(client_address), None)
         if not pending:
@@ -5019,7 +5689,11 @@ class TCP_Server_Base:  # TCP server class
             )
 
     def _resume_after_connect(self, client_address):
-        """Continue this peer's interrupted transfers after it (re)connected."""
+        """Continue this peer's interrupted transfers after it (re)connected.
+
+        Args:
+            client_address (tuple): Value used by the operation.
+        """
         self._drop_stale_transfers(peer=tuple(client_address))
         self._flush_pending_relay_resumes(tuple(client_address))
         self.resume_transfers(peer=tuple(client_address))
@@ -5027,17 +5701,36 @@ class TCP_Server_Base:  # TCP server class
     # ---- native in-memory forward relay (server side) ----------------------
 
     def _forward_alloc_fid(self):
+        """Handle the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         with self._forward_fid_lock:
             self._forward_fid += 1
             return self._forward_fid
 
     def _forward_notify_error(self, sock, msg):
+        """Handle the operation.
+
+        Args:
+            sock (object): Value used by the operation.
+            msg (object): Value used by the operation.
+        """
         try:
             self.send_message(sock, f"/forward_error {msg}")
         except Exception:
             pass
 
     def _forward_parse_items_addrs(self, tokens):
+        """Handle the operation.
+
+        Args:
+            tokens (list | dict): Value used by the operation.
+
+        Returns:
+            list | tuple: Result produced by the operation.
+        """
         items = []
         addrs = []
         for token in tokens:
@@ -5059,10 +5752,15 @@ class TCP_Server_Base:  # TCP server class
         """Server-side entry for /forward_item <kind> [resume=<offset>] <...> <addr...>.
 
         The server never touches disk: it only relays the uploaded byte
-        stream to every reachable target client from memory. ``resume=<offset>``
-        marks a repeated forward of a file the target already holds partially:
-        the uploader starts at that offset, so the relay expects
-        ``size - offset`` bytes of stream.
+                stream to every reachable target client from memory. ``resume=<offset>``
+                marks a repeated forward of a file the target already holds partially:
+                the uploader starts at that offset, so the relay expects
+                ``size - offset`` bytes of stream.
+
+        Args:
+            sock (object): Value used by the operation.
+            addr (tuple): Value used by the operation.
+            cmd (object): Value used by the operation.
         """
         try:
             parts = shlex.split(cmd)
@@ -5126,7 +5824,16 @@ class TCP_Server_Base:  # TCP server class
         """Read from a target transfer socket until ``sign`` is seen.
 
         Reads through `receive_message`, so a framed transfer connection
-        yields decrypted bytes here like any other plaintext leg."""
+                yields decrypted bytes here like any other plaintext leg.
+
+        Args:
+            sock (object): Value used by the operation.
+            sign (object): Value used by the operation.
+            timeout (float): Value used by the operation.
+
+        Returns:
+            bool: Result produced by the operation.
+        """
         buf = b""
         target = sign.encode("utf-8")
         err = self.error_sign.encode("utf-8")
@@ -5146,6 +5853,18 @@ class TCP_Server_Base:  # TCP server class
         return False
 
     def _forward_recv_exact(self, sock, n):
+        """Handle the operation.
+
+        Args:
+            sock (object): Value used by the operation.
+            n (int): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
+
+        Raises:
+            ConnectionError: When the operation cannot complete.
+        """
         buf = b""
         while len(buf) < n:
             data = self.receive_message(sock, n - len(buf))
@@ -5158,8 +5877,16 @@ class TCP_Server_Base:  # TCP server class
         """Apply a client's ``/pause_trans``/``/start_trans`` on this side.
 
         A client throttles the writer that feeds it (a forward relay's writer
-        for its target) or, without a relay, this server's own outbound leg to
-        that client (see `pause_trans`).
+                for its target) or, without a relay, this server's own outbound leg to
+                that client (see `pause_trans`).
+
+        Args:
+            client_address (tuple): Value used by the operation.
+            command (object): Value used by the operation.
+            paused (bool): Value used by the operation.
+
+        Returns:
+            NoneType | object: Result produced by the operation.
         """
         fid = _pause_command_fid(command)
         if fid is None:
@@ -5178,10 +5905,21 @@ class TCP_Server_Base:  # TCP server class
         resume_offset=0,
     ):
         """Relay one file/folder item to every target, streaming from the
+
         uploader's transfer connection with bounded in-memory buffering.
 
-        Every pushed command is tagged with the originator's address (see
-        ``forward_item_to``) so the receivers can attribute the transfer.
+                Every pushed command is tagged with the originator's address (see
+                ``forward_item_to``) so the receivers can attribute the transfer.
+
+        Args:
+            forwarder_sock (object): Value used by the operation.
+            originator_addr (tuple): Value used by the operation.
+            kind (object): Value used by the operation.
+            rel_dir (str): Value used by the operation.
+            fname (object): Value used by the operation.
+            targets (object): Value used by the operation.
+            destination_path (str): Value used by the operation.
+            resume_offset (object): Value used by the operation.
         """
         fid = self._forward_alloc_fid()
         tfids = [self._forward_alloc_fid() for _ in targets]
@@ -5291,14 +6029,23 @@ class TCP_Server_Base:  # TCP server class
         """Pump the uploader's byte stream to every target from memory.
 
         The total bytes held in the per-target queues never exceeds
-        ``max_mem_buff``: once it does, the uploader is told to pause
-        (``/pause_trans``) and the reader stops pulling; as the writers
-        drain below the low-water mark the uploader is resumed
-        (``/start_trans``).
+                ``max_mem_buff``: once it does, the uploader is told to pause
+                (``/pause_trans``) and the reader stops pulling; as the writers
+                drain below the low-water mark the uploader is resumed
+                (``/start_trans``).
+
+        Args:
+            up_sock (object): Value used by the operation.
+            target_conns (object): Value used by the operation.
+            forwarder_sock (object): Value used by the operation.
+            fid (int): Value used by the operation.
+            fname (object): Value used by the operation.
+            relay (object): Value used by the operation.
+            resume_offset (object): Value used by the operation.
 
         Returns:
-            int: Targets that acknowledged the whole item (they are the ones
-                the relay's resume record can be dropped for).
+        int: Targets that acknowledged the whole item (they are the ones
+                        the relay's resume record can be dropped for).
         """
         max_bytes = max(1, self.max_mem_buff)
         low_water = max(1, max_bytes // 2)
@@ -5310,6 +6057,11 @@ class TCP_Server_Base:  # TCP server class
         result = {"ok": 0}
 
         def enqueue(chunk):
+            """Handle the operation.
+
+            Args:
+                chunk (bytes | str): Value used by the operation.
+            """
             with cond:
                 state["buffered"] += len(chunk) * len(target_conns)
                 for q in queues.values():
@@ -5322,6 +6074,13 @@ class TCP_Server_Base:  # TCP server class
                         pass
 
         def writer(tfid, target, sock):
+            """Handle the operation.
+
+            Args:
+                tfid (int): Value used by the operation.
+                target (tuple): Value used by the operation.
+                sock (object): Value used by the operation.
+            """
             q = queues[tfid]
             while True:
                 with cond:
@@ -5355,6 +6114,7 @@ class TCP_Server_Base:  # TCP server class
                 pass
 
         def reader():
+            """Handle the operation."""
             try:
                 name_len_b = self._forward_recv_exact(up_sock, 4)
                 name_len = int.from_bytes(name_len_b, "big")
@@ -5471,10 +6231,10 @@ class TCP_Server_Base:  # TCP server class
         """Accept clients until the server stops, one coroutine per client.
 
         Runs the whole client side on one event loop: the listening socket is
-        used in non-blocking mode, and every accepted connection is handled by
-        `handle_client` on this loop, so the connection count is bounded only by
-        the file-descriptor limit. `stop` completes ``_async_wakeup`` to release
-        the loop; its remaining client coroutines are cancelled when it ends.
+                used in non-blocking mode, and every accepted connection is handled by
+                `handle_client` on this loop, so the connection count is bounded only by
+                the file-descriptor limit. `stop` completes ``_async_wakeup`` to release
+                the loop; its remaining client coroutines are cancelled when it ends.
         """
         loop = asyncio.get_running_loop()
         self._async_loop = loop
@@ -5793,6 +6553,7 @@ class TCP_Client_Base:  # TCP client class
                 the connection are persisted to the protocol's ``.Flow``
                 directory and read back on the next connect. Defaults to
                 False: a dropped connection ends the client.
+
         Raises:
             ValueError: If ``is_wait_server`` is True and ``timeout`` is not None.
             OSError: If the ``.Flow`` directories or ``decode_command_table.json``
@@ -6084,6 +6845,12 @@ class TCP_Client_Base:  # TCP client class
                 pass
 
     def _notify_message_received(self, sender, message):
+        """Handle the operation.
+
+        Args:
+            sender (object): Value used by the operation.
+            message (object): Value used by the operation.
+        """
         with self._event_listeners_lock:
             listeners = list(self._message_listeners)
         for listener in listeners:
@@ -6094,6 +6861,14 @@ class TCP_Client_Base:  # TCP client class
                 self._log_exc()
 
     def _notify_file_received(self, full_path, name, size, command):
+        """Handle the operation.
+
+        Args:
+            full_path (str): Value used by the operation.
+            name (object): Value used by the operation.
+            size (int): Value used by the operation.
+            command (object): Value used by the operation.
+        """
         with self._event_listeners_lock:
             listeners = list(self._file_listeners)
         for listener in listeners:
@@ -6107,8 +6882,14 @@ class TCP_Client_Base:  # TCP client class
         """Serializable key for a sender socket (its peer address).
 
         Forwarded records already carry the originator's address as a
-        string and are used as-is; a socket that cannot answer
-        ``getpeername`` (already closed) falls back to its repr.
+                string and are used as-is; a socket that cannot answer
+                ``getpeername`` (already closed) falls back to its repr.
+
+        Args:
+            sock (object): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
         """
         if isinstance(sock, str):
             return sock
@@ -6122,20 +6903,33 @@ class TCP_Client_Base:  # TCP client class
         """Capture the log key of ``sock`` while it is known to be alive.
 
         A record stays buffered after its connection goes away, and the
-        flush that persists it must still file it under the sender's
-        address: by then the closed socket no longer answers
-        ``getpeername`` and would be logged as ``str(sock)``. The key is
-        forgotten once nothing is buffered under it any more (see
-        ``_flush_dict_locked``).
+                flush that persists it must still file it under the sender's
+                address: by then the closed socket no longer answers
+                ``getpeername`` and would be logged as ``str(sock)``. The key is
+                forgotten once nothing is buffered under it any more (see
+                ``_flush_dict_locked``).
+
+        Args:
+            sock (object): Value used by the operation.
         """
         with self._socket_keys_lock:
             if sock not in self._socket_keys:
                 self._socket_keys[sock] = self._socket_key(sock)
 
     def _record_key(self, sock):
-        """The JSON-log key for ``sock``: the address captured when it was
+        """Return the JSON-log key for ``sock``: the address captured when it was.
+
+        The JSON-log key for ``sock``: the address captured when it was
+
         recorded, or the live peer address for a socket inserted without a
-        record."""
+                record.
+
+        Args:
+            sock (object): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         key = self._socket_keys.get(sock)
         if key is not None:
             return key
@@ -6145,8 +6939,12 @@ class TCP_Client_Base:  # TCP client class
         """Store one inbound plain-text message under the sender's socket.
 
         External code reads ``messages_dict`` (or the JSON log) instead of
-        registering a message listener. The entry is ``[content, timestamp]``
-        with the timestamp of arrival.
+                registering a message listener. The entry is ``[content, timestamp]``
+                with the timestamp of arrival.
+
+        Args:
+            sock (object): Value used by the operation.
+            content (object): Value used by the operation.
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with self._messages_dict_lock:
@@ -6162,10 +6960,14 @@ class TCP_Client_Base:  # TCP client class
         """Store one inbound command as an event under the sender's socket.
 
         The event content is the original wire command from the peer (file
-        transfers, folder transfers, extension commands, ...). External code
-        reads ``events_dict`` (or the JSON log) instead of registering a
-        listener. File-transfer events get their completion timestamp via
-        ``_update_event_timestamp``.
+                transfers, folder transfers, extension commands, ...). External code
+                reads ``events_dict`` (or the JSON log) instead of registering a
+                listener. File-transfer events get their completion timestamp via
+                ``_update_event_timestamp``.
+
+        Args:
+            sock (object): Value used by the operation.
+            command (object): Value used by the operation.
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with self._events_dict_lock:
@@ -6179,8 +6981,13 @@ class TCP_Client_Base:  # TCP client class
         """Stamp the completion time onto the recorded event for ``command``.
 
         File transfers finish on a worker thread after the receive thread
-        recorded the command, so the event's timestamp is refreshed here with
-        the moment the transfer actually completed.
+                recorded the command, so the event's timestamp is refreshed here with
+                the moment the transfer actually completed.
+
+        Args:
+            sock (object): Value used by the operation.
+            command (object): Value used by the operation.
+            timestamp (object): Value used by the operation.
         """
         with self._events_dict_lock:
             entries = self.events_dict.get(sock)
@@ -6194,10 +7001,17 @@ class TCP_Client_Base:  # TCP client class
         """Return the command to record as an event.
 
         The wire command is recorded verbatim whenever it is available. When
-        this end cannot see the original command (a transfer relayed by the
-        server, or a protocol-internal control line), splice a readable
-        command from the available parts so the event still identifies the
-        transfer.
+                this end cannot see the original command (a transfer relayed by the
+                server, or a protocol-internal control line), splice a readable
+                command from the available parts so the event still identifies the
+                transfer.
+
+        Args:
+            command (object): Value used by the operation.
+            **parts (list | dict): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
         """
         if command:
             return command
@@ -6214,7 +7028,14 @@ class TCP_Client_Base:  # TCP client class
 
     def _flush_dict_locked(self, d, size_attr, path):
         """Flush ``d`` (socket -> [[content, ts], ...]) into its JSON log and
-        clear it. The caller must hold the dict's lock."""
+
+        clear it. The caller must hold the dict's lock.
+
+        Args:
+            d (list | dict): Value used by the operation.
+            size_attr (object): Value used by the operation.
+            path (str): Value used by the operation.
+        """
         if not d:
             return
         snapshot = dict(d)
@@ -6228,12 +7049,14 @@ class TCP_Client_Base:  # TCP client class
                     self._socket_keys.pop(sock, None)
 
     def _flush_messages_dict(self):
+        """Handle the operation."""
         with self._messages_dict_lock:
             self._flush_dict_locked(
                 self.messages_dict, "_messages_dict_size", self.messages_log_file
             )
 
     def _flush_events_dict(self):
+        """Handle the operation."""
         with self._events_dict_lock:
             self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
 
@@ -6241,10 +7064,14 @@ class TCP_Client_Base:  # TCP client class
         """Merge ``snapshot`` into the JSON log at ``path`` (append per socket).
 
         Publishes through `_publish_json_log`: a temp file named after this
-        writer, and an optimistic re-merge when another instance published in
-        between, so concurrent flushes of several instances sharing one log
-        neither corrupt nor lose each other. A failure is logged, never raised
-        into the caller.
+                writer, and an optimistic re-merge when another instance published in
+                between, so concurrent flushes of several instances sharing one log
+                neither corrupt nor lose each other. A failure is logged, never raised
+                into the caller.
+
+        Args:
+            path (str): Value used by the operation.
+            snapshot (list | dict): Value used by the operation.
         """
         try:
             _publish_json_log(path, snapshot, self._record_key)
@@ -6294,20 +7121,18 @@ class TCP_Client_Base:  # TCP client class
         """Fold just-sent/received traffic into the real-time speed estimate.
 
         Every send and receive sample feeds this — control messages, file data
-        and relay traffic alike — so the speed attributes describe the
-        instance's current traffic as a rolling average over
-        ``NETWORK_SPEED_WINDOW`` seconds.
+                and relay traffic alike — so the speed attributes describe the
+                instance's current traffic as a rolling average over
+                ``NETWORK_SPEED_WINDOW`` seconds.
 
         Args:
-            payload (bytes | str | int): Bytes just written or read; a str
-                counts as its UTF-8 length, an int is a byte count already.
-            is_upload (bool): True for sent bytes (``upload_network_speed``),
-                False for received ones (``recv_network_speed``).
+            payload (bytes | str | int): Bytes just written or read; a str counts as its UTF-8 length, an int is a byte count already.
+            is_upload (bool): True for sent bytes (``upload_network_speed``), False for received ones (``recv_network_speed``).
 
         Returns:
-            float | None: The refreshed speed in bytes per second, or None when
-                ``is_enable_real_time_network_speed`` is False; both speed
-                attributes are None then.
+        float | None: The refreshed speed in bytes per second, or None when
+                        ``is_enable_real_time_network_speed`` is False; both speed
+                        attributes are None then.
         """
         if not self.is_enable_real_time_network_speed:
             self.upload_network_speed = None
@@ -6351,25 +7176,17 @@ class TCP_Client_Base:  # TCP client class
         """Register one file transfer in a progress store.
 
         Args:
-            progress_dict (dict): ``self.file_recv_progress`` for an inbound
-                transfer, ``self.file_upload_progress`` for an outbound one.
-            fid (int | None): The transfer's fid; None tracks nothing (a leg
-                without a protocol transfer id, such as a key push).
+            progress_dict (dict): ``self.file_recv_progress`` for an inbound transfer, ``self.file_upload_progress`` for an outbound one.
+            fid (int | None): The transfer's fid; None tracks nothing (a leg without a protocol transfer id, such as a key push).
             total_bytes (int): Size of the file being transferred.
-            path (str): Local path of the file: the source of an outbound
-                transfer, the file being written for an inbound one.
-            peer (tuple | None): ``(ip, port)`` of the transfer's original
-                peer — the sender for an inbound transfer, the receiver for an
-                outbound one. A forwarded transfer stores the original peer on
-                both sides, never the relay; None marks a leg that cannot be
-                resumed (there is no peer to continue it with).
-            initial (int): Bytes already transferred when the leg starts; a
-                resumed transfer continues a partially transferred file.
+            path (str): Local path of the file: the source of an outbound transfer, the file being written for an inbound one.
+            peer (tuple | None): ``(ip, port)`` of the transfer's original peer — the sender for an inbound transfer, the receiver for an outbound one. A forwarded transfer stores the original peer on both sides, never the relay; None marks a leg that cannot be resumed (there is no peer to continue it with).
+            initial (int): Bytes already transferred when the leg starts; a resumed transfer continues a partially transferred file.
 
         Returns:
-            list | None: The ``[transferred, total, speed, path, peer]`` entry
-                the transfer updates, or None when tracking is off
-                (``is_enable_file_transfer_progress_bar`` False, or no fid).
+        list | None: The ``[transferred, total, speed, path, peer]`` entry
+                        the transfer updates, or None when tracking is off
+                        (``is_enable_file_transfer_progress_bar`` False, or no fid).
         """
         if fid is None or not self.is_enable_file_transfer_progress_bar:
             return None
@@ -6383,13 +7200,9 @@ class TCP_Client_Base:  # TCP client class
         """Fold one transferred chunk into a progress entry.
 
         Args:
-            entry (list | None): Entry from `_file_progress_start`, or None
-                when the transfer is not tracked.
+            entry (list | None): Entry from `_file_progress_start`, or None when the transfer is not tracked.
             byte_count (int): Bytes of the chunk just sent or received.
-            is_upload (bool): True for sent chunks, False for received ones.
-
-        The speed slot mirrors the live measurement, so it stays None while
-        ``is_enable_real_time_network_speed`` is False.
+            is_upload (bool): True for sent chunks, False for received ones. The speed slot mirrors the live measurement, so it stays None while ``is_enable_real_time_network_speed`` is False.
         """
         if entry is None:
             return
@@ -6400,17 +7213,16 @@ class TCP_Client_Base:  # TCP client class
         """Drop a finished transfer's progress entry, or keep it for a resume.
 
         A newer transfer may already hold the same fid (transfer ids are reused
-        as transfers end), so only this transfer's own entry is dropped. With
-        ``keep`` True an interrupted transfer keeps its entry — and the partial
-        file that entry points at — so the reconnect logic can continue it
-        (`resume_transfers`); the entry then lives until the transfer ends.
+                as transfers end), so only this transfer's own entry is dropped. With
+                ``keep`` True an interrupted transfer keeps its entry — and the partial
+                file that entry points at — so the reconnect logic can continue it
+                (`resume_transfers`); the entry then lives until the transfer ends.
 
         Args:
             progress_dict (dict): Store the entry belongs to.
             fid (int | None): Transfer id the entry is keyed by.
             entry (list | None): Entry to drop; None tracks nothing.
-            keep (bool): Keep the entry (and persist the stores) instead of
-                dropping it. Defaults to False.
+            keep (bool): Keep the entry (and persist the stores) instead of dropping it. Defaults to False.
         """
         if entry is None:
             return
@@ -6434,11 +7246,19 @@ class TCP_Client_Base:  # TCP client class
         """Return the JSON-ready form of every transfer still in play.
 
         Returns:
-            dict: ``{"upload": ..., "download": ..., "relays": ...}``; fids
-                are string keys and every peer is an ``[ip, port]`` list.
+        dict: ``{"upload": ..., "download": ..., "relays": ...}``; fids
+                        are string keys and every peer is an ``[ip, port]`` list.
         """
 
         def entries(store):
+            """Handle the operation.
+
+            Args:
+                store (list | dict): Value used by the operation.
+
+            Returns:
+                list | tuple: Result produced by the operation.
+            """
             return {
                 str(fid): [
                     entry[0],
@@ -6473,12 +7293,12 @@ class TCP_Client_Base:  # TCP client class
         """Write the transfer stores to the protocol's ``.Flow`` directory.
 
         Every in-flight transfer — uploads, downloads, and the relay records
-        of the forwards this client started — is written to
-        ``client_file_trans_progress.json`` when a connection drops, and the
-        file is what the reconnect logic reads back. Once nothing is left to
-        transfer the file is emptied; it is only rewritten while it exists, so
-        a run without an interrupted transfer never creates it. A write
-        failure is logged, never raised.
+                of the forwards this client started — is written to
+                ``client_file_trans_progress.json`` when a connection drops, and the
+                file is what the reconnect logic reads back. Once nothing is left to
+                transfer the file is emptied; it is only rewritten while it exists, so
+                a run without an interrupted transfer never creates it. A write
+                failure is logged, never raised.
         """
         snapshot = self._transfer_progress_snapshot()
         with self._transfer_progress_lock:
@@ -6500,12 +7320,12 @@ class TCP_Client_Base:  # TCP client class
         """Read the persisted interrupted transfers back into the stores.
 
         Every entry read back keeps the bytes it had already transferred, so
-        the reconnect logic can ask the sender to continue from there; every
-        relay record comes back so an interrupted forward can be re-driven.
-        Entries a live transfer (or a relay) already owns are left alone.
+                the reconnect logic can ask the sender to continue from there; every
+                relay record comes back so an interrupted forward can be re-driven.
+                Entries a live transfer (or a relay) already owns are left alone.
 
         Returns:
-            int: Number of transfer entries and relay records restored.
+        int: Number of transfer entries and relay records restored.
         """
         with self._transfer_progress_lock:
             try:
@@ -6554,8 +7374,13 @@ class TCP_Client_Base:  # TCP client class
     def _mark_transfer_pause(self, fid, paused, peer=None):
         """Set or clear one transfer's pause switch (see `pause_trans`).
 
+        Args:
+            fid (int): Value used by the operation.
+            paused (bool): Value used by the operation.
+            peer (tuple): Value used by the operation.
+
         Returns:
-            bool: True when a running outbound leg was found.
+        bool: True when a running outbound leg was found.
         """
         with self._transfer_progress_lock:
             live = fid in self._active_transfer_fids
@@ -6639,14 +7464,24 @@ class TCP_Client_Base:  # TCP client class
         return self.send_message(self.client_socket, f"/start_trans {fid}")
 
     def _register_transfer_socket(self, fid, sock):
-        """Record the socket of a leg, so a dead session can be cleared out."""
+        """Record the socket of a leg, so a dead session can be cleared out.
+
+        Args:
+            fid (int): Value used by the operation.
+            sock (object): Value used by the operation.
+        """
         if fid is None:
             return
         with self._transfer_progress_lock:
             self._active_transfer_sockets[fid] = sock
 
     def _release_transfer_socket(self, fid, sock):
-        """Forget a leg's socket once the leg is over (its own, not a newer one's)."""
+        """Forget a leg's socket once the leg is over (its own, not a newer one's).
+
+        Args:
+            fid (int): Value used by the operation.
+            sock (object): Value used by the operation.
+        """
         if fid is None:
             return
         with self._transfer_progress_lock:
@@ -6657,16 +7492,14 @@ class TCP_Client_Base:  # TCP client class
         """Close the legs a peer's previous session left behind.
 
         A peer that (re)connects proves that the legs of its earlier session
-        are over: their sockets are shut down so the stored transfers can be
-        resumed without two legs writing the same transfer.
+                are over: their sockets are shut down so the stored transfers can be
+                resumed without two legs writing the same transfer.
 
         Args:
-            peer (tuple | None): Restrict to the legs whose progress entry
-                names this ``(ip, port)``; None clears every leg of the
-                instance (a fresh session replaces all of them).
+            peer (tuple | None): Restrict to the legs whose progress entry names this ``(ip, port)``; None clears every leg of the instance (a fresh session replaces all of them).
 
         Returns:
-            int: Number of legs closed.
+        int: Number of legs closed.
         """
         stale = []
         for store in (self.file_upload_progress, self.file_recv_progress):
@@ -6694,8 +7527,11 @@ class TCP_Client_Base:  # TCP client class
         """Block a sending leg while its fid is marked paused.
 
         Runs before every chunk so ``/pause_trans`` stops the stream without
-        closing the transfer; the wait ends when the leg is resumed, when the
-        instance stops, or when the fid is not paused at all.
+                closing the transfer; the wait ends when the leg is resumed, when the
+                instance stops, or when the fid is not paused at all.
+
+        Args:
+            fid (int): Value used by the operation.
         """
         if fid is None:
             return
@@ -6713,8 +7549,8 @@ class TCP_Client_Base:  # TCP client class
             timeout (float): Seconds to wait.
 
         Returns:
-            tuple | None: ``(port, stamp)`` announced for this fid, or None
-                when the announcement does not arrive in time.
+        tuple | None: ``(port, stamp)`` announced for this fid, or None
+                        when the announcement does not arrive in time.
         """
         deadline = time.time() + timeout
         while time.time() < deadline:
@@ -6730,7 +7566,11 @@ class TCP_Client_Base:  # TCP client class
         return None
 
     def _forget_transfer_port(self, fid):
-        """Drop pending port announcements of a fid an older session left behind."""
+        """Drop pending port announcements of a fid an older session left behind.
+
+        Args:
+            fid (int): Value used by the operation.
+        """
         if fid is None:
             return
         with self.file_transfer_server_port_lock:
@@ -6742,12 +7582,16 @@ class TCP_Client_Base:  # TCP client class
         """Wait until a control channel may carry framed protocol lines.
 
         The reconnect flows run right after a session is established, when the
-        crypto handshake may still be completing; a resume line sent then would
-        travel plaintext and be dropped by the peer's framing guard. Without
-        encryption there is nothing to wait for.
+                crypto handshake may still be completing; a resume line sent then would
+                travel plaintext and be dropped by the peer's framing guard. Without
+                encryption there is nothing to wait for.
+
+        Args:
+            control_socket (socket.socket): Value used by the operation.
+            timeout (float): Value used by the operation.
 
         Returns:
-            bool: True when the channel speaks frames (or encryption is off).
+        bool: True when the channel speaks frames (or encryption is off).
         """
         if not self.is_enable_encrypto or self.crypto is None:
             return True
@@ -7053,6 +7897,7 @@ class TCP_Client_Base:  # TCP client class
         stop_event = threading.Event()
 
         def server_loop():
+            """Handle the operation."""
             while not stop_event.is_set():
                 try:
                     server_socket.settimeout(1.0)
@@ -7096,6 +7941,7 @@ class TCP_Client_Base:  # TCP client class
         stop_event = threading.Event()
 
         def receiver():
+            """Handle the operation."""
             while not stop_event.is_set():
                 try:
                     client_sock.settimeout(1.0)
@@ -7118,8 +7964,11 @@ class TCP_Client_Base:  # TCP client class
         """Announce our encryption mode and wait for the server's.
 
         Returns True only when both sides agree on ``is_enable_encrypto``.
-        On a mismatch (or a missing announcement) the connection is
-        closed and False is returned.
+                On a mismatch (or a missing announcement) the connection is
+                closed and False is returned.
+
+        Returns:
+            bool: Result produced by the operation.
         """
         self._send_raw(self.client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
         if not self._crypto_mode_event.wait(timeout=self._crypto_mode_timeout):
@@ -7425,7 +8274,12 @@ class TCP_Client_Base:  # TCP client class
                 return plain  # plaintext mode: the line reader gets the bytes
 
     def _send_raw(self, client_socket, text):
-        """Send a plaintext crypto-protocol message, bypassing encryption."""
+        """Send a plaintext crypto-protocol message, bypassing encryption.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+            text (object): Value used by the operation.
+        """
         data = text.strip()
         if not data.endswith("\n"):
             data += "\n"
@@ -7434,25 +8288,54 @@ class TCP_Client_Base:  # TCP client class
         self._measure_network_speed(encoded, is_upload=True)
 
     def _crypto_mark_encrypted(self, client_socket, peer_role, peer_pem_path):
+        """Handle the operation.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+            peer_role (object): Value used by the operation.
+            peer_pem_path (str): Value used by the operation.
+        """
         with self._crypto_lock:
             self._encrypted_sockets.add(client_socket)
             self._crypto_peer[client_socket] = (peer_role, peer_pem_path)
 
     def _crypto_session_ensure(self):
-        """The client's crypto session context (created on demand)."""
+        """Get or create the client's crypto session.
+
+        The client's crypto session context (created on demand).
+
+        Returns:
+            object: Result produced by the operation.
+        """
         with self._crypto_lock:
             if self._crypto_session is None and self.crypto is not None:
                 self._crypto_session = _CryptoSession(self.crypto, "client", self._log, self._debug)
             return self._crypto_session
 
     def _crypto_control_state(self, client_socket):
-        """(session, channel) of one socket; (None, None) when unknown."""
+        """Return (session, channel) of one socket; (None, None) when unknown.
+
+        (session, channel) of one socket; (None, None) when unknown.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+
+        Returns:
+            list | tuple: Result produced by the operation.
+        """
         with self._crypto_lock:
             return self._crypto_session, self._channels.get(client_socket)
 
     def _crypto_channel_error(self, client_socket):
-        """A frame failed to decode: re-exchange on the control socket, close a
-        transfer socket (its leg has no handshake to recover with)."""
+        """Handle a frame decode failure on a control or transfer socket.
+
+        A frame failed to decode: re-exchange on the control socket, close a
+
+        transfer socket (its leg has no handshake to recover with).
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+        """
         if client_socket is self.client_socket:
             self._crypto_on_decode_failure(client_socket)
             return
@@ -7463,7 +8346,11 @@ class TCP_Client_Base:  # TCP client class
             pass
 
     def _crypto_after_flip(self, client_socket):
-        """Announce frame readiness (plaintext) and publish the session ECDH key."""
+        """Announce frame readiness (plaintext) and publish the session ECDH key.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+        """
         _session, channel = self._crypto_control_state(client_socket)
         if channel is None:
             return
@@ -7475,20 +8362,41 @@ class TCP_Client_Base:  # TCP client class
         self._crypto_publish_ecdh_pub(client_socket)
 
     def _crypto_publish_ecdh_pub(self, client_socket):
-        """Send our session ECDH public key once frames are allowed both ways."""
+        """Send our session ECDH public key once frames are allowed both ways.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+        """
         session, channel = self._crypto_control_state(client_socket)
         if session is not None:
             session.publish_pub(channel)
 
     def _crypto_transfer_stamp(self, control_socket, force_plain=False):
-        """Mode+nonce a listener announces to a transfer connector."""
+        """Mode+nonce a listener announces to a transfer connector.
+
+        Args:
+            control_socket (socket.socket): Value used by the operation.
+            force_plain (bool): Value used by the operation.
+
+        Returns:
+            object | str: Result produced by the operation.
+        """
         session, channel = self._crypto_control_state(control_socket)
         if session is None:
             return "plain"
         return session.transfer_stamp(channel, force_plain)
 
     def _crypto_attach_transfer_in(self, sock, control_socket, stamp):
-        """Framing channel for an accepted transfer socket (listener side)."""
+        """Framing channel for an accepted transfer socket (listener side).
+
+        Args:
+            sock (object): Value used by the operation.
+            control_socket (socket.socket): Value used by the operation.
+            stamp (object): Value used by the operation.
+
+        Returns:
+            NoneType | object: Result produced by the operation.
+        """
         session, control_channel = self._crypto_control_state(control_socket)
         if session is None:
             return None
@@ -7500,18 +8408,37 @@ class TCP_Client_Base:  # TCP client class
         return channel
 
     def _crypto_drop_secure(self, client_socket):
-        """Framing stopped: keep the secure-socket set and peer map truthful."""
+        """Framing stopped: keep the secure-socket set and peer map truthful.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+        """
         with self._crypto_lock:
             self._encrypted_sockets.discard(client_socket)
             self._crypto_peer.pop(client_socket, None)
 
     def _crypto_note_healthy(self, client_socket):
-        """A frame decoded cleanly: reset the streak that feeds the breaker."""
+        """Reset the decode-failure count after a valid frame.
+
+        A frame decoded cleanly: reset the streak that feeds the breaker.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+        """
         with self._crypto_lock:
             self._crypto_decode_failures = 0
 
     def _crypto_attach_transfer_out(self, sock, control_socket, stamp):
-        """Framing channel for a connected transfer socket (connector side)."""
+        """Framing channel for a connected transfer socket (connector side).
+
+        Args:
+            sock (object): Value used by the operation.
+            control_socket (socket.socket): Value used by the operation.
+            stamp (object): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         session, control_channel = self._crypto_control_state(control_socket)
         crypto = _connector_transfer_crypto(session, control_channel, stamp)
         channel = _enable_connector_channel(sock, crypto)
@@ -7522,18 +8449,27 @@ class TCP_Client_Base:  # TCP client class
         return channel
 
     def _crypto_drop_channel(self, sock):
-        """Forget a finished transfer socket's channel."""
+        """Forget a finished transfer socket's channel.
+
+        Args:
+            sock (object): Value used by the operation.
+        """
         with self._crypto_lock:
             self._channels.pop(sock, None)
             self._encrypted_sockets.discard(sock)
 
     def _crypto_on_decode_failure(self, client_socket):
         """Decryption failed (stale/wrong key): drop encryption, reload
+
         our own key and re-run the public-key exchange (forced).
 
-        A circuit breaker closes the connection after
-        ``MAX_DECODE_FAILURES`` consecutive failures, so a garbage or
-        persistent-mismatch storm cannot spin the loop forever."""
+                A circuit breaker closes the connection after
+                ``MAX_DECODE_FAILURES`` consecutive failures, so a garbage or
+                persistent-mismatch storm cannot spin the loop forever.
+
+        Args:
+            client_socket (socket.socket): Value used by the operation.
+        """
         with self._crypto_lock:
             channel = self._channels.get(client_socket)
         if channel is not None:
@@ -7575,12 +8511,28 @@ class TCP_Client_Base:  # TCP client class
         threading.Thread(target=self._crypto_exchange_thread, daemon=True).start()
 
     def _crypto_still_current(self, gen):
-        """True while ``gen`` is still the latest handshake generation."""
+        """Return true while ``gen`` is still the latest handshake generation.
+
+        True while ``gen`` is still the latest handshake generation.
+
+        Args:
+            gen (object): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         with self._crypto_lock:
             return self._crypto_handshake_gen == gen
 
     def _crypto_exchange_thread(self, force=False):
-        """Drive the client half of the handshake to completion."""
+        """Drive the client half of the handshake to completion.
+
+        Args:
+            force (bool): Value used by the operation.
+
+        Raises:
+            TimeoutError: When the operation cannot complete.
+        """
         try:
             self.crypto.ensure_keys()
             session = self._crypto_session_ensure()
@@ -7632,8 +8584,14 @@ class TCP_Client_Base:  # TCP client class
 
     def _crypto_on_server_hello(self, server_nonce, force):
         """Server initiated the handshake (re-exchange after a decode
+
         failure): record its session nonce, ack that we need its key
-        (every connection re-exchanges), then run our half."""
+                (every connection re-exchanges), then run our half.
+
+        Args:
+            server_nonce (object): Value used by the operation.
+            force (bool): Value used by the operation.
+        """
         with self._crypto_lock:
             self._crypto_force = force
             self._crypto_server_nonce = server_nonce
@@ -7650,8 +8608,10 @@ class TCP_Client_Base:  # TCP client class
 
     def _crypto_try_flip(self):
         """Flip to framed encryption only when the server key passed the
+
         TOFU check and both sides announced readiness (no plaintext/framed
-        interleaving)."""
+                interleaving).
+        """
         with self._crypto_send_lock:  # no send may interleave with the flip
             with self._crypto_lock:
                 if not (
@@ -7677,13 +8637,24 @@ class TCP_Client_Base:  # TCP client class
 
     @staticmethod
     def _crypto_fresh_nonce():
+        """Handle the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         return secrets.token_hex(16)
 
     def _crypto_after_ack(self, server_needs, force):
         """Server replied to our hello: push our key and request the
+
         server's key (if it needs us to), then signal the exchange
-        thread. Runs under ``_crypto_lock`` so a concurrent handshake
-        cannot interleave (no-GIL safe)."""
+                thread. Runs under ``_crypto_lock`` so a concurrent handshake
+                cannot interleave (no-GIL safe).
+
+        Args:
+            server_needs (object): Value used by the operation.
+            force (bool): Value used by the operation.
+        """
         with self._crypto_lock:
             gen = self._crypto_handshake_gen
             need_push = force or server_needs == "1"
@@ -7700,6 +8671,7 @@ class TCP_Client_Base:  # TCP client class
             self._send_raw(self.client_socket, "/crypto_pub_key_request")
 
         def _wait_done():
+            """Handle the operation."""
             with self._crypto_lock:
                 pub_event = self._crypto_server_pub_event
             if not pub_event.wait(timeout=90):
@@ -7730,7 +8702,12 @@ class TCP_Client_Base:  # TCP client class
 
     def _crypto_push_pub_key(self):
         """Push our public key file to the server via the file-transfer
-        mechanism (client is the sender)."""
+
+        mechanism (client is the sender).
+
+        Returns:
+            bool: Result produced by the operation.
+        """
         while (
             True
         ):  # serialise pushes: wait for a concurrent push (double handshake) instead of skipping it
@@ -7781,9 +8758,15 @@ class TCP_Client_Base:  # TCP client class
 
     def _crypto_store_received_pub(self, full_path, peer_role, server_addr):
         """TOFU-check the server's public key received via the file
+
         transfer mechanism and cache it under the server endpoint.
 
-        On failure the connection is rejected and closed.
+                On failure the connection is rejected and closed.
+
+        Args:
+            full_path (str): Value used by the operation.
+            peer_role (object): Value used by the operation.
+            server_addr (tuple): Value used by the operation.
         """
         if self.crypto is None:
             return
@@ -8013,8 +8996,14 @@ class TCP_Client_Base:  # TCP client class
         """Client console entry point for ``/forward_send_msg`` (client-only).
 
         The forwarding command is only meaningful on a client: it parses the
-        typed request and asks the server (which runs the same-named relay)
-        to push each message to every listed destination.
+                typed request and asks the server (which runs the same-named relay)
+                to push each message to every listed destination.
+
+        Args:
+            command (object): Value used by the operation.
+
+        Returns:
+            NoneType | object: Result produced by the operation.
         """
         parts = shlex.split(command)
         items, addrs = parse_forward_items_and_addrs(parts[1:])
@@ -8046,6 +9035,17 @@ class TCP_Client_Base:  # TCP client class
         return self.send_message(self.client_socket, request)
 
     def _execute_custom_handler(self, handler, command, client_socket=None, client_address=None):
+        """Handle the operation.
+
+        Args:
+            handler (callable): Value used by the operation.
+            command (object): Value used by the operation.
+            client_socket (socket.socket): Value used by the operation.
+            client_address (tuple): Value used by the operation.
+
+        Returns:
+            NoneType | object: Result produced by the operation.
+        """
         try:
             result = handler(client_socket, client_address, command)
             if result is not None:
@@ -8151,6 +9151,11 @@ class TCP_Client_Base:  # TCP client class
             self.close()
 
     def multiple_folder_file_transfer_client_recv_client_start(self, message):
+        """Start folder transfers for each path in a client command.
+
+        Args:
+            message (object): Value used by the operation.
+        """
         transfer_folder_file_list = shlex.split(message)[1:]
         destination_path = None
         if len(transfer_folder_file_list) >= 2 and not os.path.isdir(transfer_folder_file_list[-1]):
@@ -8167,6 +9172,11 @@ class TCP_Client_Base:  # TCP client class
             folder_file_transfer_client_recv_client_start_thread.start()
 
     def folder_file_transfer_client_recv_client_start(self, message):
+        """Send a folder's contents to the connected server.
+
+        Args:
+            message (object): Value used by the operation.
+        """
         command_part = shlex.split(message)
         folder_path = command_part[1]
         destination_path = command_part[2] if len(command_part) >= 3 else None
@@ -8176,6 +9186,12 @@ class TCP_Client_Base:  # TCP client class
         base_path = os.path.dirname(folder_path)
 
         def get_relative_path(base_path, abs_path):
+            """Handle the operation.
+
+            Args:
+                base_path (str): Value used by the operation.
+                abs_path (str): Value used by the operation.
+            """
             base = os.path.normpath(base_path)
             abs_ = os.path.normpath(abs_path)
             common = os.path.commonpath([base, abs_])
@@ -8188,6 +9204,13 @@ class TCP_Client_Base:  # TCP client class
             return "/" + rel
 
         def send_folder_transfer_command(folder_path, file_name=None, abspath=None):
+            """Handle the operation.
+
+            Args:
+                folder_path (str): Value used by the operation.
+                file_name (str): Value used by the operation.
+                abspath (str): Value used by the operation.
+            """
             folder_transfer_command_message = "/file_folder {}".format(shlex.quote(folder_path))
             if file_name:
                 each_file_transfer_command_message = "/file_folder {} {}".format(
@@ -8208,11 +9231,19 @@ class TCP_Client_Base:  # TCP client class
                 self._log(f"start to send folder command: {folder_transfer_command_message}")
 
         def start_file_transfer_with_limit(rel_dir, file, root):
+            """Handle the operation.
+
+            Args:
+                rel_dir (str): Value used by the operation.
+                file (str): Value used by the operation.
+                root (object): Value used by the operation.
+            """
             cmd = f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(file)}"
             if destination_path:
                 cmd += " {}".format(shlex.quote(destination_path))
 
             def limited_transfer():
+                """Handle the operation."""
                 self.file_semaphore.acquire()
                 try:
                     self.file_transfer_client_recv_client_start(cmd, root)
@@ -8224,6 +9255,7 @@ class TCP_Client_Base:  # TCP client class
             self._log(f"start to send file: {cmd} (limit {self.max_thread_num})")
 
         def get_all_files_in_folder():
+            """Handle the operation."""
             for root, dirs, files in os.walk(folder_path):
                 rel_dir = get_relative_path(base_path, root)
                 if root != folder_path:
@@ -8237,6 +9269,11 @@ class TCP_Client_Base:  # TCP client class
         get_all_files_in_folder()
 
     def multiple_file_transfer_client_recv_client_start(self, message):
+        """Start file transfers for each path in a client command.
+
+        Args:
+            message (object): Value used by the operation.
+        """
         file_list = shlex.split(message)[1:]
         destination_path = None
         if len(file_list) >= 2 and not os.path.isfile(file_list[-1]):
@@ -8259,6 +9296,12 @@ class TCP_Client_Base:  # TCP client class
             self._log(f"start to send file command: {each_file_transfer_command_message}")
 
     def file_transfer_client_recv_client_start_thread(self, message, file_folder_abspath=None):
+        """Start a thread to send a file or folder item to the server.
+
+        Args:
+            message (object): Value used by the operation.
+            file_folder_abspath (str): Value used by the operation.
+        """
         file_transfer_client_recv_client_start_thread = threading.Thread(
             target=self.file_transfer_client_recv_client_start,
             args=(message, file_folder_abspath),
@@ -8267,6 +9310,12 @@ class TCP_Client_Base:  # TCP client class
         file_transfer_client_recv_client_start_thread.start()
 
     def file_transfer_client_recv_client_start(self, message, file_folder_abspath):
+        """Send a file or folder item to the connected server.
+
+        Args:
+            message (object): Value used by the operation.
+            file_folder_abspath (str): Value used by the operation.
+        """
         client_id = None
         with self.file_client_id_lock:
             client_id = copy.copy(self.file_client_id)
@@ -8330,27 +9379,26 @@ class TCP_Client_Base:  # TCP client class
     ):
         """Send one file over a transfer sub-connection.
 
-        ``control_socket``/``crypto`` carry the listener's mode stamp
-        ("plain" or "enc:<nonce>"): an encrypted leg aborts when the session
-        key material is missing rather than downgrading silently.
+        Args:
+            filename (str): Source file path.
+            server_address (str): Transfer listener address.
+            server_port (int): Transfer listener port.
+            client_port (int): Local port to bind for the transfer.
+            control_socket (socket.socket | None): Control socket carrying the mode stamp.
+            crypto (str | None): ``"plain"`` or encrypted transfer stamp.
+            fid (int | None): Transfer ID used for progress and pause tracking.
+            peer (tuple | None): Original receiver ``(ip, port)`` for resuming.
+            resume_offset (int): Byte offset to resume from; defaults to zero.
 
-        ``fid`` is the transfer's id — the caller's own transfer id for a plain
-        send, the relay id for a forwarded upload — and keys this leg in
-        ``file_upload_progress``; every leg with a fid can be paused with
-        ``/pause_trans`` for that fid. None (a leg without a protocol transfer
-        id, such as a public-key push) tracks no progress.
-
-        ``peer`` is the transfer's original receiver (the target of a forward,
-        never the relay): it is stored with the progress entry so a later
-        reconnect can be resumed. ``resume_offset`` continues an interrupted
-        transfer from the byte the receiver already holds: the file is read
-        from there instead of its first byte.
+        Returns:
+            bool: True when the receiver acknowledges the file; otherwise False.
         """
         self._log(f"start to send file: {filename}")
         client_file_socket = None
         reset_time = 0
 
         def close_socket():
+            """Handle the operation."""
             nonlocal file_running
             nonlocal client_file_socket
             file_running = False
@@ -8386,6 +9434,7 @@ class TCP_Client_Base:  # TCP client class
         file_receive_data_from_server = ""
 
         def receive_file_transfer_messages():
+            """Handle the operation."""
             nonlocal file_running
             nonlocal client_file_socket
             nonlocal file_receive_data_from_server
@@ -8601,8 +9650,16 @@ class TCP_Client_Base:  # TCP client class
         """Ask the server to have a forward's originator continue a transfer.
 
         The local path is registered before the request goes out: the fresh
-        relay leg arrives under a new fid but writes the same path, and
-        `_take_pending_resume` hands its offset to that leg.
+                relay leg arrives under a new fid but writes the same path, and
+                `_take_pending_resume` hands its offset to that leg.
+
+        Args:
+            fid (int): Value used by the operation.
+            entry (object): Value used by the operation.
+            originator (object): Value used by the operation.
+
+        Returns:
+            bool: Result produced by the operation.
         """
         offset = _resume_offset_for(entry)
         with self._forward_resume_lock:
@@ -8621,10 +9678,16 @@ class TCP_Client_Base:  # TCP client class
         """Return the offset a pending resume of this path starts at, or None.
 
         A forward target that lost a transfer asks its originator to re-send
-        it; the fresh leg the server then pushes carries a new transfer id but
-        lands on the same path, so the state registered by the request is what
-        the leg appends from — and the interrupted entry it replaces is
-        dropped here.
+                it; the fresh leg the server then pushes carries a new transfer id but
+                lands on the same path, so the state registered by the request is what
+                the leg appends from — and the interrupted entry it replaces is
+                dropped here.
+
+        Args:
+            path (str): Value used by the operation.
+
+        Returns:
+            NoneType | object: Result produced by the operation.
         """
         with self._forward_resume_lock:
             pending = self._resume_pending_paths.pop(path, None)
@@ -8640,9 +9703,15 @@ class TCP_Client_Base:  # TCP client class
     def _resume_receive_leg(self, control_socket, peer_addr, fid, entry):
         """Receive the rest of one interrupted transfer, appending to its file.
 
+        Args:
+            control_socket (socket.socket): Value used by the operation.
+            peer_addr (tuple): Value used by the operation.
+            fid (int): Value used by the operation.
+            entry (object): Value used by the operation.
+
         Returns:
-            bool: True when the sender was asked to continue, False when the
-                request could not be sent.
+        bool: True when the sender was asked to continue, False when the
+                        request could not be sent.
         """
         entry[0] = _resume_offset_for(entry)  # the offset the sender is asked for
         self._log(f"resume: continuing transfer {fid} with {peer_addr} into {entry[3]}")
@@ -8703,7 +9772,17 @@ class TCP_Client_Base:  # TCP client class
         return True
 
     def _run_resume_send_leg(self, path, peer_addr, port, stamp, control_socket, fid, offset):
-        """Run one resumed sending leg on its own thread."""
+        """Run one resumed sending leg on its own thread.
+
+        Args:
+            path (str): Value used by the operation.
+            peer_addr (tuple): Value used by the operation.
+            port (int): Value used by the operation.
+            stamp (object): Value used by the operation.
+            control_socket (socket.socket): Value used by the operation.
+            fid (int): Value used by the operation.
+            offset (int): Value used by the operation.
+        """
         client_port = self.palloc()
         try:
             self.file_transfer_mode(
@@ -8721,7 +9800,14 @@ class TCP_Client_Base:  # TCP client class
             self.pfree(client_port)
 
     def _forward_resume_record(self, fid):
-        """Return the relay record a forwarded resume for ``fid`` belongs to."""
+        """Return the relay record a forwarded resume for ``fid`` belongs to.
+
+        Args:
+            fid (int): Value used by the operation.
+
+        Returns:
+            object: Result produced by the operation.
+        """
         with self._forward_resume_lock:
             return self._forward_resume_records.get(fid)
 
@@ -8729,9 +9815,9 @@ class TCP_Client_Base:  # TCP client class
         """Re-drive a forwarded transfer to one target, from ``offset``.
 
         Runs when the server relays a target's resume request
-        (``/forward_resume``): the recorded relay says what the transfer was,
-        so the item is forwarded again — only to the target that asked, and
-        only the remainder of the file it already holds partially.
+                (``/forward_resume``): the recorded relay says what the transfer was,
+                so the item is forwarded again — only to the target that asked, and
+                only the remainder of the file it already holds partially.
 
         Args:
             target (tuple): Target client ``(ip, port)`` that lost the file.
@@ -8739,7 +9825,7 @@ class TCP_Client_Base:  # TCP client class
             offset (int): Byte offset the target already holds.
 
         Returns:
-            bool: True when the re-forward was started.
+        bool: True when the re-forward was started.
         """
         record = self._forward_resume_record(fid)
         with self._forward_resume_lock:
@@ -8773,6 +9859,14 @@ class TCP_Client_Base:  # TCP client class
     # ---- native in-memory forward (client side) ----------------------------
 
     def _forward_parse(self, tokens):
+        """Handle the operation.
+
+        Args:
+            tokens (list | dict): Value used by the operation.
+
+        Returns:
+            list | tuple: Result produced by the operation.
+        """
         items = []
         addrs = []
         for token in tokens:
@@ -8794,7 +9888,13 @@ class TCP_Client_Base:  # TCP client class
         """Split forward console tokens into (items, addrs, destination_path).
 
         Files/folders come first and address tuples last; an optional
-        destination directory, when present, is the very last argument.
+                destination directory, when present, is the very last argument.
+
+        Args:
+            tokens (list | dict): Value used by the operation.
+
+        Returns:
+            list | tuple: Result produced by the operation.
         """
         destination_path = None
         if tokens and not (tokens[-1].startswith("(") and tokens[-1].endswith(")")):
@@ -8804,7 +9904,12 @@ class TCP_Client_Base:  # TCP client class
         return items, addrs, destination_path
 
     def forward_file_console(self, message):
-        """/forward_file <file1> <file2> ... <addr1> <addr2> ... [dest] (client only)."""
+        """Parse a client command and forward its files.
+
+        Args:
+            message (str): ``/forward_file`` command with file paths, target address
+                tuples, and an optional destination directory.
+        """
         parts = shlex.split(message)
         items, addrs, destination_path = self._forward_parse_command(parts[1:])
         files = [p for p in items if os.path.isfile(p)]
@@ -8823,7 +9928,12 @@ class TCP_Client_Base:  # TCP client class
         ).start()
 
     def forward_folder_console(self, message):
-        """/forward_folder <folder1> <folder2> ... <addr1> <addr2> ... [dest] (client only)."""
+        """Parse a client command and forward its folders.
+
+        Args:
+            message (str): ``/forward_folder`` command with folder paths, target address
+                tuples, and an optional destination directory.
+        """
         parts = shlex.split(message)
         items, addrs, destination_path = self._forward_parse_command(parts[1:])
         folders = [p for p in items if os.path.isdir(p)]
@@ -8842,6 +9952,14 @@ class TCP_Client_Base:  # TCP client class
         ).start()
 
     def _forward_driver(self, items, addrs, folder_mode, destination_path=None):
+        """Handle the operation.
+
+        Args:
+            items (list | dict): Value used by the operation.
+            addrs (list | dict): Value used by the operation.
+            folder_mode (bool): Value used by the operation.
+            destination_path (str): Value used by the operation.
+        """
         try:
             if not folder_mode:
                 for path in items:
@@ -8867,6 +9985,15 @@ class TCP_Client_Base:  # TCP client class
             self._log_exc()
 
     def _forward_rel_path(self, base_path, abs_path):
+        """Handle the operation.
+
+        Args:
+            base_path (str): Value used by the operation.
+            abs_path (str): Value used by the operation.
+
+        Returns:
+            object | str: Result produced by the operation.
+        """
         base = os.path.normpath(base_path)
         abs_ = os.path.normpath(abs_path)
         common = os.path.commonpath([base, abs_])
@@ -8883,9 +10010,21 @@ class TCP_Client_Base:  # TCP client class
         """Forward one item to every target through the server's relay.
 
         The relay the server answers with is recorded under its fid so a
-        target that lost the transfer can have it re-driven after a reconnect
-        (`_resume_forward`); ``resume_offset`` re-sends only the remainder of
-        a file the target already holds partially.
+                target that lost the transfer can have it re-driven after a reconnect
+                (`_resume_forward`); ``resume_offset`` re-sends only the remainder of
+                a file the target already holds partially.
+
+        Args:
+            kind (object): Value used by the operation.
+            rel_dir (str): Value used by the operation.
+            fname (object): Value used by the operation.
+            abspath (str): Value used by the operation.
+            addrs (list | dict): Value used by the operation.
+            destination_path (str): Value used by the operation.
+            resume_offset (object): Value used by the operation.
+
+        Returns:
+            bool | object: Result produced by the operation.
         """
         if not os.path.isfile(abspath):
             self._log(f"forward: {abspath} is not a valid file, skipped")
@@ -8955,6 +10094,13 @@ class TCP_Client_Base:  # TCP client class
     def file_folder_transfer_client_recv_server_start_thread(
         self, command, client_id, client_socket
     ):
+        """Start a client-side folder receive operation.
+
+        Args:
+            command (object): Value used by the operation.
+            client_id (object): Value used by the operation.
+            client_socket (socket.socket): Value used by the operation.
+        """
         command_part = shlex.split(command)
         relative_folder_path = command_part[1]
         # >= 4 tokens means a file transfer (/file_folder <rel> <file> [<dest>] <id>);
@@ -8968,6 +10114,13 @@ class TCP_Client_Base:  # TCP client class
         folder_transfer_client_recv_server_start_thread.start()
 
     def file_transfer_client_recv_server_start_thread(self, client_id, client_socket, command):
+        """Start a client-side file receive operation.
+
+        Args:
+            client_id (object): Value used by the operation.
+            client_socket (socket.socket): Value used by the operation.
+            command (object): Value used by the operation.
+        """
         file_transfer_client_recv_server_start_thread = threading.Thread(
             target=self.file_transfer_client_recv_server_start,
             args=(client_id, client_socket, command),
@@ -8978,6 +10131,15 @@ class TCP_Client_Base:  # TCP client class
     def file_transfer_client_recv_server_start(
         self, client_id, client_socket, command, new_save_path=None, file_name=None
     ):
+        """Receive a file pushed by the server.
+
+        Args:
+            client_id (object): Value used by the operation.
+            client_socket (socket.socket): Value used by the operation.
+            command (object): Value used by the operation.
+            new_save_path (str): Value used by the operation.
+            file_name (str): Value used by the operation.
+        """
         file_transfer_server_port = self.palloc()
         self.file_transfer_mode_recv(
             self.host,
@@ -8992,7 +10154,11 @@ class TCP_Client_Base:  # TCP client class
         self.pfree(file_transfer_server_port)
 
     def _own_address_text(self):
-        """Return this client's own ``"ip:port"`` as the server sees it, when known."""
+        """Return this client's own ``"ip:port"`` as the server sees it, when known.
+
+        Returns:
+            NoneType | object: Result produced by the operation.
+        """
         if self.client_socket is not None:
             try:
                 address = self.client_socket.getsockname()
@@ -9007,12 +10173,15 @@ class TCP_Client_Base:  # TCP client class
         """Return the sender a received transfer command belongs to.
 
         A file pushed by the server itself carries this client's own address,
-        which `parse_forward_originator` filters out: the sender is then the
-        server. A forwarded item carries the originating client's address —
-        the original peer a resume asks to continue the transfer.
+                which `parse_forward_originator` filters out: the sender is then the
+                server. A forwarded item carries the originating client's address —
+                the original peer a resume asks to continue the transfer.
+
+        Args:
+            command (object): Value used by the operation.
 
         Returns:
-            tuple: ``(ip, port)`` of the transfer's original sender.
+        tuple: ``(ip, port)`` of the transfer's original sender.
         """
         originator = parse_forward_originator(command, own_address=self._own_address_text())
         peer = _peer_from_text(originator) if originator else None
@@ -9032,15 +10201,20 @@ class TCP_Client_Base:  # TCP client class
     ):
         """Receive one file over a transfer sub-connection.
 
-        ``peer`` is the transfer's original sender (the server for a pushed
-        file, the originating client for a forwarded one — never the relay):
-        it is stored with the progress entry so a later reconnect can ask that
-        peer to continue the file.
+        Args:
+            server_file_address (str): Local address for the transfer listener.
+            server_file_port (int): Local port for the transfer listener.
+            client_socket (socket.socket): Server control socket.
+            client_id (str): Sender identifier supplied by the server.
+            new_save_path (str | None): Relative directory for folder contents.
+            file_name (str | None): Destination filename, when specified.
+            command (str): Wire command that initiated the transfer.
+            peer (tuple | None): Original sender ``(ip, port)`` for resuming.
+            resume_entry (list | None): Saved progress entry for a resumed file.
 
-        ``resume_entry`` continues an interrupted transfer: the listener
-        announces itself, asks the sender to continue from the bytes already
-        on disk (``RESUME_LINE``) and appends the incoming chunks to the
-        partial file instead of truncating it.
+        Returns:
+            None | bool: None after starting or finishing; False when a resume request
+                cannot be sent.
         """
         file_running = True
         client_file_socket = None
@@ -9048,6 +10222,7 @@ class TCP_Client_Base:  # TCP client class
         save_path = None
 
         def close_socket():
+            """Handle the operation."""
             nonlocal file_running
             nonlocal client_file_socket
             nonlocal server_file_socket
@@ -9057,6 +10232,7 @@ class TCP_Client_Base:  # TCP client class
             server_file_socket.close()
 
         def setting_file_save_path():
+            """Handle the operation."""
             nonlocal save_path
             save_path = self.file_transfer_dir
             if new_save_path or destination_path:
@@ -9078,6 +10254,11 @@ class TCP_Client_Base:  # TCP client class
             return None
 
         def file_transfer_client_recv(client_id):
+            """Handle the operation.
+
+            Args:
+                client_id (object): Value used by the operation.
+            """
             nonlocal file_running
             nonlocal client_file_socket
             nonlocal server_file_socket
@@ -9352,15 +10533,15 @@ class TCP_Client_Base:  # TCP client class
         """Close the socket a finished session left behind.
 
         An auto-reconnect binds the configured ``client_port`` again, so the
-        dead session's socket must go away completely: it is closed abortively
-        (``SO_LINGER`` on with a zero timeout, which the TCP stack turns into a
-        RST and which skips ``TIME_WAIT`` entirely). A socket that only gets
-        shut down keeps the port, and an ordinary close leaves the local port
-        in ``TIME_WAIT`` — Windows then refuses to bind or connect from it
-        again (``WSAEADDRINUSE``) for the whole two-minute delay.
+                dead session's socket must go away completely: it is closed abortively
+                (``SO_LINGER`` on with a zero timeout, which the TCP stack turns into a
+                RST and which skips ``TIME_WAIT`` entirely). A socket that only gets
+                shut down keeps the port, and an ordinary close leaves the local port
+                in ``TIME_WAIT`` — Windows then refuses to bind or connect from it
+                again (``WSAEADDRINUSE``) for the whole two-minute delay.
 
-        The receive thread of that session has already ended when this runs, so
-        nothing needs the shutdown a graceful close would perform.
+                The receive thread of that session has already ended when this runs, so
+                nothing needs the shutdown a graceful close would perform.
         """
         sock = self.client_socket
         if sock is None:
