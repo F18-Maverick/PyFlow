@@ -74,8 +74,14 @@ The parameters of the ``__init__`` method are as follows:
 - ``is_enable_file_transfer_progress_bar``: A flag indicating whether every
   running file transfer is tracked in ``file_recv_progress`` (downloads) and
   ``file_upload_progress`` (uploads). Each entry is a
-  ``[transferred bytes, total bytes, current speed, file name]`` list keyed by the
-  transfer's fid, and is removed once the transfer ends.
+  ``[transferred bytes, total bytes, current speed, local file path, peer]``
+  list keyed by the transfer's fid — ``peer`` is the ``(ip, port)`` of the
+  transfer's original sender (downloads) or receiver (uploads), never the
+  relay of a forwarded transfer. The entry is removed once the transfer ends;
+  an interrupted one keeps its entry (and its partial file) so the reconnect
+  logic can resume it.
+  ``file_trans_progress_file`` names the file under the protocol's ``.Flow``
+  directory these stores are written to when the connection drops.
 - ``is_enable_real_time_network_speed``: A flag indicating whether the
   protocol's real-time network speed is measured. With ``True`` (the default)
   every send and receive — the control layer and every temporary connection,
@@ -89,7 +95,10 @@ Every parameter has default values:
 - ``host``: Default is ``None`` (must be provided before connecting)
 - ``client_host``: Default is ``'127.0.0.1'``
 - ``port``: Default is ``65432``
-- ``client_port``: Default is ``None`` (OS assigns ephemeral port)
+- ``client_port``: Default is ``None`` (OS assigns ephemeral port). A
+  configured port that cannot be bound — a session that just ended can hold
+  it in the operating system's ``TIME_WAIT`` — is reported and the connection
+  is made from an OS-assigned port instead.
 - ``timeout``: Default is ``None``
 - ``port_add_step``: Default is ``1``
 - ``max_thread_num``: Default is ``10``
@@ -117,6 +126,11 @@ Every parameter has default values:
   (``False`` records no transfer progress)
 - ``is_enable_real_time_network_speed``: Default is ``True``
   (``False`` measures no speed; every speed value is ``None``)
+- ``is_auto_reconnect``: Default is ``False``
+  (``True`` makes `start_TCP_client` reconnect after the connection drops and
+  resume the interrupted transfers, see :ref:`transfer-pause-and-reconnect`.
+  The dead session's socket is closed abortively first, so a configured
+  ``client_port`` can be bound again — Windows refuses it otherwise)
 
 The TCP Client Setup API will initialize all the necessary 
 parameters and resources for the TCP client.
@@ -724,10 +738,13 @@ And the low-level send mode function is:
 .. code-block:: python
 
     def file_transfer_mode(
-        self, filename, server_address, server_port, client_port, pause_fid=None)
+        self, filename, server_address, server_port, client_port,
+        control_socket=None, crypto=None, fid=None, peer=None, resume_offset=0)
 
-``pause_fid`` is the forwarding id used to pause/resume the transfer with
-``/pause_trans`` / ``/start_trans``.
+``fid`` keys the leg in ``file_upload_progress`` and is what
+``/pause_trans`` / ``/start_trans`` (or `pause_trans` / `start_trans`)
+addresses; ``peer`` is the transfer's original receiver and ``resume_offset``
+continues an interrupted file from the byte the receiver already holds.
 
 We recommend that for client-to-server file transfers, 
 you use the console commands (``/file``, ``/file_folder``, 
@@ -846,8 +863,13 @@ is as follows:
     - `file_transfer_client_recv_server_start`
     - `file_transfer_client_recv_server_start_thread`
     - `file_folder_transfer_client_recv_server_start_thread`
-    - `file_transfer_mode_recv`
     - `file_transfer_mode`
+
+5.1. The transfer pause and reconnect APIs (see
+  :ref:`transfer-pause-and-reconnect`):
+    - `pause_trans` / `start_trans`
+    - `pause_trans_remote` / `start_trans_remote`
+    - `resume_transfers` / `resume_trans`
 
 6. The client console commands (interactive mode):
     - `/quit`

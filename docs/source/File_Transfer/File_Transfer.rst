@@ -647,20 +647,25 @@ Both classes record every running file transfer:
 The keys are the transfers' fids: the transfer id the sender stamps on the
 transfer command (``/file <path> <id>``), which also identifies the relay leg
 of a forwarded file. The protocol-internal public-key push is not tracked.
-Each value is a four-item list:
+Each value is a five-item list:
 
 - ``[0]``: bytes transferred so far;
 - ``[1]``: total size of the file, in bytes;
 - ``[2]``: the current network speed of that direction — ``None`` until the
   transfer has moved its first chunk, and while
   ``is_enable_real_time_network_speed`` is ``False``;
-- ``[3]``: name of the file being transferred.
+- ``[3]``: local path of the file: the source of an outbound transfer, the
+  file being written for an inbound one;
+- ``[4]``: the ``(ip, port)`` of the transfer's original peer — the sender in
+  a download's entry, the receiver in an upload's. A forwarded transfer
+  stores the original peer on both sides, never the relaying server.
 
 An entry appears when a transfer starts and is removed when it ends, so the
 stores hold exactly the transfers that are in flight at that moment (iterate
 over a copy while transfers are running). With
 ``is_enable_file_transfer_progress_bar`` set to ``False`` no entry is ever
-recorded.
+recorded — and, since the stores are the state a reconnect resumes from, no
+transfer can be resumed either.
 
 ``is_enable_real_time_network_speed`` (``True`` by default) measures the
 protocol's current traffic — the control layer and every temporary
@@ -673,6 +678,44 @@ The web tool (``transfer_web``) reads these stores: both backends serve
 ``/api/transfers`` (the rows plus the two speed attributes), and the shared
 frontend renders the live speed readout in the topbar and one progress bar per
 running transfer.
+
+.. _transfer-pause-and-reconnect:
+
+Pausing, Reconnecting and Resuming Transfers
+--------------------------------------------
+
+An outbound transfer can be held and released at any time with the
+``pause_trans(fid)`` and ``start_trans(fid)`` methods (both classes), or from
+the peer with the ``/pause_trans <fid>`` and ``/start_trans <fid>`` lines:
+``pause_trans_remote(peer, fid)``/``start_trans_remote(peer, fid)`` send them.
+The leg stops before its next chunk and stays open; a leg that is paused
+keeps its socket, so nothing is torn down. Every outbound transfer honours
+its own fid — a plain upload as much as the upload leg of a forwarded file —
+so the flow control the server uses on a relay works on any transfer.
+
+The temporary connections of a transfer are resumed after a disconnect:
+
+- when a connection drops, both sides write their transfer stores to
+  ``.Flow/server_file_trans_progress.json`` /
+  ``.Flow/client_file_trans_progress.json`` (the ``file_trans_progress_file``
+  attribute) — every upload, every download and, on the server, the relay
+  records a disconnected forward is re-driven from;
+- an interrupted transfer keeps its progress entry and its partial file
+  instead of dropping them, so the file on disk is exactly the state to
+  continue from;
+- after a reconnect the receiver drives the resume (`resume_transfers`): it
+  opens a fresh transfer listener, announces it and sends
+  ``/resume_trans <fid> <offset>`` with the byte offset its partial file
+  holds. The sender re-establishes the leg, reads its source from that offset
+  and only the remainder of the file travels. A forwarded transfer is asked
+  for through the server, which routes ``/forward_resume`` to the originating
+  client so it re-forwards just the missing part.
+
+The server resumes a peer's transfers when it reconnects, and a client with
+``is_auto_reconnect=True`` reconnects on its own and resumes every transfer it
+can reach; `resume_transfers` is public, so an application can also drive the
+resume itself. Legs the previous session left behind are closed before the
+resume runs, so two legs never write the same transfer.
 
 .. _related-apis:
 
@@ -755,9 +798,14 @@ file to disk.
 .. code-block:: python
 
     def file_transfer_mode(
-        self, filename, server_address, server_port, client_port, pause_fid=None, fid=None)
+        self, filename, server_address, server_port, client_port,
+        control_socket=None, crypto=None, fid=None, peer=None, resume_offset=0)
 
 Low-level send function that connects to the receiver and transmits the file.
+``fid`` keys the leg in ``file_upload_progress`` and is what
+``/pause_trans`` / ``/start_trans`` addresses; ``peer`` is the transfer's
+original receiver and ``resume_offset`` continues an interrupted file from
+the byte the receiver already holds.
 
 ### Client-Side File Transfer APIs
 
@@ -823,7 +871,8 @@ Low-level receive function on the client side.
 .. code-block:: python
 
     def file_transfer_mode(
-        self, filename, server_address, server_port, client_port, pause_fid=None, fid=None)
+        self, filename, server_address, server_port, client_port,
+        control_socket=None, crypto=None, fid=None, peer=None, resume_offset=0)
 
 Low‑level send function on the client side (identical to server's version).
 
@@ -844,6 +893,9 @@ reference.
 - ``multiple_file_multiple_client_transfer_server_recv_client_start``
 - ``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``
 - ``file_folder_transfer_server_recv_server_start_thread`` (folder receiving)
+- ``pause_trans`` / ``start_trans`` (hold and release an outbound transfer)
+- ``pause_trans_remote`` / ``start_trans_remote`` (ask a client to do it)
+- ``resume_transfers`` / ``resume_trans`` (continue interrupted transfers)
 
 (The low-level helpers
 ``file_transfer_server_recv_server_start``,
@@ -861,6 +913,9 @@ public but are documented for completeness.)
 - ``file_transfer_client_recv_server_start``
 - ``file_transfer_client_recv_server_start_thread``
 - ``file_folder_transfer_client_recv_server_start_thread``
+- ``pause_trans`` / ``start_trans`` (hold and release an outbound transfer)
+- ``pause_trans_remote`` / ``start_trans_remote`` (ask the server to do it)
+- ``resume_transfers`` / ``resume_trans`` (continue interrupted transfers)
 
 (The low-level helpers are documented but not part of the
 public API.)

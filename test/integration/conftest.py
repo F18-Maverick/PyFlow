@@ -1,5 +1,5 @@
 import pytest
-from helpers import free_port
+from helpers import free_port, isolate_instance_files
 
 import PyFlow.command_control_extension_tcp as ctl
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
@@ -7,12 +7,13 @@ from PyFlow.network_api.connect_udp import UDP
 
 
 @pytest.fixture
-def server(monkeypatch):
+def server(monkeypatch, tmp_path):
     """Create a TCP_Server_Base and inject into command_control_extension_tcp.server_instance.
 
     Use this fixture when a test only needs a server instance.
     """
     s = TCP_Server_Base(host="127.0.0.1", port=free_port(), is_extend_command=True)
+    isolate_instance_files(s, tmp_path, "server")
     monkeypatch.setattr(ctl, "server_instance", s)
     try:
         yield s
@@ -21,7 +22,7 @@ def server(monkeypatch):
 
 
 @pytest.fixture
-def client(monkeypatch):
+def client(monkeypatch, tmp_path):
     """Create a TCP_Client_Base and inject into command_control_extension_tcp.client_instance.
 
     Use this fixture when a test only needs a client instance.
@@ -29,6 +30,7 @@ def client(monkeypatch):
     c = TCP_Client_Base(
         host="127.0.0.1", port=free_port(), client_host="127.0.0.1", is_extend_command=True
     )
+    isolate_instance_files(c, tmp_path, "client")
     monkeypatch.setattr(ctl, "client_instance", c)
     try:
         yield c
@@ -37,7 +39,7 @@ def client(monkeypatch):
 
 
 @pytest.fixture
-def server_client(monkeypatch):
+def server_client(monkeypatch, tmp_path):
     """Create both server and client and inject both module globals.
 
     Use this when a test requires both sides present.
@@ -46,6 +48,8 @@ def server_client(monkeypatch):
     c = TCP_Client_Base(
         host="127.0.0.1", port=free_port(), client_host="127.0.0.1", is_extend_command=True
     )
+    isolate_instance_files(s, tmp_path, "server")
+    isolate_instance_files(c, tmp_path, "client")
     monkeypatch.setattr(ctl, "server_instance", s)
     monkeypatch.setattr(ctl, "client_instance", c)
     try:

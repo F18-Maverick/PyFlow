@@ -40,3 +40,16 @@ def free_port():
             _recent_ports.append(port)
             return port
     raise RuntimeError("the OS kept handing out recently used ports")
+
+
+def isolate_instance_files(instance, tmp_path, name):
+    """Point one instance's logs and transfer progress file at a temp directory.
+
+    Every instance defaults to the same files under the protocol's project
+    directory: concurrent instances would race on them, and a fresh client
+    would read (and resume) the interrupted transfers another test left
+    behind.
+    """
+    instance.messages_log_file = str(tmp_path / f"{name}_messages_log.json")
+    instance.events_log_file = str(tmp_path / f"{name}_events_log.json")
+    instance.file_trans_progress_file = str(tmp_path / f"{name}_file_trans_progress.json")

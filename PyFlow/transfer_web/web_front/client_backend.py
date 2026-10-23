@@ -261,7 +261,7 @@ def _channel_ready(client):
 
 
 def _transfer_rows(progress):
-    """JSON rows for one progress store (``fid -> [transferred, total, speed, name]``).
+    """JSON rows for one progress store (``fid -> [transferred, total, speed, path, peer]``).
 
     Returns:
         list[dict]: One row per running transfer, ordered by file name.
@@ -271,7 +271,7 @@ def _transfer_rows(progress):
         rows.append(
             {
                 "fid": fid,
-                "name": entry[3],
+                "name": os.path.basename(str(entry[3])),
                 "transferred": entry[0],
                 "total": entry[1],
                 "speed": entry[2],

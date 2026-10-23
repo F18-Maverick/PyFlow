@@ -79,8 +79,14 @@ The parameters of the ``__init__`` method are as follows:
 - ``is_enable_file_transfer_progress_bar``: A flag indicating whether every
   running file transfer is tracked in ``file_recv_progress`` (downloads) and
   ``file_upload_progress`` (uploads). Each entry is a
-  ``[transferred bytes, total bytes, current speed, file name]`` list keyed by the
-  transfer's fid, and is removed once the transfer ends.
+  ``[transferred bytes, total bytes, current speed, local file path, peer]``
+  list keyed by the transfer's fid — ``peer`` is the ``(ip, port)`` of the
+  transfer's original sender (downloads) or receiver (uploads), never the
+  relay of a forwarded transfer. The entry is removed once the transfer ends;
+  an interrupted one keeps its entry (and its partial file) so the reconnect
+  logic can resume it.
+  ``file_trans_progress_file`` names the file under the protocol's ``.Flow``
+  directory these stores are written to when a connection drops.
 - ``is_enable_real_time_network_speed``: A flag indicating whether the
   protocol's real-time network speed is measured. With ``True`` (the default)
   every send and receive — the control layer and every temporary connection,
@@ -589,7 +595,13 @@ Built-in client commands include:
 - ``/crypto_mode <0|1>``, ``/crypto_pub_key``, ``/crypto_pub_key_request``:
   internal handshake messages of the encrypted channel.
 - ``/forward_item``, ``/forward_send_msg``, ``/pause_trans``, ``/start_trans``:
-  internal forwarding/transfer-control messages.
+  internal forwarding/transfer-control messages. ``/pause_trans <fid>`` and
+  ``/start_trans <fid>`` hold and release the outbound transfer with that fid
+  (`pause_trans`/`start_trans` are the same switch as a public API).
+- ``/resume_trans <fid> <offset>`` and ``/forward_resume <addr> <fid> <offset>``:
+  internal transfer-reconnect messages: the receiver asks the sender (or, for
+  a forwarded transfer, the originator) to continue the file from the bytes
+  already on disk. See `resume_transfers`.
 - ``/server_file_transfer_port <port> <client_id>``: internal protocol message used to coordinate file transfer ports.
 
 In `handle_command`, the server will first 
@@ -1041,6 +1053,14 @@ are as follows:
     - `folder_file_transfer_server_recv_client_start`
     - `multiple_file_multiple_client_transfer_server_recv_client_start`
     - `diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start`
+    - `file_transfer_mode` / `file_transfer_mode_recv`: one transfer leg
+    - `forward_item_to` / `forward_message_to`: single forward destinations
+
+5.1. The transfer pause and reconnect APIs (see
+  :ref:`transfer-pause-and-reconnect`):
+    - `pause_trans` / `start_trans`
+    - `pause_trans_remote` / `start_trans_remote`
+    - `resume_transfers` / `resume_trans`
 
 6. The server console commands:
     - `/stop`

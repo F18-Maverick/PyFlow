@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PyFlow \n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2026-10-01 18:19+0800\n"
+"POT-Creation-Date: 2026-10-20 09:30+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language: ru\n"
@@ -21,156 +21,155 @@ msgstr ""
 "Generated-By: Babel 2.18.0\n"
 
 #: ../../source/api/PyFlow.network_api.connect_tcp.rst:2
-#: 59f41330dfa54a88831a20f4dc97c0f6
+#: 1e4cd09ce3ef45ceb95b8eb81eb7493b
 msgid "PyFlow.network\\_api.connect\\_tcp module"
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp:1 dca225f091cb4dd1810a8bd04c3a5004 of
+#: 25b88cdb337c44539a843c674ba6825b PyFlow.network_api.connect_tcp:1 of
 msgid ""
 "TCP transport for PyFlow: the server and client base classes and the wire"
 " parsers."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp:3 d5888d829f2e4850926eb364ede4678e of
+#: 1f1482fc5c2849a68f34c74a8b55ab79 PyFlow.network_api.connect_tcp:3 of
 msgid ""
 "``TCP_Server_Base`` accepts connections and dispatches inbound lines; "
 "``TCP_Client_Base`` connects, sends and reads on the same conventions:"
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp:6 bd065af9d94b44298f9716ca96809b8c of
+#: 104e5170c1c34bf9ad719f896e0c4226 PyFlow.network_api.connect_tcp:6 of
 msgid ""
-"one message per line, terminated by a newline; a line that starts with "
-"``/`` is a command and goes to the command handlers, anything else is a "
-"plain message reported to the registered message listeners;"
+"one message per line, terminated by a newline; every inbound line is "
+"reported to the registered message listeners (commands included), and a "
+"line that starts with ``/`` is then dispatched to the command handlers, "
+"anything else treated as a plain message;"
 msgstr ""
 
-#: 91ea1db95e554f2fbd2c1e92eb2d1353 PyFlow.network_api.connect_tcp:9 of
+#: 6c6c01958e5741e080edcb804b4d12d1 PyFlow.network_api.connect_tcp:10 of
 msgid ""
-"an RSA-encrypted channel is negotiated right after connect unless "
-"``is_enable_encrypto`` is False;"
+"unless ``is_enable_encrypto`` is False, an encrypted channel is "
+"negotiated right after connect: the handshake lines and the public-key "
+"pushes stay plaintext, then every later message travels as a frame (RSA-"
+"OAEP for small text payloads, an ECDH-keyed AES-GCM seal for everything "
+"else, including file data), and each file/folder transfer sub-connection "
+"is framed the same way once both sides hold the session keys (see "
+"`_SecureChannel`);"
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp:11 dfcece05b6774c5496b99d6c08039fce of
+#: 9702905f1f8a4750905b2ffb96f99ec8 PyFlow.network_api.connect_tcp:16 of
 msgid ""
 "file/folder transfer, message forwarding and port allocation are layered "
-"on the same socket and share its command namespace."
+"on the same socket and share its command namespace;"
 msgstr ""
 
-#: 89db462eaa88489c9390ddfa67a77a73 PyFlow.network_api.connect_tcp:14 of
+#: 3488995e2a8349a58393d9f2d1155b99 PyFlow.network_api.connect_tcp:18 of
+msgid ""
+"an interrupted transfer is resumed after a disconnect: both sides persist"
+" their transfer stores under the protocol's ``.Flow`` directory and the "
+"receiver asks the sender to continue the file from the bytes already on "
+"disk (``resume_transfers``; the wire lines are ``/resume_trans`` and "
+"``/forward_resume``)."
+msgstr ""
+
+#: 4cc5743bdfe54148ad38f54f10e688c9 PyFlow.network_api.connect_tcp:24 of
 msgid ""
 "The forwarding extensions use the module-level parsers "
 "`parse_forwarded_message`, `parse_forward_items_and_addrs`, "
-"`parse_forward_originator` and `forward_skip_message`."
+"`parse_forward_originator` and `forward_skip_message`; the reconnect "
+"logic uses `parse_resume_command`, `parse_forward_resume_command` and "
+"`_resume_offset_for`."
 msgstr ""
 
-#: 98c270e82fa8468487e1b4d25bab8c0c PyFlow.network_api.connect_tcp:18 of
+#: 49796529cb7f49ee8131b257212b5420 PyFlow.network_api.connect_tcp:30 of
 msgid ""
 "Concepts live in ``docs/source/Network_APIs/TCP_Server_APIs.rst`` and "
 "``TCP_Client_APIs.rst``; argument, return and exception contracts live in"
 " the docstrings below."
 msgstr ""
 
-#: 76126c02e928423b89dc4662d9a190f2
+#: 39274682c4bd46489ed6fe535b50ede5
+#: PyFlow.network_api.connect_tcp.parse_resume_command:1 of
+msgid "Split a ``/resume_trans <fid> <offset>`` line."
+msgstr ""
+
+#: ../../source/api/PyFlow.network_api.connect_tcp.rst
+#: 14dcda8b059b480982e3fb03399e665b 99035a24f6e94207b84545f8c71a451e
+#: cb62202c244d4c08974c674c13a02dca
+msgid "Returns"
+msgstr ""
+
+#: 09b385f0a98640c981d8563427e44d7e
+#: PyFlow.network_api.connect_tcp.parse_resume_command:3 of
+msgid "``(fid, offset)``, or None when the line is malformed."
+msgstr ""
+
+#: ../../source/api/PyFlow.network_api.connect_tcp.rst
+#: 19eb6fca79324b0791f8ec7488a5246c
+msgid "Return type"
+msgstr ""
+
+#: 39274682c4bd46489ed6fe535b50ede5
+#: PyFlow.network_api.connect_tcp.parse_forward_resume_command:1 of
+msgid "Split a ``/forward_resume <addr> <fid> <offset>`` line."
+msgstr ""
+
+#: 09b385f0a98640c981d8563427e44d7e
+#: PyFlow.network_api.connect_tcp.parse_forward_resume_command:3 of
+msgid "``(target, fid, offset)``, or None when the line is     malformed."
+msgstr ""
+
+#: 04a0882a3a5e4099a114728b4d1c79c0
+#: PyFlow.network_api.connect_tcp.parse_forward_resume_command:5 of
+msgid "``(target, fid, offset)``, or None when the line is"
+msgstr ""
+
+#: 4ead8d8f93644adeb812150e760f7792
+#: PyFlow.network_api.connect_tcp.parse_forward_resume_command:6 of
+msgid "malformed."
+msgstr ""
+
+#: 39274682c4bd46489ed6fe535b50ede5
 #: PyFlow.network_api.connect_tcp.parse_forwarded_message:1 of
 msgid "Split a ``/send_msg_from <addr> <payload>`` relay envelope."
 msgstr ""
 
 #: ../../source/api/PyFlow.network_api.connect_tcp.rst
-#: 0e9ae2e0bd0c44da835c0999abec5f08 1aaf58afc7f043919f411c02d435031d
-#: 1c819a8207464e439fd4675d1b823409 1d2cff780d6642deb6ab5fbf32c34185
-#: 1e24bfa274504842b67c3cb0c7a37118 26160724c12740ecbe3cc707bc46c197
-#: 2edb81613e9c4bd0949f5d6efa1a542f 30a7ccf5e56e4640a7a6e592d13a4f7c
-#: 3514f6292626456eb4b0c31a30e24cf5 38d82b9bc4414212a8458de940d3b69b
-#: 406f1bd372c14cd897f0d2dc1fdc8fd7 4400798a6d9d41a89b686b015f53a454
-#: 54f261fe47134a9494f12b5053492006 5e9d8d1799714d389a6fd79edd0e5bac
-#: 6239fd721a0f476aaf509ab580317c75 6658645eabff4ba6b0b326727f89a4f1
-#: 6f375e9a65e04034a4fd1475f3073e42 70b19bc5e5da467dbbae99d81fe54ed7
-#: 79e2d4be536b429cbbfe5016df915b72 7c3cf59acfe34a15a6c920a0f58ec56f
-#: 822df543855349c2993aabd5596b5383 8245849b603f4313a3ea2423abd5c899
-#: 83eba13f6fae4ded929924151baa0c52 9449c184a2e145909d2e1f114534253d
-#: 9a393c8c90d0446a97c34af1c173f83d 9cdc7d0b4bc2400498e9c57ed16ba459
-#: a2ddcff09d1641b5b269ec31031008f9 a5cbf7c6c5b0494b8652be7d28a7b3d1
-#: a9ec9ede7c8144ddb920261d29edc23d b5b42f99934e4b0b939671c6fb08f748
-#: b630deb98dea40c28f1cb88dcbfdb261 b6e3a01b0f044a15a7d322c63f58c262
-#: bb3b7e5558c74c8eb287944b93b9c664 bd95cc8d5960426e92ad149ce0ecaeb4
-#: be47c4f21d4d4515be0684c6c1215c0c cdebf66a7b714ef39236c1dc9773c8f7
-#: d02c1be3236b424f87b75728f76d672c d5b3f5bf790c4fc6aefb763d9c473474
-#: da6cef9244b1429881584994b097c71a e98998d054b74d0e820367ea5de54d02
-#: ea4e1b708c2f409f89bf4ca2a6e4fbf3 ebca3c62590345118f3fe5a8d85ce154
-#: ebcdb45484b64f7f9023808632316025 efca1ecd18f440db9489b40ae6480409
-#: f7766cda09fd4c0bb6b565f5fa4a3688 fe80dd07199943c784dd488826f958b7
+#: 4fa9ba6e763440b8ab00832520b4d305 501a0caef71d436e84469bc1ef9c1e5f
+#: 70d6dae11a144ed7b7e9d8e16dbf478c acdf8b3b266f4eccb6ceca17a110603b
 msgid "Parameters"
 msgstr ""
 
-#: 35b277cd5b2249dc8b38c36654b1f75a
-#: PyFlow.network_api.connect_tcp.parse_forwarded_message:3 of
+#: PyFlow.network_api.connect_tcp.parse_forwarded_message:3
+#: e42a6166c82d4861b25cb55f587db28c of
 msgid "Received line, e.g. ``/send_msg_from ('127.0.0.1', 3000) hello``."
 msgstr ""
 
-#: ../../source/api/PyFlow.network_api.connect_tcp.rst
-#: 0cd9914c895f4b308548863df6d8c13c 113c57937f6f402da7758e74266680ea
-#: 139720899e024d348d0b43b9af2b2ef7 2cb731c57fb64497a6424e4e51fe17bb
-#: 30c59afde30c44428a97266ca87baa21 3f574beaf02948d599ffd8c50922e530
-#: 40e4cbf377a94cf8803c13b2f01dbc77 4aa76ebde46243b18f2a5d811d902d1e
-#: 4d5706674a0c40a99769b5cfba21b29d 5518a67cc7364710b2b0c03f6de9de1b
-#: 564a8841a88d40e0a44b1b0d72a0b3a4 56e96f344ac14995adeb056f90d3e39a
-#: 638d047aee4d45a689f4a54f8d2be451 6e5db10681f24a01a208604d8de1ecf4
-#: 6ea11f9fd50e46f8aef42a25872d8d47 833d97bdb57049979db335d24819041a
-#: a00fef59262447aa931fe606e260a7ab a9795b94ba634cb8a7dc1fd6a7e6f326
-#: b1a77959b26540128ea564370170744f b1e2a43372ac48fe9a367121a736eaee
-#: b2f18766a5ec40d69bfd15b13fa54aa2 b963bb66a63649d5b5cc0ce3d852aab4
-#: c1bd9b5e40e644e3a1f1198e5d2247c2 d558170070474bcb9d798b72d878f185
-#: d86bf79c265c42ec969d2c8058f20a3c d906d179eca24642883fb6ff991399b8
-#: ddfeae931eb14b529e08b61ae9de5aaf ecb12ada91914625a7c5e9894b67886f
-#: f8e1381487764684b80cbc9d8f6a511c fa2587a106c540d1a870afc4a3ae97b7
-msgid "Returns"
-msgstr ""
-
-#: 24de94d25531410aa507869ac615529b
-#: PyFlow.network_api.connect_tcp.parse_forwarded_message:7 of
+#: PyFlow.network_api.connect_tcp.parse_forwarded_message:7
+#: f25d1962656c4f339805427e2573f84f of
 msgid ""
 "``(sender_id, payload)`` where ``sender_id`` is the     sender's "
 "``\"ip:port\"``, or None when the line is not a well-formed     envelope."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.parse_forwarded_message:9
-#: f4818c7037924b089072be17dbe65cda of
+#: d0d7af37e4134902ae64e10b2e43b4c1 of
 msgid "``(sender_id, payload)`` where ``sender_id`` is the"
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.parse_forwarded_message:10
-#: e4ce35611cb240c382217f2166803af1 of
+#: 09b385f0a98640c981d8563427e44d7e
+#: PyFlow.network_api.connect_tcp.parse_forwarded_message:10 of
 msgid ""
 "sender's ``\"ip:port\"``, or None when the line is not a well-formed "
 "envelope."
 msgstr ""
 
-#: ../../source/api/PyFlow.network_api.connect_tcp.rst
-#: 0f2c39309f3e47aa9157bf244f35d1e6 126027ff5c8b494e8223688394767c35
-#: 15e8f6af90d84f4c99e9a9706f995a3f 18eed5a02c0346f6966237e6812afce0
-#: 208eff4f470f474395ac42a58f179feb 308f9ffcdfe2443cb6fe0f3a79e7d4b3
-#: 30fd0d7f7d9547149d06568b9ae4b217 34500bb5a5ea4428ba3ba1f34f8555f3
-#: 357fa966af0e4661a01d3a18b3686c63 38f178d3602f47bcbf100a047fc22ccc
-#: 4268152920654e59975b69aed4638761 43cc49d0a3b2478f8a24fcdea7c2ce78
-#: 448b06753df84443af4aae1dcb008d56 4530cc6fc87d4dbcb79dd0e90ea83694
-#: 496c6102672e49fc96cd7210ed1ec602 502647c8224842608ded5058bf1c6748
-#: 574093f9f9054b898b9ab8b20a239a40 5882a32ac8a34ab7b568b256092e1aca
-#: 73e564d3b91d42388f95effb067d6218 7f2f462183d442c98c624d6750d86319
-#: 8203a323a9af48edb0f9e91ca6260ed6 87a376020e0a47fb90cc4f2d9b045d7c
-#: 8f12aa18be1a4aaf97b8db14f282a929 a61c3c1917b8486bad659991683c48cb
-#: a9e445f3a3094e3bb7957551bcf7fd21 c0afcff99bfc47f3ba7a3f0b3e836444
-#: c4d251b617f2419cb1093f6896b14cb8 d4bc332ce5f34c61b3105fb392b302e5
-#: e9a98b5852d84cf4939d9ea0f17b038c f17ca1aa780b447cb305e1db1c181efb
-msgid "Return type"
-msgstr ""
-
-#: 1ad7def88bd34ce7accca28c4d123b79
-#: PyFlow.network_api.connect_tcp.parse_forward_items_and_addrs:1 of
+#: PyFlow.network_api.connect_tcp.parse_forward_items_and_addrs:1
+#: f22254d8ca2d47ad8bc9c98664369d61 of
 msgid "Split forward-command tokens into items and destination addresses."
 msgstr ""
 
-#: 67578e526f0b4dfc924c46a44e7bea78
-#: PyFlow.network_api.connect_tcp.parse_forward_items_and_addrs:3 of
+#: PyFlow.network_api.connect_tcp.parse_forward_items_and_addrs:3
+#: b207f60051004834bab91ba392a88437 of
 msgid ""
 "A token of the form ``('ip', port)`` is a destination, everything else is"
 " a forwarded item (message text or a path). Used by the native message "
@@ -178,252 +177,326 @@ msgid ""
 "extension."
 msgstr ""
 
-#: 18a87e9cbc124ce5a6f91d61a72fc6de
+#: 5329fb72f5954768a6cec05ff4cccfea
 #: PyFlow.network_api.connect_tcp.parse_forward_items_and_addrs:7 of
 msgid "Tokens after the command name."
 msgstr ""
 
-#: 0e46577c966b41c4ad6f0aea95fd7e5c
+#: 2aebf669048046ddb279a935bcfcfde4
 #: PyFlow.network_api.connect_tcp.parse_forward_items_and_addrs:10 of
 msgid ""
 "``(items, addrs)`` in the order given; ``items`` holds texts and     "
 "paths, ``addrs`` holds ``(ip, port)`` tuples."
 msgstr ""
 
-#: 608bcdb865a94f869885cd560de7012e
+#: 96b96bd19fe94312bddf340fad073cbc
 #: PyFlow.network_api.connect_tcp.parse_forward_items_and_addrs:12 of
 msgid "``(items, addrs)`` in the order given; ``items`` holds texts and"
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.parse_forward_items_and_addrs:13
-#: e8c390dc356e4be9bb2f52cd0540e859 of
+#: 8e82954621d748e2b412952a7fb2753b
+#: PyFlow.network_api.connect_tcp.parse_forward_items_and_addrs:13 of
 msgid "paths, ``addrs`` holds ``(ip, port)`` tuples."
 msgstr ""
 
-#: 0e422066050d4ba18799efa53c6b771e
-#: PyFlow.network_api.connect_tcp.forward_skip_message:1 of
+#: PyFlow.network_api.connect_tcp.forward_skip_message:1
+#: a51324658c7943158d90ed706cecc41d of
 msgid "Build the console notice for a forward destination that cannot be served."
 msgstr ""
 
-#: 1eb2f924bcbc4e3783e3a4706c93052f
-#: PyFlow.network_api.connect_tcp.forward_skip_message:3 of
+#: PyFlow.network_api.connect_tcp.forward_skip_message:3
+#: b541e8446e374bc8b38cd7912a1fa33c of
 msgid "Destination ``(ip, port)`` that is unreachable or is the server itself."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.forward_skip_message:7
-#: b7ceaa070f754fe88242c2b495b3ff9f of
+#: 10e03f21d05e478d9cde0c7176f6e1b8
+#: PyFlow.network_api.connect_tcp.forward_skip_message:7 of
 msgid "One-line notice for the console."
 msgstr ""
 
-#: 59d83fde0d964794ba76d45749bfc021
+#: 8005e532fe9d491ca8ddd996889d605d
 #: PyFlow.network_api.connect_tcp.parse_forward_originator:1 of
 msgid "Extract the originator's ``\"ip:port\"`` from a received transfer command."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.parse_forward_originator:3
-#: b91ee97cb2574a19b8c87c99bf8ca181 of
+#: 2cf3052a89c645e782430f1f05fb37a1
+#: PyFlow.network_api.connect_tcp.parse_forward_originator:3 of
 msgid ""
 "The server's forward relay tags every pushed ``/file`` and "
 "``/file_folder`` command with the forwarding client's address tuple; a "
 "direct send carries the receiver's own address instead."
 msgstr ""
 
-#: 20da4b9824cd4fd6bb0ef55ebc38158b
+#: 335f6c1b16104395ba38a33188943d8a
 #: PyFlow.network_api.connect_tcp.parse_forward_originator:7 of
 msgid "Received transfer command."
 msgstr ""
 
-#: 9f25fa22a7b14822b8cbc1fd929976b9
-#: PyFlow.network_api.connect_tcp.parse_forward_originator:9 of
+#: PyFlow.network_api.connect_tcp.parse_forward_originator:9
+#: e5bd1024ad3f47f19cafc4c83a844b60 of
 msgid ""
 "This instance's own ``\"ip:port\"``; a command carrying it is a direct "
 "send and yields None."
 msgstr ""
 
-#: 6455c3bb288d4239811cb0104086c0fa
+#: 65469492f844448fab269b701cbdb704
 #: PyFlow.network_api.connect_tcp.parse_forward_originator:13 of
 msgid ""
 "Originator ``\"ip:port\"``, or None when the command carries no     "
 "originator (direct send or non-transfer command)."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.parse_forward_originator:15
-#: a466d04757ec40f1a2888518b8fb1d9a of
+#: 04a0882a3a5e4099a114728b4d1c79c0
+#: PyFlow.network_api.connect_tcp.parse_forward_originator:15 of
 msgid "Originator ``\"ip:port\"``, or None when the command carries no"
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.parse_forward_originator:16
-#: da8c46fb38624c7d97d91970aee4667c of
+#: a2d34276c4f54c69981f9b51f36cc31d of
 msgid "originator (direct send or non-transfer command)."
 msgstr ""
 
-#: 201f6bd5376a4ebaa7488dd3b58197c0
+#: 31646cd2d4f049a38b7910ac6836d2f9
+#: PyFlow.network_api.connect_tcp.CommandNotFoundError:1 of
+msgid "A command passed to `call_extension_functions` is not registered."
+msgstr ""
+
+#: 42bee6e5f57b43cba7c5b4c4a1769e9a
+#: PyFlow.network_api.connect_tcp.CommandNotFoundError:3 of
+msgid ""
+"Raised when the first token of the command matches no handler registered "
+"with `register_command`, on either instance class."
+msgstr ""
+
+#: 7297b41c47664243b9677b32e21de07e
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base:1 of
 msgid "TCP server: accept clients, dispatch commands, relay messages and files."
 msgstr ""
 
-#: 4f7013d76f9d447b974f22cca228ba0f
+#: 0d632c9f5b234888a691b03ade8ff7da
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base:3 of
 msgid ""
 "Each accepted connection is served by `handle_client`, either in its own "
 "thread (the default) or by a coroutine on an asyncio event loop when "
-"``is_asynic_clients_io`` is True: a line starting with ``/`` goes to "
-"`handle_command` (built-in commands plus the handlers registered with "
-"`register_command`), any other line is a plain message delivered to the "
-"listeners registered with `add_message_listener` and stored in "
-"``messages_dict``."
+"``is_asynic_clients_io`` is True: every inbound line is delivered to the "
+"listeners registered with `add_message_listener` first; a line starting "
+"with ``/`` then goes to `handle_command` (built-in commands plus the "
+"handlers registered with `register_command`), any other line is a plain "
+"message stored in ``messages_dict``."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base:13
-#: fd2aa2103a434e7b84e9f5300dfb2637 of
+#: 2870b0163d68487daf7526e91eb49ff6
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:13 of
 msgid "Address the server socket binds to."
 msgstr ""
 
-#: 0887ce96e330478f83984d935911cd2b 13fa6bd77a314fcbae42aeef584d47b6
-#: 1d012f62b99a4b0d8802295d814667dd 1d5b594e02824d74b812b69dc7b34a88
-#: 3b8af6dc474d493eb9749cb07384c5d1 4916b5bac8044e249473dae03d0af5e5
-#: 6a138e9d5ed24b6b9a9f213ffa6d07bb 7c114dabd42344d790a98003f7d68a6a
-#: 889f9fb97d4b483cbfd9ae6bbb3e1dbb 89e6193e8e8c45f3ba6d49b9ec578812
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base
-#: a0a81405abb64b70834a292dfa52ea47 a32afd5e800648f08c2ed1582462900f
-#: a4c849cfce9b4544a50162a1abd07ffc e953785e3c774cb783e506a118b6f5f9
-#: efd7bf86f2f3403a843bdc7079ed87ae f87fe645a0c846168779119b106eb83b of
+#: cf754e752b6c445989b3301b807fc9eb of
 msgid "type"
 msgstr ""
 
-#: 194d7e538b9142bb9cadf40639c7dfc2 8d779f308c7343fca45fb6b7c544b6f8
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:14
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:26
+#: 568be916ae0340289a6569e718e7cbf2
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:16
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:28
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:106
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base:15
-#: a043713065174240b3b3cb2839829b42 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:100 of
 msgid "str"
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base:19
-#: eaf91e01d29744a4b66b30d163b14bd4 of
+#: 6ac74cca7b0f443ca89f3d2c3bbe1aaa
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:19 of
 msgid "First port considered for binding and for allocation."
 msgstr ""
 
-#: 143512a7a9624b79853380f79b9db5e0 6093b43271e041dfb256e660e61561c5
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:20
+#: 9ecf88c5193c470b98dc95d184c94f92
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:22
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base:21 of
 msgid "int"
 msgstr ""
 
-#: 0f4f0acdd1a64e9cb4eb06b5fc12103e
+#: 6746407aac194c4880c7cbf82b7fa2fb
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base:25 of
 msgid ""
 "Accepted connections keyed by ``(ip, port)``; each value holds "
 "``socket``, ``address``, ``id`` and ``connected_time``."
 msgstr ""
 
-#: 6fcc166b59cb4ae7a6a6e30f2dbd2784
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base:28 of
+#: 7ba2aaf3fe4c42739121eb3ca2bcc79a
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:89
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:98
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:28
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:83
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:92 of
 msgid "dict"
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base:32
-#: d85332af5e73403388989eacf82a251d of
+#: 93556efee2aa445684af3fdc1532548a
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:32 of
 msgid "True while the accept loop runs."
 msgstr ""
 
-#: 0effb5fc02cf402ab9d27f4a51954fd1 168f4d3c8da74ebab98953585b27b866
-#: 21bd44747d4e4c9aa4a0afa0f559707d 3c8b6ad08eac44ba9eacbb2fb9752304
-#: 420ec28762864e58ad5f3a63f2811a0f 87eb97e54ef847398f653aa5b65b0191
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:38
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:44
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:50
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:56
+#: 0ab0667a38254203929e173ab5024f1d
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:40
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:46
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:52
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:58
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:65
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:72
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:79
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base:34
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base:41
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base:47
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base:53
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base:59
-#: e1e2580e801a44cc962b509779f690fc f827c454ead24d7587ae4125b1f60fda
-#: f8f0e0ce3c4841278a15e583a0ec5f92 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:66
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:73 of
 msgid "bool"
 msgstr ""
 
-#: 62103bebe6fe47aa8a3830133baa0a70
+#: 9023ee78c5fe4680a3875c881abe3307
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base:38 of
 msgid ""
 "Whether clients are served by coroutines on an event loop instead of one "
 "thread per client."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:42
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base:45
-#: c291fba3b400472996751ffdc24251b7 d0ade3e16cf044fca75a0e1bdf17038c of
+#: 4ad873e4e9da4574bc068029455f62ec
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:44
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:45 of
 msgid "Whether the RSA channel is negotiated."
 msgstr ""
 
-#: 8bb4af4279e44eef8df452f4429780ff
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:48
+#: 3c5a67d3c5824c15b42b71fbadddf5d3
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:50
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base:51
-#: c9414c44325b4b5eaed34bf2a7e49ed4 of
+#: a5ac1b25d44547ba836c5dc354438315 of
 msgid "Whether execution-process lines are logged as well."
 msgstr ""
 
-#: 5bdaf96cd6894bc4a179ae3ddc66c29c
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:54
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base:57
-#: a50b56a084674a89bb56dd9791348a75 of
+#: 4ad873e4e9da4574bc068029455f62ec
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:56
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:57 of
 msgid "Whether the instance logs anything at all."
 msgstr ""
 
-#: 75856a665d5045349622c29bee22fe17
+#: 3114d37d38af4cfcaa75397192202b93 62437fad8325442b91f177e93b8be7ef
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:62
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:63 of
+msgid ""
+"Whether every running file transfer is tracked in "
+"``file_recv_progress``/``file_upload_progress``."
+msgstr ""
+
+#: 58bd8f0892f044a583a276490dc2a7f5 855f8e2ee2a449398779d56b269628d6
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:69
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:70 of
+msgid ""
+"Whether the real-time network speed is measured into "
+"``upload_network_speed``/``recv_network_speed``."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:83
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:77
+#: afff1dd047f4479b84d46859c7da90b8 ce793576b862473cb130a29582aab5fd of
+msgid ""
+"Running downloads keyed by fid; each value is ``[received bytes, total "
+"bytes, current speed, file path, peer]`` (the speed is None until the "
+"transfer has moved its first chunk, and while speed measurement is off; "
+"``peer`` is the sender's ``(ip, port)``)."
+msgstr ""
+
+#: 36c2c0e7900d436a977b8895e671c9f0 659caaa0c8bc40d3a9ce8d0905787584
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:93
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:87 of
+msgid ""
+"Running uploads keyed by fid; each value is ``[sent bytes, total bytes, "
+"current speed, file path, peer]``, with ``peer`` the receiver's ``(ip, "
+"port)``. A forwarded transfer stores the original peer on both sides, "
+"never the relay."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:96
+#: f9528e6c490d4807b949f6730c6ece8e of
+msgid ""
+"Path under the protocol's ``.Flow`` directory where the two stores are "
+"written when a connection drops and read back on the next reconnect "
+"(``resume_transfers``)."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:110
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:104
+#: ed04a3bf285b4f57bb6a5de0c4f7284f of
+msgid "Bytes per second sent, or None when not measured."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:113
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:120
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:107
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:114
+#: d926b4f3eb4b40a4acb21f780a4dc227 of
+msgid "float | None"
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:117
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base:111
+#: ed04a3bf285b4f57bb6a5de0c4f7284f of
+msgid "Bytes per second received, or None when not measured."
+msgstr ""
+
+#: 37e6dd691f544a80b9e0949883a2e5a8
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:1 of
 msgid "Create the server and, unless extended, start accepting clients."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:3
-#: a2cce435d92d46e5b0b2cd59d43c8759 of
+#: bf58d54a167d45de9a18641877ada912 of
 msgid "Address the server socket binds to. Defaults to \"127.0.0.1\"."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:6
-#: d4c7cd9cc01e4371961f0950fd861b12 of
+#: 2f4d0c4bfd8246d4984d4c843510775d
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:6 of
 msgid "First port to bind; also the base of the allocation range."
 msgstr ""
 
-#: 716408a19bf349878edfd5f1948f57ec
+#: 47138ce8f587467aa353e302f473df48
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:8 of
 msgid ""
 "Maximum concurrent clients served in thread mode; ignored when "
 "``is_asynic_clients_io`` is True. Defaults to 10."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:11
-#: c37fcc062f6947228f3dc0b85ec5a5ca of
+#: 8786a9d2b6b449209be813778d785712
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:11 of
 msgid "Step between candidate ports. Defaults to 1."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:13
-#: e683b27a8b884c5b99511f99e20b6bf9 of
+#: 15c0118df8da4454a7fea8d529989237
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:13 of
 msgid "Number of ports per step. Defaults to 100."
 msgstr ""
 
-#: 6291e503f9bf4c78a9c226058a67bce1
+#: 973382c423524d44a569c318399e0b99
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:20
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:15
-#: e59cefed7c4e4148b863b89e4d17004e of
+#: d5f8f341d98d478289d9a226f37c1003 of
 msgid "Concurrent file transfers allowed. Defaults to 10."
 msgstr ""
 
-#: 792cebf4ce084bd9b222b9ee83eeb5f4
+#: 4fe9a7607dbc4eebbce4e62f9306c76f
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:18 of
 msgid ""
 "Reserve a port range across processes, so several instances on one host "
 "do not collide. Defaults to False."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:21
-#: befe96138f8544cbb8320f33af43af3e of
+#: 8aa56addc6ae4a7790dc957d1e1c2b60
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:21 of
 msgid "Start the console command thread. Defaults to True."
 msgstr ""
 
-#: 10c1ed53a097472297ade439439e218f 3bc54f27f3db4bce846f5ec756f0e68f
+#: 242566ff64584fba88e4fed8bb189110
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:28
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:24 of
 msgid ""
@@ -431,301 +504,440 @@ msgid ""
 " 10."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:27
-#: f0a3afe6bc0c4eb2ad2e9e5ae43e2d88 of
+#: 87d1cd7d6569498b8af8bc7064235784
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:27 of
 msgid ""
 "When True, do not call `start_TCP_Server`; the caller starts the server "
 "when ready. Defaults to False."
 msgstr ""
 
-#: 577dd2f594554ceab51324eaedf4b1b3
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:30 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:30
+#: ac43634ddb1a4d15a9f3d0f58d011441 of
 msgid ""
 "Negotiate the RSA-encrypted channel for every connection. Defaults to "
 "True."
 msgstr ""
 
-#: 1ea6dc3b1a34463881e1aa7e96a14525
+#: 1ffccca56902418ba98ee0c6776ad8fa
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:37
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:33
-#: ecd4aa80607e4f988ac59b64e85c8fbe of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:33 of
 msgid ""
 "``[pub_key_path, pvt_key_path]`` pair used instead of the default key "
 "lookup; an invalid pair is ignored."
 msgstr ""
 
-#: 0b92e71977dc4312b9e31fab903eadf2
+#: 420bbdf8d6bb400fbd3548bea03354ac
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:36 of
 msgid ""
 "Buffering ceiling in MiB for the in-memory forward pump; past it the "
 "uploader is told to pause. Defaults to 2048."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:39
-#: e14dae3d183249e19a0f6cf671ead02b of
+#: 94e4a7e67e3047fd9d565f9a5d8122ab 9dcb36b97a004812bbcf264efa812441
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:44
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:39 of
+msgid ""
+"Bytes read per receive on the control connection, covering commands and "
+"messages. Defaults to 4096."
+msgstr ""
+
+#: 116dc6d56dd44f4ebaab990a3658359d 397abb5fbc1a46db90a7829daac02465
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:47
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:42 of
+msgid ""
+"Chunk size in bytes streamed when sending or receiving a file or folder. "
+"Defaults to 65536 (64 KiB)."
+msgstr ""
+
+#: 446099293d824f27aed7245f3c77df69
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:45 of
 msgid ""
 "Serve clients with asyncio coroutines on an event loop instead of one "
 "thread per client, so a single server can hold thousands of concurrent "
 "connections. Defaults to False."
 msgstr ""
 
-#: 07311d6c7a2f4516a4209df5c7798be6 9f213be174d243d4af26f79ae9624945
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:44
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:44 of
+#: 4fe9a7607dbc4eebbce4e62f9306c76f
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:50
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:50 of
 msgid ""
 "Log execution-process lines in addition to command and result lines. "
 "Defaults to False."
 msgstr ""
 
-#: 28ea5071c3344615b114f12ad5be447c 497004294ca244138115a713c0ffed15
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:47
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:47 of
+#: 4fe9a7607dbc4eebbce4e62f9306c76f
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:53
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:53 of
 msgid ""
 "Log at all; False silences every line this instance would print. Defaults"
 " to True."
 msgstr ""
 
+#: 1608cb9ad7104c82a43f23bb929f7d84 744b24d9e233457fb87cc8faefc5a498
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:56
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:56 of
+msgid ""
+"Track every running file transfer in ``file_recv_progress`` (downloads) "
+"and ``file_upload_progress`` (uploads): each entry holds the bytes "
+"transferred so far, the total size and the current speed (None while "
+"``is_enable_real_time_network_speed`` is False). An entry appears when a "
+"transfer starts and is dropped when it ends. Defaults to True."
+msgstr ""
+
+#: 3658f6b3ec994d15b9321a10ae33b351 769ed811a0cb4b18aeacdd39e4b4bbe2
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:64
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:64 of
+msgid ""
+"Measure the real-time network speed of every send and receive — the "
+"control layer and every temporary connection (file transfers included) — "
+"into ``upload_network_speed`` and ``recv_network_speed`` (bytes per "
+"second, averaged over ``NETWORK_SPEED_WINDOW`` seconds). With False "
+"nothing is measured and every speed value is None. Defaults to True."
+msgstr ""
+
 #: ../../source/api/PyFlow.network_api.connect_tcp.rst
-#: 0f0e9eea68114cf3b085d08796aaf552 3f8c413bab284fb78ac0b2ef8b8fb44a
-#: 4a7a4c0862a84c53b2ccf0de3b00d495 4c3773b74abf40118b9ed681d9bef66a
-#: 9f4fa9dc8d5045e39702036409f07a5d aa175c9daeab453a848bb2ef9f2e3dcf
-#: cf96ad3305794cd7b9578ecb55ecd8b9 fbbf706646e24207aaf3b2532903a31b
+#: 63ab5a2f2327475ba324e245f8e6e2ac
 msgid "Raises"
 msgstr ""
 
-#: 0c72321c656641a5b684299b915cbb39
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:52
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:51
-#: d72a9dcf6bc748e5898640448e229b3b of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:81
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.__init__:73
+#: ed59ec69b9a1430597e6d8758051aff5 of
 msgid ""
 "If the ``.Flow`` directories or ``decode_command_table.json``     cannot "
 "be created or read."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.alloc_port:1
-#: e2bb545e7ee1419286f58495abc4bcd2 of
+#: 031d3e96394c454093561375a377dcce
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.pause_trans:1
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans:1 of
+msgid "Pause an outbound transfer of this instance."
+msgstr ""
+
+#: 342e6dfc6f6a4399914bc72372aa5f2d
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans:3 of
+msgid ""
+"The sending leg with this fid stops at its next chunk and stays open "
+"until `start_trans` (or the peer's ``/start_trans``) resumes it. A "
+"forward relay's writer toward ``peer`` is paused the same way the "
+"``/pause_trans`` line pauses it."
+msgstr ""
+
+#: 72d2b6fdd324482eaea9803def1fe2da
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.pause_trans:9
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.start_trans:3
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans:8
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_trans:3 of
+msgid "Transfer id the outbound leg is keyed by."
+msgstr ""
+
+#: 7ecc0c956c8b408688fca517eb6370fd
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans:10 of
+msgid ""
+"Restrict the pause to the leg or relay writer toward this ``(ip, port)``;"
+" None addresses every match."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans:14
+#: bdee1944910b4ee3908cf225a151a5fd of
+msgid ""
+"True when a running leg (or relay writer) was marked paused;     False "
+"when nothing matched — the switch is still armed, so a     leg later "
+"started under this fid starts paused."
+msgstr ""
+
+#: 99ba2aa702f74621ba4dd31b8c045467
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans:16 of
+msgid "True when a running leg (or relay writer) was marked paused;"
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans:17
+#: c85ed4c1a84443a98394146efcf04315 of
+msgid ""
+"False when nothing matched — the switch is still armed, so a leg later "
+"started under this fid starts paused."
+msgstr ""
+
+#: 2771724616054f628d60add2c7407e7b 3a0594b22c6849c88310243022e8ee23
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.start_trans:1
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_trans:1 of
+msgid "Resume an outbound transfer paused with `pause_trans`."
+msgstr ""
+
+#: 7a864ecc76fe40459eeff353522482fb
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_trans:5 of
+msgid ""
+"Restrict the resume to the leg or relay writer toward this ``(ip, "
+"port)``; None addresses every match."
+msgstr ""
+
+#: 0b11a149117c4a1fb6bcf2fba3d1a515
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_trans:9 of
+msgid "True when a live leg (or relay writer) was resumed."
+msgstr ""
+
+#: 364557403e3d480896c0ffc57a19df04
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans_remote:1 of
+msgid "Ask a connected client to pause its transfer toward this server."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans_remote:3
+#: f13c2e0e5310443080b0f63c773d8497 of
+msgid ""
+"Sends the ``/pause_trans <fid>`` line the peers use for transfer flow "
+"control (see `pause_trans` on the receiving side)."
+msgstr ""
+
+#: 3b48d6e3b84b4dde9a09f3c2f07c8b61
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans_remote:6
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_trans_remote:3 of
+msgid "Connected client ``(ip, port)``."
+msgstr ""
+
+#: 72d2b6fdd324482eaea9803def1fe2da
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans_remote:8
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_trans_remote:5 of
+msgid "Transfer id of that client's outbound leg."
+msgstr ""
+
+#: 5ea8eea489fc43108a439d54fba31068
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans_remote:11
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_trans_remote:8 of
+msgid "True when the line was written; False when ``peer`` is not     connected."
+msgstr ""
+
+#: 38905ec7539d42e0839907c32dd8667f
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans_remote:13
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_trans_remote:10 of
+msgid "True when the line was written; False when ``peer`` is not"
+msgstr ""
+
+#: 1c7b88e29a0143a39e13441769186ef4
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pause_trans_remote:14
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_trans_remote:11 of
+msgid "connected."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_trans_remote:1
+#: adfc486a05ae4063bda6a61f2a6f3c36 of
+msgid "Ask a connected client to resume a transfer paused earlier."
+msgstr ""
+
+#: 810bc26336b24ad1acba3f56d466f8e9
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.alloc_port:1 of
 msgid "Reserve this server's port range under the cross-process lock."
 msgstr ""
 
+#: 5540b6efb5864c188e080ec7aad5c3ca
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.alloc_port:3
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.free_port:3
-#: c9ae1464a03b44049e826b9b73e2aca2 d23fda91e3e645e081dd5bbd5332fc4c of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.free_port:3 of
 msgid "No-op unless ``is_hand_alloc_port`` is True."
 msgstr ""
 
-#: 0b8bb2090cd04385a9d960dd2808f5bc 55b8a82ae1ce4769a1c62b35d253810e
-#: 6d17c5fb7b4d484ba017edb4c5d5535e
+#: 356ed2e8333d49b98ed6834612b4b56d
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.alloc_port:5
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.hand_alloc_port:6
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.alloc_port:5
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.hand_alloc_port:6
-#: c3818bbf57ac448cb073fb780326fdf7 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.hand_alloc_port:6 of
 msgid "Step between candidate ports."
 msgstr ""
 
-#: 1080747700804d04ae169eef511d5bb5 45799e3c1b6e446a86b111e06365ca9b
-#: 5bfd1aa496dc41b7ab2abd78f134c389
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.alloc_port:7
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.hand_alloc_port:8
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.alloc_port:7
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.hand_alloc_port:8
-#: efa8e8819eec4e1ba0d90562f34755b5 of
+#: e18848eedc5d4d8abd97d73a0984a5d3 of
 msgid "Number of ports per step."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.free_port:1
-#: c1cf751ac2774558925ef1ffd1a6c3dc of
+#: 11e0523d1b194702a07a92748468da25
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.free_port:1 of
 msgid "Release this server's reserved port range."
 msgstr ""
 
+#: 801c063c5fa447bda1dbf7f5ccbc6a9a
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.server_port_temp_info_file_lock:1
-#: b2b2a77e9deb4423955004a9e3390aca of
+#: of
 msgid "Create the lock file that reserves the server port range for this process."
 msgstr ""
 
-#: 658bc1e35a794bf5a22c70ffbef94b87
+#: 672bb7a9496c43ac8b706a3d0062ddfd
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.is_server_port_temp_info_file_locked:1
 #: of
 msgid "Report whether the server port range is reserved by some process."
 msgstr ""
 
-#: 39bb21b4d3a0404fb64295a73c2ad5ba 5dc09f28266e4a3bb083923d8784f09c
+#: 39423e052b70403ba07a713aa9e3cb4a
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.is_client_port_temp_info_file_locked:3
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.is_server_port_temp_info_file_locked:3
 #: of
 msgid "True while the lock file exists."
 msgstr ""
 
-#: 6512b0b8da7041e8a917014e5562583c
+#: 5b6cf828ffb24e098a0c86a09818da73
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.server_port_temp_info_file_unlock:1
 #: of
 msgid "Remove the lock file that reserves the server port range."
 msgstr ""
 
-#: 90520dc2f5704cdaba37211d6390b03d
+#: 479bdf5518dc4a029ecf47ad44bdcd5d
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.hand_alloc_port:1 of
 msgid "Allocate the next free server port range and record it on disk."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.hand_alloc_port:3
-#: cf0980ef8455426781e617a911f73732 of
+#: 34c085a1bfca4dedafc749bfdcf14ad5
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.hand_alloc_port:3 of
 msgid ""
 "``port`` is moved past the ranges already recorded by other servers, so "
 "the instance ends up with a range of its own."
 msgstr ""
 
-#: 1e5f1ba9b8bf4d28971b92ef12f747f2
+#: 197b30e318d741c2b1f8afc925e91e5c
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.hand_alloc_port:11 of
 msgid "If the server port info file cannot be read or written."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.hand_free_port:1
-#: bf4bb338fcf846a29910656081787945 of
+#: 1c97c8ef484b42ab86d36b3742bf3879
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.hand_free_port:1 of
 msgid "Drop this server's entry from the on-disk port range record."
 msgstr ""
 
-#: 30208c231b534eedbe843d42a3cad90d
+#: 9fc07e857fa048e2956e64bf78f6e386
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.palloc:1 of
 msgid "Allocate a transfer port, waiting until one is free."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.palloc:3
-#: f219ec3cd1d1448fb4e0171853a7d779 of
+#: 505d7b9fb1024bc8ba886e5b0a38fbf2
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.palloc:3 of
 msgid ""
 "Allocated port, or 0 when allocation is disabled     "
 "(``is_hand_alloc_port`` False)."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.palloc:5
-#: af35fb0d306d447ca2a70b0f2b63ecee of
+#: e85fdf7f7a594e0b9aed565b4a3ab42f of
 msgid "Allocated port, or 0 when allocation is disabled"
 msgstr ""
 
-#: 94b2dff9085247fda189e063a4fa4a7f
+#: 153357eb91794cb692467afe5e94b41c
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.palloc:6 of
 msgid "(``is_hand_alloc_port`` False)."
 msgstr ""
 
-#: 06c8b24821f94f48b265dd90995e10a9 57f02c9c5f32443e82feac04411b32ed
+#: 26c5c3768e1446e78c9efc5f8038b23d
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.pfree:1
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.pfree:1 of
 msgid "Release a port obtained from `palloc`."
 msgstr ""
 
-#: 750aeace3a2043978210096a24199700
+#: 0e0379de669843778f6827973c29372e
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.pfree:3
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pfree:3
-#: a400ec85715c462e941f3f590f646046 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.pfree:3 of
 msgid "Port to release."
 msgstr ""
 
+#: 6a8d4efd9f9a45e399525e2f169035ee
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_palloc:1
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_palloc:1
-#: c6c5882e52c74fb1a5aa68e621922150 e95eb44c45ea42a5b63026f73274f990 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_palloc:1 of
 msgid "Allocate the next port above the base, or the first free one in range."
 msgstr ""
 
-#: 2aec0e66e9e44175a6d6a36917137cf9
+#: 73e9e2ddd451402a93d10dbac6ac9374
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_palloc:3 of
 msgid ""
 "Allocated port; None when the upward range is exhausted; 0 when     "
 "allocation is disabled (``is_hand_alloc_port`` False)."
 msgstr ""
 
-#: 14bd404133c744e68356290e50c91f4c
+#: 9d96a242eab8433ca750d670a5f63b82
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_palloc:5 of
 msgid "Allocated port; None when the upward range is exhausted; 0 when"
 msgstr ""
 
+#: 7b05e18fccbe4ab081d3cd22d59a48e0
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_palloc:6
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.spy_palloc:6
-#: a2a1781441e64797a0d7942463680610 bccdcb4c96de4d6a9f6c4318d0b1f55e of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.spy_palloc:6 of
 msgid "allocation is disabled (``is_hand_alloc_port`` False)."
 msgstr ""
 
-#: 9b0a4b0fa07b4f7e8e4476f99d191837
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_pfree:1
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_pfree:1
-#: a4c53c6cf9d24f1ca624f8ade02cfb07 of
+#: f2d9abe435cf49f6825bb72a68013934 of
 msgid "Release a port obtained from `file_palloc` and step the cursor back."
 msgstr ""
 
-#: 24467ee3998b40bd9563059c6610e4e9 2a1c562ca62f40158d89d6f16896ed18
+#: 6c1fb07a212d4bf19717407b0c7184d8
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_pfree:3
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.spy_pfree:3
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_pfree:3
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.spy_pfree:3
-#: ace99e97fef7403faf20dc5040a47bfa ba3e6daae9e34590bc0f2abc98c02da3 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.spy_pfree:3 of
 msgid "Port to release. Ignored when allocation is disabled."
 msgstr ""
 
-#: 053f2e52a148421eb080c1df3d3de1cc 9052b949aa354df7968cacc9ed930921
+#: 1afd81c685234a20aa41c5cde93d327d
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.spy_palloc:1
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.spy_palloc:1 of
 msgid "Allocate the next port below the base, or the first free one in range."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.spy_palloc:3
-#: eb3a97b7706a47dda4cfb5e12930ba02 of
+#: 3fc63f6d51aa4c0fb22fd0f945f9cfd7
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.spy_palloc:3 of
 msgid ""
 "Allocated port; None when the downward range is exhausted; 0 when     "
 "allocation is disabled (``is_hand_alloc_port`` False)."
 msgstr ""
 
-#: 3c8cc24113bd420eb7f373cde6a27ef2
+#: 74a441ccfa5e421dadd215ef0725a25f
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.spy_palloc:5
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.spy_palloc:5
-#: f70a4f056d6c49b2b953824ffab19db7 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.spy_palloc:5 of
 msgid "Allocated port; None when the downward range is exhausted; 0 when"
 msgstr ""
 
-#: 383142a0285745bb8ef4b95b1d597151 9f78428fda474dffac2f3cdf4c3a2aeb
+#: 9c4b9bddd98c463f9e140bd2d8425dad
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.spy_pfree:1
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.spy_pfree:1 of
 msgid "Release a port obtained from `spy_palloc` and step the cursor back."
 msgstr ""
 
-#: 57c8111cd86f49c7af67d8e9a177a591
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.register_command:1
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.register_command:1
-#: e435af0f27b641168044b3cac4130ac5 of
+#: c66c76cab8564da4b6b6cb855fd63fd5 of
 msgid "Register a custom command handler."
 msgstr ""
 
-#: 39f637bfe6ff4822952d67419861841d 51f84d06854b4b96b7ce1fb2e778b5e5
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.register_command:3
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.register_command:3 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.register_command:3
+#: cdec2f24d2dc47bc8c505b7472dc3bf7 of
 msgid ""
 "Command to intercept, e.g. \"/my_command\"; matched case-insensitively "
 "against the first token."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.register_command:6
-#: b53c2039d55947d689c2cfe09cac93c2 of
+#: c7c29a3836c9493e9c8804cc5896144a of
 msgid ""
 "``handler(client_socket, client_address, command)`` called with the raw "
 "line; a non-None return value is sent back to the sender as the response."
 msgstr ""
 
-#: 15398a9c312e459a897c07b18dc9fbaa
+#: 7c64d0c0b9ac44b995811a0fdaa0dfaf
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.register_command:10 of
 msgid ""
 "\"server\" for commands arriving from clients, \"client\" for commands "
 "typed on this instance's console."
 msgstr ""
 
-#: 7ff63de06e854f88b1cebc42b464397d 8f139fd48e9c496287f9df897ccf01d6
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.register_command:13
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.register_command:13 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.register_command:13
+#: a0c074a9da664c5eb5fa63deb6765c36 of
 msgid ""
 "Run the handler on the worker pool instead of the reader thread. Defaults"
 " to False."
 msgstr ""
 
-#: 1a0a724bef6140ceb235cbeaea95c1d8
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.register_command:17
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.register_command:17
-#: e73cb64f1ef544db8009b026ab5c376c of
+#: e6c616f887334cb6925c03de2ad6f64c of
 msgid ""
 "False when ``where_to_run`` is neither \"server\" nor     \"client\"; the"
 " handler is then not registered."
@@ -733,60 +945,107 @@ msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.register_command:19
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.register_command:19
-#: e1cba64f5b384d169c366d8e16078683 eaab849e83884bd6be80fa08867ccde2 of
+#: f125f1386b434f3a8199b1ceb8c44eca of
 msgid "False when ``where_to_run`` is neither \"server\" nor"
 msgstr ""
 
-#: 4cbf71104b8544d18962b7a9adca8b7e 82c461f38cc44bc9914cb7009a5cf3e1
+#: 1a68dac068db434eb76e28015005f29c
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.register_command:20
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.register_command:20 of
 msgid "\"client\"; the handler is then not registered."
 msgstr ""
 
-#: 15aa55a075a64bb98f5819a8a5d37113
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.add_message_listener:1 of
-msgid "Register ``listener(client_id, message)`` for every inbound plain message."
+#: 25c1023e97b64226a58cdf83f8ba07bf 9ebd0da560d747168cebc59ca93b1cb1
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.call_extension_functions:1
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.call_extension_functions:1 of
+msgid "Call one registered extension command handler directly from code."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.add_message_listener:3
-#: f914714947174f2298278112a91d82b0 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.call_extension_functions:3
+#: b14f4ed43e6c43c39579c1c16b169645 of
 msgid ""
-"Plain messages are the lines received from clients that do not start with"
-" ``/``; commands go through the registered command handlers instead."
+"The handler is selected by the first token of ``command``, matched case-"
+"insensitively against the names given to `register_command`: the console "
+"group is searched first, then the group fed by the lines clients send. "
+"The handler runs on the calling thread — ``run_in_thread`` only affects "
+"the console and inbound dispatch paths — and is called with ``None`` for "
+"both ``client_socket`` and ``client_address``, since a direct call names "
+"no peer."
 msgstr ""
 
-#: 1b5e4524170242099c808039098d64c3
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.add_message_listener:6 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.call_extension_functions:11
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.call_extension_functions:11
+#: cdec2f24d2dc47bc8c505b7472dc3bf7 of
+msgid ""
+"Command line to run, e.g. ``\"/my_command arg\"``; the handler receives "
+"it unchanged."
+msgstr ""
+
+#: 4ad873e4e9da4574bc068029455f62ec
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.call_extension_functions:15
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.call_extension_functions:15
+#: of
+msgid "Whatever the handler returns."
+msgstr ""
+
+#: 0ab70b2e8ed040d4908d0900da96f6c2 0d85b81af0634a448e6a74d63c06045f
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.call_extension_functions:18
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.call_extension_functions:18
+#: of
+msgid "If no registered handler matches the first     token of ``command``."
+msgstr ""
+
+#: 1f5b21975ad2499a86fe21c69bfd7ca0 42f8d27a5499457da7302224dcc8a521
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.call_extension_functions:19
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.call_extension_functions:19
+#: of
+msgid "If ``command`` cannot be split (unbalanced quotes)."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.add_message_listener:1
+#: ef5d20f1a16945368383a8cdbc3daa19 of
+msgid "Register ``listener(client_id, message)`` for every inbound line."
+msgstr ""
+
+#: 2459179e833b4e7db8e1d70571ac793a
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.add_message_listener:3 of
+msgid ""
+"Every line received from a client is reported, commands included "
+"(``/help``, ``/file ...``, the crypto handshake lines, ...), so the "
+"listener observes all inbound traffic; dispatch is unaffected, a command "
+"still goes through the command handlers."
+msgstr ""
+
+#: 9ec5fafe8ded489785400e3e489b8573
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.add_message_listener:8 of
 msgid ""
 "``listener(client_id, message)`` where ``client_id`` is the sender's "
 "``\"ip:port\"``. It runs on the receive thread, so it must not block, and"
 " exceptions raised inside it are swallowed."
 msgstr ""
 
-#: 2e65864bfdd2429298dbf86682b3be81
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.remove_message_listener:1
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.remove_message_listener:1
-#: e562b99848544a8cb47afb41478d1b66 of
+#: edb8edc2eb3f433186b54807a8ac43ad of
 msgid "Unregister a listener previously added by `add_message_listener`."
 msgstr ""
 
-#: 346bd1c9d44045868b59b7643f1cf09e 8ff591c39e334e1eab8d05267532faed
+#: 6fd7bb75a29e4973ac2bd05119255039
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.remove_file_listener:3
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.remove_message_listener:3
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.remove_file_listener:3
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.remove_message_listener:3
-#: a0e48bdcb67e49498a113a58a504553c ab196c3b77b143069faa85a52626d946 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.remove_message_listener:3 of
 msgid "Listener to remove; an unknown one is ignored."
 msgstr ""
 
-#: 46010db8ce4d4eb1b06348f29e115846
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.add_file_listener:1 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.add_file_listener:1
+#: cf95477e5794404fbdf4e877a132ba1c of
 msgid ""
 "Register ``listener(client_id, full_path, name, size, command)`` per "
 "saved file."
 msgstr ""
 
-#: 72536042242c4ea9bd2e6efa63fc9336
+#: 9c57d09f6d3d437890ae3ad306071701
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.add_file_listener:3 of
 msgid ""
 "Fired after a file uploaded by a client (a direct send, or a forwarded "
@@ -794,8 +1053,8 @@ msgid ""
 "``file_transfer_dir``."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.add_file_listener:7
-#: f4ba3546e2b048d49d9c274ef8d8ac98 of
+#: 6c938b7c8be3464f9925527b6deb4e1d
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.add_file_listener:7 of
 msgid ""
 "``listener(client_id, full_path, name, size, command)``; ``client_id`` is"
 " the uploader's ``\"ip:port\"`` and ``command`` the wire command that "
@@ -804,196 +1063,185 @@ msgid ""
 "block."
 msgstr ""
 
-#: 2e1706c637c54db9b8ed55ba98665535 3d6b3f43b6094b2e9776fcb9e4ce7bcb
+#: 57b1e98125974187b986386da7991dd0
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.remove_file_listener:1
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.remove_file_listener:1 of
 msgid "Unregister a listener previously added by `add_file_listener`."
 msgstr ""
 
-#: 0a8d57625bba4ce4949fc23bce63f033
+#: 58f1ccd078ea406dab00d6d4be886a76
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.submit_task:1
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.submit_task:1
-#: c27185227a5f434f9641501d1d3bca2b of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.submit_task:1 of
 msgid "Run a callable on the instance's worker pool."
 msgstr ""
 
-#: 0c5aed09b63647cd87a3234ef9a4903c 40fade944d8d43b18599150134015443
+#: 6e05c7f46b244ae195c32ee52797fa37
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.submit_task:3
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.submit_task:3 of
 msgid "Callable to run."
 msgstr ""
 
-#: 6bcb8f96e0584f66bbb94fe2573a7f61
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.submit_task:5
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.submit_task:5
-#: e959076fdf3843fc9c53ccb8492adfe6 of
+#: e1c79706c9414895bdf7bf183bf5d41a of
 msgid "Positional arguments forwarded to ``func``."
 msgstr ""
 
-#: 41d755cbd3cf48e7a0bc9d2b1aa3ab14 628a65eab1354dda83077715a47e63fb
+#: 9221436fa83a4831942cf5be4e37e2cb
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.submit_task:7
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.submit_task:7 of
 msgid "Keyword arguments forwarded to ``func``."
 msgstr ""
 
-#: 1c03aa271c37431d974f08f11c93d7af 4b1078858cf64a1e92b36fa109fc1409
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.submit_task:10
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.submit_task:10 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.submit_task:10
+#: a6b26d6cf54d4fafac2950cbe33ba56f of
 msgid ""
 "Handle for the submitted call; its worker     slot is released when the "
 "call finishes."
 msgstr ""
 
-#: 169f874c0ebb40d5aecd2549e60b4600 1e45486e3fd84627b015bf5a9a0a24b4
+#: 60f19983f7384aefbb6c97b84dd25f93
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.submit_task:12
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.submit_task:12 of
 msgid "Handle for the submitted call; its worker"
 msgstr ""
 
-#: 037748a51dd94d43a3939fa8ec538d66 655c7802ef7c42a686c74d426531db8b
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.submit_task:13
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.submit_task:13 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.submit_task:13
+#: eadf6af0a0954798933dc427ba8e107e of
 msgid "slot is released when the call finishes."
 msgstr ""
 
-#: 7b0b391fc53d42fb8f331d8e2da2be54
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_server:1
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:1
-#: d6578909a33e4eef8afe892b33e0f70b of
+#: fece61298a354d6db119309b29c6751d of
 msgid "Start a temporary listener for a side channel (not the main protocol)."
 msgstr ""
 
-#: 1164584733744eb2aa574d6f61476c2d
+#: 01d42ba32c2b41f482dd077cfb950f9b
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_server:3
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:3
-#: c132c5365e7c487c92b4072a0020b52c of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:3 of
 msgid ""
 "``handler(client_socket, address)`` started in its own thread for every "
 "accepted connection."
 msgstr ""
 
-#: 03583460bc824965b9152433dfdfb097
+#: 5e1b84445ee34c9cac00e1a2c9ef297b
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_server:6
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:6
-#: e81f361ea0fb46ee9c6760b0c6ef11c1 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:6 of
 msgid "Port to bind; None allocates one with `palloc`."
 msgstr ""
 
-#: 4f2f3f063e9c4834a77fbdb1a46d65dc
+#: 9c69c4dd1d904078af48c6308ba35895
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_server:8
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:8
-#: b655787e48384873b4446ee1147bdedd of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:8 of
 msgid "Listen backlog. Defaults to 1."
 msgstr ""
 
-#: 31cd65b92bb846f6b9c97b003fa00db5
+#: 47f98fd15e6144bd845d175cd039a6c2
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_server:11
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:11
-#: ec56b80af0a843a991cbe77c5ee9ae45 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:11 of
 msgid ""
 "``(port, thread, stop_event)``; setting ``stop_event`` ends the     loop,"
 " which closes the socket and frees the port."
 msgstr ""
 
-#: 7b73372b2ada4ce5b210b527015d925c 86cfce9d36f04328ba76e88df87fbcd8
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_server:13
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:13 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:13
+#: ecf3d32c44db40a8a13545d623ffe2c9 of
 msgid "``(port, thread, stop_event)``; setting ``stop_event`` ends the"
 msgstr ""
 
-#: 11b0347a0ebd4ae3931ed1f77c26a04e 9017aeb8480241f3a5f426c718bc4ee0
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_server:14
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:14 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:14
+#: abce9546b7444c6383c9020c4133ec63 of
 msgid "loop, which closes the socket and frees the port."
 msgstr ""
 
-#: 3c32a346019741da9aa2a3e409a7b0e2 82f16e3e9ba1468d8a87c91db28cc45e
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_server:17
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:17 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_server:17
+#: a270cfabdac64296b8a33ad4d662896f of
 msgid "If ``port`` is None and no port can be allocated."
 msgstr ""
 
+#: 031d3e96394c454093561375a377dcce
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_client:1
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:1
-#: d63b5db9eab6478ca088c9a5e90163fc f0869b5be0ab40e4a2a7eca275922557 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:1 of
 msgid "Open a temporary outbound connection for a side channel."
 msgstr ""
 
-#: 3d194b9f95794116b17720aa74ce0878
+#: 112fda54e1eb4981b4272df61c5416e2
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_client:3
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:3
-#: d0bb03d9590540fd980dd79c28d98e97 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:3 of
 msgid "Host to connect to."
 msgstr ""
 
-#: 98a5441019de48258a099f2ec25751f5
+#: 59d3c414b4304673be5d3232d2291680
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_client:5
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:5
-#: b443afa67dc84e1a8ac501ad5c6b0ff1 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:5 of
 msgid "Port to connect to."
 msgstr ""
 
-#: 537482efdcc0447e81bd001ad2d4d85a
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:7 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:7
+#: c5766672f68f47c9908e68d2ed3be7f3 of
 msgid "Local port to bind; None lets the OS choose."
 msgstr ""
 
-#: 2230b0e486fc4229acc03f78ec4b1e09 300e61efcfef4a2f8c87725e183ceda8
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_client:10
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:9 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:9
+#: bfc1b713e9fc4fe797e50c357f472e76 of
 msgid "``on_data(data, client_socket)`` called for every received chunk."
 msgstr ""
 
-#: 2f63095ce33849b78465729923d04ff0
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_client:14
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:13
-#: e07d5e5deb1a4fb086664ed896076feb of
+#: c563d04fcd7a41f1a2aeace42974430a of
 msgid ""
 "``(client_socket, thread, stop_event)``; setting ``stop_event``     ends "
 "the receiver thread."
 msgstr ""
 
+#: 0e1b9679f3104a9caab601e6bc7c0905
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_client:16
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:15
-#: bf9994c99c8a48139d4c00d0dcfeca63 dbf60e58abd04e02b50316b1cb4b7b2f of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:15 of
 msgid "``(client_socket, thread, stop_event)``; setting ``stop_event``"
 msgstr ""
 
-#: 6af1621f80734591950e545b955c4bbe
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_client:17
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.create_temporary_client:16
-#: e69a51e576e446c59185c2eceae72657 of
+#: c76fce92c3f944c1857df89bbc134540 of
 msgid "ends the receiver thread."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.broadcast:1
-#: c291ec3d31094e589a1bfc5713b47ee3 of
+#: 5ea5fd66c3d3434292e4d8e1dd1da094
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.broadcast:1 of
 msgid "Send one message to every connected client."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.broadcast:3
-#: c28f38641c704c1e912c602ced57fc9e of
+#: 32945f04e0564f9d88495506f0ab4f90
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.broadcast:3 of
 msgid "Clients whose send fails are disconnected and removed from ``clients``."
 msgstr ""
 
-#: 3f3e7a6a5de746518e9ddd135983d073
+#: 00de0b1f60b14189b1629f8146db68a6
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.broadcast:5 of
 msgid "Payload passed to `send_message`."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.broadcast:7
-#: cae2a2c29d96447d8b1056e36bbf5572 of
+#: a91c8f6921c7435e990516c2134efcf8 of
 msgid "``(ip, port)`` to leave out, typically the client the message came from."
 msgstr ""
 
-#: 9b2b7c4e77844a82bfd61276bf46f6d7
+#: 9d57c62f1fd94c1dacfe32aa50cc9665
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.send_msg_to_specific_client:1
 #: of
 msgid "Send the messages of a console line to the clients named in it."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.send_msg_to_specific_client:3
-#: cabc278e7f6a49e6bd6e533f632d0f99 of
+#: e7fbf4bbd84b4920a2b9591fabcaf2d9 of
 msgid ""
 "``/send_msg`` line as typed: message text followed by one or more ``(ip, "
 "port)`` identifiers; each message is delivered to the identifiers that "
@@ -1001,17 +1249,17 @@ msgid ""
 "notice."
 msgstr ""
 
-#: 888e165ca1554b4db63e714e3adc63f1
+#: 9d4819fe4ca94a1b81c9e0423ff98212
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.send_message:1 of
-msgid "Write one line to a client socket, encrypting when the channel is up."
+msgid "Write one message to a client socket, framing it when the channel is up."
 msgstr ""
 
-#: 64d6f6cc29de4d4290671afc59d808c7
+#: 1c7b88e29a0143a39e13441769186ef4
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.send_message:3 of
 msgid "Target connection."
 msgstr ""
 
-#: 73953d67bcbf4bfabae7b0ff91bfce8c 7e2e221f6a6b43a08f534ca2d8cfb6e8
+#: 6f8bd9adaf2b4c44a9446b049144fe21
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message:6
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.send_message:5 of
 msgid ""
@@ -1019,62 +1267,73 @@ msgid ""
 " are."
 msgstr ""
 
-#: 240dadd589af42e18e15d2c53b5c96b0
+#: 5c03983cb460497fb72f126c1d8a2bc1
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.send_message:9 of
 msgid ""
 "True when the payload was written, False for an unsupported     payload "
 "type."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.send_message:11
-#: dbfc49c3c67c48d5860a61f8ded20950 of
+#: 0b11a149117c4a1fb6bcf2fba3d1a515
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.send_message:11 of
 msgid "True when the payload was written, False for an unsupported"
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.send_message:12
-#: cab2f5321ba54adca315d34d921a09b5 of
+#: 602950a9f5ad48ea92ab60aea3b26488
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.send_message:12 of
 msgid "payload type."
 msgstr ""
 
-#: 4519dac81e714164a0edbf6ac75c9c19
+#: 149f767d72dc4da7b1d88fed768d2474
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.send_message:15 of
 msgid "If the server is not running or no socket was passed."
 msgstr ""
 
-#: 7ea1b30273604db4854189502fdf734e
+#: 07dac2d20d7041779c8b189d45ee2e64
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.send_message:16 of
 msgid "If the socket write fails (the original error is re-raised)."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.receive_message:1
-#: b228437e9cb4461e9ceb078f084544eb of
+#: caf2377ee7f348ab8c95bf2a27c44be4 of
 msgid "Read up to ``msg_length`` bytes from a client socket."
 msgstr ""
 
-#: 292c2ed074e14a5eb184dceb245cab6f 58a8806cd0bb4dc9895b7f74a1b45765
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.receive_message:3
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.receive_message:3 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.receive_message:3
+#: c702e4a63a5240ea97feb5bc393b4d09 e9256fbce5d848b59ae2e6d0ce88ce24 of
+msgid ""
+"A socket speaking frames (see `_SecureChannel`) returns decrypted "
+"plaintext, served from the channel's buffer; a socket without one is read"
+" raw. A read that started while the channel was raw is classified by the "
+"channel when it returns, so bytes of a flip that landed during the read "
+"never land in the line reader."
+msgstr ""
+
+#: 214af2667d0f443eb16c0a4aaf723b2e
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.receive_message:9
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.receive_message:9 of
 msgid "Connection to read from."
 msgstr ""
 
-#: 547ccf662a6945738e8c761628807ab1 624220029a624009adb07a49140d8a2c
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.receive_message:5
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.receive_message:5 of
+#: 7c3eb31687804ba5a59acc140ba50230
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.receive_message:11
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.receive_message:11 of
 msgid "Maximum number of bytes to read."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.receive_message:8
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.receive_message:8
-#: b0973e75b118425db7e7bfc966e5eb87 ff5195026f8143fea9240d4f21e81981 of
+#: 51eade0145d74a2bbfc51070bc779703
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.receive_message:14
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.receive_message:14 of
 msgid "Received bytes, empty when the peer closed the connection."
 msgstr ""
 
-#: 7acd066bfa87415094144b0e0c1ea0d4
+#: 7103cfcec26c44999cb5464251ee461c
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_client:1 of
 msgid "Serve one accepted client until it disconnects."
 msgstr ""
 
-#: 53591274f0824492afab6874b284c33e
+#: 65f9de7f44774aa6aef81fcbe4dc1c64
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_client:3 of
 msgid ""
 "Registers the client, greets it, announces the encryption mode and reads "
@@ -1084,8 +1343,8 @@ msgid ""
 "ends for any reason."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_client:9
-#: fba3167476a94b62af90bfc4101d1ed6 of
+#: 87d5085c31a14ad38b060c48f8cf1262
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_client:9 of
 msgid ""
 "With ``is_asynic_clients_io`` False (the default) the call blocks and "
 "owns its thread; with it True the client is served by a coroutine on the "
@@ -1094,22 +1353,22 @@ msgid ""
 "no event loop runs is closed with a console notice."
 msgstr ""
 
-#: 72edaf343723458fb9b2fe0f40bc01b8
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_client:15 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_client:15
+#: db3915757e2842c8afee97b2d471411e of
 msgid "Accepted connection."
 msgstr ""
 
-#: 6a2427e7b7de4d609bf61e3fad46b413
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_client:17 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_client:17
+#: fae378e888be4821a14ed2483cfde1e0 of
 msgid "Peer ``(ip, port)``; used as the client id and as the key in ``clients``."
 msgstr ""
 
-#: 061015c431a54fafb45ea722ae696003
+#: 32886e2babcf4283924034c600453c4a
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_command:1 of
 msgid "Dispatch one command line received from a client."
 msgstr ""
 
-#: 9cc9ee25bc464440a4ac2bca19e5a413
+#: 8972b8c4edf149fd9a4008832c85ed31
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_command:3 of
 msgid ""
 "Built-in commands (``/help``, ``/time``, ``/clients``, ``/quit``, "
@@ -1120,24 +1379,23 @@ msgid ""
 "close the connection; an unknown command is only reported on the console."
 msgstr ""
 
-#: 9a970df310fc4b59b113bb6160f24fd2
+#: 208294924333477a8e7d65aa3130777e
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_command:10 of
 msgid "Connection the line came from."
 msgstr ""
 
-#: 8856eb18fd044b60b869be64e5f4576e
+#: 306e5026cfc1441d8c754f0e02866cf3
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_command:12 of
 msgid "Peer ``(ip, port)``."
 msgstr ""
 
-#: 6ea3bacf1baf4eadb98d5e38236ecf90
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.handle_server_command:10
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.handle_server_command:12
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_command:14
-#: e212b51318ea4d46ab6354b818dc262b of
+#: a2a3a1fd57e14260a53675457fdff0b4 of
 msgid "Line including its leading ``/``."
 msgstr ""
 
-#: 0dc75edb2f174aadbc9a87fea9271420
+#: 8d727a2aaab14beaa1b6858b59b0821d
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_command:17 of
 msgid ""
 "Response for that client, or None when no response is due     (crypto "
@@ -1146,11 +1404,11 @@ msgid ""
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_command:19
-#: b3f201060ae548098d8284d4c18c0560 of
+#: ed04a3bf285b4f57bb6a5de0c4f7284f of
 msgid "Response for that client, or None when no response is due"
 msgstr ""
 
-#: 0dc75edb2f174aadbc9a87fea9271420
+#: 8d727a2aaab14beaa1b6858b59b0821d
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.handle_command:20 of
 msgid ""
 "(crypto lines, file transfers, ``/quit``, which answers on the socket "
@@ -1158,114 +1416,108 @@ msgid ""
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_message_to:1
-#: b4ee832e0ad64d189740b45a297d713d of
+#: a784dfdc5ded411d985426e36f6e5435 of
 msgid "Send one plain message to a connected target, tagged with its origin."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_message_to:3
-#: ec8cc922a2ee4e70bdff9a8e81b74e98 of
+#: b545977244dc402aa8586264d2d933f3 of
 msgid ""
 "Public API for forward extensions: the message is wrapped in a "
 "``/send_msg_from <addr> <payload>`` envelope so the receiver can "
 "attribute it to the originator (see `parse_forwarded_message`)."
 msgstr ""
 
-#: 660b6f4493ec4c9994af44960900cb10
+#: 8ee5275fbf894581ade9e6f30d5d4aff
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:7
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_message_to:7
-#: b8a3838c85624f3dbe705afac78acc47 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_message_to:7 of
 msgid "Destination ``(ip, port)``."
 msgstr ""
 
-#: 1dfa946975cf4768891292e84a2bbc63
+#: 38ffd8a7079d4794811e3504c01052f8
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_message_to:9 of
 msgid "Payload to deliver."
 msgstr ""
 
-#: 09f6b3913160404b9927d5e70252d9bc 5251c2b3867b4dc1b8dd8d09ea570d90
+#: 3b48d6e3b84b4dde9a09f3c2f07c8b61
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:15
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_message_to:11
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:13
-#: a8ee713ff78b42bd8adb5743ab369aef of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:13 of
 msgid "Originating client ``(ip, port)``."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_message_to:14
-#: ad5e4419a1d04b27bec64cf1aee14c53 of
+#: d2471a90e269464c977239f406051120 of
 msgid ""
 "False when ``target`` is not connected (a console notice is     printed);"
 " True when the envelope was sent."
 msgstr ""
 
-#: 2fd94dad15884a56b9657090a33988f9 9e706f8851a74b569ade8deb4f8f70ab
+#: 320d99b8923f4eaa886ffe0a16bfc6d9
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:24
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_message_to:16 of
 msgid "False when ``target`` is not connected (a console notice is"
 msgstr ""
 
-#: 59049e3514b74a7ba90fb8886ecca185
+#: 1a97f59b270f404096d9c2b37ab09a8c
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_message_to:17 of
 msgid "printed); True when the envelope was sent."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:1
-#: b9019e7dae074d64a66ae1c81967b9b8 of
+#: 6baab06dc12e4ecc80d1a16c26c2a19a
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:1 of
 msgid "Build the tagged wire command that pushes one forwarded item."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:3
-#: fcde926ccf5640b2b2ac6aab009aa4d0 of
+#: 0c3f9dcbcf8f413fbd5befefb960c402
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:3 of
 msgid ""
 "Public API for forward extensions. The originator tuple sits before the "
 "trailing transfer id, where the receiver's existing parsers ignore it and"
 " `parse_forward_originator` recovers it for attribution."
 msgstr ""
 
-#: 3cee0d37a9e5460a90b7c9b1abe53a92
+#: 3cf58937a2d04172bf544119279d85c1
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:9
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:7
-#: d5cb9e15787a435ab586217498d98e2b of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:7 of
 msgid "\"file\" or \"file_folder\"."
 msgstr ""
 
-#: 8efbb4663727491e8ee77edc824ce1c0
+#: 621a93603c8549c0ba047bee6aae5a38
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:11
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:9
-#: e8aeb2b89d5f4969aeaf2244f06a1a47 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:9 of
 msgid "Relative folder path (folders only)."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:13
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:11
-#: b439157e6df44d7bac2a4367c5fb66ee b9cb86fb0ad642e18ec19debb44a2648 of
+#: f0f56fb642874c3889fb0dacfed4f4ef of
 msgid "File or folder name."
 msgstr ""
 
-#: 5f249d30e8934ed0ae07c1ca2666c6c6
+#: 72d2b6fdd324482eaea9803def1fe2da
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:17
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:15
-#: df45d1036cb9437a853551afb3f31775 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:15 of
 msgid "Transfer id shared by the pushed item."
 msgstr ""
 
-#: 9bc7aaf1a36a4311a736f5528525d33a
+#: 0aa1bd5b053544e98ae4ab3ae1add5f7
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:19
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:17
-#: f806614c8aeb428292d6ca51db8ca35b of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:17 of
 msgid "Receiver-side destination directory."
 msgstr ""
 
-#: 1f3c679edcf34e71a946e8668ca27a58
+#: 93e666db45e745619b90c744e1646b73
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_target_command:20 of
 msgid "Command line to hand to `send_message`."
 msgstr ""
 
-#: 3499106d953f41789e53f24bfcae3af5
+#: 56d8327bb7414a5e85292f8f2ace9d42
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:1 of
 msgid "Push one forwarded file or folder item to a connected target."
 msgstr ""
 
-#: 959c24d8afff4486ad5f787311bf3c8b
+#: 3098afa7f4ac43a184d081dda8faa6ba
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:3 of
 msgid ""
 "Public API for forward extensions: sends the line built by "
@@ -1273,24 +1525,157 @@ msgid ""
 "`parse_forward_originator`."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:22
-#: cb11d22918824fb09fa82fd432aeb74a of
+#: 9b9634061040430484cd2596f43a8feb
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:22 of
 msgid ""
 "False when ``target`` is not connected (a console notice is     printed);"
 " True when the command was sent."
 msgstr ""
 
-#: 66262977fc014465964289448673a5b9
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:25 of
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.forward_item_to:25
+#: b8bb8c432f7649d5a35480fec0509a51 of
 msgid "printed); True when the command was sent."
 msgstr ""
 
-#: 1df1cd85678d4149bdac92c3591c9e50
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_TCP_Server:1 of
+#: 51eade0145d74a2bbfc51070bc779703
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_transfer_mode_recv:1
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_transfer_mode_recv:1 of
+msgid "Receive one file over a transfer sub-connection."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_transfer_mode_recv:3
+#: d3367c6f97aa4bf4b9cb3d79b3117fce of
+msgid ""
+"``peer`` is the transfer's original sender (the sender for an inbound "
+"transfer, never a relay): it is stored with the progress entry so a later"
+" reconnect can ask that peer to continue the file."
+msgstr ""
+
+#: 5c4faf52e8bb4808805bae58d30ac0cc
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_transfer_mode_recv:8
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_transfer_mode_recv:7
+#: de641d48c530435bb4adc04755a47a6d of
+msgid ""
+"``resume_entry`` continues an interrupted transfer: the listener "
+"announces itself, asks the sender to continue from the bytes already on "
+"disk (``RESUME_LINE``) and appends the incoming chunks to the partial "
+"file instead of truncating it."
+msgstr ""
+
+#: 51eade0145d74a2bbfc51070bc779703
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_transfer_mode:1
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_transfer_mode:1 of
+msgid "Send one file over a transfer sub-connection."
+msgstr ""
+
+#: 87862abb10ad423f820952355f5936bc
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_transfer_mode:3
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_transfer_mode:3
+#: d6a618c007ec433fa10a44b0a7a90fe4 of
+msgid ""
+"``control_socket``/``crypto`` carry the listener's mode stamp (\"plain\" "
+"or \"enc:<nonce>\"): an encrypted leg aborts when the session key "
+"material is missing rather than downgrading silently."
+msgstr ""
+
+#: 97e1a0538f544c2a8e755c78805fda7c
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_transfer_mode:7
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_transfer_mode:7
+#: a405431dfd62434b82c7052edc456123 of
+msgid ""
+"``fid`` is the transfer's id — the caller's own transfer id for a plain "
+"send, the relay id for a forwarded upload — and keys this leg in "
+"``file_upload_progress``; every leg with a fid can be paused with "
+"``/pause_trans`` for that fid. None (a leg without a protocol transfer "
+"id, such as a public-key push) tracks no progress."
+msgstr ""
+
+#: 6cb58bfd1dde4b49ba3525af014e44c7
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.file_transfer_mode:13 of
+msgid ""
+"``peer`` is the transfer's original receiver (never a relay): it is "
+"stored with the progress entry so a later reconnect can be resumed. "
+"``resume_offset`` continues an interrupted transfer from the byte the "
+"receiver already holds: the file is read from there instead of its first "
+"byte."
+msgstr ""
+
+#: 1634dbe84a95421a92a660f7c6fdd10e
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_transfers:1
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_transfers:1 of
+msgid "Continue the interrupted transfers of a peer that is back."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_transfers:3
+#: eb46142fa4e44147ad3ad8c680d5bee0 of
+msgid ""
+"Reads the persisted stores back (`_load_transfer_progress`) and, for "
+"every download this instance was receiving from ``peer``, opens a fresh "
+"transfer listener and asks the sender to continue the file from the bytes"
+" already on disk. Restored uploads need no action here: the peer drives "
+"their resume from its own side."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_transfers:9
+#: b7d54977ca494a8b9968365dffd9bd3d of
+msgid ""
+"Peer ``(ip, port)`` that just connected; None resumes every peer that is "
+"connected right now."
+msgstr ""
+
+#: 15c0118df8da4454a7fea8d529989237
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_transfers:13 of
+msgid "Number of resumed receive legs started."
+msgstr ""
+
+#: 52cb873f015542b6a94506cebfe735a1 737ed182911443bc8cfff3c4d094b9a9
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_trans:1
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_trans:1 of
+msgid "Continue one interrupted transfer this instance was sending."
+msgstr ""
+
+#: 50f292ac853841c9b082eb3c3ff4d6f4 6c968a5b77b342ed891883336cfcc255
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_trans:3
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_trans:3 of
+msgid ""
+"Runs when a receiver asks to continue a transfer (``/resume_trans``, see "
+"`resume_transfers` on the receiving side): the leg is re-established "
+"against the receiver's fresh listener and the source file is read from "
+"the byte offset the receiver already holds. Also the public API for "
+"resuming one transfer on demand."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_trans:9
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_trans:9
+#: b541e8446e374bc8b38cd7912a1fa33c of
+msgid "Receiver ``(ip, port)`` the request came from; None skips the peer check."
+msgstr ""
+
+#: 72d2b6fdd324482eaea9803def1fe2da
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_trans:12
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_trans:12 of
+msgid "Transfer id of the interrupted transfer."
+msgstr ""
+
+#: 7124e1ce01df4fcea9516bed4ca55dc7
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_trans:14
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_trans:14
+#: d94da1700d0e46028f7bf114d7c5da62 of
+msgid "Byte offset the receiver already holds."
+msgstr ""
+
+#: 1a97f59b270f404096d9c2b37ab09a8c
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_trans:17
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_trans:17 of
+msgid "True when the resume leg was started."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_TCP_Server:1
+#: b03f4edeca5f4cc19f6d695aac3690de of
 msgid "Bind the server socket, then accept clients until `stop` runs."
 msgstr ""
 
-#: 42bb4623926449f5b91a451bcac30a2f
+#: 7e027ea659ab48e19ea346cb284fe144
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.start_TCP_Server:3 of
 msgid ""
 "Blocks the calling thread. A console command thread is started when "
@@ -1301,12 +1686,12 @@ msgid ""
 "Socket errors and the end of the accept loop both end in `stop`."
 msgstr ""
 
-#: 3d3320ce03544f23ac6f43883e5a580c
+#: 291f5a8cc4f648ee9910e5cd45074675
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.console_input:1 of
 msgid "Read console commands until the server stops."
 msgstr ""
 
-#: 5f7369176edb4567b3eb5332588b8c57
+#: 1ba2e428d432496688ef23f1c07562da
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.console_input:3 of
 msgid ""
 "Handles ``/stop``, ``/status``, ``/clients``, ``/send_msg``, ``/file``, "
@@ -1318,12 +1703,12 @@ msgid ""
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.stop:1
-#: ccbb242b51984c9f8ce9fb519c202485 of
+#: eb90f49c77e64006a0c9ae861ff849b1 of
 msgid "Stop the server and release everything it owns."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.stop:3
-#: e379bbd3f7b249c6b296f371548a5b1e of
+#: a059b1e71106487999c83c2e2042f509 of
 msgid ""
 "Closes the server socket and every client connection, flushes the message"
 " and event stores, releases the allocated port range, clears ``running`` "
@@ -1331,152 +1716,192 @@ msgid ""
 " Safe to call more than once."
 msgstr ""
 
-#: 06fe9e3a48914447af6464acedea1fa0
+#: 32b06ea315b3404caa3a05c4aed0ce64
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base:1 of
 msgid ""
 "TCP client: connect to a server, dispatch commands, send and receive "
 "messages."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:3
-#: ef04371450674badb666b7fb31c203da of
+#: 2b30f5c9ecd24fc89cdcd58000ee1e99
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:3 of
 msgid ""
-"Lines received from the server go through `receive_messages`: a line "
-"starting with ``/`` is handled by `handle_server_command` (protocol "
-"commands plus the handlers registered for the \"server\" side), any other"
-" line is a plain message delivered to the listeners registered with "
-"`add_message_listener` and stored in ``messages_dict``. With "
-"``is_input_command_in_console`` the console thread `interactive_mode` "
-"sends typed lines to the server."
+"Lines received from the server go through `receive_messages`: every line "
+"is delivered to the listeners registered with `add_message_listener` "
+"first (commands included; a forwarded ``/send_msg_from`` envelope is "
+"delivered as its payload), then a line starting with ``/`` is handled by "
+"`handle_server_command` (protocol commands plus the handlers registered "
+"for the \"server\" side), any other line is stored in ``messages_dict`` "
+"as a plain message. With ``is_input_command_in_console`` the console "
+"thread `interactive_mode` sends typed lines to the server."
 msgstr ""
 
-#: 840ff55e5e444cfbb85251e9c4123178
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:12 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:14
+#: b9532c86786c43d5aea58b24157fefed of
 msgid "Server address this client connects to."
 msgstr ""
 
-#: 1f65ef8a745743ebb31ebc5805c5b02f
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:18 of
+#: 2cfa1e3e1674407ba1e2683e76fef65d
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:20 of
 msgid "Server port this client connects to."
 msgstr ""
 
-#: 5956a034ca2347f384f682b52d927ee3
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:24 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:26
+#: af04fdee2c95431a9b0c17f96e50c18c of
 msgid "Local address the socket binds to."
 msgstr ""
 
-#: 1d2b7be8ff994d15b9a3f63c0e4fab11
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:30 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:32
+#: b1d4b5606e1c48b6a915815527542758 of
 msgid "Local port, None when the OS chose one."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:32
-#: d616019e80a741638b6ac020d6abb336 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:34
+#: d926b4f3eb4b40a4acb21f780a4dc227 of
 msgid "int | None"
 msgstr ""
 
-#: 0a015a4f44194fe2b25bbd4dfe52d1eb
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:36 of
+#: 500cfd177cf5453d887f6904b73b7851
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:38 of
 msgid "True while the connection is up."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:1
-#: da7ca1204aea47779bbaaa809f79da93 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:76
+#: fd832e1d72b642838382d529c3e1f22c of
+msgid ""
+"Whether `start_TCP_client` reconnects after the connection drops (and "
+"resumes the interrupted transfers)."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base:102
+#: c194bbee7cf14d268c330e06f94ae973 of
+msgid ""
+"Path under the protocol's ``.Flow`` directory where the two stores are "
+"written when the connection drops and read back on the next reconnect "
+"(`resume_transfers`)."
+msgstr ""
+
+#: 40f2a9e1b730422db3dd58bc2a6046e3
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:1 of
 msgid "Create the client and, unless extended, connect and start reading."
 msgstr ""
 
-#: 9e0577d19b76432089a46a53a2bbf7be
+#: 0552aa36b7b74474af8f43b380dbee54
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:3 of
 msgid "Server address to connect to; required before `connect` is called."
 msgstr ""
 
-#: 8400b2487cfb4cff8a72f452e3b4c83e
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:6 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:6
+#: d246ff9aaf154bfa91b5c4c9d293afd5 of
 msgid "Local address the socket binds to. Defaults to \"127.0.0.1\"."
 msgstr ""
 
-#: 7cb2047b830c4996832b4623812a687b
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:9 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:9
+#: e981b68ebbea46e9b556b09f4b5cd44a of
 msgid "Server port. Defaults to 65432."
 msgstr ""
 
-#: 7a0404b673f84a1191af5479097f8cf5
+#: 766bf4c138234fe081bbd2668dcb2a5d
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:11 of
 msgid "Local port to bind; None lets the OS choose an ephemeral port."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:14
-#: df784379acc1474aba6566c969dbb7bc of
+#: 5d661c0f91f64ef39cacb1a5466d752c
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:14 of
 msgid ""
 "Socket timeout in seconds for connect and receive. Must be None when "
 "``is_wait_server`` is True."
 msgstr ""
 
-#: 2b8bf92e3eb049ee8e994aa8b6d92fa5
+#: 9478d02062284ecaa7838f931ab80780
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:17 of
 msgid "Step between candidate ports in the allocation range. Defaults to 1."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:22
-#: fa74d746eefe4cb6862068fdbf384dd8 of
+#: 2e1695ae510b43758793257124fd23c2
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:22 of
 msgid "Enter interactive mode after connecting. Defaults to True."
 msgstr ""
 
-#: 95ebbc90f84a41ada4b6edbec2c7a95e
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:25 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:25
+#: e02da86957dd4f45bf84ede4e9c82cda of
 msgid "Keep retrying while the server is not reachable. Defaults to True."
 msgstr ""
 
-#: 259f9e8d0d1547ae81e047e8ec24875d
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:31 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:31
+#: e1fb7f67e1714a61a9e8fe500555c700 of
 msgid ""
 "When True, do not call `start_TCP_client`; the caller connects when "
 "ready. Defaults to False."
 msgstr ""
 
-#: 794bfe7ef8594729b0e87230d3ed9e49
+#: 1634dbe84a95421a92a660f7c6fdd10e
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:34 of
 msgid "Negotiate the RSA-encrypted channel with the server. Defaults to True."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:40
-#: e3f9232109d34798af1f681b250ec7d5 of
+#: cff66a7ac1ad410f96ed1ee03cb1cf53 of
 msgid ""
 "Buffer ceiling in MiB, kept for parity with the server class; the "
 "client's forward path does not read it today. Defaults to 2048."
 msgstr ""
 
-#: 71b662106e594538b8a5fcb9bc190b1f
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:51 of
+#: 14c4889553fb42f7b0393a4a7ab46b4a
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:72 of
+msgid ""
+"Reconnect (and resume the interrupted transfers, see `resume_transfers`) "
+"when the connection drops while `start_TCP_client` runs. The transfers "
+"that died with the connection are persisted to the protocol's ``.Flow`` "
+"directory and read back on the next connect. Defaults to False: a dropped"
+" connection ends the client."
+msgstr ""
+
+#: 0f06ff3b6db940da96ec09bee3dba526
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:80 of
 msgid "If ``is_wait_server`` is True and ``timeout`` is not None."
 msgstr ""
 
-#: 4388cbc6302341adbdfa566d93526ef1
+#: 5dd677b9627d4b84b53dc7a6b2848b3f
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.register_command:6 of
 msgid ""
 "``handler(client_socket, client_address, command)`` called with the raw "
 "line; a non-None return value is sent back as the response."
 msgstr ""
 
-#: 14fcd0c8f3554ae983ac746cf3e58621
+#: 0a57a7875bb94767904ff8d93fa77eb8
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.register_command:10 of
 msgid ""
 "\"server\" for commands pushed by the server, \"client\" for commands "
 "typed on this instance's console."
 msgstr ""
 
-#: 88087ef71067485dbd40d569a7b950d4
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.call_extension_functions:3
+#: acb1af86a6184624a47ac6cc3b7127d0 of
+msgid ""
+"The handler is selected by the first token of ``command``, matched case-"
+"insensitively against the names given to `register_command`: the console "
+"group is searched first, then the group fed by the lines the server "
+"sends. The handler runs on the calling thread — ``run_in_thread`` only "
+"affects the console and inbound dispatch paths — and is called with this "
+"client's socket and id, the context its dispatch paths give it."
+msgstr ""
+
+#: 876e8fe2a6d645829ba12ddbad5006df
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.add_message_listener:1 of
-msgid "Register ``listener(sender_id, message)`` for every inbound plain message."
+msgid "Register ``listener(sender_id, message)`` for every inbound line."
 msgstr ""
 
-#: 50556c2d788d4e39a4a7cfed81ef6d6d
+#: 2658650e027a4697b248f261903a4e29
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.add_message_listener:3 of
-msgid "Mirrors the server-side contract; commands are not reported here."
+msgid ""
+"Every line received from the server is reported, commands included, so "
+"the listener observes all inbound traffic; a message another client "
+"forwarded here is reported as its payload, attributed to the forwarder."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.add_message_listener:5
-#: e6bec65449634cff953afd74d0e23e7a of
+#: 412834182c9442adaf0b85e24c200ccc
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.add_message_listener:7 of
 msgid ""
 "``listener(sender_id, message)``; ``sender_id`` is the author's "
 "``\"ip:port\"`` — the forwarding client for a message another client "
@@ -1486,21 +1911,21 @@ msgid ""
 "swallowed."
 msgstr ""
 
-#: 38c576fe994b4a77830eaba36ca063b3
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.add_file_listener:1 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.add_file_listener:1
+#: fc8a83e0b5f84273a8287b122c1a9a3e of
 msgid ""
 "Register ``listener(full_path, name, size, command)`` per saved inbound "
 "file."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.add_file_listener:3
-#: e258540084d64816a08e0783810c4e3e of
+#: 34e3386853564aab9a824e96438fc3e5
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.add_file_listener:3 of
 msgid ""
 "Fired after a file pushed by the server (a direct send, or a forwarded "
 "file/folder item) has been fully written to ``file_transfer_dir``."
 msgstr ""
 
-#: 4e10b4a74e9142e0868ab1b0b423f359
+#: 63f925709b83433e967610672b6fbc79
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.add_file_listener:6 of
 msgid ""
 "``listener(full_path, name, size, command)``; ``command`` is the wire "
@@ -1509,115 +1934,200 @@ msgid ""
 "it must not block."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.alloc_port:1
-#: afdf1e13067b4914a6aead736d7604e3 of
+#: 4bc88415dfff40a3884ee0284b0ccc3f
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.pause_trans:3 of
+msgid ""
+"The sending leg with this fid stops at its next chunk and stays open "
+"until `start_trans` (or the peer's ``/start_trans``) resumes it. This "
+"covers every outgoing transfer — a plain upload as much as a forward "
+"upload — and is what the ``/pause_trans`` line does when it arrives from "
+"a peer."
+msgstr ""
+
+#: 7e190ff27df349ae90eb7bd98a0b6b5b
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.pause_trans:11 of
+msgid ""
+"Restrict the pause to the leg whose original receiver is this ``(ip, "
+"port)``; None pauses whichever leg holds the fid."
+msgstr ""
+
+#: 5479763134c04a418df6a9e5011a9dcf
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.pause_trans:16 of
+msgid ""
+"True when a running leg was marked paused; False when     nothing matched"
+" — the switch is still armed, so a leg started     later under this fid "
+"starts paused."
+msgstr ""
+
+#: 2bc5d7e5dfa94eb29b49f12562f57c88
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.pause_trans:18 of
+msgid "True when a running leg was marked paused; False when"
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.pause_trans:19
+#: a9c7cb3036f8409faad4c1db964d8a91 of
+msgid ""
+"nothing matched — the switch is still armed, so a leg started later under"
+" this fid starts paused."
+msgstr ""
+
+#: 59fa8126f08348bb9368c35b5d2336e2
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.start_trans:5 of
+msgid ""
+"Restrict the resume to the leg whose original receiver is this ``(ip, "
+"port)``; None addresses every match."
+msgstr ""
+
+#: 149f767d72dc4da7b1d88fed768d2474
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.start_trans:9 of
+msgid "True when a running leg was resumed."
+msgstr ""
+
+#: 37e6dd691f544a80b9e0949883a2e5a8
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.pause_trans_remote:1 of
+msgid "Ask the server to pause its transfer toward this client."
+msgstr ""
+
+#: 89fa1c905614496ea12a4cfde9eb3cce
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.pause_trans_remote:3 of
+msgid ""
+"Sends the ``/pause_trans <fid>`` line the peers use for transfer flow "
+"control (a forwarded upload this client relays is throttled this way)."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.pause_trans_remote:6
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.start_trans_remote:3
+#: b541e8446e374bc8b38cd7912a1fa33c of
+msgid "The server's ``(ip, port)``; None accepts the connected server."
+msgstr ""
+
+#: 72d2b6fdd324482eaea9803def1fe2da
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.pause_trans_remote:9
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.start_trans_remote:6 of
+msgid "Transfer id of the server's outbound leg."
+msgstr ""
+
+#: 39423e052b70403ba07a713aa9e3cb4a
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.pause_trans_remote:12
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.start_trans_remote:9 of
+msgid "True when the line was written."
+msgstr ""
+
+#: 149f767d72dc4da7b1d88fed768d2474
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.start_trans_remote:1 of
+msgid "Ask the server to resume a transfer paused earlier."
+msgstr ""
+
+#: 0e91f82d8856443497c399f97643b757
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.alloc_port:1 of
 msgid "Reserve this client's port range under the cross-process lock."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.alloc_port:3
-#: cd973d56799848ecbd65c434c9f5f0ae of
+#: 6029a28126344e45b24394cb56b2f8f8
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.alloc_port:3 of
 msgid "No-op until the server assigns a range (see ``/client_alloc_port_range``)."
 msgstr ""
 
-#: 29e4db224e2d4208a5fc08a1523f9e6b
+#: 32bed401c3574959ba5ed08fc9078401
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.free_port:1 of
 msgid "Release this client's reserved port range."
 msgstr ""
 
-#: 7b0f2f6530984dcc888286f471f14747
+#: 9f86b7aac4f44886be9cd87b56072b63
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.free_port:3 of
 msgid "No-op unless a range was assigned (``is_hand_alloc_port`` True)."
 msgstr ""
 
+#: 8154f96d9ec74bd588971a806d42f8c1
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.client_port_temp_info_file_lock:1
-#: c6e04e800074445da45886940c77a9f8 of
+#: of
 msgid "Create the lock file that reserves the client port range for this process."
 msgstr ""
 
-#: 2c7b09854c254d0bbfa62d2a356cfb24
+#: 69c2dd5d5d1d497c8bac1e62ab4fc30a
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.is_client_port_temp_info_file_locked:1
 #: of
 msgid "Report whether the client port range is reserved by some process."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.client_port_temp_info_file_unlock:1
-#: b2cbf44d95154896ab2df64bf8be1a3d of
+#: c88f37ef2d5c47bda346e804508d6ec0 of
 msgid "Remove the lock file that reserves the client port range."
 msgstr ""
 
-#: 690717115cb64dfeb32f56302992451c
+#: 478443e187814a6ca7ad798277db023f
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.hand_alloc_port:1 of
 msgid "Allocate the next free client port range and record it on disk."
 msgstr ""
 
-#: 2e8d17873f8b4b419f2f6cd1f2000a62
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.hand_alloc_port:3 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.hand_alloc_port:3
+#: a8736540f4c3402fad9508e619d559d7 of
 msgid ""
 "``port`` is moved past the ranges already recorded by other clients on "
 "this host, so each instance ends up with a range of its own."
 msgstr ""
 
-#: 2d7cb151d3bc4798914cbe3d73391c16
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.hand_alloc_port:11 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.hand_alloc_port:11
+#: bc44b1604e02467280b59cb8ad63d0af of
 msgid "If the client port info file cannot be read or written."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.hand_free_port:1
-#: b6079f909975409c86477341dcf2990c of
+#: e48dff576a074109a135db168b5dbe98 of
 msgid "Drop this client's entry from the on-disk port range record."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.palloc:1
-#: c7fc083bff234cb7b377bc7adbb65ca5 of
+#: 3aa62e8843c6495c862f43fc6dda9d91
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.palloc:1 of
 msgid "Allocate a port, waiting until one is free."
 msgstr ""
 
-#: 85129bb5393542e498835f3ba6dc981a
+#: 2f7752fa51d946b1a4a566b38f046e80
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.palloc:3 of
 msgid "Allocated port, or 0 when no allocation range was assigned."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_palloc:3
-#: e77dc25d62bc4eedbd153b7420d109f4 of
+#: 503ab40fc32c4d548f65fa3272b2f4d2
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_palloc:3 of
 msgid ""
 "Allocated port; None when the upward range is exhausted; 0 when no     "
 "allocation range was assigned."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_palloc:5
-#: c452f87d6e18446cbbb2f48b1dc47b9b of
+#: b9fd549c95f24c2080d87cec92514db6 of
 msgid "Allocated port; None when the upward range is exhausted; 0 when no"
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_palloc:6
-#: e195a16298f14417b95ed3dc3ad60fac of
+#: 151a65f1c1984e4196c750108d0611cb
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_palloc:6 of
 msgid "allocation range was assigned."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.spy_palloc:3
-#: f7330894d1a041ca9a31ca1b390d5af7 of
+#: 0c6201bb2d7e45d3a4916d7e50a21e10
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.spy_palloc:3 of
 msgid ""
 "Allocated port; None when the downward range is exhausted; 0 when     no "
 "allocation range was assigned."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.spy_palloc:6
-#: a8d7d910fb874925acb423d08187908d of
+#: 76c766a9c61f4075a762ccf55038a65e
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.spy_palloc:6 of
 msgid "no allocation range was assigned."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_client:7
-#: c76dd143ea224bb69081222ac4228f8f of
+#: 8d500513e8854ba4bb91c8905a9adb73
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.create_temporary_client:7 of
 msgid "Local port to bind; None allocates one with `palloc`."
 msgstr ""
 
-#: 5a8b77d5b1e243d9b5b24039b6ff25d0
+#: 840360623c8a4c2bbafe8fe7bbf9209c
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.connect:1 of
 msgid "Connect to the server and start reading from it."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.connect:3
-#: b59d15dc7c7844a5bd0226eb081c9887 of
+#: df94288e660b48f6809358b3dc234ec9 of
 msgid ""
 "Binds ``client_port`` when one was configured, then retries while "
 "``is_wait_server`` is True and the server is not reachable yet. Once the "
@@ -1625,7 +2135,7 @@ msgid ""
 "negotiated, which closes the connection when the two sides disagree."
 msgstr ""
 
-#: 8711ef70ac704a48b05e13ded3546471
+#: 22fccba0ab36499a9a7f4427abe5e9f4
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.connect:8 of
 msgid ""
 "True when the connection is established (and, if encryption is     "
@@ -1633,105 +2143,107 @@ msgid ""
 "failed or the mode negotiation closed the connection."
 msgstr ""
 
-#: 850616ca4a614020b9627a3c39a54555
+#: 0270d0a2d42740a9889106339d9f2dbb
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.connect:10 of
 msgid "True when the connection is established (and, if encryption is"
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.connect:11
-#: cd0e7073f18d4d2ba990f1bfda735fd4 of
+#: c194691cedfb48c6bfd97d9bdc6f2246 of
 msgid ""
 "enabled, the key exchange has been started); False when the attempt "
 "failed or the mode negotiation closed the connection."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.receive_messages:1
-#: b7b9e013f50348379a0208a7702b9b1f of
+#: 4dc38e3ef3b74b8e8c27378242a1925a
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.receive_messages:1 of
 msgid "Read from the server until the connection ends."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.receive_messages:3
-#: ae819668995f44878eaa9c4a8db02583 of
+#: 431649a0d703476dadc6afa8adbe53d4
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.receive_messages:3 of
 msgid ""
-"Runs on the receive thread: plain lines are reported to the message "
-"listeners and stored in ``messages_dict`` (``/send_msg_from`` envelopes "
-"are attributed to their sender first), other ``/`` lines go to "
-"`handle_server_command`. Any end of the connection clears ``running`` and"
-" releases the port range."
+"Runs on the receive thread: every inbound line is reported to the message"
+" listeners (commands included); a plain message is also stored in "
+"``messages_dict``, while a ``/send_msg_from`` envelope is reported and "
+"stored as its payload attributed to the forwarding client, and other "
+"``/`` lines additionally go to `handle_server_command`. Any end of the "
+"connection clears ``running`` and releases the port range."
 msgstr ""
 
-#: 32feafb4504a473dbbe6b0957d3658f0
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message:1 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message:1
+#: cf284b59f7f849039404ced20f8e12db of
 msgid "Write one line to a socket, encrypting when the channel is up."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message:3
-#: c639152d8792432ba220c33c860f1211 of
+#: 40ba2ede2d3f4666b82107af129d24d0
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message:3 of
 msgid "Target connection; the client passes ``self.client_socket``."
 msgstr ""
 
-#: 5b421459787b4210b8bce3e7003cf35b
+#: 2e663941eaf142cb96738add05f9ef4d
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message:10 of
 msgid ""
 "True when the payload was written; False when the client is not     "
 "running, no socket was passed, or the payload type is unsupported."
 msgstr ""
 
-#: 1684a06aa826439784ce149aece2f637
+#: 38905ec7539d42e0839907c32dd8667f
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message:12 of
 msgid "True when the payload was written; False when the client is not"
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message:13
-#: bc5ff108fa3d46afb45fd86d4106ac2f of
+#: 3f7e2e6fedda476f996132c3f677f2f0
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message:13 of
 msgid "running, no socket was passed, or the payload type is unsupported."
 msgstr ""
 
-#: 3b27239d40244e35817e0806e3363df0
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message_to_server:1 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message_to_server:1
+#: a9220a130e694e0aba1d3b6320dff498 of
 msgid "Send the payload of a console line to the server."
 msgstr ""
 
-#: 66bc43727101429bacd6a76534c53f7b
+#: 2e208e83a89e4dac9793460a8808a042
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message_to_server:3 of
 msgid ""
 "Console line such as ``/send_msg hello``; the first token (the command "
 "name) is dropped and the second one is sent."
 msgstr ""
 
-#: 4cb6da8a7d464be983bf467e65fe55b0
+#: 39c8e70ca92b43b8ac687bc0aa7f4073
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.send_message_to_server:7 of
 msgid "If the line has fewer than two tokens."
 msgstr ""
 
-#: 369743f21d0f4656aa801c8f29b4129b
+#: 8d47f30ae7b0451f8ecfe207ec835ff3
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.receive_message:1 of
 msgid "Read up to ``msg_length`` bytes from a socket."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.handle_server_command:1
-#: f6749336c57b4a82b5c0b19f27bd8906 of
+#: 10a39005f45c46728ef9a000eeaf9109
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.handle_server_command:1 of
 msgid "Dispatch one command line pushed by the server."
 msgstr ""
 
-#: 510b3d71451048138e11fe92fdb160b4
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.handle_server_command:3 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.handle_server_command:3
+#: a7e781fde939475cb081204adac16ded of
 msgid ""
 "Handles the protocol's own lines: ``/crypto_mode`` (a mismatch closes the"
 " connection), ``/client_alloc_port_range``, the ``/crypto_*`` exchange "
 "lines, and the transfer lines ``/file``, ``/file_folder``, "
-"``/forward_upload``, ``/pause_trans``, ``/start_trans``, "
+"``/server_file_transfer_port``, ``/forward_upload``, ``/pause_trans``, "
+"``/start_trans``, ``/resume_trans``, ``/forward_resume`` and "
 "``/forward_error``. Any other name goes to the handlers registered for "
 "the \"server\" side via `register_command`; an unknown command is only "
 "reported on the console."
 msgstr ""
 
-#: 7724aab357eb408dbbf018c214f8eba0
+#: 91942d88960c4793b5eab8c3654c1400
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_messages:1 of
 msgid "Forward plain messages to other connected clients through the server."
 msgstr ""
 
-#: 12403f5be7704258849974d103865b9c
+#: 75bb9147a7464a278e19af9d03b04ecb
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_messages:3 of
 msgid ""
 "The console command ``/forward_send_msg`` uses this; the client must be "
@@ -1739,40 +2251,40 @@ msgid ""
 " so the receiving client can attribute it back to this one."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_messages:7
-#: fc0907a1c7484f66a7b2cc1a99d24dc0 of
+#: 0f3c201936df45b687dc5532531b4a4a
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_messages:7 of
 msgid "Message texts to forward."
 msgstr ""
 
-#: 8d07efc16f6c45d7b9d1d4f85f945317
+#: 277bbcb2143943b5b983badb00c3f4fa
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_messages:9 of
 msgid "Destination ``(ip, port)`` tuples."
 msgstr ""
 
-#: 4afafed2326a42e391e3b098cfea4f06
+#: 5ea8eea489fc43108a439d54fba31068
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_messages:12 of
 msgid ""
 "True when the request was written to the server; False when the     "
 "client is not connected."
 msgstr ""
 
-#: 85c761742fa5450f846373591e4af1ff
+#: 2bc5d7e5dfa94eb29b49f12562f57c88
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_messages:14 of
 msgid "True when the request was written to the server; False when the"
 msgstr ""
 
-#: 6ae9ff84b7d64c30abd31cde1715b783
+#: 45d974ad946b408b91d41bcce65abcc8
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_messages:15 of
 msgid "client is not connected."
 msgstr ""
 
-#: 7b79bd0e677c42fd921308a34e9a0929
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.interactive_mode:1 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.interactive_mode:1
+#: c9401da7c37e40e5978c80e4876b11a0 of
 msgid "Read console lines and act on them until the client stops."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.interactive_mode:3
-#: d91a5c812cdb4705a2fa27ac33ef693a of
+#: 793bcfd02c014200b0ec47f8e15b4d91
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.interactive_mode:3 of
 msgid ""
 "``/quit`` closes the connection; ``/send_msg``, ``/file``, "
 "``/multiple_file``, ``/file_folder``, ``/multiple_file_folder``, "
@@ -1782,38 +2294,77 @@ msgid ""
 "it stands. Ctrl-C and EOF close the connection."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_file_console:1
-#: dc2c54034ec64b61a3af655e86bc81a2 of
+#: 7ba721f9d59742b99e89e3b6e249e754
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_transfer_mode:13 of
+msgid ""
+"``peer`` is the transfer's original receiver (the target of a forward, "
+"never the relay): it is stored with the progress entry so a later "
+"reconnect can be resumed. ``resume_offset`` continues an interrupted "
+"transfer from the byte the receiver already holds: the file is read from "
+"there instead of its first byte."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_transfers:3
+#: a3c59554b8de41b280df7536b307bed0 of
+msgid ""
+"Reads the persisted stores back (`_load_transfer_progress`) and drives "
+"every download that can be continued: a file the server was sending is"
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_transfers:6
+#: fae378e888be4821a14ed2483cfde1e0 of
+msgid ""
+"Peer ``(ip, port)`` that just connected; None resumes every peer the "
+"client can reach."
+msgstr ""
+
+#: 48061103ed9d4bcaae8a8a837b363557
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_transfers:10 of
+msgid "Number of resumed transfers started or requested."
+msgstr ""
+
+#: 6dbae803a56c442588b28af664b7a0e9
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_file_console:1 of
 msgid ""
 "/forward_file <file1> <file2> ... <addr1> <addr2> ... [dest] (client "
 "only)."
 msgstr ""
 
-#: 303ae7e9e20444e38b303177bef0fb36
+#: 05cad8b03e0747dc804ffbfda3122fe1
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_folder_console:1 of
 msgid ""
 "/forward_folder <folder1> <folder2> ... <addr1> <addr2> ... [dest] "
 "(client only)."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.close:1
-#: ec2b9ff3c5cf4fb5a79e29242221fe67 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.file_transfer_mode_recv:3
+#: f6f606236f434f0287a969ccbe5ba2c5 of
+msgid ""
+"``peer`` is the transfer's original sender (the server for a pushed file,"
+" the originating client for a forwarded one — never the relay): it is "
+"stored with the progress entry so a later reconnect can ask that peer to "
+"continue the file."
+msgstr ""
+
+#: 6e9a9717a782419baecca63fd1f46baf
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.close:1 of
 msgid "Close the connection and release everything the client owns."
 msgstr ""
 
-#: 43645acb6c524c348b870d288aafae5e
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.close:3 of
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.close:3
+#: ba6c5badecf6465db6036735870ed305 of
 msgid ""
 "Stops the receive loop, releases the port range, flushes the message and "
-"event stores and closes the socket. Safe to call more than once."
+"event stores, persists the interrupted transfers and closes the socket. "
+"Safe to call more than once."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.start_TCP_client:1
-#: afb1904037404a6c99f6b7ae2df119e2 of
+#: c91a3245b93f46abbb49dbef7bcfeb1c of
 msgid "Connect to the server and start the client loop."
 msgstr ""
 
-#: 6f912c76416e4f37a750eda0c126da35
+#: 0c83552867484ea780fcff8d34e5c2d8
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.start_TCP_client:3 of
 msgid ""
 "Enters `interactive_mode` when ``is_input_command_in_console`` is True, "
@@ -1821,6 +2372,15 @@ msgid ""
 "process with status 1 when the connection cannot be established; Ctrl-C "
 "and the end of the connection both run `close`. A client that was closed "
 "while still connecting returns quietly, because that stop was asked for."
+msgstr ""
+
+#: PyFlow.network_api.connect_tcp.TCP_Client_Base.start_TCP_client:9
+#: eec663f58484446ebce460e6402d7b5f of
+msgid ""
+"With ``is_auto_reconnect`` True a dropped connection does not end the "
+"client: it reconnects (waiting for the server when ``is_wait_server`` is "
+"set) and every session carries the interrupted transfers of the previous "
+"one (`resume_transfers`). A close or ``/quit`` still stops the client."
 msgstr ""
 
 #~ msgid ""
@@ -1916,5 +2476,119 @@ msgstr ""
 #~ " cannot be established; Ctrl-C and "
 #~ "the end of the connection both run"
 #~ " `close`."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "one message per line, terminated by "
+#~ "a newline; a line that starts with"
+#~ " ``/`` is a command and goes to"
+#~ " the command handlers, anything else "
+#~ "is a plain message reported to the"
+#~ " registered message listeners;"
+#~ msgstr ""
+
+#~ msgid ""
+#~ "an RSA-encrypted channel is negotiated"
+#~ " right after connect unless "
+#~ "``is_enable_encrypto`` is False;"
+#~ msgstr ""
+
+#~ msgid ""
+#~ "file/folder transfer, message forwarding and"
+#~ " port allocation are layered on the"
+#~ " same socket and share its command"
+#~ " namespace."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "The forwarding extensions use the "
+#~ "module-level parsers `parse_forwarded_message`, "
+#~ "`parse_forward_items_and_addrs`, `parse_forward_originator` "
+#~ "and `forward_skip_message`."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "Each accepted connection is served by"
+#~ " `handle_client`, either in its own "
+#~ "thread (the default) or by a "
+#~ "coroutine on an asyncio event loop "
+#~ "when ``is_asynic_clients_io`` is True: a "
+#~ "line starting with ``/`` goes to "
+#~ "`handle_command` (built-in commands plus "
+#~ "the handlers registered with "
+#~ "`register_command`), any other line is a"
+#~ " plain message delivered to the "
+#~ "listeners registered with `add_message_listener` "
+#~ "and stored in ``messages_dict``."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "Register ``listener(client_id, message)`` for "
+#~ "every inbound plain message."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "Plain messages are the lines received"
+#~ " from clients that do not start "
+#~ "with ``/``; commands go through the "
+#~ "registered command handlers instead."
+#~ msgstr ""
+
+#~ msgid "Write one line to a client socket, encrypting when the channel is up."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "Lines received from the server go "
+#~ "through `receive_messages`: a line starting"
+#~ " with ``/`` is handled by "
+#~ "`handle_server_command` (protocol commands plus "
+#~ "the handlers registered for the "
+#~ "\"server\" side), any other line is "
+#~ "a plain message delivered to the "
+#~ "listeners registered with `add_message_listener` "
+#~ "and stored in ``messages_dict``. With "
+#~ "``is_input_command_in_console`` the console thread"
+#~ " `interactive_mode` sends typed lines to"
+#~ " the server."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "Register ``listener(sender_id, message)`` for "
+#~ "every inbound plain message."
+#~ msgstr ""
+
+#~ msgid "Mirrors the server-side contract; commands are not reported here."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "Runs on the receive thread: plain "
+#~ "lines are reported to the message "
+#~ "listeners and stored in ``messages_dict`` "
+#~ "(``/send_msg_from`` envelopes are attributed "
+#~ "to their sender first), other ``/`` "
+#~ "lines go to `handle_server_command`. Any "
+#~ "end of the connection clears ``running``"
+#~ " and releases the port range."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "Handles the protocol's own lines: "
+#~ "``/crypto_mode`` (a mismatch closes the "
+#~ "connection), ``/client_alloc_port_range``, the "
+#~ "``/crypto_*`` exchange lines, and the "
+#~ "transfer lines ``/file``, ``/file_folder``, "
+#~ "``/forward_upload``, ``/pause_trans``, ``/start_trans``,"
+#~ " ``/forward_error``. Any other name goes"
+#~ " to the handlers registered for the"
+#~ " \"server\" side via `register_command`; an"
+#~ " unknown command is only reported on"
+#~ " the console."
+#~ msgstr ""
+
+#~ msgid ""
+#~ "Stops the receive loop, releases the "
+#~ "port range, flushes the message and "
+#~ "event stores and closes the socket. "
+#~ "Safe to call more than once."
 #~ msgstr ""
 

@@ -30,6 +30,7 @@ def pair(tmp_path):
     )
     server.messages_log_file = str(tmp_path / "server_messages_log.json")
     server.events_log_file = str(tmp_path / "server_events_log.json")
+    server.file_trans_progress_file = str(tmp_path / "server_file_trans_progress.json")
     threading.Thread(target=server.start_TCP_Server, daemon=True).start()
     assert server_ready(server), "server did not start"
     client = TCP_Client_Base(
@@ -42,6 +43,7 @@ def pair(tmp_path):
     )
     client.messages_log_file = str(tmp_path / "client_messages_log.json")
     client.events_log_file = str(tmp_path / "client_events_log.json")
+    client.file_trans_progress_file = str(tmp_path / "client_file_trans_progress.json")
     assert client.connect()
     yield server, client
     client.close()

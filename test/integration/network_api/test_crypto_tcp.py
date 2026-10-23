@@ -77,6 +77,7 @@ def tcp_pair(tmp_path):
         is_enable_encrypto=True,
     )
     _redirect_crypto(server.crypto, tmp_path, ssh_dir, "pub_key")
+    server.file_trans_progress_file = str(tmp_path / "server_file_trans_progress.json")
     threading.Thread(target=server.start_TCP_Server, daemon=True).start()
     assert server_ready(server), "server did not start"
 
@@ -89,6 +90,7 @@ def tcp_pair(tmp_path):
         is_enable_encrypto=True,
     )
     _redirect_crypto(client.crypto, tmp_path, ssh_dir, "pub_key_client")
+    client.file_trans_progress_file = str(tmp_path / "client_file_trans_progress.json")
     assert client.connect()
     yield server, client, tmp_path
 
