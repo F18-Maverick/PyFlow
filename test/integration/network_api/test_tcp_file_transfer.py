@@ -167,14 +167,14 @@ def test_transfer_thread_survives_a_stop_before_the_start_sign(pair, tmp_path):
     stopped_first = threading.Event()
     transfer_thread = []
 
-    def stop_then_send(client_socket, message):
+    def stop_then_send(client_socket, message, is_send_raw=False):
         if message is server.server_start_file_transfer_sign and not stopped_first.is_set():
             # the race under test: the stop lands after the accept and before
             # the transfer thread's start sign
             transfer_thread.append(threading.current_thread())
             stopped_first.set()
             server.stop()
-        return real_send(client_socket, message)
+        return real_send(client_socket, message, is_send_raw=is_send_raw)
 
     server.send_message = stop_then_send
     threading.excepthook = hook
@@ -693,9 +693,9 @@ def test_forward_flow_control_pauses_uploader(pair, tmp_path, monkeypatch):
     sent = []
     real_send = server.send_message
 
-    def spy(sock, message):
+    def spy(sock, message, is_send_raw=False):
         sent.append(message if isinstance(message, str) else "")
-        return real_send(sock, message)
+        return real_send(sock, message, is_send_raw=is_send_raw)
 
     monkeypatch.setattr(server, "send_message", spy)
     a = target.client_socket.getsockname()

@@ -613,10 +613,10 @@ def test_flip_completes_even_if_push_ack_is_lost(tcp_pair, monkeypatch):
     server, client, _ = tcp_pair
     orig_send = server.send_message
 
-    def flaky_ack(client_socket, message):
+    def flaky_ack(client_socket, message, is_send_raw=False):
         if message == server.server_received_file_data_sign:
             raise OSError(9, "Bad file descriptor")  # the flaky ack send
-        return orig_send(client_socket, message)
+        return orig_send(client_socket, message, is_send_raw=is_send_raw)
 
     monkeypatch.setattr(server, "send_message", flaky_ack)
     assert _wait_flip(client)

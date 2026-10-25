@@ -3119,13 +3119,15 @@ class TCP_Server_Base:  # TCP server class
                 self._crypto_send_locks[client_socket] = lock
             return lock
 
-    def send_message(self, client_socket, message):  # send message to specific client
+    def send_message(self, client_socket, message, is_send_raw=False):  # send message to specific client
         """Write one message to a client socket, framing it when the channel is up.
 
         Args:
             client_socket (socket.socket): Target connection.
             message (str | bytes): Payload; a str is stripped and newline
                 terminated, bytes are sent as they are.
+            is_send_raw (bool): Write the payload as plaintext even when the channel
+                is encrypted; only for the crypto handshake and transfer coordination lines.
 
         Returns:
             bool: True when the payload was written, False for an unsupported
@@ -3135,6 +3137,14 @@ class TCP_Server_Base:  # TCP server class
             RuntimeError: If the server is not running or no socket was passed.
             OSError: If the socket write fails (the original error is re-raised).
         """
+        if is_send_raw:
+            deal_msg = message.strip()
+            if not deal_msg.endswith("\n"):
+                deal_msg += "\n"
+            encoded = deal_msg.encode("utf-8")
+            self._sendall(client_socket, encoded)
+            self._measure_network_speed(encoded, is_upload=True)
+            return True
         if not self.running or not client_socket:
             self._log("disable the connect to server")
             raise RuntimeError("connection error")
@@ -3204,20 +3214,6 @@ class TCP_Server_Base:  # TCP server class
                 raise BrokenPipeError(errno.EPIPE, "socket closed while sending")
             view = view[sent:]
 
-    def _send_raw(self, client_socket, text):
-        """Send a plaintext crypto-protocol message, bypassing encryption.
-
-        Args:
-            client_socket (socket.socket): Value used by the operation.
-            text (object): Value used by the operation.
-        """
-        data = text.strip()
-        if not data.endswith("\n"):
-            data += "\n"
-        encoded = data.encode("utf-8")
-        self._sendall(client_socket, encoded)
-        self._measure_network_speed(encoded, is_upload=True)
-
     def _crypto_mark_encrypted(self, client_socket, peer_role, peer_pem_path):
         """Handle the operation.
 
@@ -3276,7 +3272,7 @@ class TCP_Server_Base:  # TCP server class
             return
         try:
             # plaintext by design: the peer needs this line before it may frame
-            self._send_raw(client_socket, CRYPTO_FRAMES_START)
+            self.send_message(client_socket, CRYPTO_FRAMES_START, is_send_raw=True)
         except Exception:
             self._log_exc()
         self._crypto_publish_ecdh_pub(client_socket)
@@ -3520,7 +3516,7 @@ class TCP_Server_Base:  # TCP server class
             try:
                 with self._crypto_lock:
                     nonce = state.get("my_nonce") or self._crypto_fresh_nonce()
-                self._send_raw(client_socket, f"/crypto_key_exchange {nonce} 1")
+                self.send_message(client_socket, f"/crypto_key_exchange {nonce} 1", is_send_raw=True)
             except Exception:
                 self._log_exc()
 
@@ -3568,7 +3564,11 @@ class TCP_Server_Base:  # TCP server class
         session = self._crypto_sessions.get(client_address)
         if session is not None:
             session.reset_ecdh()  # a fresh handshake is a fresh session key
-        self._send_raw(client_socket, f"/crypto_key_exchange_ack {my_nonce} 1 {1 if force else 0}")
+        self.send_message(
+            client_socket,
+            f"/crypto_key_exchange_ack {my_nonce} 1 {1 if force else 0}",
+            is_send_raw=True,
+        )
         threading.Thread(
             target=self._crypto_wait_server_ready,
             args=(client_socket, client_address, state),
@@ -3629,7 +3629,7 @@ class TCP_Server_Base:  # TCP server class
         with self._crypto_lock:
             state["ready_sent"] = True
         try:
-            self._send_raw(client_socket, "/crypto_ready")
+            self.send_message(client_socket, "/crypto_ready", is_send_raw=True)
         except Exception:
             self._log_exc()
         self._crypto_try_server_flip(client_socket, state)
@@ -3657,7 +3657,7 @@ class TCP_Server_Base:  # TCP server class
                 client_id = copy.copy(self.file_client_id)
                 self.file_client_id += 1
             send_msg = f"/crypto_pub_key {client_id}"
-            self._send_raw(client_socket, send_msg)
+            self.send_message(client_socket, send_msg, is_send_raw=True)
             file_transfer_client_port = self.palloc()
             file_server_port = None
             waiting_time = 0
@@ -3737,7 +3737,7 @@ class TCP_Server_Base:  # TCP server class
                 peer_socket = self.clients.get(client_address, {}).get("socket")
         if not ok and peer_socket is not None:
             try:
-                self._send_raw(peer_socket, f"/crypto_reject {reason}")
+                self.send_message(peer_socket, f"/crypto_reject {reason}", is_send_raw=True)
             except Exception:
                 self._log_exc()
             try:
@@ -3976,7 +3976,11 @@ class TCP_Server_Base:  # TCP server class
             return False
         # announce our encryption mode; a mismatched peer is disconnected in handle_command
         try:
-            self._send_raw(client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
+            self.send_message(
+                client_socket,
+                f"/crypto_mode {1 if self.is_enable_encrypto else 0}",
+                is_send_raw=True,
+            )
         except Exception as e:
             # the peer vanished right after the welcome: the caller's cleanup
             # closes the connection; never let this escape
@@ -4815,8 +4819,8 @@ class TCP_Server_Base:  # TCP server class
         transfer_server_port_msg = "/server_file_transfer_port {} {} {}\n".format(
             file_transfer_server_port, file_client_id, stamp
         )
-        self._send_raw(
-            client_socket, transfer_server_port_msg
+        self.send_message(
+            client_socket, transfer_server_port_msg, is_send_raw=True
         )  # coordination line: always plaintext (like the handshake)
         server_file_socket.listen(1)
         if resume_entry is not None:
@@ -6002,7 +6006,9 @@ class TCP_Server_Base:  # TCP server class
             up_sock.listen(1)
             # coordination line: always plaintext, so it also reaches a peer
             # that has not finished flipping to framed mode
-            self._send_raw(forwarder_sock, f"/forward_upload {fid} {sport} {up_stamp}")
+            self.send_message(
+                forwarder_sock, f"/forward_upload {fid} {sport} {up_stamp}", is_send_raw=True
+            )
             up_client, _ = up_sock.accept()
             self._crypto_attach_transfer_in(up_client, forwarder_sock, up_stamp)
             self.send_message(up_client, self.server_start_file_transfer_sign)
@@ -7970,7 +7976,11 @@ class TCP_Client_Base:  # TCP client class
         Returns:
             bool: Result produced by the operation.
         """
-        self._send_raw(self.client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
+        self.send_message(
+            self.client_socket,
+            f"/crypto_mode {1 if self.is_enable_encrypto else 0}",
+            is_send_raw=True,
+        )
         if not self._crypto_mode_event.wait(timeout=self._crypto_mode_timeout):
             self._log("crypto: server did not announce its encryption mode, disconnecting")
             self.close()
@@ -8164,7 +8174,7 @@ class TCP_Client_Base:  # TCP client class
                 self._persist_transfer_progress()
                 break
 
-    def send_message(self, client_socket, message):  # send msg to server
+    def send_message(self, client_socket, message, is_send_raw=False):  # send msg to server
         """Write one line to a socket, encrypting when the channel is up.
 
         Args:
@@ -8172,11 +8182,21 @@ class TCP_Client_Base:  # TCP client class
                 ``self.client_socket``.
             message (str | bytes): Payload; a str is stripped and newline
                 terminated, bytes are sent as they are.
+            is_send_raw (bool): Write the payload as plaintext even when the channel
+                is encrypted; only for the crypto handshake and transfer coordination lines.
 
         Returns:
             bool: True when the payload was written; False when the client is not
                 running, no socket was passed, or the payload type is unsupported.
         """
+        if is_send_raw:
+            deal_msg = message.strip()
+            if not deal_msg.endswith("\n"):
+                deal_msg += "\n"
+            encoded = deal_msg.encode("utf-8")
+            client_socket.sendall(encoded)
+            self._measure_network_speed(encoded, is_upload=True)
+            return True
         if not self.running or not self.client_socket:
             self._log("disable the connect to server")
             return False
@@ -8273,20 +8293,6 @@ class TCP_Client_Base:  # TCP client class
                 self._measure_network_speed(plain, is_upload=False)
                 return plain  # plaintext mode: the line reader gets the bytes
 
-    def _send_raw(self, client_socket, text):
-        """Send a plaintext crypto-protocol message, bypassing encryption.
-
-        Args:
-            client_socket (socket.socket): Value used by the operation.
-            text (object): Value used by the operation.
-        """
-        data = text.strip()
-        if not data.endswith("\n"):
-            data += "\n"
-        encoded = data.encode("utf-8")
-        client_socket.sendall(encoded)
-        self._measure_network_speed(encoded, is_upload=True)
-
     def _crypto_mark_encrypted(self, client_socket, peer_role, peer_pem_path):
         """Handle the operation.
 
@@ -8356,7 +8362,7 @@ class TCP_Client_Base:  # TCP client class
             return
         try:
             # plaintext by design: the peer needs this line before it may frame
-            self._send_raw(client_socket, CRYPTO_FRAMES_START)
+            self.send_message(client_socket, CRYPTO_FRAMES_START, is_send_raw=True)
         except Exception:
             self._log_exc()
         self._crypto_publish_ecdh_pub(client_socket)
@@ -8555,7 +8561,7 @@ class TCP_Client_Base:  # TCP client class
                 hello = f"/crypto_key_exchange {self._crypto_my_nonce}"
                 if force:
                     hello += " 1"
-            self._send_raw(self.client_socket, hello)
+            self.send_message(self.client_socket, hello, is_send_raw=True)
             if not ack_event.wait(timeout=30):
                 if not self._crypto_still_current(gen):
                     return  # superseded by a newer handshake; that flow owns the connection
@@ -8603,7 +8609,7 @@ class TCP_Client_Base:  # TCP client class
         if session is not None:
             session.reset_ecdh()  # a re-exchange is a fresh session key
         ack = f"/crypto_key_exchange_ack {my_nonce} 1 {1 if force else 0}"
-        self._send_raw(self.client_socket, ack)
+        self.send_message(self.client_socket, ack, is_send_raw=True)
         self._crypto_after_ack("1" if force else "0", force)
 
     def _crypto_try_flip(self):
@@ -8668,7 +8674,7 @@ class TCP_Client_Base:  # TCP client class
             else:
                 request_pub = False
         if request_pub:
-            self._send_raw(self.client_socket, "/crypto_pub_key_request")
+            self.send_message(self.client_socket, "/crypto_pub_key_request", is_send_raw=True)
 
         def _wait_done():
             """Handle the operation."""
@@ -8690,7 +8696,7 @@ class TCP_Client_Base:  # TCP client class
             if stale:
                 return
             try:
-                self._send_raw(self.client_socket, "/crypto_ready")
+                self.send_message(self.client_socket, "/crypto_ready", is_send_raw=True)
             except OSError:
                 pass  # connection already closed (reject/breaker): nothing to announce
             with self._crypto_lock:
@@ -8721,7 +8727,7 @@ class TCP_Client_Base:  # TCP client class
                 client_id = copy.copy(self.file_client_id)
                 self.file_client_id += 1
             send_msg = f"/crypto_pub_key {client_id}"
-            self._send_raw(self.client_socket, send_msg)
+            self.send_message(self.client_socket, send_msg, is_send_raw=True)
             file_transfer_client_port = self.palloc()
             file_server_port = None
             waiting_time = 0
@@ -8794,7 +8800,7 @@ class TCP_Client_Base:  # TCP client class
             except OSError:
                 pass
             try:
-                self._send_raw(self.client_socket, f"/crypto_reject {reason}")
+                self.send_message(self.client_socket, f"/crypto_reject {reason}", is_send_raw=True)
             except Exception:
                 self._log_exc()
             try:
@@ -10452,8 +10458,8 @@ class TCP_Client_Base:  # TCP client class
         transfer_server_port_msg = "/server_file_transfer_port {} {} {}\n".format(
             file_transfer_server_port, file_client_id, stamp
         )
-        self._send_raw(
-            client_socket, transfer_server_port_msg
+        self.send_message(
+            client_socket, transfer_server_port_msg, is_send_raw=True
         )  # coordination line: always plaintext (like the handshake)
         server_file_socket.listen(1)
         if resume_entry is not None:
