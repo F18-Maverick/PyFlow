@@ -52,8 +52,20 @@ does not have, please pull the latest changes to avoid merge conflicts:
 
 7. Finally, open a pull request to the original repository.
 
-Documentation and style
------------------------
+Developing by agents:
+---------------------
+
+For the developers and the reviewers who want to work by the agents have to read the `AGENTS.md` first.
+
+There are two kinds of prompt templates which you can copy and complete to send to the agents.
+
+- For each stage of the incremental development process, copy the corresponding sections from `docs/prompt_templates/prompt_templates.dev.md` and send them to the Agent.
+- For each stage of the audit development process, copy the corresponding sections from `docs/prompt_templates/prompt_templates.audit.md` and send to the Agent.
+
+The wording is merely a format guideline. Whether it is valid or not shall be determined by the inspection items in each stage of this document.
+
+Documentation and style:
+------------------------
 
 Public Python interfaces need a docstring that follows ``docs/source/DOCSTRING_GUIDE.md``
 (Google style: summary line, ``Args``, ``Returns``, ``Raises``); C comments follow
