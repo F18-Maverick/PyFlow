@@ -232,17 +232,22 @@ def test_upload_resumes_after_a_reconnect(tmp_path):
         assert wait_until(lambda: client.running and client.client_socket is not None)
         client_addr = client.client_socket.getsockname()
 
+        # the server registers an accepted client on its own thread: wait for it
+        assert wait_until(lambda: client_addr in server.clients, timeout=10), (
+            "server never registered the reconnecting client"
+        )
         server_sock = server.clients[client_addr]["socket"]
         client_id = "%s:%s" % client_addr
         server.file_transfer_server_recv_server_start_thread(
             client_id, server_sock, f"/file {shlex.quote(str(src))} {fid}"
         )
-        assert _wait_port(client) is not None
+        transfer_port = _wait_port(client)
+        assert transfer_port is not None, "the client never announced a transfer port"
 
         client.pause_trans(fid)  # freeze the leg, then give it a partial file
         sender = threading.Thread(
             target=client.file_transfer_mode,
-            args=(str(src), "127.0.0.1", _wait_port(client) or 0, 0),
+            args=(str(src), "127.0.0.1", transfer_port, 0),
             kwargs={"fid": fid, "peer": (server.host, server.port)},
             daemon=True,
         )
