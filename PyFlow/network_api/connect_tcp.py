@@ -1713,23 +1713,33 @@ class TCP_Server_Base:  # TCP server class
         # never raise (exceptions are swallowed by the notify helpers).
         self._message_listeners = []
         self._file_listeners = []
+        self._send_message_listeners = []
         self._event_listeners_lock = threading.Lock()
-        # Inbound message/event stores: external code reads these instead of
-        # registering listeners. Keyed by the sender's socket; each value is
-        # a list of [content, timestamp] pairs. When a store's total size
-        # reaches max_dict_size (64 KiB) it is flushed to its JSON log and
-        # cleared (see _record_message/_record_event/_flush_*_dict).
+        # Message/event stores: external code reads these instead of registering
+        # listeners. Keyed by the socket; each value is a list of [content,
+        # timestamp] pairs. messages_dict and sent_messages_dict hold plain text
+        # (inbound / outbound); events_dict and sent_events_dict hold "/" commands.
+        # When a store's total size reaches max_dict_size (64 KiB) it is flushed
+        # to its JSON log and cleared (see _append_record, _flush_record_stores).
         self.messages_dict = {}
         self.events_dict = {}
+        self.sent_messages_dict = {}
+        self.sent_events_dict = {}
         self._messages_dict_lock = threading.Lock()
         self._events_dict_lock = threading.Lock()
+        self._sent_messages_dict_lock = threading.Lock()
+        self._sent_events_dict_lock = threading.Lock()
         self._socket_keys = {}  # record key -> "ip:port", captured while it was alive
         self._socket_keys_lock = threading.Lock()
         self._messages_dict_size = 0
         self._events_dict_size = 0
+        self._sent_messages_dict_size = 0
+        self._sent_events_dict_size = 0
         self.max_dict_size = 64 * 1024
         self.messages_log_file = os.path.join(self.project_info_dir, "messages_log.json")
         self.events_log_file = os.path.join(self.project_info_dir, "events_log.json")
+        self.sent_messages_log_file = os.path.join(self.project_info_dir, "sent_messages_log.json")
+        self.sent_events_log_file = os.path.join(self.project_info_dir, "sent_events_log.json")
         self.is_extend_command = is_extend_command
         self.is_enable_encrypto = is_enable_encrypto
         self.is_custom_keys = is_custom_keys
@@ -2651,6 +2661,33 @@ class TCP_Server_Base:  # TCP server class
             except ValueError:
                 pass
 
+    def add_send_message_listener(self, listener):
+        """Register ``listener(target_id, message)`` for every payload written by `send_message`.
+
+        Fired after a successful write, for text and bytes alike (so a byte stream
+        reaches it), never for ``is_send_raw`` protocol lines. ``target_id`` is the
+        receiving client's ``"ip:port"``. It runs on the sending thread, so it must
+        not block, and exceptions raised inside it are swallowed.
+
+        Args:
+            listener (callable): ``listener(target_id, message)``.
+        """
+        with self._event_listeners_lock:
+            if listener not in self._send_message_listeners:
+                self._send_message_listeners.append(listener)
+
+    def remove_send_message_listener(self, listener):
+        """Unregister a listener previously added by `add_send_message_listener`.
+
+        Args:
+            listener (callable): Listener to remove; an unknown one is ignored.
+        """
+        with self._event_listeners_lock:
+            try:
+                self._send_message_listeners.remove(listener)
+            except ValueError:
+                pass
+
     def add_file_listener(self, listener):
         """Register ``listener(client_id, full_path, name, size, command)`` per saved file.
 
@@ -2695,6 +2732,20 @@ class TCP_Server_Base:  # TCP server class
                 listener(client_id, message)
             except Exception as e:
                 self._log(f"message listener error: {e}")
+                self._log_exc()
+
+    def _notify_message_sent(self, client_socket, message):
+        """Report one written payload to the send listeners."""
+        with self._event_listeners_lock:
+            listeners = list(self._send_message_listeners)
+        if not listeners:
+            return
+        target_id = self._socket_key(client_socket)
+        for listener in listeners:
+            try:
+                listener(target_id, message)
+            except Exception as e:
+                self._log(f"send message listener error: {e}")
                 self._log_exc()
 
     def _notify_file_received(self, client_id, full_path, name, size, command):
@@ -2773,47 +2824,53 @@ class TCP_Server_Base:  # TCP server class
             return key
         return self._socket_key(sock)
 
-    def _record_message(self, sock, content):
-        """Store one inbound plain-text message under the sender's socket.
-
-        External code reads ``messages_dict`` (or the JSON log) instead of
-                registering a message listener. The entry is ``[content, timestamp]``
-                with the timestamp of arrival.
+    def _append_record(self, d, lock, size_attr, log_path, sock, content):
+        """Append one ``[content, timestamp]`` pair under ``sock``; flush when full.
 
         Args:
-            sock (object): Value used by the operation.
-            content (object): Value used by the operation.
+            d (dict): The store (socket -> list of pairs).
+            lock (threading.Lock): The store's lock.
+            size_attr (str): Name of the attribute holding the store's byte size.
+            log_path (str): JSON log the store flushes into.
+            sock (object): Key socket.
+            content (str): Text to record.
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with self._messages_dict_lock:
+        with lock:
             self._remember_socket_key(sock)
-            self.messages_dict.setdefault(sock, []).append([content, timestamp])
-            self._messages_dict_size += len(content.encode("utf-8", "replace")) + len(timestamp)
-            if self._messages_dict_size >= self.max_dict_size:
-                self._flush_dict_locked(
-                    self.messages_dict, "_messages_dict_size", self.messages_log_file
-                )
+            d.setdefault(sock, []).append([content, timestamp])
+            size = getattr(self, size_attr) + len(content.encode("utf-8", "replace"))
+            size += len(timestamp)
+            setattr(self, size_attr, size)
+            if size >= self.max_dict_size:
+                self._flush_dict_locked(d, size_attr, log_path)
+
+    def _record_message(self, sock, content):
+        """Store one inbound plain-text message under the sender's socket."""
+        self._append_record(
+            self.messages_dict, self._messages_dict_lock, "_messages_dict_size",
+            self.messages_log_file, sock, content,
+        )
 
     def _record_event(self, sock, command):
-        """Store one inbound command as an event under the sender's socket.
+        """Store one inbound "/" command under the sender's socket."""
+        self._append_record(
+            self.events_dict, self._events_dict_lock, "_events_dict_size",
+            self.events_log_file, sock, command,
+        )
 
-        The event content is the original wire command from the peer (file
-                transfers, folder transfers, extension commands, ...). External code
-                reads ``events_dict`` (or the JSON log) instead of registering a
-                listener. File-transfer events get their completion timestamp via
-                ``_update_event_timestamp``.
-
-        Args:
-            sock (object): Value used by the operation.
-            command (object): Value used by the operation.
-        """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with self._events_dict_lock:
-            self._remember_socket_key(sock)
-            self.events_dict.setdefault(sock, []).append([command, timestamp])
-            self._events_dict_size += len(command.encode("utf-8", "replace")) + len(timestamp)
-            if self._events_dict_size >= self.max_dict_size:
-                self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
+    def _record_sent(self, sock, content):
+        """Store one outbound text: a "/" line as a sent event, other text as a sent message."""
+        if content.startswith("/"):
+            self._append_record(
+                self.sent_events_dict, self._sent_events_dict_lock, "_sent_events_dict_size",
+                self.sent_events_log_file, sock, content,
+            )
+        else:
+            self._append_record(
+                self.sent_messages_dict, self._sent_messages_dict_lock, "_sent_messages_dict_size",
+                self.sent_messages_log_file, sock, content,
+            )
 
     def _update_event_timestamp(self, sock, command, timestamp):
         """Stamp the completion time onto the recorded event for ``command``.
@@ -2880,23 +2937,39 @@ class TCP_Server_Base:  # TCP server class
         d.clear()
         setattr(self, size_attr, 0)
         self._merge_json_log(path, snapshot)
-        other = self.events_dict if d is self.messages_dict else self.messages_dict
-        with self._socket_keys_lock:  # a key is only kept while it is buffered
+        with self._socket_keys_lock:  # a key is only kept while some store buffers it
             for sock in snapshot:
-                if sock not in d and sock not in other:
+                if not any(sock in store for store in self._record_dicts()):
                     self._socket_keys.pop(sock, None)
 
+    def _record_dicts(self):
+        """Return the four record stores, in flush order."""
+        return (self.messages_dict, self.events_dict, self.sent_messages_dict, self.sent_events_dict)
+
     def _flush_messages_dict(self):
-        """Handle the operation."""
+        """Flush the inbound messages store into its JSON log."""
         with self._messages_dict_lock:
-            self._flush_dict_locked(
-                self.messages_dict, "_messages_dict_size", self.messages_log_file
-            )
+            self._flush_dict_locked(self.messages_dict, "_messages_dict_size", self.messages_log_file)
 
     def _flush_events_dict(self):
-        """Handle the operation."""
+        """Flush the inbound events store into its JSON log."""
         with self._events_dict_lock:
             self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
+
+    def _flush_record_stores(self):
+        """Flush every record store into its JSON log (called on stop)."""
+        with self._messages_dict_lock:
+            self._flush_dict_locked(self.messages_dict, "_messages_dict_size", self.messages_log_file)
+        with self._events_dict_lock:
+            self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
+        with self._sent_messages_dict_lock:
+            self._flush_dict_locked(
+                self.sent_messages_dict, "_sent_messages_dict_size", self.sent_messages_log_file
+            )
+        with self._sent_events_dict_lock:
+            self._flush_dict_locked(
+                self.sent_events_dict, "_sent_events_dict_size", self.sent_events_log_file
+            )
 
     def _merge_json_log(self, path, snapshot):
         """Merge ``snapshot`` into the JSON log at ``path`` (append per socket).
@@ -3145,6 +3218,17 @@ class TCP_Server_Base:  # TCP server class
             self._sendall(client_socket, encoded)
             self._measure_network_speed(encoded, is_upload=True)
             return True
+        written = self._write_message(client_socket, message)
+        if written:
+            self._after_send(client_socket, message)
+        return written
+
+    def _write_message(self, client_socket, message):
+        """Write one payload: encrypted when the channel is up, plaintext otherwise.
+
+        Returns:
+            bool: True when written, False for an unsupported payload type.
+        """
         if not self.running or not client_socket:
             self._log("disable the connect to server")
             raise RuntimeError("connection error")
@@ -3186,6 +3270,14 @@ class TCP_Server_Base:  # TCP server class
                     self._log(f"send msg error: {e}")
                     self._log_exc()
                 raise
+
+    def _after_send(self, client_socket, message):
+        """Record and report one payload that `_write_message` has written."""
+        if isinstance(message, str):
+            message = message.strip()
+            if message:
+                self._record_sent(client_socket, message)
+        self._notify_message_sent(client_socket, message)
 
     def _sendall(self, client_socket, data):
         """Write ``data`` in full, waiting for room on a non-blocking socket.
@@ -6389,8 +6481,7 @@ class TCP_Server_Base:  # TCP server class
         self.running = False
         self._stopped = True  # also cancels a start_TCP_Server() still binding
         self.free_port()
-        self._flush_messages_dict()
-        self._flush_events_dict()
+        self._flush_record_stores()
         # in-flight transfers die with the server: persist them for the next run
         self._persist_transfer_progress()
         with self.client_lock:  # close all clients connections
@@ -6678,23 +6769,33 @@ class TCP_Client_Base:  # TCP client class
         # never raise (exceptions are swallowed by the notify helpers).
         self._message_listeners = []
         self._file_listeners = []
+        self._send_message_listeners = []
         self._event_listeners_lock = threading.Lock()
-        # Inbound message/event stores: external code reads these instead of
-        # registering listeners. Keyed by the sender's socket; each value is
-        # a list of [content, timestamp] pairs. When a store's total size
-        # reaches max_dict_size (64 KiB) it is flushed to its JSON log and
-        # cleared (see _record_message/_record_event/_flush_*_dict).
+        # Message/event stores: external code reads these instead of registering
+        # listeners. Keyed by the socket; each value is a list of [content,
+        # timestamp] pairs. messages_dict and sent_messages_dict hold plain text
+        # (inbound / outbound); events_dict and sent_events_dict hold "/" commands.
+        # When a store's total size reaches max_dict_size (64 KiB) it is flushed
+        # to its JSON log and cleared (see _append_record, _flush_record_stores).
         self.messages_dict = {}
         self.events_dict = {}
+        self.sent_messages_dict = {}
+        self.sent_events_dict = {}
         self._messages_dict_lock = threading.Lock()
         self._events_dict_lock = threading.Lock()
+        self._sent_messages_dict_lock = threading.Lock()
+        self._sent_events_dict_lock = threading.Lock()
         self._socket_keys = {}  # record key -> "ip:port", captured while it was alive
         self._socket_keys_lock = threading.Lock()
         self._messages_dict_size = 0
         self._events_dict_size = 0
+        self._sent_messages_dict_size = 0
+        self._sent_events_dict_size = 0
         self.max_dict_size = 64 * 1024
         self.messages_log_file = os.path.join(self.project_info_dir, "messages_log.json")
         self.events_log_file = os.path.join(self.project_info_dir, "events_log.json")
+        self.sent_messages_log_file = os.path.join(self.project_info_dir, "sent_messages_log.json")
+        self.sent_events_log_file = os.path.join(self.project_info_dir, "sent_events_log.json")
         self.is_extend_command = is_extend_command
         self.is_enable_encrypto = is_enable_encrypto
         self.is_custom_keys = is_custom_keys
@@ -6822,6 +6923,33 @@ class TCP_Client_Base:  # TCP client class
             except ValueError:
                 pass
 
+    def add_send_message_listener(self, listener):
+        """Register ``listener(target_id, message)`` for every payload written by `send_message`.
+
+        Fired after a successful write, for text and bytes alike (so a byte stream
+        reaches it), never for ``is_send_raw`` protocol lines. ``target_id`` is the
+        server's ``"ip:port"``. It runs on the sending thread, so it must not block,
+        and exceptions raised inside it are swallowed.
+
+        Args:
+            listener (callable): ``listener(target_id, message)``.
+        """
+        with self._event_listeners_lock:
+            if listener not in self._send_message_listeners:
+                self._send_message_listeners.append(listener)
+
+    def remove_send_message_listener(self, listener):
+        """Unregister a listener previously added by `add_send_message_listener`.
+
+        Args:
+            listener (callable): Listener to remove; an unknown one is ignored.
+        """
+        with self._event_listeners_lock:
+            try:
+                self._send_message_listeners.remove(listener)
+            except ValueError:
+                pass
+
     def add_file_listener(self, listener):
         """Register ``listener(full_path, name, size, command)`` per saved inbound file.
 
@@ -6864,6 +6992,20 @@ class TCP_Client_Base:  # TCP client class
                 listener(sender, message)
             except Exception as e:
                 self._log(f"message listener error: {e}")
+                self._log_exc()
+
+    def _notify_message_sent(self, client_socket, message):
+        """Report one written payload to the send listeners."""
+        with self._event_listeners_lock:
+            listeners = list(self._send_message_listeners)
+        if not listeners:
+            return
+        target_id = self._socket_key(client_socket)
+        for listener in listeners:
+            try:
+                listener(target_id, message)
+            except Exception as e:
+                self._log(f"send message listener error: {e}")
                 self._log_exc()
 
     def _notify_file_received(self, full_path, name, size, command):
@@ -6941,47 +7083,82 @@ class TCP_Client_Base:  # TCP client class
             return key
         return self._socket_key(sock)
 
-    def _record_message(self, sock, content):
-        """Store one inbound plain-text message under the sender's socket.
-
-        External code reads ``messages_dict`` (or the JSON log) instead of
-                registering a message listener. The entry is ``[content, timestamp]``
-                with the timestamp of arrival.
+    def _append_record(self, d, lock, size_attr, log_path, sock, content):
+        """Append one ``[content, timestamp]`` pair under ``sock``; flush when full.
 
         Args:
-            sock (object): Value used by the operation.
-            content (object): Value used by the operation.
+            d (dict): The store (socket -> list of pairs).
+            lock (threading.Lock): The store's lock.
+            size_attr (str): Name of the attribute holding the store's byte size.
+            log_path (str): JSON log the store flushes into.
+            sock (object): Key socket.
+            content (str): Text to record.
         """
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with self._messages_dict_lock:
+        with lock:
             self._remember_socket_key(sock)
-            self.messages_dict.setdefault(sock, []).append([content, timestamp])
-            self._messages_dict_size += len(content.encode("utf-8", "replace")) + len(timestamp)
-            if self._messages_dict_size >= self.max_dict_size:
-                self._flush_dict_locked(
-                    self.messages_dict, "_messages_dict_size", self.messages_log_file
-                )
+            d.setdefault(sock, []).append([content, timestamp])
+            size = getattr(self, size_attr) + len(content.encode("utf-8", "replace"))
+            size += len(timestamp)
+            setattr(self, size_attr, size)
+            if size >= self.max_dict_size:
+                self._flush_dict_locked(d, size_attr, log_path)
+
+    def _record_message(self, sock, content):
+        """Store one inbound plain-text message under the sender's socket."""
+        self._append_record(
+            self.messages_dict, self._messages_dict_lock, "_messages_dict_size",
+            self.messages_log_file, sock, content,
+        )
 
     def _record_event(self, sock, command):
-        """Store one inbound command as an event under the sender's socket.
+        """Store one inbound "/" command under the sender's socket."""
+        self._append_record(
+            self.events_dict, self._events_dict_lock, "_events_dict_size",
+            self.events_log_file, sock, command,
+        )
 
-        The event content is the original wire command from the peer (file
-                transfers, folder transfers, extension commands, ...). External code
-                reads ``events_dict`` (or the JSON log) instead of registering a
-                listener. File-transfer events get their completion timestamp via
-                ``_update_event_timestamp``.
+    def _record_sent(self, sock, content):
+        """Store one outbound text: a "/" line as a sent event, other text as a sent message."""
+        if content.startswith("/"):
+            self._append_record(
+                self.sent_events_dict, self._sent_events_dict_lock, "_sent_events_dict_size",
+                self.sent_events_log_file, sock, content,
+            )
+        else:
+            self._append_record(
+                self.sent_messages_dict, self._sent_messages_dict_lock, "_sent_messages_dict_size",
+                self.sent_messages_log_file, sock, content,
+            )
 
-        Args:
-            sock (object): Value used by the operation.
-            command (object): Value used by the operation.
-        """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    def _record_dicts(self):
+        """Return the four record stores, in flush order."""
+        return (self.messages_dict, self.events_dict, self.sent_messages_dict, self.sent_events_dict)
+
+    def _flush_messages_dict(self):
+        """Flush the inbound messages store into its JSON log."""
+        with self._messages_dict_lock:
+            self._flush_dict_locked(self.messages_dict, "_messages_dict_size", self.messages_log_file)
+
+    def _flush_events_dict(self):
+        """Flush the inbound events store into its JSON log."""
         with self._events_dict_lock:
-            self._remember_socket_key(sock)
-            self.events_dict.setdefault(sock, []).append([command, timestamp])
-            self._events_dict_size += len(command.encode("utf-8", "replace")) + len(timestamp)
-            if self._events_dict_size >= self.max_dict_size:
-                self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
+            self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
+
+    def _flush_record_stores(self):
+        """Flush every record store into its JSON log (called on stop)."""
+        with self._messages_dict_lock:
+            self._flush_dict_locked(self.messages_dict, "_messages_dict_size", self.messages_log_file)
+        with self._events_dict_lock:
+            self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
+        with self._sent_messages_dict_lock:
+            self._flush_dict_locked(
+                self.sent_messages_dict, "_sent_messages_dict_size", self.sent_messages_log_file
+            )
+        with self._sent_events_dict_lock:
+            self._flush_dict_locked(
+                self.sent_events_dict, "_sent_events_dict_size", self.sent_events_log_file
+            )
 
     def _update_event_timestamp(self, sock, command, timestamp):
         """Stamp the completion time onto the recorded event for ``command``.
@@ -7048,23 +7225,10 @@ class TCP_Client_Base:  # TCP client class
         d.clear()
         setattr(self, size_attr, 0)
         self._merge_json_log(path, snapshot)
-        other = self.events_dict if d is self.messages_dict else self.messages_dict
-        with self._socket_keys_lock:  # a key is only kept while it is buffered
+        with self._socket_keys_lock:  # a key is only kept while some store buffers it
             for sock in snapshot:
-                if sock not in d and sock not in other:
+                if not any(sock in store for store in self._record_dicts()):
                     self._socket_keys.pop(sock, None)
-
-    def _flush_messages_dict(self):
-        """Handle the operation."""
-        with self._messages_dict_lock:
-            self._flush_dict_locked(
-                self.messages_dict, "_messages_dict_size", self.messages_log_file
-            )
-
-    def _flush_events_dict(self):
-        """Handle the operation."""
-        with self._events_dict_lock:
-            self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
 
     def _merge_json_log(self, path, snapshot):
         """Merge ``snapshot`` into the JSON log at ``path`` (append per socket).
@@ -8197,6 +8361,18 @@ class TCP_Client_Base:  # TCP client class
             client_socket.sendall(encoded)
             self._measure_network_speed(encoded, is_upload=True)
             return True
+        written = self._write_message(client_socket, message)
+        if written:
+            self._after_send(client_socket, message)
+        return written
+
+    def _write_message(self, client_socket, message):
+        """Write one line: encrypted when the channel is up, plaintext otherwise.
+
+        Returns:
+            bool: True when written; False when the client is not running, no
+                socket was passed, or the payload type is unsupported.
+        """
         if not self.running or not self.client_socket:
             self._log("disable the connect to server")
             return False
@@ -8236,6 +8412,14 @@ class TCP_Client_Base:  # TCP client class
                     self._log(f"send msg error: {e}")
                     self._log_exc()
                 return False
+
+    def _after_send(self, client_socket, message):
+        """Record and report one payload that `_write_message` has written."""
+        if isinstance(message, str):
+            message = message.strip()
+            if message:
+                self._record_sent(client_socket, message)
+        self._notify_message_sent(client_socket, message)
 
     def send_message_to_server(self, message):
         """Send the payload of a console line to the server.
@@ -10515,8 +10699,7 @@ class TCP_Client_Base:  # TCP client class
         self.running = False
         self._stopped = True  # also cancels a connect() still in flight
         self.free_port()
-        self._flush_messages_dict()
-        self._flush_events_dict()
+        self._flush_record_stores()
         # transfers still in flight are kept on disk for the next connect
         self._persist_transfer_progress()
         with self._crypto_lock:
