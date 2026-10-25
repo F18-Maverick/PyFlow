@@ -272,6 +272,23 @@ client = TCP_Client_Base(host="127.0.0.1", port=12345, is_extend_command=True)
 
 By default both ends enable the encrypted channel (`is_enable_encrypto=True`): keys come from `~/.ssh/id_rsa` when parseable, otherwise an RSA-2048 pair is generated into `PyFlow/network_api/.Flow/pvt_key/`, and peer keys are exchanged and TOFU-checked on every connection (`PyFlow/network_api/.Flow/pub_key/pub_key.json`). See the TCP API docs for `is_custom_keys` and the full handshake.
 
+## Contributing & Developing
+
+### Contributing
+
+Please read the `.github/CONTRIBUTING.md`.
+
+### Developing
+
+For the developers and the reviewers who want to work by the agents have to read the `AGENTS.md` first.
+
+There are two kinds of prompt templates which you can copy and complete to send to the agents.
+
+- For each stage of the incremental development process, copy the corresponding sections from `docs/prompt_templates/prompt_templates.dev.md` and send them to the Agent.
+- For each stage of the audit development process, copy the corresponding sections from `docs/prompt_templates/prompt_templates.audit.md` and send to the Agent.
+
+The wording is merely a format guideline. Whether it is valid or not shall be determined by the inspection items in each stage of this document.
+
 ## Testing
 
 ```bash

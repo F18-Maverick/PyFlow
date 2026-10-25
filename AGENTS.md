@@ -7,8 +7,6 @@
 - 人类提交复杂需求时，填好“需求卡”，并说一句“按 AGENTS.md 复杂任务流程执行，先走需求卡和计划，不要写代码”。
 - 人类提交审计任务时，说“审计模式：读取 docs/audit/AGENTS.audit.md 并按审计流程执行”，并附审计卡。
 - Agent 按“需求卡 → 计划与拆分 → 单个提交审查 → 总体报告与总验收 → 合并前闸门 → 提交远端”执行。
-- 开发增量流程各阶段可复制 `docs/prompt_templates/prompt_templates.dev.md` 中的对应段落发给 Agent。
-- 审计流程各阶段可复制 `docs/prompt_templates/prompt_templates.audit.md` 中的对应段落发给 Agent。
 - 话术只是格式约定，是否通过以对应规则文件的检查项为准。
 
 ---
@@ -333,10 +331,3 @@ Agent 先不写代码，先交计划。人类明确批准后，才进入执行�
 - **轻量模式**：见“轻量任务”。
 
 模式未明确时，默认开发模式；不得自行切换模式。
-
----
-
-## 对人类审查者（Reviewer）推荐的提示词模板
-
-- 走开发增量流程各阶段可复制 `docs/prompt_templates/prompt_templates.dev.md` 中的对应段落发给 Agent；话术只是格式约定，是否通过以本文件各阶段检查项为准。
-- 走审计存量流程各阶段可复制 `docs/prompt_templates/prompt_templates.audit.md` 中的对应段落发给 Agent；话术只是格式约定，是否通过以本文件各阶段检查项为准。
