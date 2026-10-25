@@ -1714,6 +1714,7 @@ class TCP_Server_Base:  # TCP server class
         self._message_listeners = []
         self._file_listeners = []
         self._send_message_listeners = []
+        self._control_sockets = set()  # sockets carrying the control protocol; only these are recorded
         self._event_listeners_lock = threading.Lock()
         # Message/event stores: external code reads these instead of registering
         # listeners. Keyed by the socket; each value is a list of [content,
@@ -2734,6 +2735,24 @@ class TCP_Server_Base:  # TCP server class
                 self._log(f"message listener error: {e}")
                 self._log_exc()
 
+    def _notify_transfer_chunk(self, client_socket, data):
+        """Report one chunk read from a non-control socket to the message listeners.
+
+        Side-channel sockets (file/folder transfers, forwards) carry raw bytes and
+        ``sign`` tokens, which belong to the transfer layer, so they are reported
+        to the listeners but never recorded in a store.
+        """
+        if not data or client_socket in self._control_sockets:
+            return
+        with self._event_listeners_lock:
+            listeners = list(self._message_listeners)
+        for listener in listeners:
+            try:
+                listener(self._socket_key(client_socket), data)
+            except Exception as e:
+                self._log(f"message listener error: {e}")
+                self._log_exc()
+
     def _notify_message_sent(self, client_socket, message):
         """Report one written payload to the send listeners."""
         with self._event_listeners_lock:
@@ -3275,7 +3294,7 @@ class TCP_Server_Base:  # TCP server class
         """Record and report one payload that `_write_message` has written."""
         if isinstance(message, str):
             message = message.strip()
-            if message:
+            if message and client_socket in self._control_sockets:
                 self._record_sent(client_socket, message)
         self._notify_message_sent(client_socket, message)
 
@@ -3474,7 +3493,8 @@ class TCP_Server_Base:  # TCP server class
         plaintext, served from the channel's buffer; a socket without one is
         read raw. A read that started while the channel was raw is classified
         by the channel when it returns, so bytes of a flip that landed during
-        the read never land in the line reader.
+        the read never land in the line reader. Reads from a non-control socket
+        are also reported to the message listeners (see `_notify_transfer_chunk`).
 
         Args:
             client_socket (socket.socket): Connection to read from.
@@ -3489,10 +3509,12 @@ class TCP_Server_Base:  # TCP server class
             if channel is None:
                 data = client_socket.recv(msg_length)
                 self._measure_network_speed(data, is_upload=False)
+                self._notify_transfer_chunk(client_socket, data)
                 return data
             data = channel.take(msg_length)
             if data:
                 self._measure_network_speed(data, is_upload=False)
+                self._notify_transfer_chunk(client_socket, data)
                 return data  # buffered plaintext is served even after a disable
             raw = client_socket.recv(self.recv_messages_chunk_len if channel.secure else msg_length)
             if not raw:
@@ -3505,10 +3527,12 @@ class TCP_Server_Base:  # TCP server class
                 leftover = channel.drain_plaintext()
                 if leftover:
                     self._measure_network_speed(leftover, is_upload=False)
+                    self._notify_transfer_chunk(client_socket, leftover)
                     return leftover  # hand back whatever was already read
                 continue  # framing is off now: keep serving in raw mode
             if plain:
                 self._measure_network_speed(plain, is_upload=False)
+                self._notify_transfer_chunk(client_socket, plain)
                 return plain  # plaintext mode: the line reader gets the bytes
 
     def _crypto_channel_error(self, client_socket):
@@ -3934,9 +3958,12 @@ class TCP_Server_Base:  # TCP server class
             with self._crypto_lock:
                 channel = self._channels.get(client_socket)
             if channel is None:
-                return await loop.sock_recv(client_socket, self.recv_messages_chunk_len)
+                data = await loop.sock_recv(client_socket, self.recv_messages_chunk_len)
+                self._notify_transfer_chunk(client_socket, data)
+                return data
             data = channel.take(self.recv_messages_chunk_len)
             if data:
+                self._notify_transfer_chunk(client_socket, data)
                 return data  # buffered plaintext is served even after a disable
             raw = await loop.sock_recv(client_socket, self.recv_messages_chunk_len)
             if not raw:
@@ -3948,9 +3975,11 @@ class TCP_Server_Base:  # TCP server class
                 await asyncio.to_thread(self._crypto_channel_error, client_socket)
                 leftover = channel.drain_plaintext()
                 if leftover:
+                    self._notify_transfer_chunk(client_socket, leftover)
                     return leftover
                 continue  # framing is off now: keep serving in raw mode
             if plain:
+                self._notify_transfer_chunk(client_socket, plain)
                 return plain  # plaintext mode: the line reader gets the bytes
 
     async def _handle_client_async(self, client_socket, client_address):
@@ -4016,6 +4045,7 @@ class TCP_Server_Base:  # TCP server class
         """
         client_id = f"{client_address[0]}:{client_address[1]}"
         with self.client_lock:  # add new client
+            self._control_sockets.add(client_socket)
             self.clients[client_address] = {
                 "socket": client_socket,
                 "address": client_address,
@@ -4143,6 +4173,7 @@ class TCP_Server_Base:  # TCP server class
             self._crypto_peer.pop(client_socket, None)
             self._crypto_push_active.discard(client_socket)
             self._encrypted_sockets.discard(client_socket)
+            self._control_sockets.discard(client_socket)
             self._channels.pop(client_socket, None)
             self._crypto_send_locks.pop(client_socket, None)
         client_socket.close()
@@ -6770,6 +6801,7 @@ class TCP_Client_Base:  # TCP client class
         self._message_listeners = []
         self._file_listeners = []
         self._send_message_listeners = []
+        self._control_sockets = set()  # the control link to the server; only it is recorded
         self._event_listeners_lock = threading.Lock()
         # Message/event stores: external code reads these instead of registering
         # listeners. Keyed by the socket; each value is a list of [content,
@@ -6906,6 +6938,7 @@ class TCP_Client_Base:  # TCP client class
                 for a direct push from the server, which names no client author. It
                 runs on the receive thread, so it must not block, and exceptions
                 raised inside it are swallowed.
+
         """
         with self._event_listeners_lock:
             if listener not in self._message_listeners:
@@ -6990,6 +7023,24 @@ class TCP_Client_Base:  # TCP client class
         for listener in listeners:
             try:
                 listener(sender, message)
+            except Exception as e:
+                self._log(f"message listener error: {e}")
+                self._log_exc()
+
+    def _notify_transfer_chunk(self, client_socket, data):
+        """Report one chunk read from a non-control socket to the message listeners.
+
+        Side-channel sockets (file/folder transfers, forwards) carry raw bytes and
+        ``sign`` tokens, which belong to the transfer layer, so they are reported
+        to the listeners but never recorded in a store.
+        """
+        if not data or client_socket in self._control_sockets:
+            return
+        with self._event_listeners_lock:
+            listeners = list(self._message_listeners)
+        for listener in listeners:
+            try:
+                listener(self._socket_key(client_socket), data)
             except Exception as e:
                 self._log(f"message listener error: {e}")
                 self._log_exc()
@@ -8202,6 +8253,7 @@ class TCP_Client_Base:  # TCP client class
                     self.client_socket = None
                     return False
                 self.running = True
+                self._control_sockets.add(self.client_socket)
                 # this client's only control link is the server: the socket is
                 # up, so every leg still registered belongs to the previous
                 # session and is over. The sweep runs before the receive thread
@@ -8417,7 +8469,7 @@ class TCP_Client_Base:  # TCP client class
         """Record and report one payload that `_write_message` has written."""
         if isinstance(message, str):
             message = message.strip()
-            if message:
+            if message and client_socket in self._control_sockets:
                 self._record_sent(client_socket, message)
         self._notify_message_sent(client_socket, message)
 
@@ -8455,10 +8507,12 @@ class TCP_Client_Base:  # TCP client class
             if channel is None:
                 data = client_socket.recv(msg_length)
                 self._measure_network_speed(data, is_upload=False)
+                self._notify_transfer_chunk(client_socket, data)
                 return data
             data = channel.take(msg_length)
             if data:
                 self._measure_network_speed(data, is_upload=False)
+                self._notify_transfer_chunk(client_socket, data)
                 return data  # buffered plaintext is served even after a disable
             raw = client_socket.recv(self.recv_messages_chunk_len if channel.secure else msg_length)
             if not raw:
@@ -8471,10 +8525,12 @@ class TCP_Client_Base:  # TCP client class
                 leftover = channel.drain_plaintext()
                 if leftover:
                     self._measure_network_speed(leftover, is_upload=False)
+                    self._notify_transfer_chunk(client_socket, leftover)
                     return leftover  # hand back whatever was already read
                 continue  # framing is off now: keep serving in raw mode
             if plain:
                 self._measure_network_speed(plain, is_upload=False)
+                self._notify_transfer_chunk(client_socket, plain)
                 return plain  # plaintext mode: the line reader gets the bytes
 
     def _crypto_mark_encrypted(self, client_socket, peer_role, peer_pem_path):
@@ -10706,6 +10762,7 @@ class TCP_Client_Base:  # TCP client class
             if self.client_socket is not None:
                 self._channels.pop(self.client_socket, None)
                 self._encrypted_sockets.discard(self.client_socket)
+                self._control_sockets.discard(self.client_socket)
             self._crypto_session = None
         if self.client_socket:
             try:
@@ -10746,6 +10803,7 @@ class TCP_Client_Base:  # TCP client class
         with self._crypto_lock:
             self._channels.pop(sock, None)
             self._encrypted_sockets.discard(sock)
+            self._control_sockets.discard(sock)
 
     def start_TCP_client(self):  # start client
         """Connect to the server and start the client loop.
