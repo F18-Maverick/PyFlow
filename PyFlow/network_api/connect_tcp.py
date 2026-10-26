@@ -1714,7 +1714,8 @@ class TCP_Server_Base:  # TCP server class
         self._message_listeners = []
         self._file_listeners = []
         self._send_message_listeners = []
-        self._control_sockets = set()  # sockets carrying the control protocol; only these are recorded
+        # Sockets carrying the control protocol; only these are recorded.
+        self._control_sockets = set()
         self._event_listeners_lock = threading.Lock()
         # Message/event stores: external code reads these instead of registering
         # listeners. Keyed by the socket; each value is a list of [content,
@@ -2843,17 +2844,17 @@ class TCP_Server_Base:  # TCP server class
             return key
         return self._socket_key(sock)
 
-    def _append_record(self, d, lock, size_attr, log_path, sock, content):
+    def _append_record(self, store, log_path, sock, content):
         """Append one ``[content, timestamp]`` pair under ``sock``; flush when full.
 
         Args:
-            d (dict): The store (socket -> list of pairs).
-            lock (threading.Lock): The store's lock.
-            size_attr (str): Name of the attribute holding the store's byte size.
+            store (tuple): ``(dict, lock, size_attr)``; the dict maps socket to
+                a list of pairs, and ``size_attr`` names the byte-size attribute.
             log_path (str): JSON log the store flushes into.
             sock (object): Key socket.
             content (str): Text to record.
         """
+        d, lock, size_attr = store
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with lock:
             self._remember_socket_key(sock)
@@ -2867,14 +2868,14 @@ class TCP_Server_Base:  # TCP server class
     def _record_message(self, sock, content):
         """Store one inbound plain-text message under the sender's socket."""
         self._append_record(
-            self.messages_dict, self._messages_dict_lock, "_messages_dict_size",
+            (self.messages_dict, self._messages_dict_lock, "_messages_dict_size"),
             self.messages_log_file, sock, content,
         )
 
     def _record_event(self, sock, command):
         """Store one inbound "/" command under the sender's socket."""
         self._append_record(
-            self.events_dict, self._events_dict_lock, "_events_dict_size",
+            (self.events_dict, self._events_dict_lock, "_events_dict_size"),
             self.events_log_file, sock, command,
         )
 
@@ -2882,12 +2883,16 @@ class TCP_Server_Base:  # TCP server class
         """Store one outbound text: a "/" line as a sent event, other text as a sent message."""
         if content.startswith("/"):
             self._append_record(
-                self.sent_events_dict, self._sent_events_dict_lock, "_sent_events_dict_size",
+                (self.sent_events_dict, self._sent_events_dict_lock, "_sent_events_dict_size"),
                 self.sent_events_log_file, sock, content,
             )
         else:
             self._append_record(
-                self.sent_messages_dict, self._sent_messages_dict_lock, "_sent_messages_dict_size",
+                (
+                    self.sent_messages_dict,
+                    self._sent_messages_dict_lock,
+                    "_sent_messages_dict_size",
+                ),
                 self.sent_messages_log_file, sock, content,
             )
 
@@ -2963,12 +2968,19 @@ class TCP_Server_Base:  # TCP server class
 
     def _record_dicts(self):
         """Return the four record stores, in flush order."""
-        return (self.messages_dict, self.events_dict, self.sent_messages_dict, self.sent_events_dict)
+        return (
+            self.messages_dict,
+            self.events_dict,
+            self.sent_messages_dict,
+            self.sent_events_dict,
+        )
 
     def _flush_messages_dict(self):
         """Flush the inbound messages store into its JSON log."""
         with self._messages_dict_lock:
-            self._flush_dict_locked(self.messages_dict, "_messages_dict_size", self.messages_log_file)
+            self._flush_dict_locked(
+                self.messages_dict, "_messages_dict_size", self.messages_log_file
+            )
 
     def _flush_events_dict(self):
         """Flush the inbound events store into its JSON log."""
@@ -2978,7 +2990,9 @@ class TCP_Server_Base:  # TCP server class
     def _flush_record_stores(self):
         """Flush every record store into its JSON log (called on stop)."""
         with self._messages_dict_lock:
-            self._flush_dict_locked(self.messages_dict, "_messages_dict_size", self.messages_log_file)
+            self._flush_dict_locked(
+                self.messages_dict, "_messages_dict_size", self.messages_log_file
+            )
         with self._events_dict_lock:
             self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
         with self._sent_messages_dict_lock:
@@ -3211,7 +3225,8 @@ class TCP_Server_Base:  # TCP server class
                 self._crypto_send_locks[client_socket] = lock
             return lock
 
-    def send_message(self, client_socket, message, is_send_raw=False):  # send message to specific client
+    def send_message(self, client_socket, message, is_send_raw=False):
+        # send message to specific client
         """Write one message to a client socket, framing it when the channel is up.
 
         Args:
@@ -3632,7 +3647,9 @@ class TCP_Server_Base:  # TCP server class
             try:
                 with self._crypto_lock:
                     nonce = state.get("my_nonce") or self._crypto_fresh_nonce()
-                self.send_message(client_socket, f"/crypto_key_exchange {nonce} 1", is_send_raw=True)
+                self.send_message(
+                    client_socket, f"/crypto_key_exchange {nonce} 1", is_send_raw=True
+                )
             except Exception:
                 self._log_exc()
 
@@ -7134,17 +7151,17 @@ class TCP_Client_Base:  # TCP client class
             return key
         return self._socket_key(sock)
 
-    def _append_record(self, d, lock, size_attr, log_path, sock, content):
+    def _append_record(self, store, log_path, sock, content):
         """Append one ``[content, timestamp]`` pair under ``sock``; flush when full.
 
         Args:
-            d (dict): The store (socket -> list of pairs).
-            lock (threading.Lock): The store's lock.
-            size_attr (str): Name of the attribute holding the store's byte size.
+            store (tuple): ``(dict, lock, size_attr)``; the dict maps socket to
+                a list of pairs, and ``size_attr`` names the byte-size attribute.
             log_path (str): JSON log the store flushes into.
             sock (object): Key socket.
             content (str): Text to record.
         """
+        d, lock, size_attr = store
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         with lock:
             self._remember_socket_key(sock)
@@ -7158,14 +7175,14 @@ class TCP_Client_Base:  # TCP client class
     def _record_message(self, sock, content):
         """Store one inbound plain-text message under the sender's socket."""
         self._append_record(
-            self.messages_dict, self._messages_dict_lock, "_messages_dict_size",
+            (self.messages_dict, self._messages_dict_lock, "_messages_dict_size"),
             self.messages_log_file, sock, content,
         )
 
     def _record_event(self, sock, command):
         """Store one inbound "/" command under the sender's socket."""
         self._append_record(
-            self.events_dict, self._events_dict_lock, "_events_dict_size",
+            (self.events_dict, self._events_dict_lock, "_events_dict_size"),
             self.events_log_file, sock, command,
         )
 
@@ -7173,23 +7190,34 @@ class TCP_Client_Base:  # TCP client class
         """Store one outbound text: a "/" line as a sent event, other text as a sent message."""
         if content.startswith("/"):
             self._append_record(
-                self.sent_events_dict, self._sent_events_dict_lock, "_sent_events_dict_size",
+                (self.sent_events_dict, self._sent_events_dict_lock, "_sent_events_dict_size"),
                 self.sent_events_log_file, sock, content,
             )
         else:
             self._append_record(
-                self.sent_messages_dict, self._sent_messages_dict_lock, "_sent_messages_dict_size",
+                (
+                    self.sent_messages_dict,
+                    self._sent_messages_dict_lock,
+                    "_sent_messages_dict_size",
+                ),
                 self.sent_messages_log_file, sock, content,
             )
 
     def _record_dicts(self):
         """Return the four record stores, in flush order."""
-        return (self.messages_dict, self.events_dict, self.sent_messages_dict, self.sent_events_dict)
+        return (
+            self.messages_dict,
+            self.events_dict,
+            self.sent_messages_dict,
+            self.sent_events_dict,
+        )
 
     def _flush_messages_dict(self):
         """Flush the inbound messages store into its JSON log."""
         with self._messages_dict_lock:
-            self._flush_dict_locked(self.messages_dict, "_messages_dict_size", self.messages_log_file)
+            self._flush_dict_locked(
+                self.messages_dict, "_messages_dict_size", self.messages_log_file
+            )
 
     def _flush_events_dict(self):
         """Flush the inbound events store into its JSON log."""
@@ -7199,7 +7227,9 @@ class TCP_Client_Base:  # TCP client class
     def _flush_record_stores(self):
         """Flush every record store into its JSON log (called on stop)."""
         with self._messages_dict_lock:
-            self._flush_dict_locked(self.messages_dict, "_messages_dict_size", self.messages_log_file)
+            self._flush_dict_locked(
+                self.messages_dict, "_messages_dict_size", self.messages_log_file
+            )
         with self._events_dict_lock:
             self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
         with self._sent_messages_dict_lock:
@@ -8390,7 +8420,8 @@ class TCP_Client_Base:  # TCP client class
                 self._persist_transfer_progress()
                 break
 
-    def send_message(self, client_socket, message, is_send_raw=False):  # send msg to server
+    def send_message(self, client_socket, message, is_send_raw=False):
+        # send msg to server
         """Write one line to a socket, encrypting when the channel is up.
 
         Args:
@@ -8418,7 +8449,7 @@ class TCP_Client_Base:  # TCP client class
             self._after_send(client_socket, message)
         return written
 
-    def _write_message(self, client_socket, message):
+    def _write_message(self, client_socket, message):  # noqa: PLR0911 - same exits as the old send_message body
         """Write one line: encrypted when the channel is up, plaintext otherwise.
 
         Returns:
