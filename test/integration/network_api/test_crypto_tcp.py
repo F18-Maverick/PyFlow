@@ -224,38 +224,51 @@ def test_concurrent_encrypted_sends_not_dropped(tcp_pair):
 def test_slow_sender_does_not_reorder_frames(tcp_pair):
     """A thread preempted between seq allocation and the wire write must
     not let a later sender overtake it (the peer would drop the earlier
-    frame as out-of-order). Deterministic: the first sender's write is
-    delayed under the per-connection send lock."""
+    frame as out-of-order). Deterministic: the first sender's framed write
+    is held under the per-connection send lock. Only that thread's framed
+    write is stalled; the handshake's control lines and the ECDH publish
+    are written by other threads and pass straight through."""
     server, client, _ = tcp_pair
     assert _wait_flip(client)
+    channel = client._channels[client.client_socket]
+    assert wait_until(lambda: channel.frames_allowed.is_set(), timeout=5)
+    assert wait_until(
+        lambda: channel.frames_allowed.is_set()
+        and server._channels[_server_sock(server, client)].frames_allowed.is_set(),
+        timeout=5,
+    )
     gate = threading.Event()
-    stalled = [0]
+    stalled = threading.Event()
+    first_sender = []  # the thread that issues "first"; only its framed write stalls
+    real_sendall = channel._sendall
 
-    class _StallingSocket(socket.socket):
-        __slots__ = ()  # keep the exact socket layout so __class__ assignment works
+    def stalling_sendall(data):
+        if threading.current_thread() is first_sender[0] and not stalled.is_set():
+            stalled.set()  # the first sender holds seq 0 and is inside the send lock
+            gate.wait()
+        real_sendall(data)
 
-        def sendall(self, data):
-            if stalled[0] == 0:
-                stalled[0] = 1  # stall exactly one (the first) sender after seq allocation
-                gate.wait()
-            super().sendall(data)
-
-    client.client_socket.__class__ = _StallingSocket
+    channel._sendall = stalling_sendall
     buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        t1 = threading.Thread(target=client.send_message, args=(client.client_socket, "first"))
-        t1.start()
-        time.sleep(0.05)  # t1 allocates seq 0 and stalls inside sendall
-        t2 = threading.Thread(target=client.send_message, args=(client.client_socket, "second"))
-        t2.start()
-        time.sleep(0.1)  # t2 attempts its send while t1 is still stalled
+    try:
+        with contextlib.redirect_stdout(buf):
+            t1 = threading.Thread(target=client.send_message, args=(client.client_socket, "first"))
+            first_sender.append(t1)
+            t1.start()
+            assert stalled.wait(timeout=5), "first sender never reached the framed write"
+            t2 = threading.Thread(target=client.send_message, args=(client.client_socket, "second"))
+            t2.start()
+            time.sleep(0.1)  # t2 attempts its send while t1 is still stalled
+            gate.set()
+            t1.join()
+            t2.join()
+            echoed = wait_until(
+                lambda: "msg send: first" in buf.getvalue() and "msg send: second" in buf.getvalue(),
+                timeout=10,
+            )
+    finally:
         gate.set()
-        t1.join()
-        t2.join()
-        echoed = wait_until(
-            lambda: "msg send: first" in buf.getvalue() and "msg send: second" in buf.getvalue(),
-            timeout=10,
-        )
+        channel._sendall = real_sendall
     assert echoed, f"frame reordering dropped a message; echoes: {buf.getvalue()!r}"
 
 
