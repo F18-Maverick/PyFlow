@@ -331,7 +331,7 @@ def test_download_resumes_from_the_partial_file(tmp_path):
             client.client_socket.getsockname(),
         ]
 
-        assert client.resume_transfers(peer=(server.host, server.port)) == 1
+        client._request_resumes()  # the same call connect() dispatches on reconnect
 
         def got():
             return partial.stat().st_size == len(payload)
@@ -539,7 +539,7 @@ def test_download_resumes_over_the_encrypted_channel(tmp_path):
             client.client_socket.getsockname(),
         ]
 
-        assert client.resume_transfers(peer=(server.host, server.port)) == 1
+        client._request_resumes()  # the same call connect() dispatches on reconnect
         assert wait_until(lambda: partial.stat().st_size == len(payload), timeout=20), (
             "the encrypted resume did not finish"
         )
@@ -584,6 +584,63 @@ def test_client_connects_when_its_configured_port_is_taken(tmp_path):
         ), "the server never saw the client"
     finally:
         holder.close()
+        if client is not None:
+            client.close()
+        server.stop()
+
+
+def test_resume_with_a_different_total_is_refused_and_keeps_the_partial_file(tmp_path):
+    """A continued leg whose size disagrees with the progress entry is refused.
+
+    The sender answers ``/resume_trans`` with a file whose length differs from
+    the one the interrupted entry recorded. The receiver must refuse the leg and
+    leave the partial bytes and the progress entry untouched, so a later
+    reconnect still has what it needs to decide.
+    """
+    server = _start_server(tmp_path)
+    client = None
+    try:
+        recv_dir = tmp_path / "client_recv"
+        recv_dir.mkdir()
+        client = _start_client(tmp_path, server, recv_dir=recv_dir)
+        src = tmp_path / "download.bin"
+        payload = os.urandom(128 * 1024)
+        src.write_bytes(payload)
+        fid = 303
+        kept = payload[:4096]
+        partial = recv_dir / "download.bin"
+        with open(partial, "wb") as f:
+            f.write(kept)
+        stale_total = len(payload) + 1  # the entry recorded a different file of this name
+        client.file_recv_progress[fid] = [
+            len(kept),
+            stale_total,
+            None,
+            str(partial),
+            (server.host, server.port),
+        ]
+        server.file_upload_progress[fid] = [
+            0,
+            len(payload),
+            None,
+            str(src),
+            client.client_socket.getsockname(),
+        ]
+        messages = []
+        log = client._log
+
+        def record(message):
+            messages.append(message)
+            log(message)
+
+        client._log = record
+        client._request_resumes()
+        assert wait_until(lambda: any("resume rejected" in m for m in messages), timeout=20), (
+            "the mismatched resume was not refused"
+        )
+        assert partial.read_bytes() == kept
+        assert client.file_recv_progress[fid][1] == stale_total
+    finally:
         if client is not None:
             client.close()
         server.stop()

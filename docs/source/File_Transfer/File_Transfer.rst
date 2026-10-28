@@ -703,19 +703,20 @@ The temporary connections of a transfer are resumed after a disconnect:
 - an interrupted transfer keeps its progress entry and its partial file
   instead of dropping them, so the file on disk is exactly the state to
   continue from;
-- after a reconnect the receiver drives the resume (`resume_transfers`): it
-  opens a fresh transfer listener, announces it and sends
-  ``/resume_trans <fid> <offset>`` with the byte offset its partial file
-  holds. The sender re-establishes the leg, reads its source from that offset
-  and only the remainder of the file travels. A forwarded transfer is asked
-  for through the server, which routes ``/forward_resume`` to the originating
-  client so it re-forwards just the missing part.
+- after a reconnect each side asks its peer to continue every interrupted
+  download (`_request_resumes`): the receiver sends ``/resume_trans <fid>
+  <offset>`` with the byte offset its partial file holds. The sender answers
+  with ``/file <name> <fid>`` on the control channel. The receiver appends to
+  the partial file only when the fid, the sender, the file name and the size
+  all match the recorded entry; a size mismatch is refused and the partial file
+  is kept. A line that matches no entry is a new transfer. A forwarded transfer
+  is asked for through the server, which routes ``/forward_resume`` to the
+  originating client so it re-forwards just the missing part.
 
-The server resumes a peer's transfers when it reconnects, and a client with
-``is_auto_reconnect=True`` reconnects on its own and resumes every transfer it
-can reach; `resume_transfers` is public, so an application can also drive the
-resume itself. Legs the previous session left behind are closed before the
-resume runs, so two legs never write the same transfer.
+The server requests a peer's interrupted downloads when that peer reconnects,
+and a client with ``is_auto_reconnect=True`` does the same after every connect,
+so no separate call is needed. Legs the previous session left behind are closed
+before the resume runs, so two legs never write the same transfer.
 
 .. _related-apis:
 
@@ -895,7 +896,7 @@ reference.
 - ``file_folder_transfer_server_recv_server_start_thread`` (folder receiving)
 - ``pause_trans`` / ``start_trans`` (hold and release an outbound transfer)
 - ``pause_trans_remote`` / ``start_trans_remote`` (ask a client to do it)
-- ``resume_transfers`` / ``resume_trans`` (continue interrupted transfers)
+- ``resume_trans`` (continue one interrupted transfer, sender side)
 
 (The low-level helpers
 ``file_transfer_server_recv_server_start``,
@@ -915,7 +916,7 @@ public but are documented for completeness.)
 - ``file_folder_transfer_client_recv_server_start_thread``
 - ``pause_trans`` / ``start_trans`` (hold and release an outbound transfer)
 - ``pause_trans_remote`` / ``start_trans_remote`` (ask the server to do it)
-- ``resume_transfers`` / ``resume_trans`` (continue interrupted transfers)
+- ``resume_trans`` (continue one interrupted transfer, sender side)
 
 (The low-level helpers are documented but not part of the
 public API.)

@@ -18,7 +18,7 @@
 - an interrupted transfer is resumed after a disconnect: both sides persist
   their transfer stores under the protocol's ``.Flow`` directory and the
   receiver asks the sender to continue the file from the bytes already on
-  disk (``resume_transfers``; the wire lines are ``/resume_trans`` and
+  disk (``_request_resumes``; the wire lines are ``/resume_trans`` and
   ``/forward_resume``).
 
 The forwarding extensions use the module-level parsers
@@ -153,6 +153,7 @@ FORWARD_RESUME_LINE = "/forward_resume"  # server -> forwarder: re-forward one i
 RESUME_ACCEPT_TIMEOUT = 20.0  # seconds a resumed transfer waits for the sender to connect
 RESUME_PORT_TIMEOUT = 20.0  # seconds a resumed sender waits for the receiver's transfer port
 RESUME_SECURE_TIMEOUT = 10.0  # seconds a resume drive waits for the framed control channel
+FILE_COMMAND_TOKENS = 3  # a ``/file <name> <fid>`` line carries this many tokens
 
 
 def _wait_writable(client_socket, timeout):
@@ -496,6 +497,35 @@ def _open_transfer_target(path, offset):
     target.seek(offset)
     return target
 
+
+def _resumable_entry(progress, fid, peer, command_part):
+    """Return the interrupted download a received ``/file`` continues, or None.
+
+    A ``/file <name> <fid>`` line continues an entry only when the fid, the
+    original sender (``peer``) and the file name all match; anything else is a
+    new transfer and never touches an existing partial file.
+
+    Args:
+        progress (dict): ``file_recv_progress`` store, fid -> entry.
+        fid (int | None): Transfer id the line carries.
+        peer (tuple | None): Sender ``(ip, port)`` the line arrived from.
+        command_part (list): Shell-split command tokens.
+
+    Returns:
+        list | None: The matching progress entry, or None.
+    """
+    if fid is None or peer is None or len(command_part) < FILE_COMMAND_TOKENS:
+        return None
+    if command_part[0].lower() != "/file":
+        return None
+    entry = progress.get(fid)
+    if entry is None or entry[4] is None:
+        return None
+    if tuple(entry[4]) != tuple(peer):
+        return None
+    if os.path.basename(str(entry[3])) != os.path.basename(command_part[1]):
+        return None
+    return entry
 
 def parse_forward_resume_command(command):
     """Split a ``/forward_resume <addr> <fid> <offset>`` line.
@@ -1523,7 +1553,7 @@ class TCP_Server_Base:  # TCP server class
             the original peer on both sides, never the relay.
         file_trans_progress_file (str): Path under the protocol's ``.Flow``
             directory where the two stores are written when a connection drops
-            and read back on the next reconnect (``resume_transfers``).
+            and read back on the next reconnect (``_request_resumes``).
         upload_network_speed (float | None): Bytes per second sent, or None when
             not measured.
         recv_network_speed (float | None): Bytes per second received, or None
@@ -1621,7 +1651,7 @@ class TCP_Server_Base:  # TCP server class
         # hold exactly the transfers running now; iterate over a copy while
         # transfers are in flight. A transfer interrupted by a disconnect
         # keeps its entry (and its partial file) so it can be resumed once
-        # the peer is back (see `resume_transfers`).
+        # the peer is back (see `_request_resumes`).
         self.file_recv_progress = {}  # downloads: fid -> [received, total, speed, path, peer]
         self.file_upload_progress = {}  # uploads: fid -> [sent, total, speed, path, peer]
         self.upload_network_speed = None  # bytes/s over the last NETWORK_SPEED_WINDOW seconds
@@ -1889,7 +1919,7 @@ class TCP_Server_Base:  # TCP server class
                 as transfers end), so only this transfer's own entry is dropped. With
                 ``keep`` True an interrupted transfer keeps its entry — and the partial
                 file that entry points at — so the reconnect logic can continue it
-                (`resume_transfers`); the entry then lives until the transfer ends.
+                (`_request_resumes`); the entry then lives until the transfer ends.
 
         Args:
             progress_dict (dict): Store the entry belongs to.
@@ -4195,7 +4225,7 @@ class TCP_Server_Base:  # TCP server class
             self._crypto_send_locks.pop(client_socket, None)
         client_socket.close()
         # the transfers that died with this connection are written to the
-        # progress file so a reconnect can continue them (resume_transfers)
+        # progress file so a reconnect can continue them (_request_resumes)
         self._persist_transfer_progress()
         self._debug(f"client disconnected: {client_id}")
         self._debug(f"current connection count: {len(self.clients)}")
@@ -4694,7 +4724,6 @@ class TCP_Server_Base:  # TCP server class
         file_name,
         command,
         peer=None,
-        resume_entry=None,
     ):
         """Receive one file over a transfer sub-connection.
 
@@ -4707,11 +4736,9 @@ class TCP_Server_Base:  # TCP server class
             file_name (str | None): Destination filename, when specified.
             command (str): Wire command that initiated the transfer.
             peer (tuple | None): Original sender ``(ip, port)`` for resuming.
-            resume_entry (list | None): Saved progress entry for a resumed file.
 
         Returns:
-            None | bool: None after starting or finishing; False when a resume request
-                cannot be sent.
+            None: after the leg starts or finishes.
         """
         file_running = True
         client_file_socket = None
@@ -4836,6 +4863,11 @@ class TCP_Server_Base:  # TCP server class
                             "ErrorSignReceivedWhileReceivingFileSize: client reported error and disconnected"
                         )
                 file_size = int.from_bytes(size_bytes, "big")
+                if resume_entry is not None and resume_entry[1] != file_size:
+                    raise ConnectionError(
+                        f"resume rejected: {filename} is {file_size} bytes, "
+                        f"the partial file expects {resume_entry[1]}"
+                    )
                 self.send_message(client_file_socket, self.server_received_file_header_sign)
                 original_filename = filename
                 if resume_entry is not None:
@@ -4951,6 +4983,7 @@ class TCP_Server_Base:  # TCP server class
         command_part = shlex.split(command)
         file_client_id = command_part[len(command_part) - 1]
         progress_fid = _transfer_fid(command_part)  # keys this leg in file_recv_progress
+        resume_entry = _resumable_entry(self.file_recv_progress, progress_fid, peer, command_part)
         destination_path = _parse_destination_path(command_part)
         stamp = self._crypto_transfer_stamp(
             client_socket, force_plain=command_part[0] == "/crypto_pub_key"
@@ -4964,17 +4997,7 @@ class TCP_Server_Base:  # TCP server class
         )  # coordination line: always plaintext (like the handshake)
         server_file_socket.listen(1)
         if resume_entry is not None:
-            # the receiver drives a resumed transfer: it asks the sender to
-            # continue the file from the bytes already on disk
-            offset = _resume_offset_for(resume_entry)
-            if progress_fid is None or not self.send_message(
-                client_socket, f"{RESUME_LINE} {progress_fid} {offset}"
-            ):
-                self._log(
-                    f"resume: cannot ask {client_id} to continue transfer {progress_fid}"
-                )
-                server_file_socket.close()
-                return False
+            # the sender answers this resume with /file; its connection is the continued leg
             server_file_socket.settimeout(RESUME_ACCEPT_TIMEOUT)
         try:
             client_file_socket, client_file_address = server_file_socket.accept()
@@ -5581,105 +5604,52 @@ class TCP_Server_Base:  # TCP server class
 
     # ---- transfer reconnect (server side) ----------------------------------
 
-    def resume_transfers(self, peer=None):
-        """Continue the interrupted transfers of a peer that is back.
+    def _request_resumes(self, peer):
+        """Ask a peer that just connected to continue this side's interrupted downloads.
 
-        Reads the persisted stores back (`_load_transfer_progress`) and, for
-        every download this instance was receiving from ``peer``, opens a
-        fresh transfer listener and asks the sender to continue the file from
-        the bytes already on disk. Restored uploads need no action here: the
-        peer drives their resume from its own side.
+        Reads the persisted stores back (`_load_transfer_progress`). Every download
+        this instance was receiving from ``peer`` gets its offset set to the bytes
+        already on disk, and ``/resume_trans <fid> <offset>`` is sent; the sender
+        answers with ``/file <name> <fid>`` and the continued leg is received by
+        `file_transfer_mode_recv`. Uploads need no action here.
 
         Args:
-            peer (tuple | None): Peer ``(ip, port)`` that just connected; None
-                resumes every peer that is connected right now.
+            peer (tuple): Peer ``(ip, port)`` that just connected.
 
         Returns:
-            int: Number of resumed receive legs started.
+            int: Number of resume requests sent.
         """
         restored = self._load_transfer_progress()
         if restored:
             self._log(f"transfer reconnect: restored {restored} interrupted transfer(s)")
+        peer = tuple(peer)
         with self.client_lock:
-            connected = {tuple(address) for address in self.clients}
-        candidates = []
+            info = self.clients.get(peer)
+        if info is None or not self._wait_control_secure(info["socket"]):
+            return 0
+        started = 0
         for fid, entry in list(self.file_recv_progress.items()):
-            if entry[4] is None:
-                continue  # without a peer there is nobody to continue with
+            if entry[4] is None or tuple(entry[4]) != peer:
+                continue  # not a download from this peer
             with self._forward_relays_lock:
                 if fid in self._forward_resume_records:
                     continue  # a forwarded transfer: its target drives the resume
             with self._transfer_progress_lock:
                 if fid in self._active_transfer_fids:
                     continue  # a leg is already running for this fid
-            peer_addr = tuple(entry[4])
-            if peer is not None and peer_addr != tuple(peer):
-                continue
-            if peer is None and peer_addr not in connected:
-                continue
-            candidates.append((fid, entry, peer_addr))
-        started = 0
-        for fid, entry, peer_addr in candidates:
-            with self.client_lock:
-                info = self.clients.get(peer_addr)
-            if info is None:
-                continue
-            if not self._wait_control_secure(info["socket"]):
-                continue
-            threading.Thread(
-                target=self._resume_receive_leg,
-                args=(
-                    info["socket"],
-                    peer_addr,
-                    fid,
-                    entry,
-                    f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}",
-                ),
-                daemon=True,
-            ).start()
-            started += 1
+            entry[0] = _resume_offset_for(entry)
+            if self.send_message(info["socket"], f"{RESUME_LINE} {fid} {entry[0]}"):
+                started += 1
         return started
-
-    def _resume_receive_leg(self, control_socket, peer_addr, fid, entry, command):
-        """Receive the rest of one interrupted transfer, appending to its file.
-
-        Args:
-            control_socket (socket.socket): Value used by the operation.
-            peer_addr (tuple): Value used by the operation.
-            fid (int): Value used by the operation.
-            entry (object): Value used by the operation.
-            command (object): Value used by the operation.
-
-        Returns:
-        bool: True when the sender was asked to continue, False when the
-                        request could not be sent.
-        """
-        self._log(f"resume: continuing transfer {fid} with {peer_addr} into {entry[3]}")
-        entry[0] = _resume_offset_for(entry)  # the offset the sender is asked for
-        port = self.palloc()
-        try:
-            return self.file_transfer_mode_recv(
-                self.host,
-                port,
-                control_socket,
-                f"{peer_addr[0]}:{peer_addr[1]}",
-                None,
-                None,
-                command,
-                peer=peer_addr,
-                resume_entry=entry,
-            ) is not False
-        finally:
-            self.pfree(port)
 
     def resume_trans(self, peer_addr, fid, offset):
         """Continue one interrupted transfer this instance was sending.
 
         Runs when a receiver asks to continue a transfer (``/resume_trans``,
-        see `resume_transfers` on the receiving side): the leg is
-        re-established against the receiver's fresh listener and the source
-        file is read from the byte offset the receiver already holds. Also the
-        public API for resuming one transfer on demand.
+        see `_request_resumes` on the receiving side): ``/file <name> <fid>``
+        is sent so the receiver opens a listener, and the source file is read
+        from the byte offset the receiver already holds. Also the public API
+        for resuming one transfer on demand.
 
         Args:
             peer_addr (tuple | None): Receiver ``(ip, port)`` the request came
@@ -5702,45 +5672,37 @@ class TCP_Server_Base:  # TCP server class
         if info is None:
             self._log(f"resume: {peer_addr} is not connected, transfer {fid} kept")
             return False
+        self._forget_transfer_port(fid)  # drop a dead session's stale announcement
+        if not self.send_message(
+            info["socket"], f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
+        ):
+            self._log(f"resume: cannot send /file for transfer {fid} to {peer_addr}")
+            return False
         port_info = self._wait_transfer_server_port(fid)
         if port_info is None:
             self._log(f"resume: {peer_addr} did not announce a transfer port for {fid}")
             return False
         port, stamp = port_info
-        threading.Thread(
-            target=self._run_resume_send_leg,
-            args=(entry[3], tuple(peer_addr), port, stamp, info["socket"], fid, offset),
-            daemon=True,
-        ).start()
+        def run_resume_send_leg():
+            client_port = self.palloc()
+            try:
+                self.file_transfer_mode(
+                    entry[3],
+                    peer_addr[0],
+                    port,
+                    client_port,
+                    control_socket=info["socket"],
+                    crypto=stamp,
+                    fid=fid,
+                    peer=tuple(peer_addr),
+                    resume_offset=offset,
+                )
+            finally:
+                self.pfree(client_port)
+
+        threading.Thread(target=run_resume_send_leg, daemon=True).start()
         return True
 
-    def _run_resume_send_leg(self, path, peer_addr, port, stamp, control_socket, fid, offset):
-        """Run one resumed sending leg on its own thread.
-
-        Args:
-            path (str): Value used by the operation.
-            peer_addr (tuple): Value used by the operation.
-            port (int): Value used by the operation.
-            stamp (object): Value used by the operation.
-            control_socket (socket.socket): Value used by the operation.
-            fid (int): Value used by the operation.
-            offset (int): Value used by the operation.
-        """
-        client_port = self.palloc()
-        try:
-            self.file_transfer_mode(
-                path,
-                peer_addr[0],
-                port,
-                client_port,
-                control_socket=control_socket,
-                crypto=stamp,
-                fid=fid,
-                peer=peer_addr,
-                resume_offset=offset,
-            )
-        finally:
-            self.pfree(client_port)
 
     def _resume_request(self, client_address, fid, offset):
         """Route one client's ``/resume_trans`` to the transfer it names.
@@ -5840,7 +5802,7 @@ class TCP_Server_Base:  # TCP server class
         """
         self._drop_stale_transfers(peer=tuple(client_address))
         self._flush_pending_relay_resumes(tuple(client_address))
-        self.resume_transfers(peer=tuple(client_address))
+        self._request_resumes(tuple(client_address))
 
     # ---- native in-memory forward relay (server side) ----------------------
 
@@ -6609,7 +6571,7 @@ class TCP_Client_Base:  # TCP client class
             the original peer on both sides, never the relay.
         file_trans_progress_file (str): Path under the protocol's ``.Flow``
             directory where the two stores are written when the connection
-            drops and read back on the next reconnect (`resume_transfers`).
+            drops and read back on the next reconnect (`_request_resumes`).
         upload_network_speed (float | None): Bytes per second sent, or None when
             not measured.
         recv_network_speed (float | None): Bytes per second received, or None
@@ -6693,7 +6655,7 @@ class TCP_Client_Base:  # TCP client class
                 False nothing is measured and every speed value is None.
                 Defaults to True.
             is_auto_reconnect (bool): Reconnect (and resume the interrupted
-                transfers, see `resume_transfers`) when the connection drops
+                transfers, see `_request_resumes`) when the connection drops
                 while `start_TCP_client` runs. The transfers that died with
                 the connection are persisted to the protocol's ``.Flow``
                 directory and read back on the next connect. Defaults to
@@ -6713,7 +6675,7 @@ class TCP_Client_Base:  # TCP client class
         # current speed, local file path, peer (ip, port)]. An entry appears
         # when a transfer starts and is removed when it ends; a transfer
         # interrupted by a disconnect keeps its entry (and its partial file)
-        # so it can be resumed once the peer is back (see `resume_transfers`).
+        # so it can be resumed once the peer is back (see `_request_resumes`).
         self.file_recv_progress = {}  # downloads: fid -> [received, total, speed, path, peer]
         self.file_upload_progress = {}  # uploads: fid -> [sent, total, speed, path, peer]
         self.upload_network_speed = None  # bytes/s over the last NETWORK_SPEED_WINDOW seconds
@@ -7467,7 +7429,7 @@ class TCP_Client_Base:  # TCP client class
                 as transfers end), so only this transfer's own entry is dropped. With
                 ``keep`` True an interrupted transfer keeps its entry — and the partial
                 file that entry points at — so the reconnect logic can continue it
-                (`resume_transfers`); the entry then lives until the transfer ends.
+                (`_request_resumes`); the entry then lives until the transfer ends.
 
         Args:
             progress_dict (dict): Store the entry belongs to.
@@ -8320,7 +8282,7 @@ class TCP_Client_Base:  # TCP client class
                 # a (re)connected session carries the transfers that died with
                 # the previous one: continue them from what is already on disk
                 threading.Thread(
-                    target=self.resume_transfers, kwargs={"peer": (self.host, self.port)}, daemon=True
+                    target=self._request_resumes, daemon=True
                 ).start()
                 return True
             except socket.timeout:
@@ -8363,7 +8325,7 @@ class TCP_Client_Base:  # TCP client class
                     self.running = False
                     self.free_port()
                     # the transfers running on this session died with it: keep
-                    # them on disk for the next connect (resume_transfers)
+                    # them on disk for the next connect (_request_resumes)
                     self._persist_transfer_progress()
                     break
                 buffer += data.decode("utf-8")
@@ -9871,18 +9833,17 @@ class TCP_Client_Base:  # TCP client class
 
     # ---- transfer reconnect (client side) ----------------------------------
 
-    def resume_transfers(self, peer=None):
-        """Continue the interrupted transfers of a peer that is back.
+    def _request_resumes(self):
+        """Continue this client's interrupted downloads after it (re)connected.
 
-        Reads the persisted stores back (`_load_transfer_progress`) and drives
-        every download that can be continued: a file the server was sending is
-
-        Args:
-            peer (tuple | None): Peer ``(ip, port)`` that just connected; None
-                resumes every peer the client can reach.
+        Reads the persisted stores back (`_load_transfer_progress`). A download
+        from the server gets its offset set to the bytes already on disk and
+        ``/resume_trans <fid> <offset>`` is sent to the server. A download
+        forwarded from another client is requested through the server
+        (`_request_forward_resume`). Uploads need no action here.
 
         Returns:
-            int: Number of resumed transfers started or requested.
+            int: Number of resume requests sent.
         """
         restored = self._load_transfer_progress()
         if restored:
@@ -9890,13 +9851,9 @@ class TCP_Client_Base:  # TCP client class
         if not self.running or self.client_socket is None:
             return 0
         server_peer = (self.host, self.port)
-        if peer is not None and tuple(peer) != server_peer:
-            # every resume this client drives goes through the server: it is
-            # the sender of a pushed file and the relay of a forwarded one
-            return 0
         if not self._wait_control_secure(self.client_socket):
             return 0
-        candidates = []
+        started = 0
         for fid, entry in list(self.file_recv_progress.items()):
             if entry[4] is None:
                 continue  # without a peer there is nobody to continue with
@@ -9906,20 +9863,12 @@ class TCP_Client_Base:  # TCP client class
             with self._transfer_progress_lock:
                 if fid in self._active_transfer_fids:
                     continue  # a leg is already running for this fid
-            candidates.append((fid, entry, tuple(entry[4])))
-        started = 0
-        for fid, entry, peer_addr in candidates:
+            peer_addr = tuple(entry[4])
             if peer_addr == server_peer:
-                # the server is the sender: ask it directly
-                threading.Thread(
-                    target=self._resume_receive_leg,
-                    args=(self.client_socket, server_peer, fid, entry),
-                    daemon=True,
-                ).start()
-                started += 1
+                entry[0] = _resume_offset_for(entry)
+                if self.send_message(self.client_socket, f"{RESUME_LINE} {fid} {entry[0]}"):
+                    started += 1
             elif self._request_forward_resume(fid, entry, peer_addr):
-                # a forwarded transfer: the server routes the request to the
-                # originating client, which re-forwards it to this one
                 started += 1
         return started
 
@@ -9977,45 +9926,14 @@ class TCP_Client_Base:  # TCP client class
                 self._active_transfer_fids.discard(old_fid)
         return offset
 
-    def _resume_receive_leg(self, control_socket, peer_addr, fid, entry):
-        """Receive the rest of one interrupted transfer, appending to its file.
-
-        Args:
-            control_socket (socket.socket): Value used by the operation.
-            peer_addr (tuple): Value used by the operation.
-            fid (int): Value used by the operation.
-            entry (object): Value used by the operation.
-
-        Returns:
-        bool: True when the sender was asked to continue, False when the
-                        request could not be sent.
-        """
-        entry[0] = _resume_offset_for(entry)  # the offset the sender is asked for
-        self._log(f"resume: continuing transfer {fid} with {peer_addr} into {entry[3]}")
-        port = self.palloc()
-        try:
-            return self.file_transfer_mode_recv(
-                self.host,
-                port,
-                control_socket,
-                f"{peer_addr[0]}:{peer_addr[1]}",
-                None,
-                None,
-                f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}",
-                peer=peer_addr,
-                resume_entry=entry,
-            ) is not False
-        finally:
-            self.pfree(port)
-
     def resume_trans(self, peer_addr, fid, offset):
         """Continue one interrupted transfer this instance was sending.
 
         Runs when a receiver asks to continue a transfer (``/resume_trans``,
-        see `resume_transfers` on the receiving side): the leg is
-        re-established against the receiver's fresh listener and the source
-        file is read from the byte offset the receiver already holds. Also the
-        public API for resuming one transfer on demand.
+        see `_request_resumes` on the receiving side): ``/file <name> <fid>``
+        is sent so the receiver opens a listener, and the source file is read
+        from the byte offset the receiver already holds. Also the public API
+        for resuming one transfer on demand.
 
         Args:
             peer_addr (tuple | None): Receiver ``(ip, port)`` the request came
@@ -10036,45 +9954,37 @@ class TCP_Client_Base:  # TCP client class
         if not self.running or self.client_socket is None:
             self._log(f"resume: not connected to the server, transfer {fid} kept")
             return False
+        self._forget_transfer_port(fid)  # drop a dead session's stale announcement
+        if not self.send_message(
+            self.client_socket, f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
+        ):
+            self._log(f"resume: cannot send /file for transfer {fid}")
+            return False
         port_info = self._wait_transfer_server_port(fid)
         if port_info is None:
             self._log(f"resume: {peer_addr} did not announce a transfer port for {fid}")
             return False
         port, stamp = port_info
-        threading.Thread(
-            target=self._run_resume_send_leg,
-            args=(entry[3], peer_addr, port, stamp, self.client_socket, fid, offset),
-            daemon=True,
-        ).start()
+        def run_resume_send_leg():
+            client_port = self.palloc()
+            try:
+                self.file_transfer_mode(
+                    entry[3],
+                    peer_addr[0] if peer_addr else self.host,
+                    port,
+                    client_port,
+                    control_socket=self.client_socket,
+                    crypto=stamp,
+                    fid=fid,
+                    peer=peer_addr,
+                    resume_offset=offset,
+                )
+            finally:
+                self.pfree(client_port)
+
+        threading.Thread(target=run_resume_send_leg, daemon=True).start()
         return True
 
-    def _run_resume_send_leg(self, path, peer_addr, port, stamp, control_socket, fid, offset):
-        """Run one resumed sending leg on its own thread.
-
-        Args:
-            path (str): Value used by the operation.
-            peer_addr (tuple): Value used by the operation.
-            port (int): Value used by the operation.
-            stamp (object): Value used by the operation.
-            control_socket (socket.socket): Value used by the operation.
-            fid (int): Value used by the operation.
-            offset (int): Value used by the operation.
-        """
-        client_port = self.palloc()
-        try:
-            self.file_transfer_mode(
-                path,
-                peer_addr[0] if peer_addr else self.host,
-                port,
-                client_port,
-                control_socket=control_socket,
-                crypto=stamp,
-                fid=fid,
-                peer=peer_addr,
-                resume_offset=offset,
-            )
-        finally:
-            self.pfree(client_port)
 
     def _forward_resume_record(self, fid):
         """Return the relay record a forwarded resume for ``fid`` belongs to.
@@ -10474,7 +10384,6 @@ class TCP_Client_Base:  # TCP client class
         file_name,
         command,
         peer=None,
-        resume_entry=None,
     ):
         """Receive one file over a transfer sub-connection.
 
@@ -10487,11 +10396,9 @@ class TCP_Client_Base:  # TCP client class
             file_name (str | None): Destination filename, when specified.
             command (str): Wire command that initiated the transfer.
             peer (tuple | None): Original sender ``(ip, port)`` for resuming.
-            resume_entry (list | None): Saved progress entry for a resumed file.
 
         Returns:
-            None | bool: None after starting or finishing; False when a resume request
-                cannot be sent.
+            None: after the leg starts or finishes.
         """
         file_running = True
         client_file_socket = None
@@ -10614,6 +10521,11 @@ class TCP_Client_Base:  # TCP client class
                             "ErrorSignReceivedWhileReceivingFileSize: client reported error and disconnected"
                         )
                 file_size = int.from_bytes(size_bytes, "big")
+                if resume_entry is not None and resume_entry[1] != file_size:
+                    raise ConnectionError(
+                        f"resume rejected: {filename} is {file_size} bytes, "
+                        f"the partial file expects {resume_entry[1]}"
+                    )
                 self.send_message(client_file_socket, self.server_received_file_header_sign)
                 original_filename = filename
                 if resume_entry is not None:
@@ -10721,6 +10633,7 @@ class TCP_Client_Base:  # TCP client class
         command_part = shlex.split(command)
         file_client_id = command_part[len(command_part) - 1]
         progress_fid = _transfer_fid(command_part)  # keys this leg in file_recv_progress
+        resume_entry = _resumable_entry(self.file_recv_progress, progress_fid, peer, command_part)
         destination_path = _parse_destination_path(command_part)
         stamp = self._crypto_transfer_stamp(
             client_socket, force_plain=command_part[0] == "/crypto_pub_key"
@@ -10734,17 +10647,7 @@ class TCP_Client_Base:  # TCP client class
         )  # coordination line: always plaintext (like the handshake)
         server_file_socket.listen(1)
         if resume_entry is not None:
-            # the receiver drives a resumed transfer: it asks the sender to
-            # continue the file from the bytes already on disk
-            offset = _resume_offset_for(resume_entry)
-            if progress_fid is None or not self.send_message(
-                client_socket, f"{RESUME_LINE} {progress_fid} {offset}"
-            ):
-                self._log(
-                    f"resume: cannot ask {client_id} to continue transfer {progress_fid}"
-                )
-                server_file_socket.close()
-                return False
+            # the sender answers this resume with /file; its connection is the continued leg
             server_file_socket.settimeout(RESUME_ACCEPT_TIMEOUT)
         try:
             client_file_socket, client_file_address = server_file_socket.accept()
@@ -10848,7 +10751,7 @@ class TCP_Client_Base:  # TCP client class
         With ``is_auto_reconnect`` True a dropped connection does not end the
         client: it reconnects (waiting for the server when ``is_wait_server``
         is set) and every session carries the interrupted transfers of the
-        previous one (`resume_transfers`). A close or ``/quit`` still stops
+        previous one (`_request_resumes`). A close or ``/quit`` still stops
         the client.
         """
         while True:

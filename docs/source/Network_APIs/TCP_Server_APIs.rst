@@ -628,7 +628,7 @@ Built-in client commands include:
 - ``/resume_trans <fid> <offset>`` and ``/forward_resume <addr> <fid> <offset>``:
   internal transfer-reconnect messages: the receiver asks the sender (or, for
   a forwarded transfer, the originator) to continue the file from the bytes
-  already on disk. See `resume_transfers`.
+  already on disk (see :ref:`transfer-pause-and-reconnect`).
 - ``/server_file_transfer_port <port> <client_id>``: internal protocol message used to coordinate file transfer ports.
 
 In `handle_command`, the server will first 
@@ -1088,7 +1088,7 @@ are as follows:
   :ref:`transfer-pause-and-reconnect`):
     - `pause_trans` / `start_trans`
     - `pause_trans_remote` / `start_trans_remote`
-    - `resume_transfers` / `resume_trans`
+    - `resume_trans`
 
 6. The server console commands:
     - `/stop`

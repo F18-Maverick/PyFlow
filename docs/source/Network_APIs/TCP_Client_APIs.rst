@@ -896,7 +896,7 @@ is as follows:
   :ref:`transfer-pause-and-reconnect`):
     - `pause_trans` / `start_trans`
     - `pause_trans_remote` / `start_trans_remote`
-    - `resume_transfers` / `resume_trans`
+    - `resume_trans`
 
 6. The client console commands (interactive mode):
     - `/quit`
