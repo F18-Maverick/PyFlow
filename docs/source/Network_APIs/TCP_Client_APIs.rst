@@ -313,7 +313,8 @@ and newline framing are handled by the caller.
     def send_message(
         self: Self,
         client_socket: Any,
-        message: Any) -> True|False:
+        message: Any,
+        is_send_raw: bool = False) -> True|False:
         ...
 
 `send_message` sends data from the client to the server.
@@ -321,13 +322,18 @@ It verifies the client is still running and the socket is valid, then:
 
 - accepts both ``str`` and ``bytes`` message payloads
 - trims string payloads and appends a newline if missing
-- when the socket is in encrypted mode (the public-key exchange has
-  completed), the plaintext is signed with the ``_VALID`` marker,
-  RSA-OAEP encrypted with the server's public key, base64 encoded and
-  newline-terminated instead of being sent in cleartext
-- encodes string payloads as UTF-8
-- sends the complete message with ``client_socket.sendall(data)``
+- when the channel is encrypted, writes the payload as frames through the
+  secure channel (see the framing description in the ``connect_tcp`` module
+  docstring) instead of as plaintext
+- with ``is_send_raw=True`` writes a plaintext line even on an encrypted
+  channel; this is reserved for the crypto handshake and transfer
+  coordination lines
+- sends the complete payload with ``client_socket.sendall(data)``
 - returns ``True`` on success, otherwise logs the error and returns ``False``
+- after a successful write, reports the payload to the send listeners; a
+  write to the control socket is also recorded in the sent stores, while a
+  transfer socket is only reported. ``is_send_raw`` lines are neither
+  reported nor recorded, and ``bytes`` payloads are reported but not recorded
 
 The client also provides an interactive input loop (`interactive_mode`) 
 that reads user input from the console and sends messages 
@@ -345,27 +351,47 @@ protocol loop:
 
     def add_message_listener(self, listener)
     def remove_message_listener(self, listener)
+    def add_send_message_listener(self, listener)
+    def remove_send_message_listener(self, listener)
     def add_file_listener(self, listener)
     def remove_file_listener(self, listener)
 
 ``add_message_listener`` registers ``listener(sender_id, message)``
-for every inbound line, commands included, so a listener observes all
-inbound traffic; a message another client forwarded here through the
+for every inbound control line, commands included, so a listener observes
+all inbound traffic; a message another client forwarded here through the
 ``/send_msg_from`` envelope is reported as its payload. ``sender_id`` is
 the author's ``"ip:port"`` — the forwarding client for such a forwarded
-message, and it is ``None`` for a direct push from the server.
-``add_file_listener``
-registers ``listener(client_id, full_path, name, size, command)`` and
-fires after a file sent by the server has been fully written to disk.
-Both listeners run on a protocol thread, so they must not block, and an
-exception inside a listener is logged and swallowed. The ``remove_*``
-counterparts unregister a listener and ignore unknown ones.
+message, and ``None`` for a direct push from the server. Raw chunks read
+from a transfer socket (file transfer, forwarding) are reported to the same
+listeners as ``bytes``, with the peer's ``"ip:port"`` as ``sender_id``.
 
-Received messages and events are also stored per sender socket in
-``messages_dict`` / ``events_dict`` (each entry a ``[content,
-timestamp]`` pair). When a store reaches ``max_dict_size`` (64 KiB) it
-is flushed to ``messages_log.json`` / ``events_log.json`` under
-``network_api/.Flow`` and cleared; ``close`` flushes both stores.
+``add_send_message_listener`` registers ``listener(target_id, message)``
+and fires after every payload that `send_message` writes successfully,
+``str`` and ``bytes`` alike. ``target_id`` is the server's ``"ip:port"``.
+Lines written with ``is_send_raw=True`` are never reported.
+
+``add_file_listener``
+registers ``listener(full_path, name, size, command)`` and fires after a
+file sent by the server has been fully written to disk.
+
+Listeners run on the thread that reads or writes the socket, so they must
+not block. An exception inside a listener is logged and swallowed. The
+``remove_*`` counterparts unregister a listener and ignore unknown ones.
+
+Control traffic is also kept per peer socket in four stores, each value a
+list of ``[content, timestamp]`` pairs:
+
+- ``messages_dict``: inbound plain-text lines (lines not starting with ``/``)
+- ``events_dict``: inbound ``/`` commands, including the ``/send_msg_from``
+  envelope of a forwarded message
+- ``sent_messages_dict`` / ``sent_events_dict``: the same split for payloads
+  written to the control socket
+
+Only the control socket is recorded. Transfer chunks, transfer sign tokens
+and ``bytes`` payloads are never recorded. When a store reaches
+``max_dict_size`` (64 KiB) it is flushed to ``messages_log.json``,
+``events_log.json``, ``sent_messages_log.json`` or ``sent_events_log.json``
+under ``network_api/.Flow`` and cleared; ``close`` flushes all four stores.
 
 .. _tcp-client-encrypted-channel-api:
 
@@ -837,8 +863,9 @@ is as follows:
 
 2.1. The inbound event listener APIs:
     - `add_message_listener` / `remove_message_listener`
+    - `add_send_message_listener` / `remove_send_message_listener`
     - `add_file_listener` / `remove_file_listener`
-    - `messages_dict` / `events_dict` stores
+    - `messages_dict` / `events_dict` / `sent_messages_dict` / `sent_events_dict` stores
 
 3. The client encrypted channel APIs (see :ref:`tcp-client-encrypted-channel-api`):
     - `_crypto_exchange_thread`
@@ -869,7 +896,7 @@ is as follows:
   :ref:`transfer-pause-and-reconnect`):
     - `pause_trans` / `start_trans`
     - `pause_trans_remote` / `start_trans_remote`
-    - `resume_transfers` / `resume_trans`
+    - `resume_trans`
 
 6. The client console commands (interactive mode):
     - `/quit`

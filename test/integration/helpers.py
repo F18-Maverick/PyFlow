@@ -41,6 +41,37 @@ def free_port():
             return port
     raise RuntimeError("the OS kept handing out recently used ports")
 
+def read_text_or_none(path):
+    """Return a file's text, or None while it is missing or unreadable.
+
+    A receiving leg opens its target as soon as the transfer starts (truncated
+    for a fresh transfer), so ``exists()`` turning true says nothing about the
+    bytes having arrived. Polling the content must tolerate the moment between
+    the open and the first chunk.
+    """
+    try:
+        return path.read_text()
+    except OSError:
+        return None
+
+
+def wait_for_text(path, expected, timeout=10.0):
+    """Poll a file until its text equals ``expected``.
+
+    Waiting for the content, not for ``exists()``, is what makes a receive
+    assertion race-free: the receiver creates (and truncates) the target when
+    the leg starts, before any byte is written.
+
+    Args:
+        path (Path): File the transfer writes.
+        expected (str): Text the finished file must hold.
+        timeout (float): Seconds to wait.
+
+    Returns:
+        bool: True once the content matched.
+    """
+    return wait_until(lambda: read_text_or_none(path) == expected, timeout=timeout)
+
 
 def isolate_instance_files(instance, tmp_path, name):
     """Point one instance's logs and transfer progress file at a temp directory.

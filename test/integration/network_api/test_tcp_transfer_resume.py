@@ -146,7 +146,7 @@ def test_paused_transfer_is_persisted_when_the_connection_drops(tmp_path):
         src = tmp_path / "payload.bin"
         payload = os.urandom(64 * 1024)
         src.write_bytes(payload)
-        fid = 77
+        fid = 76  # even low bit: a plain leg's id
 
         server_sock = server.clients[client.client_socket.getsockname()]["socket"]
         sender_id = "%s:%s" % client.client_socket.getsockname()
@@ -213,7 +213,7 @@ def test_upload_resumes_after_a_reconnect(tmp_path):
         src = tmp_path / "payload.bin"
         payload = os.urandom(256 * 1024)
         src.write_bytes(payload)
-        fid = 101
+        fid = 100  # even low bit: a plain leg's id
 
         # a fixed client port keeps the client's address stable across the
         # reconnect, so the server can match the interrupted transfer to it
@@ -232,17 +232,22 @@ def test_upload_resumes_after_a_reconnect(tmp_path):
         assert wait_until(lambda: client.running and client.client_socket is not None)
         client_addr = client.client_socket.getsockname()
 
+        # the server registers an accepted client on its own thread: wait for it
+        assert wait_until(lambda: client_addr in server.clients, timeout=10), (
+            "server never registered the reconnecting client"
+        )
         server_sock = server.clients[client_addr]["socket"]
         client_id = "%s:%s" % client_addr
         server.file_transfer_server_recv_server_start_thread(
             client_id, server_sock, f"/file {shlex.quote(str(src))} {fid}"
         )
-        assert _wait_port(client) is not None
+        transfer_port = _wait_port(client)
+        assert transfer_port is not None, "the client never announced a transfer port"
 
         client.pause_trans(fid)  # freeze the leg, then give it a partial file
         sender = threading.Thread(
             target=client.file_transfer_mode,
-            args=(str(src), "127.0.0.1", _wait_port(client) or 0, 0),
+            args=(str(src), "127.0.0.1", transfer_port, 0),
             kwargs={"fid": fid, "peer": (server.host, server.port)},
             daemon=True,
         )
@@ -306,7 +311,7 @@ def test_download_resumes_from_the_partial_file(tmp_path):
         src = tmp_path / "download.bin"
         payload = os.urandom(128 * 1024)
         src.write_bytes(payload)
-        fid = 202
+        fid = 202  # even low bit: a plain leg's id
 
         partial = recv_dir / "download.bin"
         with open(partial, "wb") as f:
@@ -326,7 +331,7 @@ def test_download_resumes_from_the_partial_file(tmp_path):
             client.client_socket.getsockname(),
         ]
 
-        assert client.resume_transfers(peer=(server.host, server.port)) == 1
+        client._request_resumes()  # the same call connect() dispatches on reconnect
 
         def got():
             return partial.stat().st_size == len(payload)
@@ -361,8 +366,8 @@ def test_forwarded_file_resumes_through_the_server(tmp_path):
         src = tmp_path / "payload.bin"
         payload = os.urandom(96 * 1024)
         src.write_bytes(payload)
-        fid = 303  # the forwarder's transfer id
-        tfid = 304  # the target's transfer id
+        fid = 303  # odd low bit: a relay leg's id
+        tfid = 305  # odd low bit: a relay target's id
         target_addr = target.client_socket.getsockname()
         forwarder_addr = forwarder.client_socket.getsockname()
 
@@ -436,7 +441,7 @@ def test_pause_and_start_trans_control_a_plain_transfer(tmp_path):
         src = tmp_path / "payload.bin"
         payload = os.urandom(256 * 1024)
         src.write_bytes(payload)
-        fid = 404
+        fid = 404  # even low bit: a plain leg's id
 
         server_sock = server.clients[client.client_socket.getsockname()]["socket"]
         server.file_transfer_server_recv_server_start_thread(
@@ -515,7 +520,7 @@ def test_download_resumes_over_the_encrypted_channel(tmp_path):
         src = tmp_path / "download.bin"
         payload = os.urandom(64 * 1024)
         src.write_bytes(payload)
-        fid = 909
+        fid = 908  # even low bit: a plain leg's id
         partial = recv_dir / "download.bin"
         with open(partial, "wb") as f:
             f.write(payload[:1024])
@@ -534,7 +539,7 @@ def test_download_resumes_over_the_encrypted_channel(tmp_path):
             client.client_socket.getsockname(),
         ]
 
-        assert client.resume_transfers(peer=(server.host, server.port)) == 1
+        client._request_resumes()  # the same call connect() dispatches on reconnect
         assert wait_until(lambda: partial.stat().st_size == len(payload), timeout=20), (
             "the encrypted resume did not finish"
         )
@@ -579,6 +584,163 @@ def test_client_connects_when_its_configured_port_is_taken(tmp_path):
         ), "the server never saw the client"
     finally:
         holder.close()
+        if client is not None:
+            client.close()
+        server.stop()
+
+
+def test_resume_with_a_different_total_is_refused_and_keeps_the_partial_file(tmp_path):
+    """A continued leg whose size disagrees with the progress entry is refused.
+
+    The sender answers ``/resume_trans`` with a file whose length differs from
+    the one the interrupted entry recorded. The receiver must refuse the leg and
+    leave the partial bytes and the progress entry untouched, so a later
+    reconnect still has what it needs to decide.
+    """
+    server = _start_server(tmp_path)
+    client = None
+    try:
+        recv_dir = tmp_path / "client_recv"
+        recv_dir.mkdir()
+        client = _start_client(tmp_path, server, recv_dir=recv_dir)
+        src = tmp_path / "download.bin"
+        payload = os.urandom(128 * 1024)
+        src.write_bytes(payload)
+        fid = 302  # even low bit: a plain leg's id
+        kept = payload[:4096]
+        partial = recv_dir / "download.bin"
+        with open(partial, "wb") as f:
+            f.write(kept)
+        stale_total = len(payload) + 1  # the entry recorded a different file of this name
+        client.file_recv_progress[fid] = [
+            len(kept),
+            stale_total,
+            None,
+            str(partial),
+            (server.host, server.port),
+        ]
+        server.file_upload_progress[fid] = [
+            0,
+            len(payload),
+            None,
+            str(src),
+            client.client_socket.getsockname(),
+        ]
+        messages = []
+        log = client._log
+
+        def record(message):
+            messages.append(message)
+            log(message)
+
+        client._log = record
+        client._request_resumes()
+        assert wait_until(lambda: any("resume rejected" in m for m in messages), timeout=20), (
+            "the mismatched resume was not refused"
+        )
+        assert partial.read_bytes() == kept
+        assert client.file_recv_progress[fid][1] == stale_total
+    finally:
+        if client is not None:
+            client.close()
+        server.stop()
+
+
+def test_download_resumes_after_connect_without_a_manual_call(tmp_path):
+    """A download interrupted by a disconnect resumes via the client's own reconnect.
+
+    Nothing calls the resume driver by hand: the client reconnects
+    (``is_auto_reconnect``) and its connect path asks the server to continue the
+    file from the bytes already on disk. This covers the trigger itself, which
+    the partial-file tests inject directly.
+    """
+    server = _start_server(tmp_path)
+    recv_dir = tmp_path / "client_recv"
+    recv_dir.mkdir()
+    client = None
+    try:
+        src = tmp_path / "payload.bin"
+        payload = os.urandom(32 * 1024 * 1024)  # still in flight when the fault hits
+        src.write_bytes(payload)
+
+        # a fixed client port keeps its address stable, so the server can match
+        # the interrupted download to the reconnecting peer
+        client = TCP_Client_Base(
+            host="127.0.0.1",
+            port=server.port,
+            client_host="127.0.0.1",
+            client_port=free_port(),
+            is_extend_command=True,
+            is_input_command_in_console=False,
+            is_enable_encrypto=False,
+            is_auto_reconnect=True,
+        )
+        _isolate(client, tmp_path, "client")
+        client.file_transfer_dir = str(recv_dir)
+        threading.Thread(target=client.start_TCP_client, daemon=True).start()
+        assert wait_until(lambda: client.running and client.client_socket is not None)
+        client_addr = client.client_socket.getsockname()
+        assert wait_until(lambda: client_addr in server.clients, timeout=10), (
+            "server never registered the client"
+        )
+
+        partial = recv_dir / src.name
+        # the server stamps the leg's fid from its own allocator, and the pause
+        # switch is keyed by fid: predict the id the next leg will take and arm
+        # the pause before it starts, so the fault lands while the transfer is
+        # still incomplete
+        alloc = server._fid_alloc
+        with alloc._lock:
+            fid = ((alloc._counter + 1) << 32) | (alloc._epoch << 1)
+        assert server.pause_trans(fid) is False, "the leg was already running"
+
+        # the server pushes the file: the client opens its listener and the
+        # server connects from a send leg
+        server.file_transfer_server_recv_client_start_thread(
+            "/file {} {}".format(shlex.quote(str(src)), shlex.quote(repr(client_addr)))
+        )
+        assert wait_until(lambda: server.file_upload_progress.get(fid), timeout=30), (
+            "the server never registered the outgoing transfer"
+        )
+        # the leg is parked before its first chunk, so the receiver holds an
+        # empty target; give it the bytes an interrupted transfer would have
+        # left behind (the leg's own writes would only be the same file)
+        assert wait_until(lambda: partial.exists(), timeout=20), (
+            "the receiver never created the target file"
+        )
+        half = len(payload) // 2
+        partial.write_bytes(payload[:half])
+
+        # a fault drops the control connection from the server side; the parked
+        # leg cannot finish the file, so the partial stays on disk
+        dead_leg = server._active_transfer_sockets.get(fid)
+        assert dead_leg is not None, "the send leg was not registered"
+        dead_socket = client.client_socket
+        server_sock = server.clients[client_addr]["socket"]
+        server_sock.shutdown(2)
+        server_sock.close()
+        assert wait_until(lambda: dead_socket.fileno() == -1, timeout=20), (
+            "the reconnect did not release the dead session's socket"
+        )
+        # the reconnecting client sweeps the dead session's legs and then asks
+        # for the remainder; only the swept leg may be released, or it would
+        # write from its own offset into the file the resumed leg continues
+        assert wait_until(
+            lambda: server._active_transfer_sockets.get(fid) is not dead_leg, timeout=20
+        ), "the dead session's leg was never cleared"
+        server.start_trans(fid)  # the leg was parked by the test, not by the protocol
+        assert wait_until(lambda: server.clients.get(client_addr) is not None, timeout=20), (
+            "the client did not come back"
+        )
+        assert client.client_socket.getsockname() == client_addr, (
+            "the client came back from a different port"
+        )
+
+        assert wait_until(lambda: partial.stat().st_size == len(payload), timeout=30), (
+            "the resumed download did not finish"
+        )
+        assert partial.read_bytes() == payload, "the resumed download did not continue the partial"
+    finally:
         if client is not None:
             client.close()
         server.stop()

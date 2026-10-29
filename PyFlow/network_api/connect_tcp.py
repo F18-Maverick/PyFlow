@@ -18,7 +18,7 @@
 - an interrupted transfer is resumed after a disconnect: both sides persist
   their transfer stores under the protocol's ``.Flow`` directory and the
   receiver asks the sender to continue the file from the bytes already on
-  disk (``resume_transfers``; the wire lines are ``/resume_trans`` and
+  disk (``_request_resumes``; the wire lines are ``/resume_trans`` and
   ``/forward_resume``).
 
 The forwarding extensions use the module-level parsers
@@ -38,7 +38,6 @@ import os
 import ast
 import sys
 import time
-import copy
 import shlex
 import socket
 import struct  # SO_LINGER's (l_onoff, l_linger) pair, for abortive closes
@@ -153,6 +152,7 @@ FORWARD_RESUME_LINE = "/forward_resume"  # server -> forwarder: re-forward one i
 RESUME_ACCEPT_TIMEOUT = 20.0  # seconds a resumed transfer waits for the sender to connect
 RESUME_PORT_TIMEOUT = 20.0  # seconds a resumed sender waits for the receiver's transfer port
 RESUME_SECURE_TIMEOUT = 10.0  # seconds a resume drive waits for the framed control channel
+FILE_COMMAND_TOKENS = 3  # a ``/file <name> <fid>`` line carries this many tokens
 
 
 def _wait_writable(client_socket, timeout):
@@ -497,6 +497,96 @@ def _open_transfer_target(path, offset):
     return target
 
 
+def _receive_dir_for(base_dir, new_save_path, destination_path):
+    """Compose the receive directory of one folder command.
+
+    The single definition of where a folder command lands: an absolute
+        ``destination_path`` replaces ``base_dir``, a relative one nests under
+        it, and the command's ``/``-separated relative path nests below that.
+        ``setting_file_save_path`` and the folder-creation branch of
+        ``file_folder_transfer_*_recv_*_start_thread`` both use it, so a create
+        command and the file legs under it always agree on the directory.
+
+    Args:
+        base_dir (str): Instance receive root (``file_transfer_dir``).
+        new_save_path (str | None): Command's relative folder path, ``/``-separated.
+        destination_path (str | None): Receiver-side destination directory.
+
+    Returns:
+    str: Directory the command names, without creating it.
+    """
+    save_path = base_dir
+    if destination_path:
+        if os.path.isabs(destination_path):
+            save_path = destination_path
+        else:
+            save_path = os.path.join(save_path, destination_path)
+    if new_save_path:
+        path_list = new_save_path.split("/")
+        if path_list and path_list[0] == "":
+            del path_list[0]
+        for node in path_list:
+            save_path = os.path.join(save_path, node)
+    return save_path
+def _rel_dirs_with_files(folder_path, base_path):
+    """Relative paths of the directories under ``folder_path`` that have files.
+
+    A directory needs to exist at the receiver only when a file lands in it
+    or below it; an empty directory has nothing to receive. Each entry is in
+        ``"/data/sub"`` form, and every ancestor of a directory that has files is
+        included, because a file leg creates only its own leaf directory.
+
+    Args:
+        folder_path (str): Folder being sent.
+        base_path (str): Parent directory the relative paths hang off.
+
+    Returns:
+    set: Relative folder paths, ``""`` for the transfer root.
+    """
+    needed = set()
+    base = os.path.normpath(base_path)
+    for root, _dirs, files in os.walk(folder_path):
+        if not files:
+            continue
+        rel = os.path.relpath(os.path.normpath(root), base)
+        rel = "" if rel == "." else "/" + rel.replace(os.sep, "/")
+        while True:
+            needed.add(rel)
+            trimmed = rel.rstrip("/")
+            if not trimmed:
+                break
+            rel = trimmed.rsplit("/", 1)[0]
+    return needed
+
+def _resumable_entry(progress, fid, peer, command_part):
+    """Return the interrupted download a received ``/file`` continues, or None.
+
+    A ``/file <name> <fid>`` line continues an entry only when the fid, the
+    original sender (``peer``) and the file name all match; anything else is a
+    new transfer and never touches an existing partial file.
+
+    Args:
+        progress (dict): ``file_recv_progress`` store, fid -> entry.
+        fid (int | None): Transfer id the line carries.
+        peer (tuple | None): Sender ``(ip, port)`` the line arrived from.
+        command_part (list): Shell-split command tokens.
+
+    Returns:
+        list | None: The matching progress entry, or None.
+    """
+    if fid is None or peer is None or len(command_part) < FILE_COMMAND_TOKENS:
+        return None
+    if command_part[0].lower() != "/file":
+        return None
+    entry = progress.get(fid)
+    if entry is None or entry[4] is None:
+        return None
+    if tuple(entry[4]) != tuple(peer):
+        return None
+    if os.path.basename(str(entry[3])) != os.path.basename(command_part[1]):
+        return None
+    return entry
+
 def parse_forward_resume_command(command):
     """Split a ``/forward_resume <addr> <fid> <offset>`` line.
 
@@ -634,6 +724,95 @@ def parse_forward_originator(command, own_address=None):
                     return None  # direct send: the tuple is the receiver itself
                 return originator
     return None
+
+
+# ---- transfer ids ----------------------------------------------------------
+#
+# A transfer id keys the progress stores, the pause switches and the transfer
+# socket registry, and it travels on the wire as the last token of ``/file``
+# and ``/file_folder`` lines. One allocator per instance:
+#
+#     fid = (counter << 32) | (epoch << 1) | kind
+#
+# ``epoch`` is random per instance, so two instances (or the same instance
+# restarted) never hand out the same value; ``counter`` only grows and lives in
+# the high bits, so no run length can overflow into the low fields; ``kind`` is
+# 0 for a plain leg and 1 for a relay (whose originator fid and per-target tfids
+# are all relay kinds).
+#
+# The counters this replaced started at 0 in every instance and were also
+# decremented when a leg ended, so an inbound fid from one peer and an outbound
+# fid from this instance could be the same number: the shared registries
+# (``_active_transfer_fids``, ``_active_transfer_sockets``, ``_transfer_pause``)
+# then let one leg's cleanup tear down the other's socket.
+
+FID_LOW_BITS = 32  # low 32 bits: epoch (31) + kind (1)
+FID_KIND_PLAIN = 0
+FID_KIND_RELAY = 1
+
+
+def fid_kind(fid):
+    """Return 0 (plain leg) or 1 (relay leg) of a transfer id.
+
+    Args:
+        fid (int): Transfer id.
+
+    Returns:
+    int: ``FID_KIND_PLAIN`` or ``FID_KIND_RELAY``.
+    """
+    return fid & 1
+
+
+def format_fid(fid):
+    """Render a transfer id for logs as ``e<epoch>.<kind>.<counter>``.
+
+    Args:
+        fid (int): Transfer id.
+
+    Returns:
+    str: Readable form; the inverse of the allocator's packing.
+    """
+    low = fid & 0xFFFFFFFF
+    return f"e{low >> 1}.{low & 1}.{fid >> FID_LOW_BITS}"
+
+
+class _FidAllocator:
+    """Hand out transfer ids that never collide with a live one.
+
+    ``alloc`` skips a candidate that already keys one of the live tables. Those
+        tables are read under this allocator's own lock only; a caller must not
+        hold ``_transfer_progress_lock`` or ``_forward_relays_lock`` while
+        allocating, so the two lock families never nest.
+    """
+
+    def __init__(self, live_tables):
+        """Create an allocator for one instance.
+
+        Args:
+            live_tables (tuple): Dicts whose keys are ids still in use —
+                ``file_upload_progress``, ``file_recv_progress`` and
+                ``_forward_resume_records``. Held by reference, never copied.
+        """
+        self._epoch = int.from_bytes(os.urandom(4), "big") & 0x7FFFFFFF
+        self._counter = 0
+        self._live_tables = live_tables
+        self._lock = threading.Lock()
+
+    def alloc(self, kind=FID_KIND_PLAIN):
+        """Return an unused transfer id.
+
+        Args:
+            kind (int): ``FID_KIND_PLAIN`` or ``FID_KIND_RELAY``.
+
+        Returns:
+        int: Transfer id.
+        """
+        with self._lock:
+            while True:
+                self._counter += 1
+                fid = (self._counter << FID_LOW_BITS) | (self._epoch << 1) | kind
+                if not any(fid in table for table in self._live_tables):
+                    return fid
 
 
 # ---- encrypted channel framing ---------------------------------------------
@@ -1523,7 +1702,7 @@ class TCP_Server_Base:  # TCP server class
             the original peer on both sides, never the relay.
         file_trans_progress_file (str): Path under the protocol's ``.Flow``
             directory where the two stores are written when a connection drops
-            and read back on the next reconnect (``resume_transfers``).
+            and read back on the next reconnect (``_request_resumes``).
         upload_network_speed (float | None): Bytes per second sent, or None when
             not measured.
         recv_network_speed (float | None): Bytes per second received, or None
@@ -1621,7 +1800,7 @@ class TCP_Server_Base:  # TCP server class
         # hold exactly the transfers running now; iterate over a copy while
         # transfers are in flight. A transfer interrupted by a disconnect
         # keeps its entry (and its partial file) so it can be resumed once
-        # the peer is back (see `resume_transfers`).
+        # the peer is back (see `_request_resumes`).
         self.file_recv_progress = {}  # downloads: fid -> [received, total, speed, path, peer]
         self.file_upload_progress = {}  # uploads: fid -> [sent, total, speed, path, peer]
         self.upload_network_speed = None  # bytes/s over the last NETWORK_SPEED_WINDOW seconds
@@ -1631,8 +1810,6 @@ class TCP_Server_Base:  # TCP server class
         self._recv_speed_samples = collections.deque()
         self._upload_speed_total = 0  # bytes held in the sample windows
         self._recv_speed_total = 0
-        self._forward_fid = 0
-        self._forward_fid_lock = threading.Lock()
         self._forward_relays = {}
         self._forward_relays_lock = threading.Lock()
         # Relay records kept after their relay died, so a disconnected
@@ -1641,6 +1818,12 @@ class TCP_Server_Base:  # TCP server class
         # Resume requests that arrived before the originator reconnected:
         # originator (ip, port) -> [(fid, target (ip, port), offset), ...].
         self._pending_relay_resumes = {}
+        # Transfer ids for the legs this instance sends (see `_FidAllocator`).
+        # Inbound legs carry ids the peer allocated, so the two directions can
+        # never share a value and the shared registries below stay disjoint.
+        self._fid_alloc = _FidAllocator(
+            (self.file_upload_progress, self.file_recv_progress, self._forward_resume_records)
+        )
         # Outbound-transfer pause switches (see `pause_trans`/`start_trans`):
         # fid -> bool. A leg waits while its own fid is marked paused.
         self._transfer_pause = {}
@@ -1680,10 +1863,8 @@ class TCP_Server_Base:  # TCP server class
         self.alloc_port(port_add_step, port_range_num)
         self.server_socket = None
         self.clients = {}  # store client info
-        self.file_client_id_lock = threading.Lock()
         self.file_transfer_server_port_lock = threading.Lock()
         self.file_server_port_list = []
-        self.file_client_id = 0
         self.client_lock = threading.Lock()  # add the threading lock
         self.max_file_transfer_thread_num = max_file_transfer_thread_num
         MAX_CONCURRENT_FILES = self.max_file_transfer_thread_num
@@ -1713,23 +1894,35 @@ class TCP_Server_Base:  # TCP server class
         # never raise (exceptions are swallowed by the notify helpers).
         self._message_listeners = []
         self._file_listeners = []
+        self._send_message_listeners = []
+        # Sockets carrying the control protocol; only these are recorded.
+        self._control_sockets = set()
         self._event_listeners_lock = threading.Lock()
-        # Inbound message/event stores: external code reads these instead of
-        # registering listeners. Keyed by the sender's socket; each value is
-        # a list of [content, timestamp] pairs. When a store's total size
-        # reaches max_dict_size (64 KiB) it is flushed to its JSON log and
-        # cleared (see _record_message/_record_event/_flush_*_dict).
+        # Message/event stores: external code reads these instead of registering
+        # listeners. Keyed by the socket; each value is a list of [content,
+        # timestamp] pairs. messages_dict and sent_messages_dict hold plain text
+        # (inbound / outbound); events_dict and sent_events_dict hold "/" commands.
+        # When a store's total size reaches max_dict_size (64 KiB) it is flushed
+        # to its JSON log and cleared (see _append_record, _flush_record_stores).
         self.messages_dict = {}
         self.events_dict = {}
+        self.sent_messages_dict = {}
+        self.sent_events_dict = {}
         self._messages_dict_lock = threading.Lock()
         self._events_dict_lock = threading.Lock()
+        self._sent_messages_dict_lock = threading.Lock()
+        self._sent_events_dict_lock = threading.Lock()
         self._socket_keys = {}  # record key -> "ip:port", captured while it was alive
         self._socket_keys_lock = threading.Lock()
         self._messages_dict_size = 0
         self._events_dict_size = 0
+        self._sent_messages_dict_size = 0
+        self._sent_events_dict_size = 0
         self.max_dict_size = 64 * 1024
         self.messages_log_file = os.path.join(self.project_info_dir, "messages_log.json")
         self.events_log_file = os.path.join(self.project_info_dir, "events_log.json")
+        self.sent_messages_log_file = os.path.join(self.project_info_dir, "sent_messages_log.json")
+        self.sent_events_log_file = os.path.join(self.project_info_dir, "sent_events_log.json")
         self.is_extend_command = is_extend_command
         self.is_enable_encrypto = is_enable_encrypto
         self.is_custom_keys = is_custom_keys
@@ -1877,7 +2070,7 @@ class TCP_Server_Base:  # TCP server class
                 as transfers end), so only this transfer's own entry is dropped. With
                 ``keep`` True an interrupted transfer keeps its entry — and the partial
                 file that entry points at — so the reconnect logic can continue it
-                (`resume_transfers`); the entry then lives until the transfer ends.
+                (`_request_resumes`); the entry then lives until the transfer ends.
 
         Args:
             progress_dict (dict): Store the entry belongs to.
@@ -2651,6 +2844,33 @@ class TCP_Server_Base:  # TCP server class
             except ValueError:
                 pass
 
+    def add_send_message_listener(self, listener):
+        """Register ``listener(target_id, message)`` for every payload written by `send_message`.
+
+        Fired after a successful write, for text and bytes alike (so a byte stream
+        reaches it), never for ``is_send_raw`` protocol lines. ``target_id`` is the
+        receiving client's ``"ip:port"``. It runs on the sending thread, so it must
+        not block, and exceptions raised inside it are swallowed.
+
+        Args:
+            listener (callable): ``listener(target_id, message)``.
+        """
+        with self._event_listeners_lock:
+            if listener not in self._send_message_listeners:
+                self._send_message_listeners.append(listener)
+
+    def remove_send_message_listener(self, listener):
+        """Unregister a listener previously added by `add_send_message_listener`.
+
+        Args:
+            listener (callable): Listener to remove; an unknown one is ignored.
+        """
+        with self._event_listeners_lock:
+            try:
+                self._send_message_listeners.remove(listener)
+            except ValueError:
+                pass
+
     def add_file_listener(self, listener):
         """Register ``listener(client_id, full_path, name, size, command)`` per saved file.
 
@@ -2695,6 +2915,38 @@ class TCP_Server_Base:  # TCP server class
                 listener(client_id, message)
             except Exception as e:
                 self._log(f"message listener error: {e}")
+                self._log_exc()
+
+    def _notify_transfer_chunk(self, client_socket, data):
+        """Report one chunk read from a non-control socket to the message listeners.
+
+        Side-channel sockets (file/folder transfers, forwards) carry raw bytes and
+        ``sign`` tokens, which belong to the transfer layer, so they are reported
+        to the listeners but never recorded in a store.
+        """
+        if not data or client_socket in self._control_sockets:
+            return
+        with self._event_listeners_lock:
+            listeners = list(self._message_listeners)
+        for listener in listeners:
+            try:
+                listener(self._socket_key(client_socket), data)
+            except Exception as e:
+                self._log(f"message listener error: {e}")
+                self._log_exc()
+
+    def _notify_message_sent(self, client_socket, message):
+        """Report one written payload to the send listeners."""
+        with self._event_listeners_lock:
+            listeners = list(self._send_message_listeners)
+        if not listeners:
+            return
+        target_id = self._socket_key(client_socket)
+        for listener in listeners:
+            try:
+                listener(target_id, message)
+            except Exception as e:
+                self._log(f"send message listener error: {e}")
                 self._log_exc()
 
     def _notify_file_received(self, client_id, full_path, name, size, command):
@@ -2773,47 +3025,57 @@ class TCP_Server_Base:  # TCP server class
             return key
         return self._socket_key(sock)
 
-    def _record_message(self, sock, content):
-        """Store one inbound plain-text message under the sender's socket.
-
-        External code reads ``messages_dict`` (or the JSON log) instead of
-                registering a message listener. The entry is ``[content, timestamp]``
-                with the timestamp of arrival.
+    def _append_record(self, store, log_path, sock, content):
+        """Append one ``[content, timestamp]`` pair under ``sock``; flush when full.
 
         Args:
-            sock (object): Value used by the operation.
-            content (object): Value used by the operation.
+            store (tuple): ``(dict, lock, size_attr)``; the dict maps socket to
+                a list of pairs, and ``size_attr`` names the byte-size attribute.
+            log_path (str): JSON log the store flushes into.
+            sock (object): Key socket.
+            content (str): Text to record.
         """
+        d, lock, size_attr = store
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with self._messages_dict_lock:
+        with lock:
             self._remember_socket_key(sock)
-            self.messages_dict.setdefault(sock, []).append([content, timestamp])
-            self._messages_dict_size += len(content.encode("utf-8", "replace")) + len(timestamp)
-            if self._messages_dict_size >= self.max_dict_size:
-                self._flush_dict_locked(
-                    self.messages_dict, "_messages_dict_size", self.messages_log_file
-                )
+            d.setdefault(sock, []).append([content, timestamp])
+            size = getattr(self, size_attr) + len(content.encode("utf-8", "replace"))
+            size += len(timestamp)
+            setattr(self, size_attr, size)
+            if size >= self.max_dict_size:
+                self._flush_dict_locked(d, size_attr, log_path)
+
+    def _record_message(self, sock, content):
+        """Store one inbound plain-text message under the sender's socket."""
+        self._append_record(
+            (self.messages_dict, self._messages_dict_lock, "_messages_dict_size"),
+            self.messages_log_file, sock, content,
+        )
 
     def _record_event(self, sock, command):
-        """Store one inbound command as an event under the sender's socket.
+        """Store one inbound "/" command under the sender's socket."""
+        self._append_record(
+            (self.events_dict, self._events_dict_lock, "_events_dict_size"),
+            self.events_log_file, sock, command,
+        )
 
-        The event content is the original wire command from the peer (file
-                transfers, folder transfers, extension commands, ...). External code
-                reads ``events_dict`` (or the JSON log) instead of registering a
-                listener. File-transfer events get their completion timestamp via
-                ``_update_event_timestamp``.
-
-        Args:
-            sock (object): Value used by the operation.
-            command (object): Value used by the operation.
-        """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with self._events_dict_lock:
-            self._remember_socket_key(sock)
-            self.events_dict.setdefault(sock, []).append([command, timestamp])
-            self._events_dict_size += len(command.encode("utf-8", "replace")) + len(timestamp)
-            if self._events_dict_size >= self.max_dict_size:
-                self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
+    def _record_sent(self, sock, content):
+        """Store one outbound text: a "/" line as a sent event, other text as a sent message."""
+        if content.startswith("/"):
+            self._append_record(
+                (self.sent_events_dict, self._sent_events_dict_lock, "_sent_events_dict_size"),
+                self.sent_events_log_file, sock, content,
+            )
+        else:
+            self._append_record(
+                (
+                    self.sent_messages_dict,
+                    self._sent_messages_dict_lock,
+                    "_sent_messages_dict_size",
+                ),
+                self.sent_messages_log_file, sock, content,
+            )
 
     def _update_event_timestamp(self, sock, command, timestamp):
         """Stamp the completion time onto the recorded event for ``command``.
@@ -2880,23 +3142,48 @@ class TCP_Server_Base:  # TCP server class
         d.clear()
         setattr(self, size_attr, 0)
         self._merge_json_log(path, snapshot)
-        other = self.events_dict if d is self.messages_dict else self.messages_dict
-        with self._socket_keys_lock:  # a key is only kept while it is buffered
+        with self._socket_keys_lock:  # a key is only kept while some store buffers it
             for sock in snapshot:
-                if sock not in d and sock not in other:
+                if not any(sock in store for store in self._record_dicts()):
                     self._socket_keys.pop(sock, None)
 
+    def _record_dicts(self):
+        """Return the four record stores, in flush order."""
+        return (
+            self.messages_dict,
+            self.events_dict,
+            self.sent_messages_dict,
+            self.sent_events_dict,
+        )
+
     def _flush_messages_dict(self):
-        """Handle the operation."""
+        """Flush the inbound messages store into its JSON log."""
         with self._messages_dict_lock:
             self._flush_dict_locked(
                 self.messages_dict, "_messages_dict_size", self.messages_log_file
             )
 
     def _flush_events_dict(self):
-        """Handle the operation."""
+        """Flush the inbound events store into its JSON log."""
         with self._events_dict_lock:
             self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
+
+    def _flush_record_stores(self):
+        """Flush every record store into its JSON log (called on stop)."""
+        with self._messages_dict_lock:
+            self._flush_dict_locked(
+                self.messages_dict, "_messages_dict_size", self.messages_log_file
+            )
+        with self._events_dict_lock:
+            self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
+        with self._sent_messages_dict_lock:
+            self._flush_dict_locked(
+                self.sent_messages_dict, "_sent_messages_dict_size", self.sent_messages_log_file
+            )
+        with self._sent_events_dict_lock:
+            self._flush_dict_locked(
+                self.sent_events_dict, "_sent_events_dict_size", self.sent_events_log_file
+            )
 
     def _merge_json_log(self, path, snapshot):
         """Merge ``snapshot`` into the JSON log at ``path`` (append per socket).
@@ -3119,13 +3406,16 @@ class TCP_Server_Base:  # TCP server class
                 self._crypto_send_locks[client_socket] = lock
             return lock
 
-    def send_message(self, client_socket, message):  # send message to specific client
+    def send_message(self, client_socket, message, is_send_raw=False):
+        # send message to specific client
         """Write one message to a client socket, framing it when the channel is up.
 
         Args:
             client_socket (socket.socket): Target connection.
             message (str | bytes): Payload; a str is stripped and newline
                 terminated, bytes are sent as they are.
+            is_send_raw (bool): Write the payload as plaintext even when the channel
+                is encrypted; only for the crypto handshake and transfer coordination lines.
 
         Returns:
             bool: True when the payload was written, False for an unsupported
@@ -3134,6 +3424,25 @@ class TCP_Server_Base:  # TCP server class
         Raises:
             RuntimeError: If the server is not running or no socket was passed.
             OSError: If the socket write fails (the original error is re-raised).
+        """
+        if is_send_raw:
+            deal_msg = message.strip()
+            if not deal_msg.endswith("\n"):
+                deal_msg += "\n"
+            encoded = deal_msg.encode("utf-8")
+            self._sendall(client_socket, encoded)
+            self._measure_network_speed(encoded, is_upload=True)
+            return True
+        written = self._write_message(client_socket, message)
+        if written:
+            self._after_send(client_socket, message)
+        return written
+
+    def _write_message(self, client_socket, message):
+        """Write one payload: encrypted when the channel is up, plaintext otherwise.
+
+        Returns:
+            bool: True when written, False for an unsupported payload type.
         """
         if not self.running or not client_socket:
             self._log("disable the connect to server")
@@ -3177,6 +3486,14 @@ class TCP_Server_Base:  # TCP server class
                     self._log_exc()
                 raise
 
+    def _after_send(self, client_socket, message):
+        """Record and report one payload that `_write_message` has written."""
+        if isinstance(message, str):
+            message = message.strip()
+            if message and client_socket in self._control_sockets:
+                self._record_sent(client_socket, message)
+        self._notify_message_sent(client_socket, message)
+
     def _sendall(self, client_socket, data):
         """Write ``data`` in full, waiting for room on a non-blocking socket.
 
@@ -3203,20 +3520,6 @@ class TCP_Server_Base:  # TCP server class
             if sent == 0:  # the peer closed the connection
                 raise BrokenPipeError(errno.EPIPE, "socket closed while sending")
             view = view[sent:]
-
-    def _send_raw(self, client_socket, text):
-        """Send a plaintext crypto-protocol message, bypassing encryption.
-
-        Args:
-            client_socket (socket.socket): Value used by the operation.
-            text (object): Value used by the operation.
-        """
-        data = text.strip()
-        if not data.endswith("\n"):
-            data += "\n"
-        encoded = data.encode("utf-8")
-        self._sendall(client_socket, encoded)
-        self._measure_network_speed(encoded, is_upload=True)
 
     def _crypto_mark_encrypted(self, client_socket, peer_role, peer_pem_path):
         """Handle the operation.
@@ -3276,7 +3579,7 @@ class TCP_Server_Base:  # TCP server class
             return
         try:
             # plaintext by design: the peer needs this line before it may frame
-            self._send_raw(client_socket, CRYPTO_FRAMES_START)
+            self.send_message(client_socket, CRYPTO_FRAMES_START, is_send_raw=True)
         except Exception:
             self._log_exc()
         self._crypto_publish_ecdh_pub(client_socket)
@@ -3386,7 +3689,8 @@ class TCP_Server_Base:  # TCP server class
         plaintext, served from the channel's buffer; a socket without one is
         read raw. A read that started while the channel was raw is classified
         by the channel when it returns, so bytes of a flip that landed during
-        the read never land in the line reader.
+        the read never land in the line reader. Reads from a non-control socket
+        are also reported to the message listeners (see `_notify_transfer_chunk`).
 
         Args:
             client_socket (socket.socket): Connection to read from.
@@ -3401,10 +3705,12 @@ class TCP_Server_Base:  # TCP server class
             if channel is None:
                 data = client_socket.recv(msg_length)
                 self._measure_network_speed(data, is_upload=False)
+                self._notify_transfer_chunk(client_socket, data)
                 return data
             data = channel.take(msg_length)
             if data:
                 self._measure_network_speed(data, is_upload=False)
+                self._notify_transfer_chunk(client_socket, data)
                 return data  # buffered plaintext is served even after a disable
             raw = client_socket.recv(self.recv_messages_chunk_len if channel.secure else msg_length)
             if not raw:
@@ -3417,10 +3723,12 @@ class TCP_Server_Base:  # TCP server class
                 leftover = channel.drain_plaintext()
                 if leftover:
                     self._measure_network_speed(leftover, is_upload=False)
+                    self._notify_transfer_chunk(client_socket, leftover)
                     return leftover  # hand back whatever was already read
                 continue  # framing is off now: keep serving in raw mode
             if plain:
                 self._measure_network_speed(plain, is_upload=False)
+                self._notify_transfer_chunk(client_socket, plain)
                 return plain  # plaintext mode: the line reader gets the bytes
 
     def _crypto_channel_error(self, client_socket):
@@ -3520,7 +3828,9 @@ class TCP_Server_Base:  # TCP server class
             try:
                 with self._crypto_lock:
                     nonce = state.get("my_nonce") or self._crypto_fresh_nonce()
-                self._send_raw(client_socket, f"/crypto_key_exchange {nonce} 1")
+                self.send_message(
+                    client_socket, f"/crypto_key_exchange {nonce} 1", is_send_raw=True
+                )
             except Exception:
                 self._log_exc()
 
@@ -3568,7 +3878,11 @@ class TCP_Server_Base:  # TCP server class
         session = self._crypto_sessions.get(client_address)
         if session is not None:
             session.reset_ecdh()  # a fresh handshake is a fresh session key
-        self._send_raw(client_socket, f"/crypto_key_exchange_ack {my_nonce} 1 {1 if force else 0}")
+        self.send_message(
+            client_socket,
+            f"/crypto_key_exchange_ack {my_nonce} 1 {1 if force else 0}",
+            is_send_raw=True,
+        )
         threading.Thread(
             target=self._crypto_wait_server_ready,
             args=(client_socket, client_address, state),
@@ -3629,7 +3943,7 @@ class TCP_Server_Base:  # TCP server class
         with self._crypto_lock:
             state["ready_sent"] = True
         try:
-            self._send_raw(client_socket, "/crypto_ready")
+            self.send_message(client_socket, "/crypto_ready", is_send_raw=True)
         except Exception:
             self._log_exc()
         self._crypto_try_server_flip(client_socket, state)
@@ -3653,11 +3967,9 @@ class TCP_Server_Base:  # TCP server class
                     break
             time.sleep(0.05)
         try:
-            with self.file_client_id_lock:
-                client_id = copy.copy(self.file_client_id)
-                self.file_client_id += 1
+            client_id = self._fid_alloc.alloc(FID_KIND_PLAIN)
             send_msg = f"/crypto_pub_key {client_id}"
-            self._send_raw(client_socket, send_msg)
+            self.send_message(client_socket, send_msg, is_send_raw=True)
             file_transfer_client_port = self.palloc()
             file_server_port = None
             waiting_time = 0
@@ -3737,7 +4049,7 @@ class TCP_Server_Base:  # TCP server class
                 peer_socket = self.clients.get(client_address, {}).get("socket")
         if not ok and peer_socket is not None:
             try:
-                self._send_raw(peer_socket, f"/crypto_reject {reason}")
+                self.send_message(peer_socket, f"/crypto_reject {reason}", is_send_raw=True)
             except Exception:
                 self._log_exc()
             try:
@@ -3842,9 +4154,12 @@ class TCP_Server_Base:  # TCP server class
             with self._crypto_lock:
                 channel = self._channels.get(client_socket)
             if channel is None:
-                return await loop.sock_recv(client_socket, self.recv_messages_chunk_len)
+                data = await loop.sock_recv(client_socket, self.recv_messages_chunk_len)
+                self._notify_transfer_chunk(client_socket, data)
+                return data
             data = channel.take(self.recv_messages_chunk_len)
             if data:
+                self._notify_transfer_chunk(client_socket, data)
                 return data  # buffered plaintext is served even after a disable
             raw = await loop.sock_recv(client_socket, self.recv_messages_chunk_len)
             if not raw:
@@ -3856,9 +4171,11 @@ class TCP_Server_Base:  # TCP server class
                 await asyncio.to_thread(self._crypto_channel_error, client_socket)
                 leftover = channel.drain_plaintext()
                 if leftover:
+                    self._notify_transfer_chunk(client_socket, leftover)
                     return leftover
                 continue  # framing is off now: keep serving in raw mode
             if plain:
+                self._notify_transfer_chunk(client_socket, plain)
                 return plain  # plaintext mode: the line reader gets the bytes
 
     async def _handle_client_async(self, client_socket, client_address):
@@ -3924,6 +4241,7 @@ class TCP_Server_Base:  # TCP server class
         """
         client_id = f"{client_address[0]}:{client_address[1]}"
         with self.client_lock:  # add new client
+            self._control_sockets.add(client_socket)
             self.clients[client_address] = {
                 "socket": client_socket,
                 "address": client_address,
@@ -3976,7 +4294,11 @@ class TCP_Server_Base:  # TCP server class
             return False
         # announce our encryption mode; a mismatched peer is disconnected in handle_command
         try:
-            self._send_raw(client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
+            self.send_message(
+                client_socket,
+                f"/crypto_mode {1 if self.is_enable_encrypto else 0}",
+                is_send_raw=True,
+            )
         except Exception as e:
             # the peer vanished right after the welcome: the caller's cleanup
             # closes the connection; never let this escape
@@ -4047,11 +4369,12 @@ class TCP_Server_Base:  # TCP server class
             self._crypto_peer.pop(client_socket, None)
             self._crypto_push_active.discard(client_socket)
             self._encrypted_sockets.discard(client_socket)
+            self._control_sockets.discard(client_socket)
             self._channels.pop(client_socket, None)
             self._crypto_send_locks.pop(client_socket, None)
         client_socket.close()
         # the transfers that died with this connection are written to the
-        # progress file so a reconnect can continue them (resume_transfers)
+        # progress file so a reconnect can continue them (_request_resumes)
         self._persist_transfer_progress()
         self._debug(f"client disconnected: {client_id}")
         self._debug(f"current connection count: {len(self.clients)}")
@@ -4479,7 +4802,13 @@ class TCP_Server_Base:  # TCP server class
     def file_folder_transfer_server_recv_server_start_thread(  # start a file folder server thread on server
         self, command, client_id, client_socket
     ):
-        """Start a server-side folder receive operation.
+        """Create a folder, or start a server-side folder receive operation.
+
+        A command without a client id (``/file_folder <rel>`` or
+        ``/file_folder <rel> <dest>``) is folder creation: the directory is
+        created here, on the control line, and no transfer leg is opened. A
+        command with an id carries one file of the folder and starts the usual
+        receive leg.
 
         Args:
             command (object): Value used by the operation.
@@ -4491,6 +4820,18 @@ class TCP_Server_Base:  # TCP server class
         # >= 4 tokens means a file transfer (/file_folder <rel> <file> [<dest>] <id>);
         # 2-3 tokens is folder creation (optional destination, no client id)
         file_name = command_part[2] if len(command_part) >= 4 else None
+        if file_name is None:
+            created = _receive_dir_for(
+                self.file_transfer_dir,
+                relative_folder_path,
+                _parse_destination_path(command_part),
+            )
+            try:
+                os.makedirs(created, exist_ok=True)
+                self._log(f"folder {created} created for {client_id}")
+            except OSError as e:
+                self._log(f"folder {created} could not be created for {client_id}: {e}")
+            return
         folder_transfer_server_recv_server_start_thread = threading.Thread(
             target=self.file_transfer_server_recv_server_start,
             args=(client_id, client_socket, command, relative_folder_path, file_name),
@@ -4550,7 +4891,6 @@ class TCP_Server_Base:  # TCP server class
         file_name,
         command,
         peer=None,
-        resume_entry=None,
     ):
         """Receive one file over a transfer sub-connection.
 
@@ -4563,11 +4903,9 @@ class TCP_Server_Base:  # TCP server class
             file_name (str | None): Destination filename, when specified.
             command (str): Wire command that initiated the transfer.
             peer (tuple | None): Original sender ``(ip, port)`` for resuming.
-            resume_entry (list | None): Saved progress entry for a resumed file.
 
         Returns:
-            None | bool: None after starting or finishing; False when a resume request
-                cannot be sent.
+            None: after the leg starts or finishes.
         """
         file_running = True
         client_file_socket = None
@@ -4585,23 +4923,14 @@ class TCP_Server_Base:  # TCP server class
             server_file_socket.close()
 
         def setting_file_save_path():
-            """Handle the operation."""
+            """Resolve, and create, the directory this leg writes into."""
             nonlocal save_path
-            save_path = self.file_transfer_dir
+            save_path = _receive_dir_for(
+                self.file_transfer_dir, new_save_path, destination_path
+            )
             if new_save_path or destination_path:
-                if destination_path:
-                    if os.path.isabs(destination_path):
-                        save_path = destination_path
-                    else:
-                        save_path = os.path.join(save_path, destination_path)
-                if new_save_path:
-                    path_list = new_save_path.split("/")
-                    if path_list and path_list[0] == "":
-                        del path_list[0]
-                    for node in path_list:
-                        save_path = os.path.join(save_path, node)
                 os.makedirs(save_path, exist_ok=True)
-            if file_name or new_save_path == None:
+            if file_name or new_save_path is None:
                 return save_path
             close_socket()
             return None
@@ -4692,6 +5021,11 @@ class TCP_Server_Base:  # TCP server class
                             "ErrorSignReceivedWhileReceivingFileSize: client reported error and disconnected"
                         )
                 file_size = int.from_bytes(size_bytes, "big")
+                if resume_entry is not None and resume_entry[1] != file_size:
+                    raise ConnectionError(
+                        f"resume rejected: {filename} is {file_size} bytes, "
+                        f"the partial file expects {resume_entry[1]}"
+                    )
                 self.send_message(client_file_socket, self.server_received_file_header_sign)
                 original_filename = filename
                 if resume_entry is not None:
@@ -4807,6 +5141,7 @@ class TCP_Server_Base:  # TCP server class
         command_part = shlex.split(command)
         file_client_id = command_part[len(command_part) - 1]
         progress_fid = _transfer_fid(command_part)  # keys this leg in file_recv_progress
+        resume_entry = _resumable_entry(self.file_recv_progress, progress_fid, peer, command_part)
         destination_path = _parse_destination_path(command_part)
         stamp = self._crypto_transfer_stamp(
             client_socket, force_plain=command_part[0] == "/crypto_pub_key"
@@ -4815,22 +5150,12 @@ class TCP_Server_Base:  # TCP server class
         transfer_server_port_msg = "/server_file_transfer_port {} {} {}\n".format(
             file_transfer_server_port, file_client_id, stamp
         )
-        self._send_raw(
-            client_socket, transfer_server_port_msg
+        self.send_message(
+            client_socket, transfer_server_port_msg, is_send_raw=True
         )  # coordination line: always plaintext (like the handshake)
         server_file_socket.listen(1)
         if resume_entry is not None:
-            # the receiver drives a resumed transfer: it asks the sender to
-            # continue the file from the bytes already on disk
-            offset = _resume_offset_for(resume_entry)
-            if progress_fid is None or not self.send_message(
-                client_socket, f"{RESUME_LINE} {progress_fid} {offset}"
-            ):
-                self._log(
-                    f"resume: cannot ask {client_id} to continue transfer {progress_fid}"
-                )
-                server_file_socket.close()
-                return False
+            # the sender answers this resume with /file; its connection is the continued leg
             server_file_socket.settimeout(RESUME_ACCEPT_TIMEOUT)
         try:
             client_file_socket, client_file_address = server_file_socket.accept()
@@ -5109,17 +5434,19 @@ class TCP_Server_Base:  # TCP server class
             self._log(f"start to send file: {cmd} (limit {self.max_file_transfer_thread_num})")
 
         def get_all_files_in_folder():
-            """Handle the operation."""
-            for root, dirs, files in os.walk(folder_path):
+            """Announce the directories that need it, then send every file."""
+            needed = _rel_dirs_with_files(folder_path, base_path)
+            if transfer_path in needed:
+                send_folder_transfer_command(transfer_path)
+            for root, _dirs, files in os.walk(folder_path):
                 rel_dir = get_relative_path(base_path, root)
-                if root != folder_path:
+                if root != folder_path and rel_dir in needed:
                     send_folder_transfer_command(rel_dir)
                 for file in files:
                     start_file_transfer_with_limit(rel_dir, file, root)
             self._log(f"finished sending all files in folder {folder_path}")
 
         transfer_path = get_relative_path(base_path, folder_path)
-        send_folder_transfer_command(transfer_path)
         get_all_files_in_folder()
 
     def file_transfer_server_recv_client_start_thread(self, message, file_folder_abspath=None):
@@ -5160,10 +5487,8 @@ class TCP_Server_Base:  # TCP server class
             self._log_exc()
             return False
         self._debug(client_socket, client_address, message)
-        with self.file_client_id_lock:
-            client_id = copy.copy(self.file_client_id)
-            send_msg = message.strip() + " " + str(self.file_client_id) + "\n"
-            self.file_client_id += 1
+        client_id = self._fid_alloc.alloc(FID_KIND_PLAIN)
+        send_msg = message.strip() + " " + str(client_id) + "\n"
         try:
             waiting_time = 0
             if shlex.split(message.lower())[0] == "/file_folder":
@@ -5247,8 +5572,6 @@ class TCP_Server_Base:  # TCP server class
             file_running = False
             self._crypto_drop_channel(client_file_socket)
             client_file_socket.close()
-            with self.file_client_id_lock:
-                self.file_client_id -= 1
 
         while True:
             try:
@@ -5437,105 +5760,52 @@ class TCP_Server_Base:  # TCP server class
 
     # ---- transfer reconnect (server side) ----------------------------------
 
-    def resume_transfers(self, peer=None):
-        """Continue the interrupted transfers of a peer that is back.
+    def _request_resumes(self, peer):
+        """Ask a peer that just connected to continue this side's interrupted downloads.
 
-        Reads the persisted stores back (`_load_transfer_progress`) and, for
-        every download this instance was receiving from ``peer``, opens a
-        fresh transfer listener and asks the sender to continue the file from
-        the bytes already on disk. Restored uploads need no action here: the
-        peer drives their resume from its own side.
+        Reads the persisted stores back (`_load_transfer_progress`). Every download
+        this instance was receiving from ``peer`` gets its offset set to the bytes
+        already on disk, and ``/resume_trans <fid> <offset>`` is sent; the sender
+        answers with ``/file <name> <fid>`` and the continued leg is received by
+        `file_transfer_mode_recv`. Uploads need no action here.
 
         Args:
-            peer (tuple | None): Peer ``(ip, port)`` that just connected; None
-                resumes every peer that is connected right now.
+            peer (tuple): Peer ``(ip, port)`` that just connected.
 
         Returns:
-            int: Number of resumed receive legs started.
+            int: Number of resume requests sent.
         """
         restored = self._load_transfer_progress()
         if restored:
             self._log(f"transfer reconnect: restored {restored} interrupted transfer(s)")
+        peer = tuple(peer)
         with self.client_lock:
-            connected = {tuple(address) for address in self.clients}
-        candidates = []
+            info = self.clients.get(peer)
+        if info is None or not self._wait_control_secure(info["socket"]):
+            return 0
+        started = 0
         for fid, entry in list(self.file_recv_progress.items()):
-            if entry[4] is None:
-                continue  # without a peer there is nobody to continue with
+            if entry[4] is None or tuple(entry[4]) != peer:
+                continue  # not a download from this peer
             with self._forward_relays_lock:
                 if fid in self._forward_resume_records:
                     continue  # a forwarded transfer: its target drives the resume
             with self._transfer_progress_lock:
                 if fid in self._active_transfer_fids:
                     continue  # a leg is already running for this fid
-            peer_addr = tuple(entry[4])
-            if peer is not None and peer_addr != tuple(peer):
-                continue
-            if peer is None and peer_addr not in connected:
-                continue
-            candidates.append((fid, entry, peer_addr))
-        started = 0
-        for fid, entry, peer_addr in candidates:
-            with self.client_lock:
-                info = self.clients.get(peer_addr)
-            if info is None:
-                continue
-            if not self._wait_control_secure(info["socket"]):
-                continue
-            threading.Thread(
-                target=self._resume_receive_leg,
-                args=(
-                    info["socket"],
-                    peer_addr,
-                    fid,
-                    entry,
-                    f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}",
-                ),
-                daemon=True,
-            ).start()
-            started += 1
+            entry[0] = _resume_offset_for(entry)
+            if self.send_message(info["socket"], f"{RESUME_LINE} {fid} {entry[0]}"):
+                started += 1
         return started
-
-    def _resume_receive_leg(self, control_socket, peer_addr, fid, entry, command):
-        """Receive the rest of one interrupted transfer, appending to its file.
-
-        Args:
-            control_socket (socket.socket): Value used by the operation.
-            peer_addr (tuple): Value used by the operation.
-            fid (int): Value used by the operation.
-            entry (object): Value used by the operation.
-            command (object): Value used by the operation.
-
-        Returns:
-        bool: True when the sender was asked to continue, False when the
-                        request could not be sent.
-        """
-        self._log(f"resume: continuing transfer {fid} with {peer_addr} into {entry[3]}")
-        entry[0] = _resume_offset_for(entry)  # the offset the sender is asked for
-        port = self.palloc()
-        try:
-            return self.file_transfer_mode_recv(
-                self.host,
-                port,
-                control_socket,
-                f"{peer_addr[0]}:{peer_addr[1]}",
-                None,
-                None,
-                command,
-                peer=peer_addr,
-                resume_entry=entry,
-            ) is not False
-        finally:
-            self.pfree(port)
 
     def resume_trans(self, peer_addr, fid, offset):
         """Continue one interrupted transfer this instance was sending.
 
         Runs when a receiver asks to continue a transfer (``/resume_trans``,
-        see `resume_transfers` on the receiving side): the leg is
-        re-established against the receiver's fresh listener and the source
-        file is read from the byte offset the receiver already holds. Also the
-        public API for resuming one transfer on demand.
+        see `_request_resumes` on the receiving side): ``/file <name> <fid>``
+        is sent so the receiver opens a listener, and the source file is read
+        from the byte offset the receiver already holds. Also the public API
+        for resuming one transfer on demand.
 
         Args:
             peer_addr (tuple | None): Receiver ``(ip, port)`` the request came
@@ -5558,45 +5828,37 @@ class TCP_Server_Base:  # TCP server class
         if info is None:
             self._log(f"resume: {peer_addr} is not connected, transfer {fid} kept")
             return False
+        self._forget_transfer_port(fid)  # drop a dead session's stale announcement
+        if not self.send_message(
+            info["socket"], f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
+        ):
+            self._log(f"resume: cannot send /file for transfer {fid} to {peer_addr}")
+            return False
         port_info = self._wait_transfer_server_port(fid)
         if port_info is None:
             self._log(f"resume: {peer_addr} did not announce a transfer port for {fid}")
             return False
         port, stamp = port_info
-        threading.Thread(
-            target=self._run_resume_send_leg,
-            args=(entry[3], tuple(peer_addr), port, stamp, info["socket"], fid, offset),
-            daemon=True,
-        ).start()
+        def run_resume_send_leg():
+            client_port = self.palloc()
+            try:
+                self.file_transfer_mode(
+                    entry[3],
+                    peer_addr[0],
+                    port,
+                    client_port,
+                    control_socket=info["socket"],
+                    crypto=stamp,
+                    fid=fid,
+                    peer=tuple(peer_addr),
+                    resume_offset=offset,
+                )
+            finally:
+                self.pfree(client_port)
+
+        threading.Thread(target=run_resume_send_leg, daemon=True).start()
         return True
 
-    def _run_resume_send_leg(self, path, peer_addr, port, stamp, control_socket, fid, offset):
-        """Run one resumed sending leg on its own thread.
-
-        Args:
-            path (str): Value used by the operation.
-            peer_addr (tuple): Value used by the operation.
-            port (int): Value used by the operation.
-            stamp (object): Value used by the operation.
-            control_socket (socket.socket): Value used by the operation.
-            fid (int): Value used by the operation.
-            offset (int): Value used by the operation.
-        """
-        client_port = self.palloc()
-        try:
-            self.file_transfer_mode(
-                path,
-                peer_addr[0],
-                port,
-                client_port,
-                control_socket=control_socket,
-                crypto=stamp,
-                fid=fid,
-                peer=peer_addr,
-                resume_offset=offset,
-            )
-        finally:
-            self.pfree(client_port)
 
     def _resume_request(self, client_address, fid, offset):
         """Route one client's ``/resume_trans`` to the transfer it names.
@@ -5613,17 +5875,22 @@ class TCP_Server_Base:  # TCP server class
         Returns:
             object: Result produced by the operation.
         """
-        with self._forward_relays_lock:
-            record = self._forward_resume_records.get(fid)
-        if record is not None:
-            originator = record.get("originator")
-            targets = [tuple(target) for target in record.get("targets") or []]
-            if (
-                originator is not None
-                and tuple(client_address) in targets
-                and tuple(originator) != tuple(client_address)
-            ):
-                return self._route_forward_resume(record, client_address, offset)
+        if fid_kind(fid) == FID_KIND_RELAY:
+            with self._forward_relays_lock:
+                record = self._forward_resume_records.get(fid)
+            if record is not None:
+                originator = record.get("originator")
+                targets = [tuple(target) for target in record.get("targets") or []]
+                if (
+                    originator is not None
+                    and tuple(client_address) in targets
+                    and tuple(originator) != tuple(client_address)
+                ):
+                    return self._route_forward_resume(record, client_address, offset)
+            self._log(
+                f"resume: relay id {format_fid(fid)} has no live record, ignored"
+            )
+            return False
         return self.resume_trans(client_address, fid, offset)
 
     def _route_forward_resume(self, record, target_addr, offset):
@@ -5696,19 +5963,9 @@ class TCP_Server_Base:  # TCP server class
         """
         self._drop_stale_transfers(peer=tuple(client_address))
         self._flush_pending_relay_resumes(tuple(client_address))
-        self.resume_transfers(peer=tuple(client_address))
+        self._request_resumes(tuple(client_address))
 
     # ---- native in-memory forward relay (server side) ----------------------
-
-    def _forward_alloc_fid(self):
-        """Handle the operation.
-
-        Returns:
-            object: Result produced by the operation.
-        """
-        with self._forward_fid_lock:
-            self._forward_fid += 1
-            return self._forward_fid
 
     def _forward_notify_error(self, sock, msg):
         """Handle the operation.
@@ -5921,8 +6178,11 @@ class TCP_Server_Base:  # TCP server class
             destination_path (str): Value used by the operation.
             resume_offset (object): Value used by the operation.
         """
-        fid = self._forward_alloc_fid()
-        tfids = [self._forward_alloc_fid() for _ in targets]
+        # One relay consumes 1 + N ids: the originator's leg and one per target.
+        # All are relay kind, so a resume request can be routed without probing
+        # the progress stores first.
+        fid = self._fid_alloc.alloc(FID_KIND_RELAY)
+        tfids = [self._fid_alloc.alloc(FID_KIND_RELAY) for _ in targets]
         relay = {
             "cond": threading.Condition(),
             "writer_pause": {target: False for target in targets},
@@ -6002,7 +6262,9 @@ class TCP_Server_Base:  # TCP server class
             up_sock.listen(1)
             # coordination line: always plaintext, so it also reaches a peer
             # that has not finished flipping to framed mode
-            self._send_raw(forwarder_sock, f"/forward_upload {fid} {sport} {up_stamp}")
+            self.send_message(
+                forwarder_sock, f"/forward_upload {fid} {sport} {up_stamp}", is_send_raw=True
+            )
             up_client, _ = up_sock.accept()
             self._crypto_attach_transfer_in(up_client, forwarder_sock, up_stamp)
             self.send_message(up_client, self.server_start_file_transfer_sign)
@@ -6383,8 +6645,7 @@ class TCP_Server_Base:  # TCP server class
         self.running = False
         self._stopped = True  # also cancels a start_TCP_Server() still binding
         self.free_port()
-        self._flush_messages_dict()
-        self._flush_events_dict()
+        self._flush_record_stores()
         # in-flight transfers die with the server: persist them for the next run
         self._persist_transfer_progress()
         with self.client_lock:  # close all clients connections
@@ -6464,7 +6725,7 @@ class TCP_Client_Base:  # TCP client class
             the original peer on both sides, never the relay.
         file_trans_progress_file (str): Path under the protocol's ``.Flow``
             directory where the two stores are written when the connection
-            drops and read back on the next reconnect (`resume_transfers`).
+            drops and read back on the next reconnect (`_request_resumes`).
         upload_network_speed (float | None): Bytes per second sent, or None when
             not measured.
         recv_network_speed (float | None): Bytes per second received, or None
@@ -6548,7 +6809,7 @@ class TCP_Client_Base:  # TCP client class
                 False nothing is measured and every speed value is None.
                 Defaults to True.
             is_auto_reconnect (bool): Reconnect (and resume the interrupted
-                transfers, see `resume_transfers`) when the connection drops
+                transfers, see `_request_resumes`) when the connection drops
                 while `start_TCP_client` runs. The transfers that died with
                 the connection are persisted to the protocol's ``.Flow``
                 directory and read back on the next connect. Defaults to
@@ -6568,7 +6829,7 @@ class TCP_Client_Base:  # TCP client class
         # current speed, local file path, peer (ip, port)]. An entry appears
         # when a transfer starts and is removed when it ends; a transfer
         # interrupted by a disconnect keeps its entry (and its partial file)
-        # so it can be resumed once the peer is back (see `resume_transfers`).
+        # so it can be resumed once the peer is back (see `_request_resumes`).
         self.file_recv_progress = {}  # downloads: fid -> [received, total, speed, path, peer]
         self.file_upload_progress = {}  # uploads: fid -> [sent, total, speed, path, peer]
         self.upload_network_speed = None  # bytes/s over the last NETWORK_SPEED_WINDOW seconds
@@ -6644,8 +6905,12 @@ class TCP_Client_Base:  # TCP client class
                 "please set wait_server_timeout to None or set is_wait_server to False",
             ]
             raise ValueError(" ".join(error_msg))
-        self.file_client_id = 0
-        self.file_client_id_lock = threading.Lock()
+        # Transfer ids for the legs this instance sends (see `_FidAllocator`).
+        # Inbound legs carry ids the peer allocated, so the two directions can
+        # never share a value and the shared registries stay disjoint.
+        self._fid_alloc = _FidAllocator(
+            (self.file_upload_progress, self.file_recv_progress, self._forward_resume_records)
+        )
         MAX_CONCURRENT_FILES = self.max_thread_num
         self.file_semaphore = threading.Semaphore(MAX_CONCURRENT_FILES)
         with open(self.decode_command_table_file_path, "r", encoding="utf-8") as f:
@@ -6672,23 +6937,34 @@ class TCP_Client_Base:  # TCP client class
         # never raise (exceptions are swallowed by the notify helpers).
         self._message_listeners = []
         self._file_listeners = []
+        self._send_message_listeners = []
+        self._control_sockets = set()  # the control link to the server; only it is recorded
         self._event_listeners_lock = threading.Lock()
-        # Inbound message/event stores: external code reads these instead of
-        # registering listeners. Keyed by the sender's socket; each value is
-        # a list of [content, timestamp] pairs. When a store's total size
-        # reaches max_dict_size (64 KiB) it is flushed to its JSON log and
-        # cleared (see _record_message/_record_event/_flush_*_dict).
+        # Message/event stores: external code reads these instead of registering
+        # listeners. Keyed by the socket; each value is a list of [content,
+        # timestamp] pairs. messages_dict and sent_messages_dict hold plain text
+        # (inbound / outbound); events_dict and sent_events_dict hold "/" commands.
+        # When a store's total size reaches max_dict_size (64 KiB) it is flushed
+        # to its JSON log and cleared (see _append_record, _flush_record_stores).
         self.messages_dict = {}
         self.events_dict = {}
+        self.sent_messages_dict = {}
+        self.sent_events_dict = {}
         self._messages_dict_lock = threading.Lock()
         self._events_dict_lock = threading.Lock()
+        self._sent_messages_dict_lock = threading.Lock()
+        self._sent_events_dict_lock = threading.Lock()
         self._socket_keys = {}  # record key -> "ip:port", captured while it was alive
         self._socket_keys_lock = threading.Lock()
         self._messages_dict_size = 0
         self._events_dict_size = 0
+        self._sent_messages_dict_size = 0
+        self._sent_events_dict_size = 0
         self.max_dict_size = 64 * 1024
         self.messages_log_file = os.path.join(self.project_info_dir, "messages_log.json")
         self.events_log_file = os.path.join(self.project_info_dir, "events_log.json")
+        self.sent_messages_log_file = os.path.join(self.project_info_dir, "sent_messages_log.json")
+        self.sent_events_log_file = os.path.join(self.project_info_dir, "sent_events_log.json")
         self.is_extend_command = is_extend_command
         self.is_enable_encrypto = is_enable_encrypto
         self.is_custom_keys = is_custom_keys
@@ -6799,6 +7075,7 @@ class TCP_Client_Base:  # TCP client class
                 for a direct push from the server, which names no client author. It
                 runs on the receive thread, so it must not block, and exceptions
                 raised inside it are swallowed.
+
         """
         with self._event_listeners_lock:
             if listener not in self._message_listeners:
@@ -6813,6 +7090,33 @@ class TCP_Client_Base:  # TCP client class
         with self._event_listeners_lock:
             try:
                 self._message_listeners.remove(listener)
+            except ValueError:
+                pass
+
+    def add_send_message_listener(self, listener):
+        """Register ``listener(target_id, message)`` for every payload written by `send_message`.
+
+        Fired after a successful write, for text and bytes alike (so a byte stream
+        reaches it), never for ``is_send_raw`` protocol lines. ``target_id`` is the
+        server's ``"ip:port"``. It runs on the sending thread, so it must not block,
+        and exceptions raised inside it are swallowed.
+
+        Args:
+            listener (callable): ``listener(target_id, message)``.
+        """
+        with self._event_listeners_lock:
+            if listener not in self._send_message_listeners:
+                self._send_message_listeners.append(listener)
+
+    def remove_send_message_listener(self, listener):
+        """Unregister a listener previously added by `add_send_message_listener`.
+
+        Args:
+            listener (callable): Listener to remove; an unknown one is ignored.
+        """
+        with self._event_listeners_lock:
+            try:
+                self._send_message_listeners.remove(listener)
             except ValueError:
                 pass
 
@@ -6858,6 +7162,38 @@ class TCP_Client_Base:  # TCP client class
                 listener(sender, message)
             except Exception as e:
                 self._log(f"message listener error: {e}")
+                self._log_exc()
+
+    def _notify_transfer_chunk(self, client_socket, data):
+        """Report one chunk read from a non-control socket to the message listeners.
+
+        Side-channel sockets (file/folder transfers, forwards) carry raw bytes and
+        ``sign`` tokens, which belong to the transfer layer, so they are reported
+        to the listeners but never recorded in a store.
+        """
+        if not data or client_socket in self._control_sockets:
+            return
+        with self._event_listeners_lock:
+            listeners = list(self._message_listeners)
+        for listener in listeners:
+            try:
+                listener(self._socket_key(client_socket), data)
+            except Exception as e:
+                self._log(f"message listener error: {e}")
+                self._log_exc()
+
+    def _notify_message_sent(self, client_socket, message):
+        """Report one written payload to the send listeners."""
+        with self._event_listeners_lock:
+            listeners = list(self._send_message_listeners)
+        if not listeners:
+            return
+        target_id = self._socket_key(client_socket)
+        for listener in listeners:
+            try:
+                listener(target_id, message)
+            except Exception as e:
+                self._log(f"send message listener error: {e}")
                 self._log_exc()
 
     def _notify_file_received(self, full_path, name, size, command):
@@ -6935,47 +7271,95 @@ class TCP_Client_Base:  # TCP client class
             return key
         return self._socket_key(sock)
 
-    def _record_message(self, sock, content):
-        """Store one inbound plain-text message under the sender's socket.
-
-        External code reads ``messages_dict`` (or the JSON log) instead of
-                registering a message listener. The entry is ``[content, timestamp]``
-                with the timestamp of arrival.
+    def _append_record(self, store, log_path, sock, content):
+        """Append one ``[content, timestamp]`` pair under ``sock``; flush when full.
 
         Args:
-            sock (object): Value used by the operation.
-            content (object): Value used by the operation.
+            store (tuple): ``(dict, lock, size_attr)``; the dict maps socket to
+                a list of pairs, and ``size_attr`` names the byte-size attribute.
+            log_path (str): JSON log the store flushes into.
+            sock (object): Key socket.
+            content (str): Text to record.
         """
+        d, lock, size_attr = store
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        with self._messages_dict_lock:
+        with lock:
             self._remember_socket_key(sock)
-            self.messages_dict.setdefault(sock, []).append([content, timestamp])
-            self._messages_dict_size += len(content.encode("utf-8", "replace")) + len(timestamp)
-            if self._messages_dict_size >= self.max_dict_size:
-                self._flush_dict_locked(
-                    self.messages_dict, "_messages_dict_size", self.messages_log_file
-                )
+            d.setdefault(sock, []).append([content, timestamp])
+            size = getattr(self, size_attr) + len(content.encode("utf-8", "replace"))
+            size += len(timestamp)
+            setattr(self, size_attr, size)
+            if size >= self.max_dict_size:
+                self._flush_dict_locked(d, size_attr, log_path)
+
+    def _record_message(self, sock, content):
+        """Store one inbound plain-text message under the sender's socket."""
+        self._append_record(
+            (self.messages_dict, self._messages_dict_lock, "_messages_dict_size"),
+            self.messages_log_file, sock, content,
+        )
 
     def _record_event(self, sock, command):
-        """Store one inbound command as an event under the sender's socket.
+        """Store one inbound "/" command under the sender's socket."""
+        self._append_record(
+            (self.events_dict, self._events_dict_lock, "_events_dict_size"),
+            self.events_log_file, sock, command,
+        )
 
-        The event content is the original wire command from the peer (file
-                transfers, folder transfers, extension commands, ...). External code
-                reads ``events_dict`` (or the JSON log) instead of registering a
-                listener. File-transfer events get their completion timestamp via
-                ``_update_event_timestamp``.
+    def _record_sent(self, sock, content):
+        """Store one outbound text: a "/" line as a sent event, other text as a sent message."""
+        if content.startswith("/"):
+            self._append_record(
+                (self.sent_events_dict, self._sent_events_dict_lock, "_sent_events_dict_size"),
+                self.sent_events_log_file, sock, content,
+            )
+        else:
+            self._append_record(
+                (
+                    self.sent_messages_dict,
+                    self._sent_messages_dict_lock,
+                    "_sent_messages_dict_size",
+                ),
+                self.sent_messages_log_file, sock, content,
+            )
 
-        Args:
-            sock (object): Value used by the operation.
-            command (object): Value used by the operation.
-        """
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    def _record_dicts(self):
+        """Return the four record stores, in flush order."""
+        return (
+            self.messages_dict,
+            self.events_dict,
+            self.sent_messages_dict,
+            self.sent_events_dict,
+        )
+
+    def _flush_messages_dict(self):
+        """Flush the inbound messages store into its JSON log."""
+        with self._messages_dict_lock:
+            self._flush_dict_locked(
+                self.messages_dict, "_messages_dict_size", self.messages_log_file
+            )
+
+    def _flush_events_dict(self):
+        """Flush the inbound events store into its JSON log."""
         with self._events_dict_lock:
-            self._remember_socket_key(sock)
-            self.events_dict.setdefault(sock, []).append([command, timestamp])
-            self._events_dict_size += len(command.encode("utf-8", "replace")) + len(timestamp)
-            if self._events_dict_size >= self.max_dict_size:
-                self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
+            self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
+
+    def _flush_record_stores(self):
+        """Flush every record store into its JSON log (called on stop)."""
+        with self._messages_dict_lock:
+            self._flush_dict_locked(
+                self.messages_dict, "_messages_dict_size", self.messages_log_file
+            )
+        with self._events_dict_lock:
+            self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
+        with self._sent_messages_dict_lock:
+            self._flush_dict_locked(
+                self.sent_messages_dict, "_sent_messages_dict_size", self.sent_messages_log_file
+            )
+        with self._sent_events_dict_lock:
+            self._flush_dict_locked(
+                self.sent_events_dict, "_sent_events_dict_size", self.sent_events_log_file
+            )
 
     def _update_event_timestamp(self, sock, command, timestamp):
         """Stamp the completion time onto the recorded event for ``command``.
@@ -7042,23 +7426,10 @@ class TCP_Client_Base:  # TCP client class
         d.clear()
         setattr(self, size_attr, 0)
         self._merge_json_log(path, snapshot)
-        other = self.events_dict if d is self.messages_dict else self.messages_dict
-        with self._socket_keys_lock:  # a key is only kept while it is buffered
+        with self._socket_keys_lock:  # a key is only kept while some store buffers it
             for sock in snapshot:
-                if sock not in d and sock not in other:
+                if not any(sock in store for store in self._record_dicts()):
                     self._socket_keys.pop(sock, None)
-
-    def _flush_messages_dict(self):
-        """Handle the operation."""
-        with self._messages_dict_lock:
-            self._flush_dict_locked(
-                self.messages_dict, "_messages_dict_size", self.messages_log_file
-            )
-
-    def _flush_events_dict(self):
-        """Handle the operation."""
-        with self._events_dict_lock:
-            self._flush_dict_locked(self.events_dict, "_events_dict_size", self.events_log_file)
 
     def _merge_json_log(self, path, snapshot):
         """Merge ``snapshot`` into the JSON log at ``path`` (append per socket).
@@ -7216,7 +7587,7 @@ class TCP_Client_Base:  # TCP client class
                 as transfers end), so only this transfer's own entry is dropped. With
                 ``keep`` True an interrupted transfer keeps its entry — and the partial
                 file that entry points at — so the reconnect logic can continue it
-                (`resume_transfers`); the entry then lives until the transfer ends.
+                (`_request_resumes`); the entry then lives until the transfer ends.
 
         Args:
             progress_dict (dict): Store the entry belongs to.
@@ -7970,7 +8341,11 @@ class TCP_Client_Base:  # TCP client class
         Returns:
             bool: Result produced by the operation.
         """
-        self._send_raw(self.client_socket, f"/crypto_mode {1 if self.is_enable_encrypto else 0}")
+        self.send_message(
+            self.client_socket,
+            f"/crypto_mode {1 if self.is_enable_encrypto else 0}",
+            is_send_raw=True,
+        )
         if not self._crypto_mode_event.wait(timeout=self._crypto_mode_timeout):
             self._log("crypto: server did not announce its encryption mode, disconnecting")
             self.close()
@@ -8028,6 +8403,7 @@ class TCP_Client_Base:  # TCP client class
                     self.client_socket = None
                     return False
                 self.running = True
+                self._control_sockets.add(self.client_socket)
                 # this client's only control link is the server: the socket is
                 # up, so every leg still registered belongs to the previous
                 # session and is over. The sweep runs before the receive thread
@@ -8064,7 +8440,7 @@ class TCP_Client_Base:  # TCP client class
                 # a (re)connected session carries the transfers that died with
                 # the previous one: continue them from what is already on disk
                 threading.Thread(
-                    target=self.resume_transfers, kwargs={"peer": (self.host, self.port)}, daemon=True
+                    target=self._request_resumes, daemon=True
                 ).start()
                 return True
             except socket.timeout:
@@ -8107,7 +8483,7 @@ class TCP_Client_Base:  # TCP client class
                     self.running = False
                     self.free_port()
                     # the transfers running on this session died with it: keep
-                    # them on disk for the next connect (resume_transfers)
+                    # them on disk for the next connect (_request_resumes)
                     self._persist_transfer_progress()
                     break
                 buffer += data.decode("utf-8")
@@ -8164,7 +8540,8 @@ class TCP_Client_Base:  # TCP client class
                 self._persist_transfer_progress()
                 break
 
-    def send_message(self, client_socket, message):  # send msg to server
+    def send_message(self, client_socket, message, is_send_raw=False):
+        # send msg to server
         """Write one line to a socket, encrypting when the channel is up.
 
         Args:
@@ -8172,10 +8549,32 @@ class TCP_Client_Base:  # TCP client class
                 ``self.client_socket``.
             message (str | bytes): Payload; a str is stripped and newline
                 terminated, bytes are sent as they are.
+            is_send_raw (bool): Write the payload as plaintext even when the channel
+                is encrypted; only for the crypto handshake and transfer coordination lines.
 
         Returns:
             bool: True when the payload was written; False when the client is not
                 running, no socket was passed, or the payload type is unsupported.
+        """
+        if is_send_raw:
+            deal_msg = message.strip()
+            if not deal_msg.endswith("\n"):
+                deal_msg += "\n"
+            encoded = deal_msg.encode("utf-8")
+            client_socket.sendall(encoded)
+            self._measure_network_speed(encoded, is_upload=True)
+            return True
+        written = self._write_message(client_socket, message)
+        if written:
+            self._after_send(client_socket, message)
+        return written
+
+    def _write_message(self, client_socket, message):  # noqa: PLR0911 - same exits as the old send_message body
+        """Write one line: encrypted when the channel is up, plaintext otherwise.
+
+        Returns:
+            bool: True when written; False when the client is not running, no
+                socket was passed, or the payload type is unsupported.
         """
         if not self.running or not self.client_socket:
             self._log("disable the connect to server")
@@ -8217,6 +8616,14 @@ class TCP_Client_Base:  # TCP client class
                     self._log_exc()
                 return False
 
+    def _after_send(self, client_socket, message):
+        """Record and report one payload that `_write_message` has written."""
+        if isinstance(message, str):
+            message = message.strip()
+            if message and client_socket in self._control_sockets:
+                self._record_sent(client_socket, message)
+        self._notify_message_sent(client_socket, message)
+
     def send_message_to_server(self, message):
         """Send the payload of a console line to the server.
 
@@ -8251,10 +8658,12 @@ class TCP_Client_Base:  # TCP client class
             if channel is None:
                 data = client_socket.recv(msg_length)
                 self._measure_network_speed(data, is_upload=False)
+                self._notify_transfer_chunk(client_socket, data)
                 return data
             data = channel.take(msg_length)
             if data:
                 self._measure_network_speed(data, is_upload=False)
+                self._notify_transfer_chunk(client_socket, data)
                 return data  # buffered plaintext is served even after a disable
             raw = client_socket.recv(self.recv_messages_chunk_len if channel.secure else msg_length)
             if not raw:
@@ -8267,25 +8676,13 @@ class TCP_Client_Base:  # TCP client class
                 leftover = channel.drain_plaintext()
                 if leftover:
                     self._measure_network_speed(leftover, is_upload=False)
+                    self._notify_transfer_chunk(client_socket, leftover)
                     return leftover  # hand back whatever was already read
                 continue  # framing is off now: keep serving in raw mode
             if plain:
                 self._measure_network_speed(plain, is_upload=False)
+                self._notify_transfer_chunk(client_socket, plain)
                 return plain  # plaintext mode: the line reader gets the bytes
-
-    def _send_raw(self, client_socket, text):
-        """Send a plaintext crypto-protocol message, bypassing encryption.
-
-        Args:
-            client_socket (socket.socket): Value used by the operation.
-            text (object): Value used by the operation.
-        """
-        data = text.strip()
-        if not data.endswith("\n"):
-            data += "\n"
-        encoded = data.encode("utf-8")
-        client_socket.sendall(encoded)
-        self._measure_network_speed(encoded, is_upload=True)
 
     def _crypto_mark_encrypted(self, client_socket, peer_role, peer_pem_path):
         """Handle the operation.
@@ -8356,7 +8753,7 @@ class TCP_Client_Base:  # TCP client class
             return
         try:
             # plaintext by design: the peer needs this line before it may frame
-            self._send_raw(client_socket, CRYPTO_FRAMES_START)
+            self.send_message(client_socket, CRYPTO_FRAMES_START, is_send_raw=True)
         except Exception:
             self._log_exc()
         self._crypto_publish_ecdh_pub(client_socket)
@@ -8555,7 +8952,7 @@ class TCP_Client_Base:  # TCP client class
                 hello = f"/crypto_key_exchange {self._crypto_my_nonce}"
                 if force:
                     hello += " 1"
-            self._send_raw(self.client_socket, hello)
+            self.send_message(self.client_socket, hello, is_send_raw=True)
             if not ack_event.wait(timeout=30):
                 if not self._crypto_still_current(gen):
                     return  # superseded by a newer handshake; that flow owns the connection
@@ -8603,7 +9000,7 @@ class TCP_Client_Base:  # TCP client class
         if session is not None:
             session.reset_ecdh()  # a re-exchange is a fresh session key
         ack = f"/crypto_key_exchange_ack {my_nonce} 1 {1 if force else 0}"
-        self._send_raw(self.client_socket, ack)
+        self.send_message(self.client_socket, ack, is_send_raw=True)
         self._crypto_after_ack("1" if force else "0", force)
 
     def _crypto_try_flip(self):
@@ -8668,7 +9065,7 @@ class TCP_Client_Base:  # TCP client class
             else:
                 request_pub = False
         if request_pub:
-            self._send_raw(self.client_socket, "/crypto_pub_key_request")
+            self.send_message(self.client_socket, "/crypto_pub_key_request", is_send_raw=True)
 
         def _wait_done():
             """Handle the operation."""
@@ -8690,7 +9087,7 @@ class TCP_Client_Base:  # TCP client class
             if stale:
                 return
             try:
-                self._send_raw(self.client_socket, "/crypto_ready")
+                self.send_message(self.client_socket, "/crypto_ready", is_send_raw=True)
             except OSError:
                 pass  # connection already closed (reject/breaker): nothing to announce
             with self._crypto_lock:
@@ -8717,11 +9114,9 @@ class TCP_Client_Base:  # TCP client class
                     break
             time.sleep(0.05)
         try:
-            with self.file_client_id_lock:
-                client_id = copy.copy(self.file_client_id)
-                self.file_client_id += 1
+            client_id = self._fid_alloc.alloc(FID_KIND_PLAIN)
             send_msg = f"/crypto_pub_key {client_id}"
-            self._send_raw(self.client_socket, send_msg)
+            self.send_message(self.client_socket, send_msg, is_send_raw=True)
             file_transfer_client_port = self.palloc()
             file_server_port = None
             waiting_time = 0
@@ -8794,7 +9189,7 @@ class TCP_Client_Base:  # TCP client class
             except OSError:
                 pass
             try:
-                self._send_raw(self.client_socket, f"/crypto_reject {reason}")
+                self.send_message(self.client_socket, f"/crypto_reject {reason}", is_send_raw=True)
             except Exception:
                 self._log_exc()
             try:
@@ -9255,17 +9650,19 @@ class TCP_Client_Base:  # TCP client class
             self._log(f"start to send file: {cmd} (limit {self.max_thread_num})")
 
         def get_all_files_in_folder():
-            """Handle the operation."""
-            for root, dirs, files in os.walk(folder_path):
+            """Announce the directories that need it, then send every file."""
+            needed = _rel_dirs_with_files(folder_path, base_path)
+            if transfer_path in needed:
+                send_folder_transfer_command(transfer_path)
+            for root, _dirs, files in os.walk(folder_path):
                 rel_dir = get_relative_path(base_path, root)
-                if root != folder_path:
+                if root != folder_path and rel_dir in needed:
                     send_folder_transfer_command(rel_dir)
                 for file in files:
                     start_file_transfer_with_limit(rel_dir, file, root)
             self._log(f"finished sending all files in folder {folder_path}")
 
         transfer_path = get_relative_path(base_path, folder_path)
-        send_folder_transfer_command(transfer_path)
         get_all_files_in_folder()
 
     def multiple_file_transfer_client_recv_client_start(self, message):
@@ -9316,11 +9713,8 @@ class TCP_Client_Base:  # TCP client class
             message (object): Value used by the operation.
             file_folder_abspath (str): Value used by the operation.
         """
-        client_id = None
-        with self.file_client_id_lock:
-            client_id = copy.copy(self.file_client_id)
-            send_msg = message.strip() + " " + str(self.file_client_id)
-            self.file_client_id += 1
+        client_id = self._fid_alloc.alloc(FID_KIND_PLAIN)
+        send_msg = message.strip() + " " + str(client_id)
         try:
             waiting_time = 0
             if shlex.split(message.lower())[0] == "/file_folder":
@@ -9404,8 +9798,6 @@ class TCP_Client_Base:  # TCP client class
             file_running = False
             self._crypto_drop_channel(client_file_socket)
             client_file_socket.close()
-            with self.file_client_id_lock:
-                self.file_client_id -= 1
 
         while True:
             try:
@@ -9594,18 +9986,17 @@ class TCP_Client_Base:  # TCP client class
 
     # ---- transfer reconnect (client side) ----------------------------------
 
-    def resume_transfers(self, peer=None):
-        """Continue the interrupted transfers of a peer that is back.
+    def _request_resumes(self):
+        """Continue this client's interrupted downloads after it (re)connected.
 
-        Reads the persisted stores back (`_load_transfer_progress`) and drives
-        every download that can be continued: a file the server was sending is
-
-        Args:
-            peer (tuple | None): Peer ``(ip, port)`` that just connected; None
-                resumes every peer the client can reach.
+        Reads the persisted stores back (`_load_transfer_progress`). A download
+        from the server gets its offset set to the bytes already on disk and
+        ``/resume_trans <fid> <offset>`` is sent to the server. A download
+        forwarded from another client is requested through the server
+        (`_request_forward_resume`). Uploads need no action here.
 
         Returns:
-            int: Number of resumed transfers started or requested.
+            int: Number of resume requests sent.
         """
         restored = self._load_transfer_progress()
         if restored:
@@ -9613,13 +10004,9 @@ class TCP_Client_Base:  # TCP client class
         if not self.running or self.client_socket is None:
             return 0
         server_peer = (self.host, self.port)
-        if peer is not None and tuple(peer) != server_peer:
-            # every resume this client drives goes through the server: it is
-            # the sender of a pushed file and the relay of a forwarded one
-            return 0
         if not self._wait_control_secure(self.client_socket):
             return 0
-        candidates = []
+        started = 0
         for fid, entry in list(self.file_recv_progress.items()):
             if entry[4] is None:
                 continue  # without a peer there is nobody to continue with
@@ -9629,20 +10016,12 @@ class TCP_Client_Base:  # TCP client class
             with self._transfer_progress_lock:
                 if fid in self._active_transfer_fids:
                     continue  # a leg is already running for this fid
-            candidates.append((fid, entry, tuple(entry[4])))
-        started = 0
-        for fid, entry, peer_addr in candidates:
+            peer_addr = tuple(entry[4])
             if peer_addr == server_peer:
-                # the server is the sender: ask it directly
-                threading.Thread(
-                    target=self._resume_receive_leg,
-                    args=(self.client_socket, server_peer, fid, entry),
-                    daemon=True,
-                ).start()
-                started += 1
+                entry[0] = _resume_offset_for(entry)
+                if self.send_message(self.client_socket, f"{RESUME_LINE} {fid} {entry[0]}"):
+                    started += 1
             elif self._request_forward_resume(fid, entry, peer_addr):
-                # a forwarded transfer: the server routes the request to the
-                # originating client, which re-forwards it to this one
                 started += 1
         return started
 
@@ -9700,45 +10079,14 @@ class TCP_Client_Base:  # TCP client class
                 self._active_transfer_fids.discard(old_fid)
         return offset
 
-    def _resume_receive_leg(self, control_socket, peer_addr, fid, entry):
-        """Receive the rest of one interrupted transfer, appending to its file.
-
-        Args:
-            control_socket (socket.socket): Value used by the operation.
-            peer_addr (tuple): Value used by the operation.
-            fid (int): Value used by the operation.
-            entry (object): Value used by the operation.
-
-        Returns:
-        bool: True when the sender was asked to continue, False when the
-                        request could not be sent.
-        """
-        entry[0] = _resume_offset_for(entry)  # the offset the sender is asked for
-        self._log(f"resume: continuing transfer {fid} with {peer_addr} into {entry[3]}")
-        port = self.palloc()
-        try:
-            return self.file_transfer_mode_recv(
-                self.host,
-                port,
-                control_socket,
-                f"{peer_addr[0]}:{peer_addr[1]}",
-                None,
-                None,
-                f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}",
-                peer=peer_addr,
-                resume_entry=entry,
-            ) is not False
-        finally:
-            self.pfree(port)
-
     def resume_trans(self, peer_addr, fid, offset):
         """Continue one interrupted transfer this instance was sending.
 
         Runs when a receiver asks to continue a transfer (``/resume_trans``,
-        see `resume_transfers` on the receiving side): the leg is
-        re-established against the receiver's fresh listener and the source
-        file is read from the byte offset the receiver already holds. Also the
-        public API for resuming one transfer on demand.
+        see `_request_resumes` on the receiving side): ``/file <name> <fid>``
+        is sent so the receiver opens a listener, and the source file is read
+        from the byte offset the receiver already holds. Also the public API
+        for resuming one transfer on demand.
 
         Args:
             peer_addr (tuple | None): Receiver ``(ip, port)`` the request came
@@ -9759,45 +10107,37 @@ class TCP_Client_Base:  # TCP client class
         if not self.running or self.client_socket is None:
             self._log(f"resume: not connected to the server, transfer {fid} kept")
             return False
+        self._forget_transfer_port(fid)  # drop a dead session's stale announcement
+        if not self.send_message(
+            self.client_socket, f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
+        ):
+            self._log(f"resume: cannot send /file for transfer {fid}")
+            return False
         port_info = self._wait_transfer_server_port(fid)
         if port_info is None:
             self._log(f"resume: {peer_addr} did not announce a transfer port for {fid}")
             return False
         port, stamp = port_info
-        threading.Thread(
-            target=self._run_resume_send_leg,
-            args=(entry[3], peer_addr, port, stamp, self.client_socket, fid, offset),
-            daemon=True,
-        ).start()
+        def run_resume_send_leg():
+            client_port = self.palloc()
+            try:
+                self.file_transfer_mode(
+                    entry[3],
+                    peer_addr[0] if peer_addr else self.host,
+                    port,
+                    client_port,
+                    control_socket=self.client_socket,
+                    crypto=stamp,
+                    fid=fid,
+                    peer=peer_addr,
+                    resume_offset=offset,
+                )
+            finally:
+                self.pfree(client_port)
+
+        threading.Thread(target=run_resume_send_leg, daemon=True).start()
         return True
 
-    def _run_resume_send_leg(self, path, peer_addr, port, stamp, control_socket, fid, offset):
-        """Run one resumed sending leg on its own thread.
-
-        Args:
-            path (str): Value used by the operation.
-            peer_addr (tuple): Value used by the operation.
-            port (int): Value used by the operation.
-            stamp (object): Value used by the operation.
-            control_socket (socket.socket): Value used by the operation.
-            fid (int): Value used by the operation.
-            offset (int): Value used by the operation.
-        """
-        client_port = self.palloc()
-        try:
-            self.file_transfer_mode(
-                path,
-                peer_addr[0] if peer_addr else self.host,
-                port,
-                client_port,
-                control_socket=control_socket,
-                crypto=stamp,
-                fid=fid,
-                peer=peer_addr,
-                resume_offset=offset,
-            )
-        finally:
-            self.pfree(client_port)
 
     def _forward_resume_record(self, fid):
         """Return the relay record a forwarded resume for ``fid`` belongs to.
@@ -10106,6 +10446,18 @@ class TCP_Client_Base:  # TCP client class
         # >= 4 tokens means a file transfer (/file_folder <rel> <file> [<dest>] <id>);
         # 2-3 tokens is folder creation (optional destination, no client id)
         file_name = command_part[2] if len(command_part) >= 4 else None
+        if file_name is None:
+            created = _receive_dir_for(
+                self.file_transfer_dir,
+                relative_folder_path,
+                _parse_destination_path(command_part),
+            )
+            try:
+                os.makedirs(created, exist_ok=True)
+                self._log(f"folder {created} created for {client_id}")
+            except OSError as e:
+                self._log(f"folder {created} could not be created for {client_id}: {e}")
+            return
         folder_transfer_client_recv_server_start_thread = threading.Thread(
             target=self.file_transfer_client_recv_server_start,
             args=(client_id, client_socket, command, relative_folder_path, file_name),
@@ -10197,7 +10549,6 @@ class TCP_Client_Base:  # TCP client class
         file_name,
         command,
         peer=None,
-        resume_entry=None,
     ):
         """Receive one file over a transfer sub-connection.
 
@@ -10210,11 +10561,9 @@ class TCP_Client_Base:  # TCP client class
             file_name (str | None): Destination filename, when specified.
             command (str): Wire command that initiated the transfer.
             peer (tuple | None): Original sender ``(ip, port)`` for resuming.
-            resume_entry (list | None): Saved progress entry for a resumed file.
 
         Returns:
-            None | bool: None after starting or finishing; False when a resume request
-                cannot be sent.
+            None: after the leg starts or finishes.
         """
         file_running = True
         client_file_socket = None
@@ -10232,23 +10581,14 @@ class TCP_Client_Base:  # TCP client class
             server_file_socket.close()
 
         def setting_file_save_path():
-            """Handle the operation."""
+            """Resolve, and create, the directory this leg writes into."""
             nonlocal save_path
-            save_path = self.file_transfer_dir
+            save_path = _receive_dir_for(
+                self.file_transfer_dir, new_save_path, destination_path
+            )
             if new_save_path or destination_path:
-                if destination_path:
-                    if os.path.isabs(destination_path):
-                        save_path = destination_path
-                    else:
-                        save_path = os.path.join(save_path, destination_path)
-                if new_save_path:
-                    path_list = new_save_path.split("/")
-                    if path_list and path_list[0] == "":
-                        del path_list[0]
-                    for node in path_list:
-                        save_path = os.path.join(save_path, node)
                 os.makedirs(save_path, exist_ok=True)
-            if file_name or new_save_path == None:
+            if file_name or new_save_path is None:
                 return save_path
             close_socket()
             return None
@@ -10337,6 +10677,11 @@ class TCP_Client_Base:  # TCP client class
                             "ErrorSignReceivedWhileReceivingFileSize: client reported error and disconnected"
                         )
                 file_size = int.from_bytes(size_bytes, "big")
+                if resume_entry is not None and resume_entry[1] != file_size:
+                    raise ConnectionError(
+                        f"resume rejected: {filename} is {file_size} bytes, "
+                        f"the partial file expects {resume_entry[1]}"
+                    )
                 self.send_message(client_file_socket, self.server_received_file_header_sign)
                 original_filename = filename
                 if resume_entry is not None:
@@ -10444,6 +10789,7 @@ class TCP_Client_Base:  # TCP client class
         command_part = shlex.split(command)
         file_client_id = command_part[len(command_part) - 1]
         progress_fid = _transfer_fid(command_part)  # keys this leg in file_recv_progress
+        resume_entry = _resumable_entry(self.file_recv_progress, progress_fid, peer, command_part)
         destination_path = _parse_destination_path(command_part)
         stamp = self._crypto_transfer_stamp(
             client_socket, force_plain=command_part[0] == "/crypto_pub_key"
@@ -10452,22 +10798,12 @@ class TCP_Client_Base:  # TCP client class
         transfer_server_port_msg = "/server_file_transfer_port {} {} {}\n".format(
             file_transfer_server_port, file_client_id, stamp
         )
-        self._send_raw(
-            client_socket, transfer_server_port_msg
+        self.send_message(
+            client_socket, transfer_server_port_msg, is_send_raw=True
         )  # coordination line: always plaintext (like the handshake)
         server_file_socket.listen(1)
         if resume_entry is not None:
-            # the receiver drives a resumed transfer: it asks the sender to
-            # continue the file from the bytes already on disk
-            offset = _resume_offset_for(resume_entry)
-            if progress_fid is None or not self.send_message(
-                client_socket, f"{RESUME_LINE} {progress_fid} {offset}"
-            ):
-                self._log(
-                    f"resume: cannot ask {client_id} to continue transfer {progress_fid}"
-                )
-                server_file_socket.close()
-                return False
+            # the sender answers this resume with /file; its connection is the continued leg
             server_file_socket.settimeout(RESUME_ACCEPT_TIMEOUT)
         try:
             client_file_socket, client_file_address = server_file_socket.accept()
@@ -10509,14 +10845,14 @@ class TCP_Client_Base:  # TCP client class
         self.running = False
         self._stopped = True  # also cancels a connect() still in flight
         self.free_port()
-        self._flush_messages_dict()
-        self._flush_events_dict()
+        self._flush_record_stores()
         # transfers still in flight are kept on disk for the next connect
         self._persist_transfer_progress()
         with self._crypto_lock:
             if self.client_socket is not None:
                 self._channels.pop(self.client_socket, None)
                 self._encrypted_sockets.discard(self.client_socket)
+                self._control_sockets.discard(self.client_socket)
             self._crypto_session = None
         if self.client_socket:
             try:
@@ -10557,6 +10893,7 @@ class TCP_Client_Base:  # TCP client class
         with self._crypto_lock:
             self._channels.pop(sock, None)
             self._encrypted_sockets.discard(sock)
+            self._control_sockets.discard(sock)
 
     def start_TCP_client(self):  # start client
         """Connect to the server and start the client loop.
@@ -10570,7 +10907,7 @@ class TCP_Client_Base:  # TCP client class
         With ``is_auto_reconnect`` True a dropped connection does not end the
         client: it reconnects (waiting for the server when ``is_wait_server``
         is set) and every session carries the interrupted transfers of the
-        previous one (`resume_transfers`). A close or ``/quit`` still stops
+        previous one (`_request_resumes`). A close or ``/quit`` still stops
         the client.
         """
         while True:

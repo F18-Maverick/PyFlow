@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-from helpers import free_port, isolate_instance_files, server_ready, wait_until
+from helpers import free_port, isolate_instance_files, server_ready, wait_for_text, wait_until
 
 from PyFlow.network_api.connect_tcp import (
     TCP_Client_Base,
@@ -167,14 +167,14 @@ def test_transfer_thread_survives_a_stop_before_the_start_sign(pair, tmp_path):
     stopped_first = threading.Event()
     transfer_thread = []
 
-    def stop_then_send(client_socket, message):
+    def stop_then_send(client_socket, message, is_send_raw=False):
         if message is server.server_start_file_transfer_sign and not stopped_first.is_set():
             # the race under test: the stop lands after the accept and before
             # the transfer thread's start sign
             transfer_thread.append(threading.current_thread())
             stopped_first.set()
             server.stop()
-        return real_send(client_socket, message)
+        return real_send(client_socket, message, is_send_raw=is_send_raw)
 
     server.send_message = stop_then_send
     threading.excepthook = hook
@@ -363,15 +363,56 @@ def test_client_uploads_folder_to_destination(pair, tmp_path):
 
     # the folder keeps its own name under the destination (same structure as
     # the default receive directory, with the destination as its root)
-    assert wait_until(lambda: (dest / "data" / "a.txt").exists(), timeout=10), (
-        "a.txt not at destination"
-    )
-    assert wait_until(lambda: (dest / "data" / "sub" / "b.txt").exists(), timeout=10), (
-        "b.txt not at destination"
-    )
-    assert (dest / "data" / "a.txt").read_text() == "hello"
-    assert (dest / "data" / "sub" / "b.txt").read_text() == "world"
+    assert wait_for_text(dest / "data" / "a.txt", "hello"), "a.txt not at destination"
+    assert wait_for_text(dest / "data" / "sub" / "b.txt", "world"), "b.txt not at destination"
     assert not any(server_recv.iterdir()), "folder must not land in the default directory"
+
+
+def test_client_uploads_folder_skips_empty_directories(pair, tmp_path):
+    """A directory with no file in its subtree is never created at the peer.
+
+    Only a directory that receives a file (directly or deeper) needs to exist;
+    announcing an empty one would leave an empty directory on the far side.
+    """
+    server, client, _ = pair
+    server_recv = tmp_path / "server_recv"
+    server_recv.mkdir()
+    server.file_transfer_dir = str(server_recv)
+    folder = tmp_path / "data"
+    (folder / "sub" / "deep").mkdir(parents=True)
+    (folder / "empty").mkdir()
+    (folder / "a.txt").write_text("hello")
+    (folder / "sub" / "b.txt").write_text("world")
+
+    client.folder_file_transfer_client_recv_client_start(f'/file_folder "{folder}"')
+
+    assert wait_for_text(server_recv / "data" / "a.txt", "hello"), "a.txt not received"
+    assert wait_for_text(server_recv / "data" / "sub" / "b.txt", "world"), "b.txt not received"
+    assert not (server_recv / "data" / "empty").exists(), "an empty directory was created"
+    assert not (server_recv / "data" / "sub" / "deep").exists(), (
+        "a directory holding no file was created"
+    )
+
+
+def test_folder_creation_command_creates_directory_without_a_transfer(pair, tmp_path):
+    """``/file_folder <rel> [<dest>]`` creates the directory on the control line.
+
+    The command carries no client id, so it opens no transfer leg: the
+    directory must exist as soon as the line is processed, with no listener
+    or port involved.
+    """
+    server, client, _ = pair
+    server_recv = tmp_path / "server_recv"
+    server_recv.mkdir()
+    server.file_transfer_dir = str(server_recv)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    client.send_message(client.client_socket, "/file_folder /made/by/command")
+    client.send_message(client.client_socket, f'/file_folder /made/with/dest "{dest}"')
+
+    assert wait_until(lambda: (server_recv / "made" / "by" / "command").is_dir(), timeout=10)
+    assert wait_until(lambda: (dest / "made" / "with" / "dest").is_dir(), timeout=10)
 
 
 def test_server_pushes_folder_to_destination(pair, tmp_path):
@@ -391,14 +432,8 @@ def test_server_pushes_folder_to_destination(pair, tmp_path):
     )
     server.folder_file_transfer_server_recv_client_start(cmd)
 
-    assert wait_until(lambda: (dest / "data" / "a.txt").exists(), timeout=10), (
-        "a.txt not at destination"
-    )
-    assert wait_until(lambda: (dest / "data" / "sub" / "b.txt").exists(), timeout=10), (
-        "b.txt not at destination"
-    )
-    assert (dest / "data" / "a.txt").read_text() == "hello"
-    assert (dest / "data" / "sub" / "b.txt").read_text() == "world"
+    assert wait_for_text(dest / "data" / "a.txt", "hello"), "a.txt not at destination"
+    assert wait_for_text(dest / "data" / "sub" / "b.txt", "world"), "b.txt not at destination"
 
 
 def test_client_uploads_multiple_files_to_destination(pair, tmp_path):
@@ -444,14 +479,8 @@ def test_client_uploads_multiple_folders_to_destination(pair, tmp_path):
         f'/multiple_file_folder "{folder_a}" "{folder_b}" "{dest}"'
     )
 
-    assert wait_until(lambda: (dest / "data_a" / "a.txt").exists(), timeout=10), (
-        "a.txt not at destination"
-    )
-    assert wait_until(lambda: (dest / "data_b" / "b.txt").exists(), timeout=10), (
-        "b.txt not at destination"
-    )
-    assert (dest / "data_a" / "a.txt").read_text() == "hello"
-    assert (dest / "data_b" / "b.txt").read_text() == "world"
+    assert wait_for_text(dest / "data_a" / "a.txt", "hello"), "a.txt not at destination"
+    assert wait_for_text(dest / "data_b" / "b.txt", "world"), "b.txt not at destination"
 
 
 def test_windows_paths_need_quoting_through_shlex():
@@ -631,14 +660,12 @@ def test_forward_folder_to_client(pair, tmp_path):
     cmd = '/forward_folder "{}" "({}, {})"'.format(folder, repr(a[0]), a[1])
     forwarder.forward_folder_console(cmd)
 
-    assert wait_until(lambda: (recv_dir / "data" / "a.txt").exists(), timeout=15), (
+    assert wait_for_text(recv_dir / "data" / "a.txt", "hello", timeout=15), (
         "a.txt not forwarded"
     )
-    assert wait_until(lambda: (recv_dir / "data" / "sub" / "b.txt").exists(), timeout=15), (
+    assert wait_for_text(recv_dir / "data" / "sub" / "b.txt", "world", timeout=15), (
         "sub/b.txt not forwarded"
     )
-    assert (recv_dir / "data" / "a.txt").read_text() == "hello"
-    assert (recv_dir / "data" / "sub" / "b.txt").read_text() == "world"
     forwarder.close()
 
 
@@ -693,9 +720,9 @@ def test_forward_flow_control_pauses_uploader(pair, tmp_path, monkeypatch):
     sent = []
     real_send = server.send_message
 
-    def spy(sock, message):
+    def spy(sock, message, is_send_raw=False):
         sent.append(message if isinstance(message, str) else "")
-        return real_send(sock, message)
+        return real_send(sock, message, is_send_raw=is_send_raw)
 
     monkeypatch.setattr(server, "send_message", spy)
     a = target.client_socket.getsockname()
@@ -754,14 +781,12 @@ def test_forward_folder_with_destination(pair, tmp_path):
     cmd = '/forward_folder "{}" "({}, {})" "{}"'.format(folder, repr(a[0]), a[1], dest)
     forwarder.forward_folder_console(cmd)
 
-    assert wait_until(lambda: (dest / "data" / "a.txt").exists(), timeout=15), (
+    assert wait_for_text(dest / "data" / "a.txt", "hello", timeout=15), (
         "a.txt not at the destination"
     )
-    assert wait_until(lambda: (dest / "data" / "sub" / "b.txt").exists(), timeout=15), (
+    assert wait_for_text(dest / "data" / "sub" / "b.txt", "world", timeout=15), (
         "sub/b.txt not at the destination"
     )
-    assert (dest / "data" / "a.txt").read_text() == "hello"
-    assert (dest / "data" / "sub" / "b.txt").read_text() == "world"
     assert not any(recv_dir.iterdir()), "default directory must stay empty"
     forwarder.close()
 
