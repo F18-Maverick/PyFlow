@@ -146,7 +146,7 @@ def test_paused_transfer_is_persisted_when_the_connection_drops(tmp_path):
         src = tmp_path / "payload.bin"
         payload = os.urandom(64 * 1024)
         src.write_bytes(payload)
-        fid = 77
+        fid = 76  # even low bit: a plain leg's id
 
         server_sock = server.clients[client.client_socket.getsockname()]["socket"]
         sender_id = "%s:%s" % client.client_socket.getsockname()
@@ -213,7 +213,7 @@ def test_upload_resumes_after_a_reconnect(tmp_path):
         src = tmp_path / "payload.bin"
         payload = os.urandom(256 * 1024)
         src.write_bytes(payload)
-        fid = 101
+        fid = 100  # even low bit: a plain leg's id
 
         # a fixed client port keeps the client's address stable across the
         # reconnect, so the server can match the interrupted transfer to it
@@ -311,7 +311,7 @@ def test_download_resumes_from_the_partial_file(tmp_path):
         src = tmp_path / "download.bin"
         payload = os.urandom(128 * 1024)
         src.write_bytes(payload)
-        fid = 202
+        fid = 202  # even low bit: a plain leg's id
 
         partial = recv_dir / "download.bin"
         with open(partial, "wb") as f:
@@ -366,8 +366,8 @@ def test_forwarded_file_resumes_through_the_server(tmp_path):
         src = tmp_path / "payload.bin"
         payload = os.urandom(96 * 1024)
         src.write_bytes(payload)
-        fid = 303  # the forwarder's transfer id
-        tfid = 304  # the target's transfer id
+        fid = 303  # odd low bit: a relay leg's id
+        tfid = 305  # odd low bit: a relay target's id
         target_addr = target.client_socket.getsockname()
         forwarder_addr = forwarder.client_socket.getsockname()
 
@@ -441,7 +441,7 @@ def test_pause_and_start_trans_control_a_plain_transfer(tmp_path):
         src = tmp_path / "payload.bin"
         payload = os.urandom(256 * 1024)
         src.write_bytes(payload)
-        fid = 404
+        fid = 404  # even low bit: a plain leg's id
 
         server_sock = server.clients[client.client_socket.getsockname()]["socket"]
         server.file_transfer_server_recv_server_start_thread(
@@ -520,7 +520,7 @@ def test_download_resumes_over_the_encrypted_channel(tmp_path):
         src = tmp_path / "download.bin"
         payload = os.urandom(64 * 1024)
         src.write_bytes(payload)
-        fid = 909
+        fid = 908  # even low bit: a plain leg's id
         partial = recv_dir / "download.bin"
         with open(partial, "wb") as f:
             f.write(payload[:1024])
@@ -606,7 +606,7 @@ def test_resume_with_a_different_total_is_refused_and_keeps_the_partial_file(tmp
         src = tmp_path / "download.bin"
         payload = os.urandom(128 * 1024)
         src.write_bytes(payload)
-        fid = 303
+        fid = 302  # even low bit: a plain leg's id
         kept = payload[:4096]
         partial = recv_dir / "download.bin"
         with open(partial, "wb") as f:
@@ -685,11 +685,13 @@ def test_download_resumes_after_connect_without_a_manual_call(tmp_path):
         )
 
         partial = recv_dir / src.name
-        # the server stamps the leg's fid from its own counter, and the pause
-        # switch is keyed by fid: read the id and arm the pause before the leg
-        # starts, so the fault lands while the transfer is still incomplete
-        with server.file_client_id_lock:
-            fid = server.file_client_id
+        # the server stamps the leg's fid from its own allocator, and the pause
+        # switch is keyed by fid: predict the id the next leg will take and arm
+        # the pause before it starts, so the fault lands while the transfer is
+        # still incomplete
+        alloc = server._fid_alloc
+        with alloc._lock:
+            fid = ((alloc._counter + 1) << 32) | (alloc._epoch << 1)
         assert server.pause_trans(fid) is False, "the leg was already running"
 
         # the server pushes the file: the client opens its listener and the

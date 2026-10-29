@@ -38,7 +38,6 @@ import os
 import ast
 import sys
 import time
-import copy
 import shlex
 import socket
 import struct  # SO_LINGER's (l_onoff, l_linger) pair, for abortive closes
@@ -725,6 +724,95 @@ def parse_forward_originator(command, own_address=None):
                     return None  # direct send: the tuple is the receiver itself
                 return originator
     return None
+
+
+# ---- transfer ids ----------------------------------------------------------
+#
+# A transfer id keys the progress stores, the pause switches and the transfer
+# socket registry, and it travels on the wire as the last token of ``/file``
+# and ``/file_folder`` lines. One allocator per instance:
+#
+#     fid = (counter << 32) | (epoch << 1) | kind
+#
+# ``epoch`` is random per instance, so two instances (or the same instance
+# restarted) never hand out the same value; ``counter`` only grows and lives in
+# the high bits, so no run length can overflow into the low fields; ``kind`` is
+# 0 for a plain leg and 1 for a relay (whose originator fid and per-target tfids
+# are all relay kinds).
+#
+# The counters this replaced started at 0 in every instance and were also
+# decremented when a leg ended, so an inbound fid from one peer and an outbound
+# fid from this instance could be the same number: the shared registries
+# (``_active_transfer_fids``, ``_active_transfer_sockets``, ``_transfer_pause``)
+# then let one leg's cleanup tear down the other's socket.
+
+FID_LOW_BITS = 32  # low 32 bits: epoch (31) + kind (1)
+FID_KIND_PLAIN = 0
+FID_KIND_RELAY = 1
+
+
+def fid_kind(fid):
+    """Return 0 (plain leg) or 1 (relay leg) of a transfer id.
+
+    Args:
+        fid (int): Transfer id.
+
+    Returns:
+    int: ``FID_KIND_PLAIN`` or ``FID_KIND_RELAY``.
+    """
+    return fid & 1
+
+
+def format_fid(fid):
+    """Render a transfer id for logs as ``e<epoch>.<kind>.<counter>``.
+
+    Args:
+        fid (int): Transfer id.
+
+    Returns:
+    str: Readable form; the inverse of the allocator's packing.
+    """
+    low = fid & 0xFFFFFFFF
+    return f"e{low >> 1}.{low & 1}.{fid >> FID_LOW_BITS}"
+
+
+class _FidAllocator:
+    """Hand out transfer ids that never collide with a live one.
+
+    ``alloc`` skips a candidate that already keys one of the live tables. Those
+        tables are read under this allocator's own lock only; a caller must not
+        hold ``_transfer_progress_lock`` or ``_forward_relays_lock`` while
+        allocating, so the two lock families never nest.
+    """
+
+    def __init__(self, live_tables):
+        """Create an allocator for one instance.
+
+        Args:
+            live_tables (tuple): Dicts whose keys are ids still in use —
+                ``file_upload_progress``, ``file_recv_progress`` and
+                ``_forward_resume_records``. Held by reference, never copied.
+        """
+        self._epoch = int.from_bytes(os.urandom(4), "big") & 0x7FFFFFFF
+        self._counter = 0
+        self._live_tables = live_tables
+        self._lock = threading.Lock()
+
+    def alloc(self, kind=FID_KIND_PLAIN):
+        """Return an unused transfer id.
+
+        Args:
+            kind (int): ``FID_KIND_PLAIN`` or ``FID_KIND_RELAY``.
+
+        Returns:
+        int: Transfer id.
+        """
+        with self._lock:
+            while True:
+                self._counter += 1
+                fid = (self._counter << FID_LOW_BITS) | (self._epoch << 1) | kind
+                if not any(fid in table for table in self._live_tables):
+                    return fid
 
 
 # ---- encrypted channel framing ---------------------------------------------
@@ -1722,8 +1810,6 @@ class TCP_Server_Base:  # TCP server class
         self._recv_speed_samples = collections.deque()
         self._upload_speed_total = 0  # bytes held in the sample windows
         self._recv_speed_total = 0
-        self._forward_fid = 0
-        self._forward_fid_lock = threading.Lock()
         self._forward_relays = {}
         self._forward_relays_lock = threading.Lock()
         # Relay records kept after their relay died, so a disconnected
@@ -1732,6 +1818,12 @@ class TCP_Server_Base:  # TCP server class
         # Resume requests that arrived before the originator reconnected:
         # originator (ip, port) -> [(fid, target (ip, port), offset), ...].
         self._pending_relay_resumes = {}
+        # Transfer ids for the legs this instance sends (see `_FidAllocator`).
+        # Inbound legs carry ids the peer allocated, so the two directions can
+        # never share a value and the shared registries below stay disjoint.
+        self._fid_alloc = _FidAllocator(
+            (self.file_upload_progress, self.file_recv_progress, self._forward_resume_records)
+        )
         # Outbound-transfer pause switches (see `pause_trans`/`start_trans`):
         # fid -> bool. A leg waits while its own fid is marked paused.
         self._transfer_pause = {}
@@ -1771,10 +1863,8 @@ class TCP_Server_Base:  # TCP server class
         self.alloc_port(port_add_step, port_range_num)
         self.server_socket = None
         self.clients = {}  # store client info
-        self.file_client_id_lock = threading.Lock()
         self.file_transfer_server_port_lock = threading.Lock()
         self.file_server_port_list = []
-        self.file_client_id = 0
         self.client_lock = threading.Lock()  # add the threading lock
         self.max_file_transfer_thread_num = max_file_transfer_thread_num
         MAX_CONCURRENT_FILES = self.max_file_transfer_thread_num
@@ -3877,9 +3967,7 @@ class TCP_Server_Base:  # TCP server class
                     break
             time.sleep(0.05)
         try:
-            with self.file_client_id_lock:
-                client_id = copy.copy(self.file_client_id)
-                self.file_client_id += 1
+            client_id = self._fid_alloc.alloc(FID_KIND_PLAIN)
             send_msg = f"/crypto_pub_key {client_id}"
             self.send_message(client_socket, send_msg, is_send_raw=True)
             file_transfer_client_port = self.palloc()
@@ -5399,10 +5487,8 @@ class TCP_Server_Base:  # TCP server class
             self._log_exc()
             return False
         self._debug(client_socket, client_address, message)
-        with self.file_client_id_lock:
-            client_id = copy.copy(self.file_client_id)
-            send_msg = message.strip() + " " + str(self.file_client_id) + "\n"
-            self.file_client_id += 1
+        client_id = self._fid_alloc.alloc(FID_KIND_PLAIN)
+        send_msg = message.strip() + " " + str(client_id) + "\n"
         try:
             waiting_time = 0
             if shlex.split(message.lower())[0] == "/file_folder":
@@ -5486,8 +5572,6 @@ class TCP_Server_Base:  # TCP server class
             file_running = False
             self._crypto_drop_channel(client_file_socket)
             client_file_socket.close()
-            with self.file_client_id_lock:
-                self.file_client_id -= 1
 
         while True:
             try:
@@ -5791,17 +5875,22 @@ class TCP_Server_Base:  # TCP server class
         Returns:
             object: Result produced by the operation.
         """
-        with self._forward_relays_lock:
-            record = self._forward_resume_records.get(fid)
-        if record is not None:
-            originator = record.get("originator")
-            targets = [tuple(target) for target in record.get("targets") or []]
-            if (
-                originator is not None
-                and tuple(client_address) in targets
-                and tuple(originator) != tuple(client_address)
-            ):
-                return self._route_forward_resume(record, client_address, offset)
+        if fid_kind(fid) == FID_KIND_RELAY:
+            with self._forward_relays_lock:
+                record = self._forward_resume_records.get(fid)
+            if record is not None:
+                originator = record.get("originator")
+                targets = [tuple(target) for target in record.get("targets") or []]
+                if (
+                    originator is not None
+                    and tuple(client_address) in targets
+                    and tuple(originator) != tuple(client_address)
+                ):
+                    return self._route_forward_resume(record, client_address, offset)
+            self._log(
+                f"resume: relay id {format_fid(fid)} has no live record, ignored"
+            )
+            return False
         return self.resume_trans(client_address, fid, offset)
 
     def _route_forward_resume(self, record, target_addr, offset):
@@ -5877,16 +5966,6 @@ class TCP_Server_Base:  # TCP server class
         self._request_resumes(tuple(client_address))
 
     # ---- native in-memory forward relay (server side) ----------------------
-
-    def _forward_alloc_fid(self):
-        """Handle the operation.
-
-        Returns:
-            object: Result produced by the operation.
-        """
-        with self._forward_fid_lock:
-            self._forward_fid += 1
-            return self._forward_fid
 
     def _forward_notify_error(self, sock, msg):
         """Handle the operation.
@@ -6099,8 +6178,11 @@ class TCP_Server_Base:  # TCP server class
             destination_path (str): Value used by the operation.
             resume_offset (object): Value used by the operation.
         """
-        fid = self._forward_alloc_fid()
-        tfids = [self._forward_alloc_fid() for _ in targets]
+        # One relay consumes 1 + N ids: the originator's leg and one per target.
+        # All are relay kind, so a resume request can be routed without probing
+        # the progress stores first.
+        fid = self._fid_alloc.alloc(FID_KIND_RELAY)
+        tfids = [self._fid_alloc.alloc(FID_KIND_RELAY) for _ in targets]
         relay = {
             "cond": threading.Condition(),
             "writer_pause": {target: False for target in targets},
@@ -6823,8 +6905,12 @@ class TCP_Client_Base:  # TCP client class
                 "please set wait_server_timeout to None or set is_wait_server to False",
             ]
             raise ValueError(" ".join(error_msg))
-        self.file_client_id = 0
-        self.file_client_id_lock = threading.Lock()
+        # Transfer ids for the legs this instance sends (see `_FidAllocator`).
+        # Inbound legs carry ids the peer allocated, so the two directions can
+        # never share a value and the shared registries stay disjoint.
+        self._fid_alloc = _FidAllocator(
+            (self.file_upload_progress, self.file_recv_progress, self._forward_resume_records)
+        )
         MAX_CONCURRENT_FILES = self.max_thread_num
         self.file_semaphore = threading.Semaphore(MAX_CONCURRENT_FILES)
         with open(self.decode_command_table_file_path, "r", encoding="utf-8") as f:
@@ -9028,9 +9114,7 @@ class TCP_Client_Base:  # TCP client class
                     break
             time.sleep(0.05)
         try:
-            with self.file_client_id_lock:
-                client_id = copy.copy(self.file_client_id)
-                self.file_client_id += 1
+            client_id = self._fid_alloc.alloc(FID_KIND_PLAIN)
             send_msg = f"/crypto_pub_key {client_id}"
             self.send_message(self.client_socket, send_msg, is_send_raw=True)
             file_transfer_client_port = self.palloc()
@@ -9629,11 +9713,8 @@ class TCP_Client_Base:  # TCP client class
             message (object): Value used by the operation.
             file_folder_abspath (str): Value used by the operation.
         """
-        client_id = None
-        with self.file_client_id_lock:
-            client_id = copy.copy(self.file_client_id)
-            send_msg = message.strip() + " " + str(self.file_client_id)
-            self.file_client_id += 1
+        client_id = self._fid_alloc.alloc(FID_KIND_PLAIN)
+        send_msg = message.strip() + " " + str(client_id)
         try:
             waiting_time = 0
             if shlex.split(message.lower())[0] == "/file_folder":
@@ -9717,8 +9798,6 @@ class TCP_Client_Base:  # TCP client class
             file_running = False
             self._crypto_drop_channel(client_file_socket)
             client_file_socket.close()
-            with self.file_client_id_lock:
-                self.file_client_id -= 1
 
         while True:
             try:
