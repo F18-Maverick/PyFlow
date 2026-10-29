@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 
-from helpers import free_port, isolate_instance_files, server_ready, wait_until
+from helpers import free_port, isolate_instance_files, server_ready, wait_for_text, wait_until
 
 from PyFlow.network_api.connect_tcp import (
     TCP_Client_Base,
@@ -363,14 +363,8 @@ def test_client_uploads_folder_to_destination(pair, tmp_path):
 
     # the folder keeps its own name under the destination (same structure as
     # the default receive directory, with the destination as its root)
-    assert wait_until(lambda: (dest / "data" / "a.txt").exists(), timeout=10), (
-        "a.txt not at destination"
-    )
-    assert wait_until(lambda: (dest / "data" / "sub" / "b.txt").exists(), timeout=10), (
-        "b.txt not at destination"
-    )
-    assert (dest / "data" / "a.txt").read_text() == "hello"
-    assert (dest / "data" / "sub" / "b.txt").read_text() == "world"
+    assert wait_for_text(dest / "data" / "a.txt", "hello"), "a.txt not at destination"
+    assert wait_for_text(dest / "data" / "sub" / "b.txt", "world"), "b.txt not at destination"
     assert not any(server_recv.iterdir()), "folder must not land in the default directory"
 
 
@@ -391,14 +385,8 @@ def test_server_pushes_folder_to_destination(pair, tmp_path):
     )
     server.folder_file_transfer_server_recv_client_start(cmd)
 
-    assert wait_until(lambda: (dest / "data" / "a.txt").exists(), timeout=10), (
-        "a.txt not at destination"
-    )
-    assert wait_until(lambda: (dest / "data" / "sub" / "b.txt").exists(), timeout=10), (
-        "b.txt not at destination"
-    )
-    assert (dest / "data" / "a.txt").read_text() == "hello"
-    assert (dest / "data" / "sub" / "b.txt").read_text() == "world"
+    assert wait_for_text(dest / "data" / "a.txt", "hello"), "a.txt not at destination"
+    assert wait_for_text(dest / "data" / "sub" / "b.txt", "world"), "b.txt not at destination"
 
 
 def test_client_uploads_multiple_files_to_destination(pair, tmp_path):
@@ -444,14 +432,8 @@ def test_client_uploads_multiple_folders_to_destination(pair, tmp_path):
         f'/multiple_file_folder "{folder_a}" "{folder_b}" "{dest}"'
     )
 
-    assert wait_until(lambda: (dest / "data_a" / "a.txt").exists(), timeout=10), (
-        "a.txt not at destination"
-    )
-    assert wait_until(lambda: (dest / "data_b" / "b.txt").exists(), timeout=10), (
-        "b.txt not at destination"
-    )
-    assert (dest / "data_a" / "a.txt").read_text() == "hello"
-    assert (dest / "data_b" / "b.txt").read_text() == "world"
+    assert wait_for_text(dest / "data_a" / "a.txt", "hello"), "a.txt not at destination"
+    assert wait_for_text(dest / "data_b" / "b.txt", "world"), "b.txt not at destination"
 
 
 def test_windows_paths_need_quoting_through_shlex():
@@ -631,14 +613,12 @@ def test_forward_folder_to_client(pair, tmp_path):
     cmd = '/forward_folder "{}" "({}, {})"'.format(folder, repr(a[0]), a[1])
     forwarder.forward_folder_console(cmd)
 
-    assert wait_until(lambda: (recv_dir / "data" / "a.txt").exists(), timeout=15), (
+    assert wait_for_text(recv_dir / "data" / "a.txt", "hello", timeout=15), (
         "a.txt not forwarded"
     )
-    assert wait_until(lambda: (recv_dir / "data" / "sub" / "b.txt").exists(), timeout=15), (
+    assert wait_for_text(recv_dir / "data" / "sub" / "b.txt", "world", timeout=15), (
         "sub/b.txt not forwarded"
     )
-    assert (recv_dir / "data" / "a.txt").read_text() == "hello"
-    assert (recv_dir / "data" / "sub" / "b.txt").read_text() == "world"
     forwarder.close()
 
 
@@ -754,14 +734,12 @@ def test_forward_folder_with_destination(pair, tmp_path):
     cmd = '/forward_folder "{}" "({}, {})" "{}"'.format(folder, repr(a[0]), a[1], dest)
     forwarder.forward_folder_console(cmd)
 
-    assert wait_until(lambda: (dest / "data" / "a.txt").exists(), timeout=15), (
+    assert wait_for_text(dest / "data" / "a.txt", "hello", timeout=15), (
         "a.txt not at the destination"
     )
-    assert wait_until(lambda: (dest / "data" / "sub" / "b.txt").exists(), timeout=15), (
+    assert wait_for_text(dest / "data" / "sub" / "b.txt", "world", timeout=15), (
         "sub/b.txt not at the destination"
     )
-    assert (dest / "data" / "a.txt").read_text() == "hello"
-    assert (dest / "data" / "sub" / "b.txt").read_text() == "world"
     assert not any(recv_dir.iterdir()), "default directory must stay empty"
     forwarder.close()
 

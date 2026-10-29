@@ -644,3 +644,101 @@ def test_resume_with_a_different_total_is_refused_and_keeps_the_partial_file(tmp
         if client is not None:
             client.close()
         server.stop()
+
+
+def test_download_resumes_after_connect_without_a_manual_call(tmp_path):
+    """A download interrupted by a disconnect resumes via the client's own reconnect.
+
+    Nothing calls the resume driver by hand: the client reconnects
+    (``is_auto_reconnect``) and its connect path asks the server to continue the
+    file from the bytes already on disk. This covers the trigger itself, which
+    the partial-file tests inject directly.
+    """
+    server = _start_server(tmp_path)
+    recv_dir = tmp_path / "client_recv"
+    recv_dir.mkdir()
+    client = None
+    try:
+        src = tmp_path / "payload.bin"
+        payload = os.urandom(32 * 1024 * 1024)  # still in flight when the fault hits
+        src.write_bytes(payload)
+
+        # a fixed client port keeps its address stable, so the server can match
+        # the interrupted download to the reconnecting peer
+        client = TCP_Client_Base(
+            host="127.0.0.1",
+            port=server.port,
+            client_host="127.0.0.1",
+            client_port=free_port(),
+            is_extend_command=True,
+            is_input_command_in_console=False,
+            is_enable_encrypto=False,
+            is_auto_reconnect=True,
+        )
+        _isolate(client, tmp_path, "client")
+        client.file_transfer_dir = str(recv_dir)
+        threading.Thread(target=client.start_TCP_client, daemon=True).start()
+        assert wait_until(lambda: client.running and client.client_socket is not None)
+        client_addr = client.client_socket.getsockname()
+        assert wait_until(lambda: client_addr in server.clients, timeout=10), (
+            "server never registered the client"
+        )
+
+        partial = recv_dir / src.name
+        # the server stamps the leg's fid from its own counter, and the pause
+        # switch is keyed by fid: read the id and arm the pause before the leg
+        # starts, so the fault lands while the transfer is still incomplete
+        with server.file_client_id_lock:
+            fid = server.file_client_id
+        assert server.pause_trans(fid) is False, "the leg was already running"
+
+        # the server pushes the file: the client opens its listener and the
+        # server connects from a send leg
+        server.file_transfer_server_recv_client_start_thread(
+            "/file {} {}".format(shlex.quote(str(src)), shlex.quote(repr(client_addr)))
+        )
+        assert wait_until(lambda: server.file_upload_progress.get(fid), timeout=30), (
+            "the server never registered the outgoing transfer"
+        )
+        # the leg is parked before its first chunk, so the receiver holds an
+        # empty target; give it the bytes an interrupted transfer would have
+        # left behind (the leg's own writes would only be the same file)
+        assert wait_until(lambda: partial.exists(), timeout=20), (
+            "the receiver never created the target file"
+        )
+        half = len(payload) // 2
+        partial.write_bytes(payload[:half])
+
+        # a fault drops the control connection from the server side; the parked
+        # leg cannot finish the file, so the partial stays on disk
+        dead_leg = server._active_transfer_sockets.get(fid)
+        assert dead_leg is not None, "the send leg was not registered"
+        dead_socket = client.client_socket
+        server_sock = server.clients[client_addr]["socket"]
+        server_sock.shutdown(2)
+        server_sock.close()
+        assert wait_until(lambda: dead_socket.fileno() == -1, timeout=20), (
+            "the reconnect did not release the dead session's socket"
+        )
+        # the reconnecting client sweeps the dead session's legs and then asks
+        # for the remainder; only the swept leg may be released, or it would
+        # write from its own offset into the file the resumed leg continues
+        assert wait_until(
+            lambda: server._active_transfer_sockets.get(fid) is not dead_leg, timeout=20
+        ), "the dead session's leg was never cleared"
+        server.start_trans(fid)  # the leg was parked by the test, not by the protocol
+        assert wait_until(lambda: server.clients.get(client_addr) is not None, timeout=20), (
+            "the client did not come back"
+        )
+        assert client.client_socket.getsockname() == client_addr, (
+            "the client came back from a different port"
+        )
+
+        assert wait_until(lambda: partial.stat().st_size == len(payload), timeout=30), (
+            "the resumed download did not finish"
+        )
+        assert partial.read_bytes() == payload, "the resumed download did not continue the partial"
+    finally:
+        if client is not None:
+            client.close()
+        server.stop()
