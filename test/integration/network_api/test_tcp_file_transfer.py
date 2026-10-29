@@ -368,6 +368,53 @@ def test_client_uploads_folder_to_destination(pair, tmp_path):
     assert not any(server_recv.iterdir()), "folder must not land in the default directory"
 
 
+def test_client_uploads_folder_skips_empty_directories(pair, tmp_path):
+    """A directory with no file in its subtree is never created at the peer.
+
+    Only a directory that receives a file (directly or deeper) needs to exist;
+    announcing an empty one would leave an empty directory on the far side.
+    """
+    server, client, _ = pair
+    server_recv = tmp_path / "server_recv"
+    server_recv.mkdir()
+    server.file_transfer_dir = str(server_recv)
+    folder = tmp_path / "data"
+    (folder / "sub" / "deep").mkdir(parents=True)
+    (folder / "empty").mkdir()
+    (folder / "a.txt").write_text("hello")
+    (folder / "sub" / "b.txt").write_text("world")
+
+    client.folder_file_transfer_client_recv_client_start(f'/file_folder "{folder}"')
+
+    assert wait_for_text(server_recv / "data" / "a.txt", "hello"), "a.txt not received"
+    assert wait_for_text(server_recv / "data" / "sub" / "b.txt", "world"), "b.txt not received"
+    assert not (server_recv / "data" / "empty").exists(), "an empty directory was created"
+    assert not (server_recv / "data" / "sub" / "deep").exists(), (
+        "a directory holding no file was created"
+    )
+
+
+def test_folder_creation_command_creates_directory_without_a_transfer(pair, tmp_path):
+    """``/file_folder <rel> [<dest>]`` creates the directory on the control line.
+
+    The command carries no client id, so it opens no transfer leg: the
+    directory must exist as soon as the line is processed, with no listener
+    or port involved.
+    """
+    server, client, _ = pair
+    server_recv = tmp_path / "server_recv"
+    server_recv.mkdir()
+    server.file_transfer_dir = str(server_recv)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    client.send_message(client.client_socket, "/file_folder /made/by/command")
+    client.send_message(client.client_socket, f'/file_folder /made/with/dest "{dest}"')
+
+    assert wait_until(lambda: (server_recv / "made" / "by" / "command").is_dir(), timeout=10)
+    assert wait_until(lambda: (dest / "made" / "with" / "dest").is_dir(), timeout=10)
+
+
 def test_server_pushes_folder_to_destination(pair, tmp_path):
     """Server /file_folder with a destination dir: the folder structure is
     recreated under the destination on the client."""

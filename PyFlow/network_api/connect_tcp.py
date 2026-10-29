@@ -498,6 +498,67 @@ def _open_transfer_target(path, offset):
     return target
 
 
+def _receive_dir_for(base_dir, new_save_path, destination_path):
+    """Compose the receive directory of one folder command.
+
+    The single definition of where a folder command lands: an absolute
+        ``destination_path`` replaces ``base_dir``, a relative one nests under
+        it, and the command's ``/``-separated relative path nests below that.
+        ``setting_file_save_path`` and the folder-creation branch of
+        ``file_folder_transfer_*_recv_*_start_thread`` both use it, so a create
+        command and the file legs under it always agree on the directory.
+
+    Args:
+        base_dir (str): Instance receive root (``file_transfer_dir``).
+        new_save_path (str | None): Command's relative folder path, ``/``-separated.
+        destination_path (str | None): Receiver-side destination directory.
+
+    Returns:
+    str: Directory the command names, without creating it.
+    """
+    save_path = base_dir
+    if destination_path:
+        if os.path.isabs(destination_path):
+            save_path = destination_path
+        else:
+            save_path = os.path.join(save_path, destination_path)
+    if new_save_path:
+        path_list = new_save_path.split("/")
+        if path_list and path_list[0] == "":
+            del path_list[0]
+        for node in path_list:
+            save_path = os.path.join(save_path, node)
+    return save_path
+def _rel_dirs_with_files(folder_path, base_path):
+    """Relative paths of the directories under ``folder_path`` that have files.
+
+    A directory needs to exist at the receiver only when a file lands in it
+    or below it; an empty directory has nothing to receive. Each entry is in
+        ``"/data/sub"`` form, and every ancestor of a directory that has files is
+        included, because a file leg creates only its own leaf directory.
+
+    Args:
+        folder_path (str): Folder being sent.
+        base_path (str): Parent directory the relative paths hang off.
+
+    Returns:
+    set: Relative folder paths, ``""`` for the transfer root.
+    """
+    needed = set()
+    base = os.path.normpath(base_path)
+    for root, _dirs, files in os.walk(folder_path):
+        if not files:
+            continue
+        rel = os.path.relpath(os.path.normpath(root), base)
+        rel = "" if rel == "." else "/" + rel.replace(os.sep, "/")
+        while True:
+            needed.add(rel)
+            trimmed = rel.rstrip("/")
+            if not trimmed:
+                break
+            rel = trimmed.rsplit("/", 1)[0]
+    return needed
+
 def _resumable_entry(progress, fid, peer, command_part):
     """Return the interrupted download a received ``/file`` continues, or None.
 
@@ -4653,7 +4714,13 @@ class TCP_Server_Base:  # TCP server class
     def file_folder_transfer_server_recv_server_start_thread(  # start a file folder server thread on server
         self, command, client_id, client_socket
     ):
-        """Start a server-side folder receive operation.
+        """Create a folder, or start a server-side folder receive operation.
+
+        A command without a client id (``/file_folder <rel>`` or
+        ``/file_folder <rel> <dest>``) is folder creation: the directory is
+        created here, on the control line, and no transfer leg is opened. A
+        command with an id carries one file of the folder and starts the usual
+        receive leg.
 
         Args:
             command (object): Value used by the operation.
@@ -4665,6 +4732,18 @@ class TCP_Server_Base:  # TCP server class
         # >= 4 tokens means a file transfer (/file_folder <rel> <file> [<dest>] <id>);
         # 2-3 tokens is folder creation (optional destination, no client id)
         file_name = command_part[2] if len(command_part) >= 4 else None
+        if file_name is None:
+            created = _receive_dir_for(
+                self.file_transfer_dir,
+                relative_folder_path,
+                _parse_destination_path(command_part),
+            )
+            try:
+                os.makedirs(created, exist_ok=True)
+                self._log(f"folder {created} created for {client_id}")
+            except OSError as e:
+                self._log(f"folder {created} could not be created for {client_id}: {e}")
+            return
         folder_transfer_server_recv_server_start_thread = threading.Thread(
             target=self.file_transfer_server_recv_server_start,
             args=(client_id, client_socket, command, relative_folder_path, file_name),
@@ -4756,23 +4835,14 @@ class TCP_Server_Base:  # TCP server class
             server_file_socket.close()
 
         def setting_file_save_path():
-            """Handle the operation."""
+            """Resolve, and create, the directory this leg writes into."""
             nonlocal save_path
-            save_path = self.file_transfer_dir
+            save_path = _receive_dir_for(
+                self.file_transfer_dir, new_save_path, destination_path
+            )
             if new_save_path or destination_path:
-                if destination_path:
-                    if os.path.isabs(destination_path):
-                        save_path = destination_path
-                    else:
-                        save_path = os.path.join(save_path, destination_path)
-                if new_save_path:
-                    path_list = new_save_path.split("/")
-                    if path_list and path_list[0] == "":
-                        del path_list[0]
-                    for node in path_list:
-                        save_path = os.path.join(save_path, node)
                 os.makedirs(save_path, exist_ok=True)
-            if file_name or new_save_path == None:
+            if file_name or new_save_path is None:
                 return save_path
             close_socket()
             return None
@@ -5276,17 +5346,19 @@ class TCP_Server_Base:  # TCP server class
             self._log(f"start to send file: {cmd} (limit {self.max_file_transfer_thread_num})")
 
         def get_all_files_in_folder():
-            """Handle the operation."""
-            for root, dirs, files in os.walk(folder_path):
+            """Announce the directories that need it, then send every file."""
+            needed = _rel_dirs_with_files(folder_path, base_path)
+            if transfer_path in needed:
+                send_folder_transfer_command(transfer_path)
+            for root, _dirs, files in os.walk(folder_path):
                 rel_dir = get_relative_path(base_path, root)
-                if root != folder_path:
+                if root != folder_path and rel_dir in needed:
                     send_folder_transfer_command(rel_dir)
                 for file in files:
                     start_file_transfer_with_limit(rel_dir, file, root)
             self._log(f"finished sending all files in folder {folder_path}")
 
         transfer_path = get_relative_path(base_path, folder_path)
-        send_folder_transfer_command(transfer_path)
         get_all_files_in_folder()
 
     def file_transfer_server_recv_client_start_thread(self, message, file_folder_abspath=None):
@@ -9494,17 +9566,19 @@ class TCP_Client_Base:  # TCP client class
             self._log(f"start to send file: {cmd} (limit {self.max_thread_num})")
 
         def get_all_files_in_folder():
-            """Handle the operation."""
-            for root, dirs, files in os.walk(folder_path):
+            """Announce the directories that need it, then send every file."""
+            needed = _rel_dirs_with_files(folder_path, base_path)
+            if transfer_path in needed:
+                send_folder_transfer_command(transfer_path)
+            for root, _dirs, files in os.walk(folder_path):
                 rel_dir = get_relative_path(base_path, root)
-                if root != folder_path:
+                if root != folder_path and rel_dir in needed:
                     send_folder_transfer_command(rel_dir)
                 for file in files:
                     start_file_transfer_with_limit(rel_dir, file, root)
             self._log(f"finished sending all files in folder {folder_path}")
 
         transfer_path = get_relative_path(base_path, folder_path)
-        send_folder_transfer_command(transfer_path)
         get_all_files_in_folder()
 
     def multiple_file_transfer_client_recv_client_start(self, message):
@@ -10293,6 +10367,18 @@ class TCP_Client_Base:  # TCP client class
         # >= 4 tokens means a file transfer (/file_folder <rel> <file> [<dest>] <id>);
         # 2-3 tokens is folder creation (optional destination, no client id)
         file_name = command_part[2] if len(command_part) >= 4 else None
+        if file_name is None:
+            created = _receive_dir_for(
+                self.file_transfer_dir,
+                relative_folder_path,
+                _parse_destination_path(command_part),
+            )
+            try:
+                os.makedirs(created, exist_ok=True)
+                self._log(f"folder {created} created for {client_id}")
+            except OSError as e:
+                self._log(f"folder {created} could not be created for {client_id}: {e}")
+            return
         folder_transfer_client_recv_server_start_thread = threading.Thread(
             target=self.file_transfer_client_recv_server_start,
             args=(client_id, client_socket, command, relative_folder_path, file_name),
@@ -10416,23 +10502,14 @@ class TCP_Client_Base:  # TCP client class
             server_file_socket.close()
 
         def setting_file_save_path():
-            """Handle the operation."""
+            """Resolve, and create, the directory this leg writes into."""
             nonlocal save_path
-            save_path = self.file_transfer_dir
+            save_path = _receive_dir_for(
+                self.file_transfer_dir, new_save_path, destination_path
+            )
             if new_save_path or destination_path:
-                if destination_path:
-                    if os.path.isabs(destination_path):
-                        save_path = destination_path
-                    else:
-                        save_path = os.path.join(save_path, destination_path)
-                if new_save_path:
-                    path_list = new_save_path.split("/")
-                    if path_list and path_list[0] == "":
-                        del path_list[0]
-                    for node in path_list:
-                        save_path = os.path.join(save_path, node)
                 os.makedirs(save_path, exist_ok=True)
-            if file_name or new_save_path == None:
+            if file_name or new_save_path is None:
                 return save_path
             close_socket()
             return None

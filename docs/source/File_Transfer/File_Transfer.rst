@@ -184,11 +184,10 @@ Its logic is as follows:
 For folder transfers, the worker function
 ``folder_file_transfer_client_recv_client_start(message)``
 walks the
-directory tree on the console thread. It first sends a
-``/file_folder <relative_path>`` command for the top-level folder itself
-to create the
-corresponding directory on the server, then sends the same command for
-every subdirectory it walks into. For each file, it starts a daemon
+directory tree on the console thread. Only directories that hold a file,
+directly or below them, are announced to the receiver with a
+``/file_folder <relative_path>`` command; a directory with no file in its
+subtree is never created on the far side. For each file, it starts a daemon
 thread that holds
 ``file_semaphore`` around the actual transfer, with a
 command of the form
@@ -324,7 +323,11 @@ or
 creates the
 corresponding directory under the base receive directory
 (``received_files/`` for the server, the same directory
-for the client). The
+for the client). A command with no client id carries no data: the directory
+is created on the control line itself and no transfer leg is opened. The
+optional destination directory (``/file_folder <relative_path> <dest>``)
+is resolved by the same ``_receive_dir_for`` used by the file legs, so a
+created directory and the files landing under it always agree. The
 relative path uses forward slashes to be
 platform-independent.
 
