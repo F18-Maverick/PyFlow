@@ -80,6 +80,34 @@ def _start_client(tmp_path, server, name="client", recv_dir=None, **kwargs):
     return client
 
 
+def _track_socket_workers(monkeypatch):
+    """Retain real control, listener, relay and file workers for teardown."""
+    workers = []
+    real_start = threading.Thread.start
+
+    def start(worker, *args, **kwargs):
+        result = real_start(worker, *args, **kwargs)
+        workers.append(worker)
+        return result
+
+    monkeypatch.setattr(threading.Thread, "start", start)
+    return workers
+
+
+def _close_socket_workers(server, clients, workers):
+    for client in clients:
+        client.close()
+    server.stop()
+    deadline = time.monotonic() + 20
+    # Joining parents also lets any final child workers enter this list.
+    for worker in workers:
+        worker.join(timeout=max(0, deadline - time.monotonic()))
+    assert not any(worker.is_alive() for worker in workers), (
+        "socket workers survived teardown",
+        [worker.name for worker in workers if worker.is_alive()],
+    )
+
+
 def test_progress_entries_round_trip_through_the_progress_file(tmp_path):
     """Both stores are written with their peer tuples and read back intact."""
     server = _start_server(tmp_path)
@@ -654,7 +682,7 @@ def test_download_resumes_from_the_partial_file(tmp_path):
         server.stop()
 
 
-def test_forwarded_file_resumes_through_the_server(tmp_path):
+def test_forwarded_file_resumes_through_the_server(tmp_path, monkeypatch):
     """A target that lost a forwarded file gets the remainder re-sent.
 
     The target asks the server to continue the transfer; the server routes
@@ -663,6 +691,7 @@ def test_forwarded_file_resumes_through_the_server(tmp_path):
     download entry and the originator's upload entry name the original peer,
     never the relay.
     """
+    workers = _track_socket_workers(monkeypatch)
     server = _start_server(tmp_path)
     recv_dir = tmp_path / "target_recv"
     recv_dir.mkdir()
@@ -703,16 +732,9 @@ def test_forwarded_file_resumes_through_the_server(tmp_path):
             "destination": None,
             "targets": [list(target_addr)],
         }
-        server._forward_resume_records[tfid] = {
-            "fid": fid,
-            "originator": list(forwarder_addr),
-            "targets": [list(target_addr)],
-            "tfids": [tfid],
-            "kind": "file",
-            "rel_dir": "",
-            "fname": "payload.bin",
-            "destination": None,
-        }
+        assert server._register_fid_route(
+            fid, forwarder_addr, {target_addr: tfid}
+        ) is not None
 
         assert target._request_forward_resume(
             tfid, target.file_recv_progress[tfid], forwarder_addr
@@ -726,11 +748,225 @@ def test_forwarded_file_resumes_through_the_server(tmp_path):
         assert wait_until(lambda: tfid not in target.file_recv_progress, timeout=10)
         assert wait_until(lambda: upload_key not in forwarder.file_upload_progress, timeout=10)
     finally:
-        if forwarder is not None:
-            forwarder.close()
-        if target is not None:
-            target.close()
-        server.stop()
+        clients = [client for client in (forwarder, target) if client is not None]
+        _close_socket_workers(server, clients, workers)
+
+
+def test_forward_route_survives_a_refused_target_listener_and_reload(tmp_path, monkeypatch):
+    """One real completed target cannot erase another accepted target's route."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    restored = None
+    # Bound but deliberately not listening: this port cannot be stolen, and
+    # the relay's real connect() receives a deterministic connection refusal.
+    refused_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    refused_listener.bind(("127.0.0.1", 0))
+    advertised = threading.Event()
+    try:
+        good_dir = tmp_path / "good_recv"
+        bad_dir = tmp_path / "refused_recv"
+        good_dir.mkdir()
+        bad_dir.mkdir()
+        source = _start_client(tmp_path, server, name="source")
+        clients.append(source)
+        good = _start_client(tmp_path, server, name="good", recv_dir=good_dir)
+        clients.append(good)
+        bad = _start_client(tmp_path, server, name="refused", recv_dir=bad_dir)
+        clients.append(bad)
+        source_addr = source.client_socket.getsockname()
+        good_addr = good.client_socket.getsockname()
+        bad_addr = bad.client_socket.getsockname()
+        assert wait_until(lambda: all(
+            peer in server.clients for peer in (source_addr, good_addr, bad_addr)
+        ))
+
+        def advertise_refused_listener(client_id, client_socket, command,
+                                       new_save_path=None, file_name=None):
+            tfid = int(shlex.split(command)[-1])
+            stamp = bad._crypto_transfer_stamp(client_socket)
+            bad.send_message(
+                client_socket,
+                f"/server_file_transfer_port {refused_listener.getsockname()[1]} {tfid} {stamp}\n",
+                is_send_raw=True,
+            )
+            advertised.set()
+
+        monkeypatch.setattr(
+            bad, "file_transfer_client_recv_server_start", advertise_refused_listener
+        )
+        src = tmp_path / "partially_forwarded.bin"
+        payload = os.urandom(96 * 1024)
+        src.write_bytes(payload)
+        sender = threading.Thread(
+            target=source._forward_one,
+            args=("file", "", src.name, str(src), [good_addr, bad_addr]),
+            daemon=True,
+        )
+        sender.start()
+        assert advertised.wait(timeout=10), "the faulty target did not advertise its port"
+        output = good_dir / src.name
+        assert wait_until(
+            lambda: output.exists() and output.stat().st_size == len(payload), timeout=20
+        ), "the healthy target did not receive the full forwarded file"
+        assert output.read_bytes() == payload
+        sender.join(timeout=20)
+        assert not sender.is_alive(), "the real source transfer did not finish"
+        assert wait_until(lambda: not server._forward_relays, timeout=10)
+        assert wait_until(lambda: not good.file_recv_progress, timeout=10)
+        assert not (bad_dir / src.name).exists()
+
+        assert len(server._fid_routes) == 1
+        fid, route = next(iter(server._fid_routes.items()))
+        assert route["originator"] == source_addr
+        assert set(route["targets"]) == {good_addr, bad_addr}
+        assert server._lookup_fid_route(None, fid) == (fid, route)
+        for target, tfid in route["targets"].items():
+            found = server._lookup_fid_route(target, tfid)
+            assert found[0] == fid
+            assert found[1] is route
+        expected_index = {
+            (target, tfid): fid for target, tfid in route["targets"].items()
+        }
+        assert server._fid_route_index == expected_index
+
+        server._persist_transfer_progress()
+        with open(server.file_trans_progress_file, "r", encoding="utf-8") as stream:
+            snapshot = json.load(stream)
+        assert snapshot["relays"] == {
+            str(fid): {
+                "originator": list(source_addr),
+                "targets": [
+                    [list(target), tfid] for target, tfid in route["targets"].items()
+                ],
+            }
+        }
+        restored = TCP_Server_Base(
+            host="127.0.0.1", port=free_port(), is_extend_command=True,
+            is_input_command_in_console=False, is_enable_encrypto=False,
+        )
+        _isolate(restored, tmp_path, "restored")
+        restored.file_trans_progress_file = server.file_trans_progress_file
+        assert restored._load_transfer_progress() == 1
+        restored_route = restored._fid_routes[fid]
+        assert restored_route == route
+        assert restored._fid_route_index == expected_index
+        assert restored._lookup_fid_route(None, fid)[1] is restored_route
+        for target, tfid in route["targets"].items():
+            found = restored._lookup_fid_route(target, tfid)
+            assert found[0] == fid
+            assert found[1] is restored_route
+
+        # Drive both rejection and offline routing through real control sockets.
+        # Waiting for the real handler to return avoids timing-based negatives.
+        source.close()
+        assert wait_until(lambda: source_addr not in server.clients, timeout=10)
+        handled = []
+        real_resume_request = server._resume_request
+
+        def observe_resume(peer, requested_fid, offset):
+            try:
+                return real_resume_request(peer, requested_fid, offset)
+            finally:
+                handled.append((peer, requested_fid, offset))
+
+        monkeypatch.setattr(server, "_resume_request", observe_resume)
+        bad_fid = route["targets"][bad_addr]
+        unknown_fid = max([fid, *route["targets"].values()]) + 2
+        assert good.send_message(good.client_socket, f"/resume_trans {bad_fid} 0")
+        assert bad.send_message(bad.client_socket, f"/resume_trans {unknown_fid} 0")
+        assert wait_until(lambda: len(handled) == 2, timeout=10)
+        assert set(handled) == {(good_addr, bad_fid, 0), (bad_addr, unknown_fid, 0)}
+        assert server._pending_relay_resumes == {}
+        assert bad.send_message(bad.client_socket, f"/resume_trans {bad_fid} 0")
+        assert wait_until(lambda: len(handled) == 3, timeout=10)
+        assert server._pending_relay_resumes == {source_addr: [(fid, bad_addr, 0)]}
+        assert server._fid_routes[fid] is route
+    finally:
+        refused_listener.close()
+        if restored is not None:
+            restored.stop()
+        _close_socket_workers(server, clients, workers)
+
+
+def test_forward_route_is_removed_only_after_all_real_targets_complete(tmp_path, monkeypatch):
+    """A completed sibling leaves the route live until the held writer finishes."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    held = {}
+    try:
+        source = _start_client(tmp_path, server, name="source")
+        clients.append(source)
+        targets = []
+        outputs = []
+        for index in range(2):
+            recv_dir = tmp_path / f"forward_target_{index}"
+            recv_dir.mkdir()
+            target = _start_client(
+                tmp_path, server, name=f"target_{index}", recv_dir=recv_dir
+            )
+            clients.append(target)
+            targets.append(target.client_socket.getsockname())
+            outputs.append(recv_dir / "complete_forward.bin")
+        assert wait_until(lambda: all(target in server.clients for target in targets))
+        real_forward_item_to = server.forward_item_to
+
+        def hold_second_writer(target, kind, rel_dir, fname, originator_addr, tfid,
+                               destination_path=None):
+            if target == targets[1]:
+                held["fid"] = tfid
+                held["paused"] = server.pause_trans(tfid, target)
+            return real_forward_item_to(
+                target, kind, rel_dir, fname, originator_addr, tfid, destination_path
+            )
+
+        monkeypatch.setattr(server, "forward_item_to", hold_second_writer)
+        src = tmp_path / "complete_forward.bin"
+        payload = os.urandom(96 * 1024)
+        src.write_bytes(payload)
+        sender = threading.Thread(
+            target=source._forward_one,
+            args=("file", "", src.name, str(src), targets), daemon=True,
+        )
+        sender.start()
+        assert wait_until(
+            lambda: outputs[0].exists() and outputs[0].stat().st_size == len(payload),
+            timeout=20,
+        ), "the unpaused target did not finish"
+        assert outputs[0].read_bytes() == payload
+        assert wait_until(lambda: not clients[1].file_recv_progress, timeout=10)
+        assert held["paused"] is True
+        assert not outputs[1].exists() or outputs[1].stat().st_size == 0
+        assert len(server._fid_routes) == 1
+        fid, route = next(iter(server._fid_routes.items()))
+        assert set(route["targets"]) == set(targets)
+        expected_index = {
+            (target, tfid): fid for target, tfid in route["targets"].items()
+        }
+        assert server._fid_route_index == expected_index
+        for target, tfid in route["targets"].items():
+            assert server._lookup_fid_route(target, tfid)[1] is route
+
+        assert server.start_trans(held["fid"], targets[1]) is True
+        assert wait_until(
+            lambda: outputs[1].exists() and outputs[1].stat().st_size == len(payload),
+            timeout=20,
+        ), "the released target did not finish"
+        assert outputs[1].read_bytes() == payload
+        sender.join(timeout=20)
+        assert not sender.is_alive(), "the real source transfer did not finish"
+        assert wait_until(lambda: not server._forward_relays, timeout=10)
+        assert wait_until(lambda: not clients[2].file_recv_progress, timeout=10)
+        assert server._fid_routes == {}
+        assert server._fid_route_index == {}
+        assert server._lookup_fid_route(None, fid) is None
+        for target, tfid in route["targets"].items():
+            assert server._lookup_fid_route(target, tfid) is None
+    finally:
+        if held:
+            server.start_trans(held["fid"], targets[1])
+        _close_socket_workers(server, clients, workers)
 
 
 def test_pause_and_start_trans_control_a_plain_transfer(tmp_path):

@@ -90,6 +90,10 @@ The parameters of the ``__init__`` method are as follows:
   directory these stores are written to when a connection drops.
   Upload JSON keys encode ``[receiver, fid]`` as compact JSON strings.
   Older bare upload-id snapshots are rejected and preserved, not migrated.
+  Forward routes are persisted once per upstream fid in ``relays``, with an
+  original sender and the full receiver/fid target mapping. Receiver-scoped
+  reverse indexes are rebuilt on load and never overwrite live routes. Older
+  server relay snapshots are rejected and preserved, not auto-migrated.
 - ``is_enable_real_time_network_speed``: A flag indicating whether the
   protocol's real-time network speed is measured. With ``True`` (the default)
   every send and receive — the control layer and every temporary connection,

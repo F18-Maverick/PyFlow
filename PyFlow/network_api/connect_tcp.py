@@ -413,8 +413,8 @@ def _peer_from_json(value):
     return None
 
 
-def _read_transfer_progress(path):
-    """Read progress without accepting ambiguous, pre-scope upload keys."""
+def _read_transfer_progress(path, *, server_routes=False):
+    """Read scoped progress and, for servers, canonical relay route snapshots."""
     with open(path, "r", encoding="utf-8") as source:
         data = json.load(source)
     if isinstance(data, dict):
@@ -425,6 +425,20 @@ def _read_transfer_progress(path):
                 and _peer_from_json(key[0]) is not None and isinstance(key[1], int)
             ):
                 raise ValueError("unsupported upload progress key; archive the old progress file")
+        if server_routes:
+            try:
+                for fid, route in (data.get("relays") or {}).items():
+                    int(fid)
+                    if _peer_from_json(route["originator"]) is None or not route["targets"]:
+                        raise ValueError
+                    seen = set()
+                    for target, child in route["targets"]:
+                        peer = _peer_from_json(target)
+                        if peer is None or peer in seen or not isinstance(child, int):
+                            raise ValueError
+                        seen.add(peer)
+            except (TypeError, ValueError, KeyError, AttributeError):
+                raise ValueError("unsupported server relay progress; archive the old file") from None
     return data
 
 
@@ -804,8 +818,8 @@ class _FidAllocator:
 
         Args:
             live_tables (tuple): Dicts whose keys are ids still in use —
-                ``file_upload_progress``, ``file_recv_progress`` and
-                ``_forward_resume_records``. Held by reference, never copied.
+                progress stores plus server routes/indexes or client forwarding
+                records. Held by reference, never copied.
         """
         self._epoch = int.from_bytes(os.urandom(4), "big") & 0x7FFFFFFF
         self._counter = 0
@@ -1828,9 +1842,9 @@ class TCP_Server_Base:  # TCP server class
         self._recv_speed_total = 0
         self._forward_relays = {}
         self._forward_relays_lock = threading.Lock()
-        # Relay records kept after their relay died, so a disconnected
-        # forward can be resumed: relay fid and every target tfid -> record.
-        self._forward_resume_records = {}
+        # One route per local upstream fid; downstream keys point to that fid.
+        self._fid_routes = {}
+        self._fid_route_index = {}  # (receiver, downstream fid) -> upstream fid
         # Resume requests that arrived before the originator reconnected:
         # originator (ip, port) -> [(fid, target (ip, port), offset), ...].
         self._pending_relay_resumes = {}
@@ -1838,7 +1852,8 @@ class TCP_Server_Base:  # TCP server class
         # Inbound ids use local integer keys; outbound ids use (receiver, fid).
         # Equal numbers cannot share progress, pause state or sockets.
         self._fid_alloc = _FidAllocator(
-            (self.file_upload_progress, self.file_recv_progress, self._forward_resume_records)
+            (self.file_upload_progress, self.file_recv_progress,
+             self._fid_routes, self._fid_route_index)
         )
         # Outbound-transfer pause switches (see `pause_trans`/`start_trans`):
         # (receiver, fid) -> bool; a pause never affects a different receiver.
@@ -2110,6 +2125,41 @@ class TCP_Server_Base:  # TCP server class
             # a transfer that ended must not be resumed on a later reconnect
             self._persist_transfer_progress()
 
+    def _register_fid_route(self, fid, originator, targets):
+        """Register one complete relay route without replacing any live owner."""
+        targets = {tuple(target): child for target, child in targets.items()}
+        route = {"originator": tuple(originator), "targets": targets}
+        with self._forward_relays_lock:
+            if not targets or fid in self._fid_routes or any(
+                (target, child) in self._fid_route_index for target, child in targets.items()
+            ):
+                return None
+            self._fid_routes[fid] = route
+            for target, child in targets.items():
+                self._fid_route_index[(target, child)] = fid
+        return route
+
+    def _lookup_fid_route(self, peer, fid):
+        """Find a local upstream or an exactly scoped downstream relay leg."""
+        with self._forward_relays_lock:
+            upstream = fid if peer is None else self._fid_route_index.get((tuple(peer), fid))
+            route = self._fid_routes.get(upstream)
+            return (upstream, route) if route is not None else None
+
+    def _drop_fid_route(self, fid, route):
+        """Drop only the owning route and its derived downstream indexes."""
+        with self._forward_relays_lock:
+            if self._fid_routes.get(fid) is not route:
+                return False
+            del self._fid_routes[fid]
+            for target, child in route["targets"].items():
+                key = (target, child)
+                if self._fid_route_index.get(key) == fid:
+                    del self._fid_route_index[key]
+        if os.path.exists(self.file_trans_progress_file):
+            self._persist_transfer_progress()
+        return True
+
     def _transfer_progress_snapshot(self):
         """Return the JSON-ready form of every transfer still in play.
 
@@ -2142,16 +2192,10 @@ class TCP_Server_Base:  # TCP server class
         with self._forward_relays_lock:
             relays = {
                 str(key): {
-                    "fid": record.get("fid"),
-                    "originator": list(record["originator"]) if record.get("originator") else None,
-                    "targets": [list(target) for target in record.get("targets") or []],
-                    "tfids": list(record.get("tfids") or []),
-                    "kind": record.get("kind"),
-                    "rel_dir": record.get("rel_dir"),
-                    "fname": record.get("fname"),
-                    "destination": record.get("destination"),
+                    "originator": list(route["originator"]),
+                    "targets": [[list(target), child] for target, child in route["targets"].items()],
                 }
-                for key, record in list(self._forward_resume_records.items())
+                for key, route in self._fid_routes.items()
             }
         return {
             "upload": entries(self.file_upload_progress),
@@ -2177,7 +2221,7 @@ class TCP_Server_Base:  # TCP server class
             tmp_path = f"{self.file_trans_progress_file}.{os.getpid()}.tmp"
             try:
                 if os.path.exists(self.file_trans_progress_file):
-                    _read_transfer_progress(self.file_trans_progress_file)
+                    _read_transfer_progress(self.file_trans_progress_file, server_routes=True)
                 with open(tmp_path, "w", encoding="utf-8") as f:
                     json.dump(snapshot, f, ensure_ascii=False, indent=2)
                 os.replace(tmp_path, self.file_trans_progress_file)
@@ -2201,7 +2245,7 @@ class TCP_Server_Base:  # TCP server class
         """
         with self._transfer_progress_lock:
             try:
-                data = _read_transfer_progress(self.file_trans_progress_file)
+                data = _read_transfer_progress(self.file_trans_progress_file, server_routes=True)
             except FileNotFoundError:
                 return 0
             except (OSError, ValueError) as e:
@@ -2210,22 +2254,13 @@ class TCP_Server_Base:  # TCP server class
             if not isinstance(data, dict):
                 return 0
             restored = 0
-            with self._forward_relays_lock:
-                for key_text, record in (data.get("relays") or {}).items():
-                    try:
-                        key = int(key_text)
-                    except (TypeError, ValueError):
-                        continue
-                    if not isinstance(record, dict):
-                        continue
-                    record = dict(record)
-                    record["originator"] = _peer_from_json(record.get("originator"))
-                    record["targets"] = [
-                        target
-                        for target in (_peer_from_json(t) for t in record.get("targets") or [])
-                        if target
-                    ]
-                    self._forward_resume_records.setdefault(key, record)
+            for key_text, record in (data.get("relays") or {}).items():
+                try:
+                    fid = int(key_text)
+                    targets = {tuple(target): child for target, child in record["targets"]}
+                except (TypeError, ValueError, KeyError):
+                    continue
+                if self._register_fid_route(fid, record["originator"], targets) is not None:
                     restored += 1
             for key, store in (
                 ("download", self.file_recv_progress),
@@ -2241,8 +2276,10 @@ class TCP_Server_Base:  # TCP server class
                         entry = [int(row[0]), int(row[1]), None, row[3], _peer_from_json(row[4])]
                     except (TypeError, ValueError, IndexError, KeyError):
                         continue
-                    if fid in store or (fid if key == "download" else fid[1]) in self._forward_resume_records:
-                        continue  # a live transfer owns it, or a relay drives it
+                    routed = self._lookup_fid_route(None if key == "download" else fid[0],
+                                                    fid if key == "download" else fid[1])
+                    if fid in store or routed is not None:
+                        continue  # preserve live progress and route-owned legs
                     store[fid] = entry
                     restored += 1
             return restored
@@ -5805,9 +5842,8 @@ class TCP_Server_Base:  # TCP server class
         for fid, entry in list(self.file_recv_progress.items()):
             if entry[4] is None or tuple(entry[4]) != peer:
                 continue  # not a download from this peer
-            with self._forward_relays_lock:
-                if fid in self._forward_resume_records:
-                    continue  # a forwarded transfer: its target drives the resume
+            if self._lookup_fid_route(None, fid) is not None:
+                continue  # a forwarded transfer: its target drives the resume
             with self._transfer_progress_lock:
                 if fid in self._active_transfer_fids:
                     continue  # a leg is already running for this fid
@@ -5894,24 +5930,18 @@ class TCP_Server_Base:  # TCP server class
             object: Result produced by the operation.
         """
         if fid_kind(fid) == FID_KIND_RELAY:
-            with self._forward_relays_lock:
-                record = self._forward_resume_records.get(fid)
-            if record is not None:
-                originator = record.get("originator")
-                targets = [tuple(target) for target in record.get("targets") or []]
-                if (
-                    originator is not None
-                    and tuple(client_address) in targets
-                    and tuple(originator) != tuple(client_address)
-                ):
-                    return self._route_forward_resume(record, client_address, offset)
+            found = self._lookup_fid_route(client_address, fid)
+            if found is not None:
+                upstream, route = found
+                if route["originator"] != tuple(client_address):
+                    return self._route_forward_resume(upstream, route, client_address, offset)
             self._log(
                 f"resume: relay id {format_fid(fid)} has no live record, ignored"
             )
             return False
         return self.resume_trans(client_address, fid, offset)
 
-    def _route_forward_resume(self, record, target_addr, offset):
+    def _route_forward_resume(self, originator_fid, route, target_addr, offset):
         """Ask a forwarded transfer's originator to continue it for one target.
 
         The server only relays: the record of the dead relay names the
@@ -5920,17 +5950,15 @@ class TCP_Server_Base:  # TCP server class
                 that is not back yet gets the request as soon as it reconnects.
 
         Args:
-            record (object): Value used by the operation.
+            originator_fid (int): Server-local upstream fid.
+            route (dict): Authoritative route naming the original sender.
             target_addr (object): Value used by the operation.
             offset (int): Value used by the operation.
 
         Returns:
             bool | object: Result produced by the operation.
         """
-        originator = record.get("originator")
-        originator_fid = record.get("fid")
-        if originator is None or originator_fid is None:
-            return False
+        originator = route["originator"]
         request = (
             f"{FORWARD_RESUME_LINE} {shlex.quote(repr(tuple(target_addr)))} "
             f"{originator_fid} {offset}"
@@ -6199,8 +6227,15 @@ class TCP_Server_Base:  # TCP server class
         # One relay consumes 1 + N ids: the originator's leg and one per target.
         # All are relay kind, so a resume request can be routed without probing
         # the progress stores first.
+        targets = list(dict.fromkeys(tuple(target) for target in targets))
         fid = self._fid_alloc.alloc(FID_KIND_RELAY)
         tfids = [self._fid_alloc.alloc(FID_KIND_RELAY, receiver=target) for target in targets]
+        route = self._register_fid_route(fid, originator_addr, dict(zip(targets, tfids)))
+        if route is None:
+            self._forward_notify_error(forwarder_sock, "relay route is already in use")
+            return
+        if os.path.exists(self.file_trans_progress_file):
+            self._persist_transfer_progress()
         relay = {
             "cond": threading.Condition(),
             "writer_pause": {target: False for target in targets},
@@ -6209,21 +6244,6 @@ class TCP_Server_Base:  # TCP server class
         with self._forward_relays_lock:
             for key in relay_keys:
                 self._forward_relays[key] = relay
-        record = {
-            "fid": fid,
-            "originator": [originator_addr[0], originator_addr[1]],
-            "targets": [[target[0], target[1]] for target in targets],
-            "tfids": list(tfids),
-            "kind": kind,
-            "rel_dir": rel_dir,
-            "fname": fname,
-            "destination": destination_path,
-        }
-        # the record survives the relay so an interrupted forward can be
-        # routed back to its originator (see `_route_forward_resume`)
-        with self._forward_relays_lock:
-            for key in [fid] + tfids:
-                self._forward_resume_records[key] = record
         try:
             # ask every target to open a receive transfer socket; the
             # destination directory (if any) goes before the target id so
@@ -6296,11 +6316,9 @@ class TCP_Server_Base:  # TCP server class
             up_client.close()
             up_sock.close()
             self.pfree(sport)
-            if delivered >= len(target_conns):
-                # every target got the whole item: nothing is left to resume
-                with self._forward_relays_lock:
-                    for key in [fid] + tfids:
-                        self._forward_resume_records.pop(key, None)
+            if delivered == len(targets):
+                # Setup failures remain in the accepted target set.
+                self._drop_fid_route(fid, route)
         finally:
             with self._forward_relays_lock:
                 for key in relay_keys:

@@ -727,6 +727,25 @@ The temporary connections of a transfer are resumed after a disconnect:
   is asked for through the server, which routes ``/forward_resume`` to the
   originating client so it re-forwards just the missing part.
 
+On the server, each upstream fid has one authoritative route containing its
+original sender and the full accepted ``receiver -> downstream fid`` mapping.
+A derived ``(receiver, downstream fid) -> upstream fid`` index locates that
+same route; no file paths, progress values or directory metadata are copied.
+Live relay buffers and pause conditions remain separate runtime state.
+
+The server's ``relays`` snapshot writes one row per upstream fid, containing
+``originator`` and ``targets: [[receiver, fid], ...]``. Loading rebuilds the
+index without replacing live upstream or downstream owners. Unsupported old
+server relay snapshots are rejected and preserved during writes and shutdown;
+archive them before persisting new routes. Client relay snapshots are unchanged.
+
+Targets accepted after reachability filtering remain in that route even when
+their listener connection or start handshake fails. The server removes the
+whole route only when all accepted targets acknowledge the transfer, not merely
+all connections that successfully opened. This does not yet change the source's
+upload ACK or its record lifetime: final-target completion notification remains
+a separately approved protocol change.
+
 The server requests a peer's interrupted downloads when that peer reconnects,
 and a client with ``is_auto_reconnect=True`` does the same after every connect,
 so no separate call is needed. Legs the previous session left behind are closed
