@@ -647,10 +647,13 @@ Both classes record every running file transfer:
 - ``file_recv_progress`` — the files being received (downloads);
 - ``file_upload_progress`` — the files being sent (uploads).
 
-The keys are the transfers' fids: the transfer id the sender stamps on the
-transfer command (``/file <path> <id>``), which also identifies the relay leg
-of a forwarded file. The protocol-internal public-key push is not tracked.
-Each value is a five-item list:
+Downloads use integer fid keys. Uploads use ``(receiver, fid)`` keys, where
+receiver is the actual next-hop control endpoint, not the logical target of a
+forward. Client uploads always use ``((host, port), fid)``; server uploads use
+the receiving client's control address. Equal numeric fids from different
+receivers do not share progress, pauses, sockets or port announcements.
+The protocol-internal public-key push is not tracked. Each value remains a
+five-item list:
 
 - ``[0]``: bytes transferred so far;
 - ``[1]``: total size of the file, in bytes;
@@ -687,10 +690,13 @@ running transfer.
 Pausing, Reconnecting and Resuming Transfers
 --------------------------------------------
 
-An outbound transfer can be held and released at any time with the
-``pause_trans(fid)`` and ``start_trans(fid)`` methods (both classes), or from
-the peer with the ``/pause_trans <fid>`` and ``/start_trans <fid>`` lines:
-``pause_trans_remote(peer, fid)``/``start_trans_remote(peer, fid)`` send them.
+An outbound transfer can be held and released with the server methods
+``pause_trans(fid, peer)`` / ``start_trans(fid, peer)``; the receiving peer is
+required, including when arming a transfer that has not started. The client
+methods default to its connected server and reject a different explicit peer.
+Remote ``/pause_trans <fid>`` / ``/start_trans <fid>`` lines use their requesting
+control peer as the scope; ``pause_trans_remote(peer, fid)`` /
+``start_trans_remote(peer, fid)`` send them. Their wire format is unchanged.
 The leg stops before its next chunk and stays open; a leg that is paused
 keeps its socket, so nothing is torn down. Every outbound transfer honours
 its own fid — a plain upload as much as the upload leg of a forwarded file —
@@ -703,6 +709,11 @@ The temporary connections of a transfer are resumed after a disconnect:
   ``.Flow/client_file_trans_progress.json`` (the ``file_trans_progress_file``
   attribute) — every upload, every download and, on the server, the relay
   records a disconnected forward is re-driven from;
+- upload entries use compact JSON strings containing ``[receiver, fid]`` as
+  keys, while download keys remain decimal fid strings. Values remain five
+  items. A snapshot with unsupported bare upload-id keys is logged and left
+  untouched, including during shutdown; archive it before enabling persistence
+  of new transfers. Automatic migration is not provided;
 - an interrupted transfer keeps its progress entry and its partial file
   instead of dropping them, so the file on disk is exactly the state to
   continue from;
@@ -806,10 +817,10 @@ file to disk.
         control_socket=None, crypto=None, fid=None, peer=None, resume_offset=0)
 
 Low-level send function that connects to the receiver and transmits the file.
-``fid`` keys the leg in ``file_upload_progress`` and is what
-``/pause_trans`` / ``/start_trans`` addresses; ``peer`` is the transfer's
-original receiver and ``resume_offset`` continues an interrupted file from
-the byte the receiver already holds.
+``(receiver, fid)`` keys the upload, with receiver taken from ``peer`` or,
+for an untracked logical peer, the control endpoint (transfer listener when
+no control socket exists). Pause/start use this same receiver scope;
+``resume_offset`` continues from the byte the receiver already holds.
 
 ### Client-Side File Transfer APIs
 

@@ -260,14 +260,15 @@ def _channel_ready(client):
         return client.client_socket in client._encrypted_sockets
 
 
-def _transfer_rows(progress):
-    """JSON rows for one progress store (``fid -> [transferred, total, speed, path, peer]``).
+def _transfer_rows(progress, *, uploading):
+    """JSON rows for uploads keyed by ``(receiver, fid)`` or downloads by ``fid``.
 
     Returns:
         list[dict]: One row per running transfer, ordered by file name.
     """
     rows = []
-    for fid, entry in list(progress.items()):
+    for key, entry in list(progress.items()):
+        fid = key[1] if uploading else key
         rows.append(
             {
                 "fid": fid,
@@ -1585,8 +1586,8 @@ class ClientWebApp:
             "speed_enabled": bool(client.is_enable_real_time_network_speed),
             "upload_network_speed": client.upload_network_speed,
             "recv_network_speed": client.recv_network_speed,
-            "uploading": _transfer_rows(client.file_upload_progress),
-            "downloading": _transfer_rows(client.file_recv_progress),
+            "uploading": _transfer_rows(client.file_upload_progress, uploading=True),
+            "downloading": _transfer_rows(client.file_recv_progress, uploading=False),
         }
 
     # ------------------------------------------------------------------- run

@@ -212,14 +212,15 @@ FTP_GET_OK_COMMAND = "/ftp_get_ok"
 FTP_ERROR_COMMAND = "/ftp_error"
 
 
-def _transfer_rows(progress):
-    """JSON rows for one progress store (``fid -> [transferred, total, speed, path, peer]``).
+def _transfer_rows(progress, *, uploading):
+    """JSON rows for uploads keyed by ``(receiver, fid)`` or downloads by ``fid``.
 
     Returns:
         list[dict]: One row per running transfer, ordered by file name.
     """
     rows = []
-    for fid, entry in list(progress.items()):
+    for key, entry in list(progress.items()):
+        fid = key[1] if uploading else key
         rows.append(
             {
                 "fid": fid,
@@ -683,8 +684,8 @@ class ServerWebApp:
             "speed_enabled": bool(server.is_enable_real_time_network_speed),
             "upload_network_speed": server.upload_network_speed,
             "recv_network_speed": server.recv_network_speed,
-            "uploading": _transfer_rows(server.file_upload_progress),
-            "downloading": _transfer_rows(server.file_recv_progress),
+            "uploading": _transfer_rows(server.file_upload_progress, uploading=True),
+            "downloading": _transfer_rows(server.file_recv_progress, uploading=False),
         }
 
     def _client_list_for(self, addr):

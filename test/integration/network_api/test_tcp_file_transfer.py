@@ -846,6 +846,7 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
     payload = os.urandom(300 * 1024)
     src.write_bytes(payload)
     fid = 4242
+    upload_key = ((client.host, client.port), fid)
 
     server_sock = server.clients[client.client_socket.getsockname()]["socket"]
     client_id = "%s:%s" % client.client_socket.getsockname()
@@ -867,11 +868,11 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
         assert wait_until(lambda: server.file_recv_progress.get(fid), timeout=10), (
             "the receive side did not register its progress"
         )
-        assert wait_until(lambda: client.file_upload_progress.get(fid), timeout=10), (
+        assert wait_until(lambda: client.file_upload_progress.get(upload_key), timeout=10), (
             "the upload side did not register its progress"
         )
         recv_entry = server.file_recv_progress[fid]
-        upload_entry = client.file_upload_progress[fid]
+        upload_entry = client.file_upload_progress[upload_key]
         assert recv_entry[:2] == [0, len(payload)]
         assert upload_entry[:2] == [0, len(payload)]
         # the local path of each side, and the transfer's original peer
@@ -895,7 +896,7 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
     assert recv_entry[2] > 0 and upload_entry[2] > 0
     # ... and were dropped when the transfer ended
     assert fid not in server.file_recv_progress
-    assert fid not in client.file_upload_progress
+    assert upload_key not in client.file_upload_progress
     # the protocol-wide measurement covers the control layer as well
     assert server.recv_network_speed > 0
     assert client.upload_network_speed > 0
@@ -904,14 +905,16 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
     """The reverse direction is tracked too: the server uploads, the client
     downloads, and both progress stores follow the same fid.
 
-    The server-side pause uses the same public API as the client's: any
-    outbound transfer is held by the fid it runs under.
+    The server-side pause uses the same public API as the client's, with an
+    explicit receiver peer to identify the outbound transfer's namespace.
     """
     server, client, recv_dir = pair
     src = tmp_path / "download.bin"
     payload = os.urandom(300 * 1024)
     src.write_bytes(payload)
     fid = 5150
+    receiver = client.client_socket.getsockname()
+    upload_key = (receiver, fid)
 
     # the client side of the transfer: it believes the server sent a
     # "/file" command, so it opens a temporary server and advertises the
@@ -922,11 +925,11 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
     server_port = _wait_port(server)
     assert server_port is not None
 
-    assert server.pause_trans(fid) is False  # armed before the leg exists
+    assert server.pause_trans(fid, receiver) is False  # armed before the leg exists
     sender = threading.Thread(
         target=server.file_transfer_mode,
         args=(str(src), "127.0.0.1", server_port, 0),
-        kwargs={"fid": fid, "peer": client.client_socket.getsockname()},
+        kwargs={"fid": fid, "peer": receiver},
         daemon=True,
     )
     sender.start()
@@ -934,11 +937,11 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
         assert wait_until(lambda: client.file_recv_progress.get(fid), timeout=10), (
             "the client did not register its download progress"
         )
-        assert wait_until(lambda: server.file_upload_progress.get(fid), timeout=10), (
+        assert wait_until(lambda: server.file_upload_progress.get(upload_key), timeout=10), (
             "the server did not register its upload progress"
         )
         recv_entry = client.file_recv_progress[fid]
-        upload_entry = server.file_upload_progress[fid]
+        upload_entry = server.file_upload_progress[upload_key]
         assert recv_entry[:2] == [0, len(payload)]
         assert upload_entry[:2] == [0, len(payload)]
         assert recv_entry[3] == str(recv_dir / "download.bin")
@@ -946,7 +949,7 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
         assert recv_entry[4] == (server.host, server.port)
         assert upload_entry[4] == client.client_socket.getsockname()
     finally:
-        server.start_trans(fid)
+        server.start_trans(fid, receiver)
         sender.join(timeout=15)
     assert not sender.is_alive(), "the download did not finish"
 
@@ -959,7 +962,7 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
     assert recv_entry[0] == len(payload) and upload_entry[0] == len(payload)
     assert recv_entry[2] > 0 and upload_entry[2] > 0
     assert fid not in client.file_recv_progress
-    assert fid not in server.file_upload_progress
+    assert upload_key not in server.file_upload_progress
     assert client.recv_network_speed > 0
     assert server.upload_network_speed > 0
 

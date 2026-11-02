@@ -83,9 +83,12 @@ def _start_client(tmp_path, server, name="client", recv_dir=None, **kwargs):
 def test_progress_entries_round_trip_through_the_progress_file(tmp_path):
     """Both stores are written with their peer tuples and read back intact."""
     server = _start_server(tmp_path)
+    receiver = ("127.0.0.1", 6000)
+    upload_key = (receiver, 9)
+    upload_json_key = json.dumps(upload_key, separators=(",", ":"))
     try:
         server.file_recv_progress[7] = [128, 1024, None, "/tmp/part.bin", ("127.0.0.1", 5000)]
-        server.file_upload_progress[9] = [64, 512, None, "/tmp/src.bin", ("127.0.0.1", 6000)]
+        server.file_upload_progress[upload_key] = [64, 512, None, "/tmp/src.bin", receiver]
         server._persist_transfer_progress()
 
         with open(server.file_trans_progress_file, "r", encoding="utf-8") as f:
@@ -97,7 +100,9 @@ def test_progress_entries_round_trip_through_the_progress_file(tmp_path):
             "/tmp/part.bin",
             ["127.0.0.1", 5000],
         ]
-        assert written["upload"]["9"] == [64, 512, None, "/tmp/src.bin", ["127.0.0.1", 6000]]
+        assert written["upload"][upload_json_key] == [
+            64, 512, None, "/tmp/src.bin", list(receiver)
+        ]
 
         server.file_recv_progress.clear()
         server.file_upload_progress.clear()
@@ -109,7 +114,7 @@ def test_progress_entries_round_trip_through_the_progress_file(tmp_path):
             "/tmp/part.bin",
             ("127.0.0.1", 5000),
         ]
-        assert server.file_upload_progress[9] == [
+        assert server.file_upload_progress[upload_key] == [
             64,
             512,
             None,
@@ -123,8 +128,306 @@ def test_progress_entries_round_trip_through_the_progress_file(tmp_path):
         server.file_recv_progress[7] = [999, 1024, None, "/tmp/live.bin", None]
         assert server._load_transfer_progress() == 1
         assert server.file_recv_progress[7] == [999, 1024, None, "/tmp/live.bin", None]
-        assert server.file_upload_progress[9][0] == 64  # noqa: PLR2004
+        assert server.file_upload_progress[upload_key][0] == 64  # noqa: PLR2004
     finally:
+        server.stop()
+
+
+def test_legacy_upload_progress_is_rejected_without_overwriting_snapshot(tmp_path):
+    """Neither TCP class may silently migrate or replace a bare-fid upload file."""
+    legacy_bytes = (
+        b'{\n   "download": {},\n'
+        b'   "upload": {"9": [64, 512, null, "/tmp/src.bin", ["127.0.0.1", 6000]]},\n'
+        b'   "relays": {}\n}\n\n'
+    )
+    for name, tcp_class, persist_first in (
+        ("server_load_first", TCP_Server_Base, False),
+        ("server_persist_first", TCP_Server_Base, True),
+        ("client_load_first", TCP_Client_Base, False),
+        ("client_persist_first", TCP_Client_Base, True),
+    ):
+        # Keep connection/resume workers out of this on-disk preservation case.
+        instance = tcp_class(
+            host="127.0.0.1",
+            port=free_port(),
+            is_extend_command=True,
+            is_input_command_in_console=False,
+            is_enable_encrypto=False,
+        )
+        _isolate(instance, tmp_path, f"legacy_{name}")
+        progress_path = tmp_path / f"legacy_{name}_file_trans_progress.json"
+        messages = []
+        real_log = instance._log
+
+        def record(message):
+            messages.append(message)
+            real_log(message)
+
+        instance._log = record
+        try:
+            progress_path.write_bytes(legacy_bytes)
+            if persist_first:
+                instance._persist_transfer_progress()
+                assert progress_path.read_bytes() == legacy_bytes
+                assert any(
+                    "unsupported" in message.lower() and "upload" in message.lower()
+                    for message in messages
+                ), f"{name} did not log rejection before its first persistence"
+            assert instance._load_transfer_progress() == 0
+            assert instance.file_upload_progress == {}
+            assert instance.file_recv_progress == {}
+            assert any(
+                "unsupported" in message.lower() and "upload" in message.lower()
+                for message in messages
+            ), f"{name} did not log rejection of the unsupported upload key"
+            assert progress_path.read_bytes() == legacy_bytes
+
+            # Persisting an empty current state must not erase rejected history.
+            instance._persist_transfer_progress()
+            assert progress_path.read_bytes() == legacy_bytes
+
+            # A new scoped transfer is not permission to overwrite that history
+            # either; ordinary shutdown persists the current stores once more.
+            receiver = (
+                (instance.host, instance.port)
+                if tcp_class is TCP_Client_Base
+                else ("127.0.0.1", 6000)
+            )
+            upload_key = (receiver, 9)
+            instance.file_upload_progress[upload_key] = [
+                0, 1024, None, str(tmp_path / f"{name}_new.bin"), receiver
+            ]
+            instance._persist_transfer_progress()
+            assert progress_path.read_bytes() == legacy_bytes
+        finally:
+            if tcp_class is TCP_Server_Base:
+                instance.stop()
+            else:
+                instance.close()
+        assert progress_path.read_bytes() == legacy_bytes
+
+
+def test_equal_server_upload_fids_are_isolated_by_receiver(tmp_path):
+    """Pausing and clearing one real receiver leaves its equal-id sibling intact."""
+    server = _start_server(tmp_path)
+    clients = []
+    senders = []
+    receivers = []
+    fid = 602
+    results = {}
+    try:
+        sources = []
+        payloads = []
+        outputs = []
+        for index in range(2):
+            recv_dir = tmp_path / f"receiver_{index}"
+            recv_dir.mkdir()
+            client = _start_client(
+                tmp_path, server, name=f"client_{index}", recv_dir=recv_dir
+            )
+            clients.append(client)
+            receiver = client.client_socket.getsockname()
+            receivers.append(receiver)
+            assert wait_until(lambda: receiver in server.clients)
+            src = tmp_path / f"payload_{index}.bin"
+            payload = os.urandom((index + 1) * 128 * 1024 + 17)
+            src.write_bytes(payload)
+            sources.append(src)
+            payloads.append(payload)
+            outputs.append(recv_dir / src.name)
+            assert server.pause_trans(fid, receiver) is False
+            client.file_transfer_client_recv_server_start_thread(
+                "cid", client.client_socket, f"/file {shlex.quote(str(src))} {fid}"
+            )
+
+        assert wait_until(lambda: len(server.file_server_port_list) == 2, timeout=10)
+        # Both announcements have the same fid; select in reverse receiver
+        # order so neither cache ordering nor a fid-only lookup can mask it.
+        ports = {
+            receiver: server._wait_transfer_server_port(fid, receiver, timeout=10)
+            for receiver in reversed(receivers)
+        }
+        assert all(port is not None for port in ports.values())
+
+        def send(receiver, src):
+            port, stamp = ports[receiver]
+            results[receiver] = server.file_transfer_mode(
+                str(src), receiver[0], port, 0,
+                control_socket=server.clients[receiver]["socket"],
+                crypto=stamp, fid=fid, peer=receiver,
+            )
+
+        for receiver, src in zip(receivers, sources):
+            sender = threading.Thread(target=send, args=(receiver, src), daemon=True)
+            senders.append(sender)
+            sender.start()
+
+        keys = [(receiver, fid) for receiver in receivers]
+        assert wait_until(
+            lambda: all(key in server.file_upload_progress for key in keys), timeout=15
+        ), "the equal-id uploads did not register independently"
+        assert wait_until(
+            lambda: all(fid in client.file_recv_progress for client in clients), timeout=10
+        )
+        rows = [server.file_upload_progress[key] for key in keys]
+        assert rows[0] is not rows[1]
+        for row, src, payload, receiver in zip(rows, sources, payloads, receivers):
+            assert row == [0, len(payload), None, str(src), receiver]
+        sockets = [server._active_transfer_sockets[key] for key in keys]
+        assert sockets[0] is not sockets[1]
+        assert all(key in server._active_transfer_fids for key in keys)
+        assert server.pause_trans(fid, receivers[0]) is True
+
+        assert server._drop_stale_transfers(receivers[0]) == 1
+        assert sockets[0].fileno() == -1
+        assert keys[0] not in server._active_transfer_sockets
+        assert keys[0] not in server._active_transfer_fids
+        assert server._active_transfer_sockets[keys[1]] is sockets[1]
+        assert keys[1] in server._active_transfer_fids
+
+        # Release only the dead leg's waiter and let its real cleanup finish.
+        # If start/pause or cleanup is fid-only, the other leg now sends or dies.
+        server.start_trans(fid, receivers[0])
+        senders[0].join(timeout=15)
+        assert not senders[0].is_alive(), "the cleared upload did not stop"
+        assert results[receivers[0]] is False
+        assert server.file_upload_progress[keys[1]] is rows[1]
+        assert rows[1][0] == 0
+        assert clients[1].file_recv_progress[fid][0] == 0
+        assert server._transfer_pause[keys[1]] is True
+        assert server._active_transfer_sockets[keys[1]] is sockets[1]
+        assert senders[1].is_alive()
+
+        assert server.start_trans(fid, receivers[1]) is True
+        senders[1].join(timeout=20)
+        assert not senders[1].is_alive(), "the unaffected receiver did not finish"
+        assert results[receivers[1]] is True
+        assert outputs[1].read_bytes() == payloads[1]
+        assert rows[1][0] == len(payloads[1])
+        assert wait_until(lambda: fid not in clients[1].file_recv_progress, timeout=10)
+        assert keys[1] not in server.file_upload_progress
+        assert keys[1] not in server._active_transfer_sockets
+        assert keys[1] not in server._active_transfer_fids
+    finally:
+        for receiver in receivers:
+            server.start_trans(fid, receiver)
+        for client in clients:
+            client.close()
+        server.stop()
+        for sender in senders:
+            sender.join(timeout=10)
+
+
+def test_equal_upload_fids_persist_and_reload_per_receiver(tmp_path):
+    """Two real client addresses keep separate compact JSON keys and five fields."""
+    server = _start_server(tmp_path)
+    clients = []
+    try:
+        for index in range(2):
+            clients.append(_start_client(tmp_path, server, name=f"client_{index}"))
+        receivers = [client.client_socket.getsockname() for client in clients]
+        assert receivers[0] != receivers[1]
+        fid = 604
+        keys = [(receiver, fid) for receiver in receivers]
+        rows = [
+            [128, 1024, None, str(tmp_path / "first.bin"), receivers[0]],
+            [256, 2048, None, str(tmp_path / "second.bin"), receivers[1]],
+        ]
+        server.file_upload_progress.update(zip(keys, rows))
+        server._persist_transfer_progress()
+        with open(server.file_trans_progress_file, "r", encoding="utf-8") as f:
+            written = json.load(f)
+        json_keys = [json.dumps(key, separators=(",", ":")) for key in keys]
+        assert set(written["upload"]) == set(json_keys)
+        for json_key, row in zip(json_keys, rows):
+            assert written["upload"][json_key] == row[:4] + [list(row[4])]
+
+        server.file_upload_progress.clear()
+        assert server._load_transfer_progress() == 2
+        assert server.file_upload_progress == dict(zip(keys, rows))
+        live = [512, 1024, None, str(tmp_path / "live.bin"), receivers[0]]
+        server.file_upload_progress[keys[0]] = live
+        del server.file_upload_progress[keys[1]]
+        assert server._load_transfer_progress() == 1
+        assert server.file_upload_progress[keys[0]] is live
+        assert server.file_upload_progress[keys[1]] == rows[1]
+    finally:
+        for client in clients:
+            client.close()
+        server.stop()
+
+
+def test_equal_inbound_and_outbound_fids_cleanup_only_their_own_sockets(tmp_path):
+    """Receive cleanup cannot close an equal-id upload, including a client forward."""
+    server = _start_server(tmp_path)
+    client = None
+    other = None
+    sockets = []
+    try:
+        client = _start_client(tmp_path, server)
+        other = _start_client(tmp_path, server, name="other")
+        client_peer = client.client_socket.getsockname()
+        server_peer = (client.host, client.port)
+        forwarded_peer = other.client_socket.getsockname()
+        cases = (
+            (server, client_peer, forwarded_peer, forwarded_peer),
+            (client, forwarded_peer, server_peer, forwarded_peer),
+        )
+        for instance, inbound_peer, receiver, logical_peer in cases:
+            inbound, inbound_remote = socket.socketpair()
+            outbound, outbound_remote = socket.socketpair()
+            sockets.extend((inbound, inbound_remote, outbound, outbound_remote))
+            inbound_remote.settimeout(2)
+            outbound_remote.settimeout(2)
+            fid = 606
+            upload_key = (receiver, fid)
+            recv_entry = instance._file_progress_start(
+                instance.file_recv_progress, fid, 1024,
+                str(tmp_path / "received.bin"), peer=inbound_peer,
+            )
+            upload_entry = instance._file_progress_start(
+                instance.file_upload_progress, upload_key, 2048,
+                str(tmp_path / "source.bin"), peer=logical_peer,
+            )
+            instance._register_transfer_socket(fid, inbound)
+            instance._register_transfer_socket(upload_key, outbound)
+            assert instance.pause_trans(fid, receiver) is True
+            assert len(recv_entry) == len(upload_entry) == 5
+            assert upload_entry[4] == logical_peer
+
+            assert instance._drop_stale_transfers(inbound_peer) == 1
+            assert inbound_remote.recv(1) == b""
+            assert fid not in instance._active_transfer_sockets
+            assert fid not in instance._active_transfer_fids
+            instance._file_progress_finish(instance.file_recv_progress, fid, recv_entry)
+            instance._release_transfer_socket(fid, inbound)
+            assert fid not in instance.file_recv_progress
+            assert instance.file_upload_progress[upload_key] is upload_entry
+            assert upload_key in instance._active_transfer_fids
+            assert instance._active_transfer_sockets[upload_key] is outbound
+            assert instance._transfer_pause[upload_key] is True
+            outbound.sendall(b"x")
+            assert outbound_remote.recv(1) == b"x"
+
+            # The client's receiver is its server even when row[4] names the
+            # logical forward target; cleanup must use the scoped namespace.
+            assert instance._drop_stale_transfers(receiver) == 1
+            assert outbound_remote.recv(1) == b""
+            assert upload_key not in instance._active_transfer_sockets
+            assert upload_key not in instance._active_transfer_fids
+            instance._file_progress_finish(
+                instance.file_upload_progress, upload_key, upload_entry
+            )
+            instance._release_transfer_socket(upload_key, outbound)
+            assert upload_key not in instance.file_upload_progress
+            instance.start_trans(fid, receiver)
+    finally:
+        for sock in sockets:
+            sock.close()
+        if other is not None:
+            other.close()
+        if client is not None:
+            client.close()
         server.stop()
 
 
@@ -176,8 +479,9 @@ def test_paused_transfer_is_persisted_when_the_connection_drops(tmp_path):
 
         with open(client.file_trans_progress_file, "r", encoding="utf-8") as f:
             client_state = json.load(f)
-        assert client_state["upload"][str(fid)][3] == str(src)
-        assert client_state["upload"][str(fid)][4] == [server.host, server.port]
+        upload_json_key = json.dumps(((client.host, client.port), fid), separators=(",", ":"))
+        assert client_state["upload"][upload_json_key][3] == str(src)
+        assert client_state["upload"][upload_json_key][4] == [server.host, server.port]
 
         assert wait_until(
             lambda: os.path.exists(server.file_trans_progress_file), timeout=10
@@ -286,7 +590,10 @@ def test_upload_resumes_after_a_reconnect(tmp_path):
         assert wait_until(got, timeout=30), "the resumed upload did not finish"
         assert partial.read_bytes() == payload
         assert wait_until(lambda: fid not in server.file_recv_progress, timeout=10)
-        assert wait_until(lambda: fid not in client.file_upload_progress, timeout=10)
+        assert wait_until(
+            lambda: ((client.host, client.port), fid) not in client.file_upload_progress,
+            timeout=10,
+        )
         client.start_trans(fid)
         sender.join(timeout=10)
     finally:
@@ -323,7 +630,8 @@ def test_download_resumes_from_the_partial_file(tmp_path):
             str(partial),
             (server.host, server.port),
         ]
-        server.file_upload_progress[fid] = [
+        upload_key = (client.client_socket.getsockname(), fid)
+        server.file_upload_progress[upload_key] = [
             0,
             len(payload),
             None,
@@ -339,7 +647,7 @@ def test_download_resumes_from_the_partial_file(tmp_path):
         assert wait_until(got, timeout=20), "the resumed download did not finish"
         assert partial.read_bytes() == payload
         assert wait_until(lambda: fid not in client.file_recv_progress, timeout=10)
-        assert wait_until(lambda: fid not in server.file_upload_progress, timeout=10)
+        assert wait_until(lambda: upload_key not in server.file_upload_progress, timeout=10)
     finally:
         if client is not None:
             client.close()
@@ -384,7 +692,8 @@ def test_forwarded_file_resumes_through_the_server(tmp_path):
             str(partial),
             forwarder_addr,
         ]
-        forwarder.file_upload_progress[fid] = [0, len(payload), None, str(src), target_addr]
+        upload_key = ((forwarder.host, forwarder.port), fid)
+        forwarder.file_upload_progress[upload_key] = [0, len(payload), None, str(src), target_addr]
         forwarder._forward_resume_records[fid] = {
             "fid": fid,
             "kind": "file",
@@ -415,7 +724,7 @@ def test_forwarded_file_resumes_through_the_server(tmp_path):
         assert wait_until(got, timeout=20), "the forwarded resume did not finish"
         assert partial.read_bytes() == payload
         assert wait_until(lambda: tfid not in target.file_recv_progress, timeout=10)
-        assert wait_until(lambda: fid not in forwarder.file_upload_progress, timeout=10)
+        assert wait_until(lambda: upload_key not in forwarder.file_upload_progress, timeout=10)
     finally:
         if forwarder is not None:
             forwarder.close()
@@ -457,7 +766,8 @@ def test_pause_and_start_trans_control_a_plain_transfer(tmp_path):
             daemon=True,
         )
         sender.start()
-        assert wait_until(lambda: client.file_upload_progress.get(fid)), (
+        upload_key = ((client.host, client.port), fid)
+        assert wait_until(lambda: client.file_upload_progress.get(upload_key)), (
             "the uploader never registered the transfer"
         )
         time.sleep(0.5)
@@ -531,7 +841,8 @@ def test_download_resumes_over_the_encrypted_channel(tmp_path):
             str(partial),
             (server.host, server.port),
         ]
-        server.file_upload_progress[fid] = [
+        upload_key = (client.client_socket.getsockname(), fid)
+        server.file_upload_progress[upload_key] = [
             0,
             len(payload),
             None,
@@ -545,7 +856,7 @@ def test_download_resumes_over_the_encrypted_channel(tmp_path):
         )
         assert partial.read_bytes() == payload
         assert wait_until(lambda: fid not in client.file_recv_progress, timeout=10)
-        assert wait_until(lambda: fid not in server.file_upload_progress, timeout=10)
+        assert wait_until(lambda: upload_key not in server.file_upload_progress, timeout=10)
     finally:
         if client is not None:
             client.close()
@@ -619,7 +930,8 @@ def test_resume_with_a_different_total_is_refused_and_keeps_the_partial_file(tmp
             str(partial),
             (server.host, server.port),
         ]
-        server.file_upload_progress[fid] = [
+        upload_key = (client.client_socket.getsockname(), fid)
+        server.file_upload_progress[upload_key] = [
             0,
             len(payload),
             None,
@@ -685,21 +997,20 @@ def test_download_resumes_after_connect_without_a_manual_call(tmp_path):
         )
 
         partial = recv_dir / src.name
-        # the server stamps the leg's fid from its own allocator, and the pause
-        # switch is keyed by fid: predict the id the next leg will take and arm
-        # the pause before it starts, so the fault lands while the transfer is
-        # still incomplete
+        # Predict the next server-allocated id and arm this receiver's pause
+        # before the leg starts, so the fault lands while it is incomplete.
         alloc = server._fid_alloc
         with alloc._lock:
             fid = ((alloc._counter + 1) << 32) | (alloc._epoch << 1)
-        assert server.pause_trans(fid) is False, "the leg was already running"
+        upload_key = (client_addr, fid)
+        assert server.pause_trans(fid, client_addr) is False, "the leg was already running"
 
         # the server pushes the file: the client opens its listener and the
         # server connects from a send leg
         server.file_transfer_server_recv_client_start_thread(
             "/file {} {}".format(shlex.quote(str(src)), shlex.quote(repr(client_addr)))
         )
-        assert wait_until(lambda: server.file_upload_progress.get(fid), timeout=30), (
+        assert wait_until(lambda: server.file_upload_progress.get(upload_key), timeout=30), (
             "the server never registered the outgoing transfer"
         )
         # the leg is parked before its first chunk, so the receiver holds an
@@ -713,7 +1024,7 @@ def test_download_resumes_after_connect_without_a_manual_call(tmp_path):
 
         # a fault drops the control connection from the server side; the parked
         # leg cannot finish the file, so the partial stays on disk
-        dead_leg = server._active_transfer_sockets.get(fid)
+        dead_leg = server._active_transfer_sockets.get(upload_key)
         assert dead_leg is not None, "the send leg was not registered"
         dead_socket = client.client_socket
         server_sock = server.clients[client_addr]["socket"]
@@ -726,9 +1037,9 @@ def test_download_resumes_after_connect_without_a_manual_call(tmp_path):
         # for the remainder; only the swept leg may be released, or it would
         # write from its own offset into the file the resumed leg continues
         assert wait_until(
-            lambda: server._active_transfer_sockets.get(fid) is not dead_leg, timeout=20
+            lambda: server._active_transfer_sockets.get(upload_key) is not dead_leg, timeout=20
         ), "the dead session's leg was never cleared"
-        server.start_trans(fid)  # the leg was parked by the test, not by the protocol
+        server.start_trans(fid, client_addr)  # the test, not the protocol, parked this leg
         assert wait_until(lambda: server.clients.get(client_addr) is not None, timeout=20), (
             "the client did not come back"
         )

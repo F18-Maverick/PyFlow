@@ -75,13 +75,16 @@ The parameters of the ``__init__`` method are as follows:
   running file transfer is tracked in ``file_recv_progress`` (downloads) and
   ``file_upload_progress`` (uploads). Each entry is a
   ``[transferred bytes, total bytes, current speed, local file path, peer]``
-  list keyed by the transfer's fid — ``peer`` is the ``(ip, port)`` of the
-  transfer's original sender (downloads) or receiver (uploads), never the
-  relay of a forwarded transfer. The entry is removed once the transfer ends;
+  list. Downloads use integer fid keys; uploads use ``((host, port), fid)``
+  keys, scoped to the connected server even for forwarded uploads.
+  The value's ``peer`` remains the original sender (downloads) or logical
+  receiver (uploads), not the relay. The entry is removed once the transfer ends;
   an interrupted one keeps its entry (and its partial file) so the reconnect
   logic can resume it.
   ``file_trans_progress_file`` names the file under the protocol's ``.Flow``
   directory these stores are written to when the connection drops.
+  Upload JSON keys encode ``[receiver, fid]`` as compact JSON strings.
+  Older bare upload-id snapshots are rejected and preserved, not migrated.
 - ``is_enable_real_time_network_speed``: A flag indicating whether the
   protocol's real-time network speed is measured. With ``True`` (the default)
   every send and receive — the control layer and every temporary connection,
@@ -767,10 +770,11 @@ And the low-level send mode function is:
         self, filename, server_address, server_port, client_port,
         control_socket=None, crypto=None, fid=None, peer=None, resume_offset=0)
 
-``fid`` keys the leg in ``file_upload_progress`` and is what
-``/pause_trans`` / ``/start_trans`` (or `pause_trans` / `start_trans`)
-addresses; ``peer`` is the transfer's original receiver and ``resume_offset``
-continues an interrupted file from the byte the receiver already holds.
+``((host, port), fid)`` keys the leg in ``file_upload_progress``. The
+``/pause_trans`` / ``/start_trans`` lines and local methods address that server
+scope; an explicit local ``peer`` must be the server, not the logical target.
+The value's ``peer`` is the original receiver; ``resume_offset`` continues
+the interrupted file from the byte the receiver already holds.
 
 We recommend that for client-to-server file transfers, 
 you use the console commands (``/file``, ``/file_folder``, 

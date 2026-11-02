@@ -80,13 +80,16 @@ The parameters of the ``__init__`` method are as follows:
   running file transfer is tracked in ``file_recv_progress`` (downloads) and
   ``file_upload_progress`` (uploads). Each entry is a
   ``[transferred bytes, total bytes, current speed, local file path, peer]``
-  list keyed by the transfer's fid — ``peer`` is the ``(ip, port)`` of the
-  transfer's original sender (downloads) or receiver (uploads), never the
-  relay of a forwarded transfer. The entry is removed once the transfer ends;
+  list. Downloads use integer fid keys; uploads use ``(receiver, fid)`` keys,
+  where receiver is the actual control-channel peer's ``(ip, port)``.
+  The value's ``peer`` remains the original sender (downloads) or logical
+  receiver (uploads), not a forwarding relay. The entry is removed once the transfer ends;
   an interrupted one keeps its entry (and its partial file) so the reconnect
   logic can resume it.
   ``file_trans_progress_file`` names the file under the protocol's ``.Flow``
   directory these stores are written to when a connection drops.
+  Upload JSON keys encode ``[receiver, fid]`` as compact JSON strings.
+  Older bare upload-id snapshots are rejected and preserved, not migrated.
 - ``is_enable_real_time_network_speed``: A flag indicating whether the
   protocol's real-time network speed is measured. With ``True`` (the default)
   every send and receive — the control layer and every temporary connection,
@@ -623,8 +626,9 @@ Built-in client commands include:
   internal handshake messages of the encrypted channel.
 - ``/forward_item``, ``/forward_send_msg``, ``/pause_trans``, ``/start_trans``:
   internal forwarding/transfer-control messages. ``/pause_trans <fid>`` and
-  ``/start_trans <fid>`` hold and release the outbound transfer with that fid
-  (`pause_trans`/`start_trans` are the same switch as a public API).
+  ``/start_trans <fid>`` hold and release the outbound transfer to the requesting
+  peer. Local calls require ``pause_trans(fid, peer)`` / ``start_trans(fid, peer)``;
+  the receiver scope is required even when arming a future transfer.
 - ``/resume_trans <fid> <offset>`` and ``/forward_resume <addr> <fid> <offset>``:
   internal transfer-reconnect messages: the receiver asks the sender (or, for
   a forwarded transfer, the originator) to continue the file from the bytes

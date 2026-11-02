@@ -85,6 +85,37 @@ def _logged_in_flask_client(web):
     return flask_client
 
 
+@pytest.mark.parametrize("backend", ["server", "client"])
+def test_transfers_keep_receiver_scoped_uploads_separate(backend, request, tmp_path):
+    """Equal numeric fids in different receiver scopes survive Flask serialization."""
+    if backend == "server":
+        app = request.getfixturevalue("web")
+        tcp = app.server
+        flask_client = _logged_in_flask_client(app)
+    else:
+        app, flask_client = request.getfixturevalue("client_web")
+        tcp = app.client
+
+    first_receiver = ("127.0.0.1", 6000)
+    second_receiver = ("127.0.0.1", 6001)
+    tcp.file_upload_progress[(second_receiver, 9)] = [
+        3072, 8192, 512.5, str(tmp_path / "second" / "zeta.bin"), second_receiver
+    ]
+    tcp.file_upload_progress[(first_receiver, 9)] = [
+        512, 2048, 1024.0, str(tmp_path / "first" / "alpha.bin"), first_receiver
+    ]
+
+    response = flask_client.get("/api/transfers")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["uploading"] == [
+        {"fid": 9, "name": "alpha.bin", "transferred": 512, "total": 2048, "speed": 1024.0},
+        {"fid": 9, "name": "zeta.bin", "transferred": 3072, "total": 8192, "speed": 512.5},
+    ]
+    assert body["downloading"] == []
+
+
 # ---- server backend ----------------------------------------------------------
 
 
@@ -94,8 +125,9 @@ def test_server_transfers_report_both_directions(web):
     A row carries the fid, the file name, the bytes and the live speed; the two
     speed attributes ride along for the topbar readout.
     """
-    web.server.file_recv_progress[7] = [512, 2048, 1024.0, "alpha.bin"]
-    web.server.file_upload_progress[9] = [10, 100, None, "beta.bin"]
+    peer = ("127.0.0.1", 40000)
+    web.server.file_recv_progress[7] = [512, 2048, 1024.0, "alpha.bin", peer]
+    web.server.file_upload_progress[(peer, 9)] = [10, 100, None, "beta.bin", peer]
     web.server.upload_network_speed = 2048.0
     web.server.recv_network_speed = 4096.0
 
@@ -116,8 +148,9 @@ def test_server_transfers_report_both_directions(web):
 
 def test_server_rows_are_ordered_by_name(web):
     """Concurrent transfers of a folder list in a stable, readable order."""
-    web.server.file_upload_progress[2] = [0, 10, None, "zeta.bin"]
-    web.server.file_upload_progress[1] = [0, 10, None, "alpha.bin"]
+    peer = ("127.0.0.1", 40000)
+    web.server.file_upload_progress[(peer, 2)] = [0, 10, None, "zeta.bin", peer]
+    web.server.file_upload_progress[(peer, 1)] = [0, 10, None, "alpha.bin", peer]
 
     body = _logged_in_flask_client(web).get("/api/transfers").get_json()
 
@@ -149,17 +182,24 @@ def test_server_transfers_are_empty_while_the_tcp_server_is_down(web):
 # ---- client backend ----------------------------------------------------------
 
 
-def test_client_transfers_report_the_running_transfer(client_web):
-    """The client page reads its own instance's download row and speed."""
+def test_client_transfers_report_both_directions(client_web):
+    """Forwarded uploads retain their local fid; download rows stay unchanged."""
     app, flask_client = client_web
-    app.client.file_recv_progress[11] = [1024, 4096, 2048.0, "pack.bin"]
+    receiver = (app.client.host, app.client.port)
+    logical_target = ("127.0.0.1", 40001)
+    app.client.file_recv_progress[11] = [1024, 4096, 2048.0, "pack.bin", receiver]
+    app.client.file_upload_progress[(receiver, 9)] = [
+        10, 100, None, "beta.bin", logical_target
+    ]
     app.client.recv_network_speed = 2048.0
 
     body = flask_client.get("/api/transfers").get_json()
 
     assert body["progress_enabled"] is True
     assert body["speed_enabled"] is True
-    assert body["uploading"] == []
+    assert body["uploading"] == [
+        {"fid": 9, "name": "beta.bin", "transferred": 10, "total": 100, "speed": None}
+    ]
     assert body["downloading"] == [
         {"fid": 11, "name": "pack.bin", "transferred": 1024, "total": 4096, "speed": 2048.0}
     ]
