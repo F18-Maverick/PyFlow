@@ -632,6 +632,98 @@ def test_upload_resumes_after_a_reconnect(tmp_path):
         server.stop()
 
 
+@pytest.mark.parametrize("kind", ["file", "folder"])
+@pytest.mark.parametrize("ack_failure", ["false", "exception"])
+def test_server_ack_failure_keeps_received_file_until_eof_confirmation(
+    tmp_path, monkeypatch, kind, ack_failure
+):
+    """Failed final ACKs preserve the original receive row, even on EOF retry."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    try:
+        recv_dir = tmp_path / "server_recv"
+        recv_dir.mkdir()
+        server.file_transfer_dir = str(recv_dir)
+        client = _start_client(tmp_path, server)
+        clients.append(client)
+        peer = client.client_socket.getsockname()
+        assert wait_until(lambda: peer in server.clients)
+        control = server.clients[peer]["socket"]
+        client_id = "%s:%s" % peer
+        src = tmp_path / "ack_failure.bin"
+        payload = os.urandom(64 * 1024 + 37)
+        src.write_bytes(payload)
+        fid = 606
+        output = recv_dir / "bundle/nested" / src.name if kind == "folder" else recv_dir / src.name
+        upload_key = ((server.host, server.port), fid)
+        attempts = []
+        outcomes = []
+        real_send = server.send_message
+        real_transfer = client.file_transfer_mode
+
+        def fail_final_ack(sock, message, is_send_raw=False):
+            if message == server.server_received_file_data_sign:
+                attempts.append(sock)
+                if len(attempts) <= 2:
+                    if ack_failure == "exception":
+                        raise ConnectionError("injected Server final ACK write failure")
+                    return False
+            return real_send(sock, message, is_send_raw=is_send_raw)
+
+        def observe_transfer(*args, **kwargs):
+            result = real_transfer(*args, **kwargs)
+            outcomes.append((kwargs.get("fid"), kwargs.get("resume_offset", 0), result))
+            return result
+
+        monkeypatch.setattr(server, "send_message", fail_final_ack)
+        monkeypatch.setattr(client, "file_transfer_mode", observe_transfer)
+        if kind == "folder":
+            server.file_folder_transfer_server_recv_server_start_thread(
+                f"/file_folder bundle/nested {src.name} {fid}", client_id, control
+            )
+        else:
+            server.file_transfer_server_recv_server_start_thread(
+                client_id, control, f"/file {shlex.quote(str(src))} {fid}"
+            )
+        port_info = client._wait_transfer_server_port(fid, (server.host, server.port), timeout=10)
+        assert port_info is not None
+        port, stamp = port_info
+        assert client.file_transfer_mode(
+            str(src), server.host, port, 0, control_socket=client.client_socket,
+            crypto=stamp, fid=fid, peer=(server.host, server.port),
+        ) is False
+        for attempt in range(2):
+            assert wait_until(lambda: fid not in server._active_transfer_sockets)
+            assert len(attempts) == attempt + 1
+            assert output.read_bytes() == payload
+            assert server.file_recv_progress[fid] == [
+                len(payload), len(payload), None, str(output), peer
+            ]
+            assert client.file_upload_progress[upload_key][0:2] == [len(payload), len(payload)]
+            with open(server.file_trans_progress_file, encoding="utf-8") as stream:
+                snapshot = json.load(stream)
+            assert snapshot["download"][str(fid)] == [
+                len(payload), len(payload), None, str(output), list(peer)
+            ]
+            assert server._request_resumes(peer) == 1
+            assert wait_until(lambda: len(outcomes) == attempt + 2, timeout=15)
+        assert outcomes == [
+            (fid, 0, False), (fid, len(payload), False), (fid, len(payload), True)
+        ]
+        assert len(attempts) == 3
+        assert wait_until(lambda: fid not in server._active_transfer_sockets)
+        assert fid not in server.file_recv_progress
+        assert upload_key not in client.file_upload_progress
+        with open(server.file_trans_progress_file, encoding="utf-8") as stream:
+            assert json.load(stream)["download"] == {}
+        assert output.read_bytes() == payload
+        if kind == "folder":
+            assert not (recv_dir / src.name).exists()
+    finally:
+        _close_socket_workers(server, clients, workers)
+
+
 def test_download_resumes_from_the_partial_file(tmp_path):
     """The receiver drives a resume of a file the server was sending.
 
@@ -682,6 +774,96 @@ def test_download_resumes_from_the_partial_file(tmp_path):
         if client is not None:
             client.close()
         server.stop()
+
+
+@pytest.mark.parametrize("kind", ["file", "folder"])
+@pytest.mark.parametrize("offset", [0, 4096], ids=["initial", "resumed"])
+def test_server_final_error_keeps_upload_until_successful_resume(
+    tmp_path, monkeypatch, kind, offset
+):
+    """A real error sign must preserve a direct upload, including an EOF replay."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    try:
+        recv_dir = tmp_path / "receiver"
+        recv_dir.mkdir()
+        client = _start_client(tmp_path, server, recv_dir=recv_dir)
+        clients.append(client)
+        receiver = client.client_socket.getsockname()
+        assert wait_until(lambda: receiver in server.clients)
+        src = tmp_path / "rejected.bin"
+        payload = os.urandom(64 * 1024 + 37)
+        src.write_bytes(payload)
+        fid = 604
+        key = (receiver, fid)
+        output = recv_dir / "bundle/nested" / src.name if kind == "folder" else recv_dir / src.name
+        if offset:
+            output.parent.mkdir(parents=True, exist_ok=True)
+            output.write_bytes(payload[:offset])
+            client.file_recv_progress[fid] = [
+                offset, len(payload), None, str(output), (server.host, server.port)
+            ]
+            server.file_upload_progress[key] = [
+                offset, len(payload), None, str(src), receiver
+            ]
+        header_seen = threading.Event()
+        rejected = threading.Event()
+        real_receive = server.receive_message
+        real_send = client.send_message
+
+        def observe_header(sock, *args, **kwargs):
+            data = real_receive(sock, *args, **kwargs)
+            if data.strip() == server.server_received_file_header_sign.encode("utf-8"):
+                header_seen.set()
+            return data
+
+        def reject_final_ack(sock, message, is_send_raw=False):
+            if message == client.server_received_file_data_sign and not rejected.is_set():
+                # Separate the two signs even on an unframed TCP stream.
+                assert header_seen.wait(timeout=10)
+                assert real_send(sock, client.error_sign)
+                rejected.set()
+                raise ConnectionError("injected receiver rejection after the file body")
+            return real_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(server, "receive_message", observe_header)
+        monkeypatch.setattr(client, "send_message", reject_final_ack)
+        if kind == "folder":
+            client.file_folder_transfer_client_recv_server_start_thread(
+                f"/file_folder bundle/nested {src.name} {fid}", "cid", client.client_socket
+            )
+        else:
+            client.file_transfer_client_recv_server_start_thread(
+                "cid", client.client_socket, f"/file {shlex.quote(str(src))} {fid}"
+            )
+        port, stamp = server._wait_transfer_server_port(fid, receiver, timeout=10)
+        result = server.file_transfer_mode(
+            str(src), receiver[0], port, 0,
+            control_socket=server.clients[receiver]["socket"], crypto=stamp,
+            fid=fid, peer=receiver, resume_offset=offset,
+        )
+        assert rejected.is_set()
+        assert result is False
+        assert output.read_bytes() == payload
+        assert server.file_upload_progress[key] == [
+            len(payload), len(payload), None, str(src), receiver
+        ]
+        with open(server.file_trans_progress_file, encoding="utf-8") as stream:
+            snapshot = json.load(stream)
+        json_key = json.dumps(key, separators=(",", ":"))
+        assert snapshot["upload"][json_key] == [
+            len(payload), len(payload), None, str(src), list(receiver)
+        ]
+        assert wait_until(lambda: fid not in client._active_transfer_fids)
+        assert client._request_resumes() == 1
+        assert wait_until(lambda: key not in server.file_upload_progress, timeout=15)
+        assert wait_until(lambda: fid not in client.file_recv_progress)
+        assert output.read_bytes() == payload
+        if kind == "folder":
+            assert not (recv_dir / src.name).exists()
+    finally:
+        _close_socket_workers(server, clients, workers)
 
 
 def test_forwarded_file_resumes_through_the_server(tmp_path, monkeypatch):

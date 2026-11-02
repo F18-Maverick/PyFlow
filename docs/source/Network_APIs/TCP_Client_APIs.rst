@@ -687,6 +687,9 @@ Supported console commands (user-typed) include:
 - ``/multiple_file <file1> <file2> ...``: sends multiple files to the server, one thread per file, limited to ``max_thread_num`` at a time.
 - ``/file_folder <folder_path>``: sends an entire folder to the server, recursively.
 - ``/multiple_file_folder <folder1> <folder2> ...``: sends multiple folders to the server.
+- ``/transfers``: prints this client's local memory rows and separate persisted
+  transfer snapshot as JSON. It is handled locally, never sent to the server,
+  and accepts no arguments.
 - ``/forward_file``, ``/forward_folder``, ``/forward_send_msg``: the
   forwarding extension's console commands.
 - Any other non-empty line is sent as-is to the server — the same path chat
@@ -918,6 +921,7 @@ is as follows:
     - `/file`
     - `/multiple_file`
     - `/file_folder`
+    - `/transfers`
     - `/multiple_file_folder`
 
 See Also

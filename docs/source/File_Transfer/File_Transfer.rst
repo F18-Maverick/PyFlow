@@ -673,6 +673,23 @@ forwarded upload can therefore show all bytes sent while still pending. With
 ``is_enable_file_transfer_progress_bar`` set to ``False`` no progress entry is
 recorded, and automatic partial-file recovery remains unsupported.
 
+Direct senders return ``True`` only after the receiver's final data ACK.
+An error sign at startup returns ``False`` before sending file metadata;
+an error sign after the body also returns ``False``, even when every byte
+has been sent. A tracked upload with a peer retains and persists its
+``(receiver, fid)`` row after failure. Startup rejection creates no new row
+and leaves an existing interrupted row intact. The server and client share
+this rule for files, folder items and resumed legs. ACK wait limits and the
+uncertainty of an ACK lost after a successful TCP write are unchanged.
+
+Both receivers also retain and persist a tracked receive row with a peer
+when writing the final ACK returns ``False`` or raises, even if the complete
+file is already on disk. The original fid, full path, source and total remain
+available for EOF confirmation; a failed confirmation keeps the row again,
+and a successful ACK write removes it. Local receive notifications, events
+and public-key TOFU registration still precede that ACK. Key pushes remain
+untracked, and disabling progress recording does not create recovery rows.
+
 ``is_enable_real_time_network_speed`` (``True`` by default) measures the
 protocol's current traffic — the control layer and every temporary
 connection, file transfers included — into ``upload_network_speed`` and
@@ -684,6 +701,38 @@ The web tool (``transfer_web``) reads these stores: both backends serve
 ``/api/transfers`` (the rows plus the two speed attributes), and the shared
 frontend renders the live speed readout in the topbar and one progress bar per
 running transfer.
+
+Local progress inspection
+-------------------------
+
+Both ``TCP_Server_Base`` and ``TCP_Client_Base`` expose the same read-only
+method:
+
+.. code-block:: python
+
+    get_transfer_progress(*, include_persisted=True) -> dict
+
+The result contains ``progress_enabled`` and ``speed_enabled`` flags, a
+``memory`` section, and a separate ``persisted`` section. Memory rows include
+the integer ``fid``, the complete upload ``receiver`` scope when applicable,
+the logical ``peer``, path/name, byte counts, speed, local ``active`` and
+``socket_registered`` observations, and upload ``paused`` state. Uploads with
+the same numeric fid but different receivers remain separate. Server relay
+rows show ``originator``, all accepted ``targets`` and ``completed`` targets;
+client rows show its existing forwarding-recovery metadata.
+
+By default, ``persisted`` reads the instance's existing progress JSON without
+loading it into memory or changing it. Its ``status`` is ``ok``, ``missing``,
+``error`` or ``not_requested``; disk rows set runtime-only fields to ``None``.
+``include_persisted=False`` skips file I/O. The method never starts a
+connection, resumes a transfer, writes state, reads file contents or infers a
+zombie/completion status. A local interactive console can print the same
+snapshot with ``/transfers``; unsupported arguments print usage locally.
+
+The server and client console commands are local-only. The existing Web
+``/api/transfers`` response remains the smaller live-progress contract and is
+not replaced by this diagnostic snapshot.
+
 
 .. _transfer-pause-and-reconnect:
 

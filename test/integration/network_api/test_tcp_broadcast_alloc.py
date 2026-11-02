@@ -231,6 +231,30 @@ def test_console_input_status_clients_stop(server, monkeypatch, capsys):
     server.stop.assert_called_once()
 
 
+def test_transfers_console_prints_local_progress_without_logging(server, monkeypatch, capsys):
+    import json
+
+    server.is_print_log = False
+    server.file_recv_progress[22] = [9, 9, None, "/recv/完整.bin", ("127.0.0.1", 50001)]
+    server.running = True
+    lines = iter(["/TrAnSfErS", "/transfers --unknown"])
+
+    def input_line():
+        try:
+            return next(lines)
+        except StopIteration:
+            server.running = False
+            return ""
+
+    monkeypatch.setattr("builtins.input", input_line)
+    server.console_input()
+    output = capsys.readouterr().out
+    view, end = json.JSONDecoder().raw_decode(output)
+    row, = view["memory"]["downloading"]
+    assert row["path"] == "/recv/完整.bin" and row["transferred"] == row["total"] == 9
+    assert "/transfers" in output[end:]
+
+
 def test_console_input_help_and_unknown(server, monkeypatch, capsys):
     server.running = True
     monkeypatch.setattr(server, "stop", MagicMock())

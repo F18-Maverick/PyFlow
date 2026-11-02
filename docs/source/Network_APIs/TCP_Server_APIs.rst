@@ -834,6 +834,8 @@ Supported console commands include:
 - ``/file_folder <folder_path> <(ip, port)> [destination_file_path]``: sends a folder from the server to a specific client.
 - ``/multiple_file_multiple_client <file1> <file2> ... <(ip, port)1> <(ip, port)2> ...``: sends multiple files to multiple clients. Tokens are classified as targets when they are wrapped in parentheses and as files otherwise, so files and targets may be interleaved.
 - ``/diff_multiple_file_diff_multiple_client <file1> <file2> ... <(ip, port)1> <(ip, port)2> ...``: sends the files that precede a group of targets to that group. A new group starts whenever a file token follows one or more target tuples; an optional trailing destination path (a token that is not a tuple) is accepted and passed on.
+- ``/transfers``: prints the local memory rows and the separate persisted
+  transfer snapshot as JSON; it does not send a network command or change state.
 - ``/help``: prints a help summary of console commands.
 
 The forward commands (``/forward_send_msg``, ``/forward_file``,
@@ -1100,6 +1102,7 @@ are as follows:
     - `multiple_file_multiple_client_transfer_server_recv_client_start`
     - `diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start`
     - `file_transfer_mode` / `file_transfer_mode_recv`: one transfer leg
+    - `get_transfer_progress`
     - `forward_item_to` / `forward_message_to`: single forward destinations
 
 5.1. The transfer pause and reconnect APIs (see
@@ -1117,6 +1120,7 @@ are as follows:
     - `/file_folder`
     - `/multiple_file_multiple_client`
     - `/diff_multiple_file_diff_multiple_client`
+    - `/transfers`
     - `/help`
 
 See Also

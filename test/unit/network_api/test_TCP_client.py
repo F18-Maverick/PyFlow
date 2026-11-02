@@ -69,6 +69,35 @@ def test_console_custom_command_matches_the_whole_first_token(monkeypatch):
     assert "/mycmd hello" not in sent  # not forwarded to the server as chat
 
 
+def test_transfers_console_prints_local_records_with_logging_disabled(tmp_path, monkeypatch, capsys):
+    import json
+
+    client = _client(is_print_log=False, is_enable_encrypto=False)
+    for attr in ("messages_log_file", "events_log_file", "sent_messages_log_file",
+                 "sent_events_log_file", "file_trans_progress_file"):
+        setattr(client, attr, str(tmp_path / f"{attr}.json"))
+    client.file_recv_progress[22] = [9, 9, None, "/recv/完整.bin", ("127.0.0.1", 65004)]
+    client.running = True
+    lines = iter(["  /TrAnSfErS  ", '/transfers "'])
+
+    def input_line():
+        try:
+            return next(lines)
+        except StopIteration:
+            client.running = False
+            return ""
+
+    monkeypatch.setattr("builtins.input", input_line)
+    client.interactive_mode()
+    output = capsys.readouterr().out
+    view, end = json.JSONDecoder().raw_decode(output)
+    row, = view["memory"]["downloading"]
+    assert row["path"] == "/recv/完整.bin" and row["transferred"] == row["total"] == 9
+    assert view["persisted"]["status"] == "missing"
+    # Unsupported arguments, including an unmatched quote, remain local usage.
+    assert "/transfers" in output[end:]
+
+
 def test_multiple_file_keeps_the_semaphore_slot_during_the_transfer(monkeypatch):
     """Cap concurrent ``/multiple_file`` sends at ``max_thread_num``.
 

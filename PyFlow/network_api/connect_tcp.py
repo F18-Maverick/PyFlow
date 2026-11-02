@@ -447,6 +447,83 @@ def _read_transfer_progress(path, *, server_routes=False):
     return data
 
 
+def _transfer_progress_view(snapshot, *, speed_enabled, runtime=None):
+    """Render an existing progress snapshot without merging scoped identities."""
+    if not isinstance(snapshot, dict):
+        raise ValueError("transfer progress must be an object")
+    view = {"uploading": [], "downloading": [], "relays": []}
+    for source, destination in (("upload", "uploading"), ("download", "downloading")):
+        entries = snapshot.get(source, {})
+        if not isinstance(entries, dict):
+            raise ValueError(f"{source} progress must be an object")
+        for text, entry in entries.items():
+            if not isinstance(entry, list) or len(entry) != 5:
+                raise ValueError("transfer progress rows must have five fields")
+            if source == "upload":
+                receiver, fid = json.loads(text)
+                receiver = _peer_from_json(receiver)
+                if receiver is None or not isinstance(fid, int):
+                    raise ValueError("unsupported upload progress key")
+                key = (receiver, fid)
+            else:
+                receiver, fid = None, int(text)
+                key = fid
+            peer = _peer_from_json(entry[4]) if entry[4] is not None else None
+            if entry[4] is not None and peer is None:
+                raise ValueError("invalid progress peer")
+            view[destination].append({
+                "fid": fid,
+                "receiver": list(receiver) if receiver is not None else None,
+                "peer": list(peer) if peer is not None else None,
+                "name": os.path.basename(entry[3]), "path": entry[3],
+                "transferred": int(entry[0]), "total": int(entry[1]),
+                "speed": entry[2] if speed_enabled else None,
+                "active": key in runtime[0] if runtime is not None else None,
+                "socket_registered": key in runtime[1] if runtime is not None else None,
+                "paused": runtime[2].get(key, False)
+                if runtime is not None and receiver is not None else None,
+            })
+    relays = snapshot.get("relays", {})
+    if not isinstance(relays, dict) or any(not isinstance(row, dict) for row in relays.values()):
+        raise ValueError("relay progress must contain record objects")
+    view["relays"] = [{**row, "fid": int(fid)} for fid, row in relays.items()]
+    return view
+
+
+def _get_transfer_progress(instance, *, include_persisted, server_routes=False):
+    """Observe local stores and an optional file; never load or persist state."""
+    with instance._transfer_progress_lock:
+        snapshot = instance._transfer_progress_snapshot()
+        active = set(instance._active_transfer_fids)
+        sockets = set(instance._active_transfer_sockets)
+    with instance._transfer_pause_cond:
+        paused = dict(instance._transfer_pause)
+    speed_enabled = bool(instance.is_enable_real_time_network_speed)
+    persisted = {
+        "path": os.fspath(instance.file_trans_progress_file),
+        "status": "not_requested", "snapshot": None, "error": None,
+    }
+    result = {
+        "progress_enabled": bool(instance.is_enable_file_transfer_progress_bar),
+        "speed_enabled": speed_enabled,
+        "memory": _transfer_progress_view(
+            snapshot, speed_enabled=speed_enabled, runtime=(active, sockets, paused)
+        ),
+        "persisted": persisted,
+    }
+    if include_persisted:
+        try:
+            data = _read_transfer_progress(persisted["path"], server_routes=server_routes)
+            persisted["snapshot"] = _transfer_progress_view(data, speed_enabled=speed_enabled)
+            persisted["status"] = "ok"
+        except FileNotFoundError:
+            persisted["status"] = "missing"
+        except (OSError, ValueError, TypeError, KeyError, IndexError, AttributeError) as exc:
+            persisted["status"] = "error"
+            persisted["error"] = str(exc)
+    return result
+
+
 def _resume_offset_for(entry):
     """Bytes of an interrupted transfer's file already on the receiver's disk.
 
@@ -2230,6 +2307,20 @@ class TCP_Server_Base:  # TCP server class
             "download": entries(self.file_recv_progress),
             "relays": relays,
         }
+
+    def get_transfer_progress(self, *, include_persisted=True) -> dict:
+        """Return a detached, local-only view of all retained transfer records.
+
+        Args:
+            include_persisted (bool): Read this instance's progress file too.
+                Defaults to True; never loads it into the live stores.
+
+        Returns:
+            dict: Flags, scoped memory rows and a separate persisted snapshot
+                with its path, read status and error. Disk runtime flags are
+                unknown (None). No completion or zombie status is inferred.
+        """
+        return _get_transfer_progress(self, include_persisted=include_persisted, server_routes=True)
 
     def _persist_transfer_progress(self):
         """Write the transfer stores to the protocol's ``.Flow`` directory.
@@ -5164,7 +5255,6 @@ class TCP_Server_Base:  # TCP server class
                         remaining -= len(chunk)
                         self._file_progress_update(progress, len(chunk), is_upload=False)
                     f.truncate()  # a longer partial file drops its stale tail
-                finished_ok = True
                 # TOFU first: the ack is only a notification, and a failed
                 # ack send must not skip the key registration (the server
                 # would never announce readiness and the handshake hangs)
@@ -5188,7 +5278,9 @@ class TCP_Server_Base:  # TCP server class
                         except OSError:
                             pass
                 try:
-                    self.send_message(client_file_socket, self.server_received_file_data_sign)
+                    finished_ok = bool(self.send_message(
+                        client_file_socket, self.server_received_file_data_sign
+                    ))
                 except Exception:
                     self._log_exc()
                 close_socket()
@@ -5736,7 +5828,7 @@ class TCP_Server_Base:  # TCP server class
                     break
                 if file_receive_data_from_server == self.error_sign:
                     close_socket()
-                    break
+                    return False
                 if not file_running:
                     # peer closed the file connection: the receive thread
                     # already cleaned up; nothing more to wait for
@@ -5785,7 +5877,7 @@ class TCP_Server_Base:  # TCP server class
                     break
                 if file_receive_data_from_server == self.error_sign:
                     close_socket()
-                    break
+                    return False
                 if not file_running:
                     # peer closed the file connection: the receive thread
                     # already cleaned up; nothing more to wait for
@@ -6645,7 +6737,7 @@ class TCP_Server_Base:  # TCP server class
         """Read console commands until the server stops.
 
         Handles ``/stop``, ``/status``, ``/clients``, ``/send_msg``, ``/file``,
-        ``/file_folder``, ``/multiple_file_multiple_client``,
+        ``/file_folder``, ``/multiple_file_multiple_client``, ``/transfers``,
         ``/diff_multiple_file_diff_multiple_client`` and ``/help``; the forward
         commands are client-only and are refused here. Any other name goes to the
         handlers registered with ``where_to_run="client"``. Ctrl-C and EOF stop the
@@ -6659,6 +6751,11 @@ class TCP_Server_Base:  # TCP server class
                     self._log("shutting down...")
                     self.running = False
                     self.stop()
+                elif deal_cmd.lower().split(maxsplit=1)[:1] == ["/transfers"]:
+                    if deal_cmd.lower() != "/transfers":
+                        print("Usage: /transfers")
+                    else:
+                        print(json.dumps(self.get_transfer_progress(), ensure_ascii=False, indent=2))
                 elif deal_cmd.lower() == "/status":
                     self._log(f"current connection count: {len(self.clients)}")
                     self._log(f"server running: {self.running}")
@@ -6693,6 +6790,7 @@ class TCP_Server_Base:  # TCP server class
                         "/stop - stop the server\n",
                         "\t/status - display server status\n",
                         "\t/clients - display connected clients\n",
+                        "\t/transfers - inspect local memory and persisted transfer progress\n",
                         "\t/send_msg <message1> <message2> ... ",
                         "<client_id1> <client_id2> ... <messageN>",
                         " ... <client_idN> ... - send message or ",
@@ -7762,6 +7860,20 @@ class TCP_Client_Base:  # TCP client class
             "download": entries(self.file_recv_progress),
             "relays": relays,
         }
+
+    def get_transfer_progress(self, *, include_persisted=True) -> dict:
+        """Return a detached, local-only view of all retained transfer records.
+
+        Args:
+            include_persisted (bool): Read this instance's progress file too.
+                Defaults to True; never loads it into the live stores.
+
+        Returns:
+            dict: Flags, scoped memory rows and a separate persisted snapshot
+                with its path, read status and error. Disk runtime flags are
+                unknown (None). No completion or zombie status is inferred.
+        """
+        return _get_transfer_progress(self, include_persisted=include_persisted)
 
     def _persist_transfer_progress(self):
         """Write the transfer stores to the protocol's ``.Flow`` directory.
@@ -9577,8 +9689,8 @@ class TCP_Client_Base:  # TCP client class
 
         ``/quit`` closes the connection; ``/send_msg``, ``/file``,
         ``/multiple_file``, ``/file_folder``, ``/multiple_file_folder``,
-        ``/forward_file``, ``/forward_folder`` and ``/forward_send_msg`` are handled
-        locally; any other name goes to the handlers registered with
+        ``/forward_file``, ``/forward_folder``, ``/forward_send_msg`` and
+        ``/transfers`` are handled locally; other names go to handlers registered with
         ``where_to_run="client"``, and anything left is sent to the server as it
         stands. Ctrl-C and EOF close the connection.
         """
@@ -9594,6 +9706,13 @@ class TCP_Client_Base:  # TCP client class
                             self.send_message(self.client_socket, "/quit")
                             time.sleep(0.5)
                             break
+                        elif message.split(maxsplit=1)[0].lower() == "/transfers":
+                            if message.strip().lower() != "/transfers":
+                                print("Usage: /transfers")
+                            else:
+                                print(json.dumps(
+                                    self.get_transfer_progress(), ensure_ascii=False, indent=2
+                                ))
                         elif shlex.split(message.lower())[0] == "/send_msg":
                             self.send_message_to_server(message)
                         elif shlex.split(message.lower())[0] == "/file":

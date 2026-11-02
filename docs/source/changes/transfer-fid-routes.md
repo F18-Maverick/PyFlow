@@ -1,4 +1,4 @@
-# Change note: server FID routes and final target completion (atomic changes 2–3)
+# Change note: server FID routes and transfer completion (2–3, O1–O2)
 
 > Atomic changes 1 and 2 were reviewed and committed by the user. Atomic change
 > 3 adds per-target completion and stable-ID replay as approved, and awaits
@@ -120,3 +120,59 @@ Keep regressions for zero ACK, partial ACK, EOF confirmation, file/folder replay
 duplicate requests, lost final ACK, completed-state reload and malformed-state
 file preservation. Runtime evidence and explicit exclusions are recorded in
 `docs/plans/transfer-fid-and-resume-unify-atomic-3-report.md`.
+
+## Follow-up O1: direct Server error signs never complete an upload
+
+- Human approval covers O1 only, before the separately gated O2–O4 follow-ups.
+- `TCP_Server_Base.file_transfer_mode` now returns `False` immediately on an
+  error sign in both the startup wait and the final-data-ACK wait, rather than
+  falling through after a `break`. Only the existing final ACK permits success.
+- Existing owning-entry cleanup persists a resumable failed upload under its
+  complete `(receiver, fid)` key. Startup failure creates no progress row and
+  does not discard a row retained from an earlier attempt. No protocol marker,
+  public signature, JSON shape, retry or timeout is added.
+- A real-socket regression covers file/folder items at offsets zero and 4096,
+  receiver rejection after the body, durable retention and successful original-ID
+  EOF confirmation. Independent runtime checks also exercise startup rejection,
+  successful transfers and framed/encrypted failure and recovery.
+- Server receive-ACK retention (O2), progress inspection (O3) and `delete_config`
+  (O4) are not implemented here. Evidence and limitations are recorded in
+  `docs/plans/ordinary-transfer-progress-inspection-o1-report.md`.
+
+## Follow-up O2: failed Server receive ACKs retain recovery state
+
+- O1 passed human review; O2 was separately approved. Server receive completion
+  no longer sets `finished_ok` immediately after writing the file. It records
+  `bool(send_message(...))` for the existing final ACK, matching the Client
+  receive path. A false result or exception keeps and persists the original
+  tracked receive row with a peer, even when all bytes are already on disk.
+- Notifications, event updates and public-key TOFU registration stay before
+  the ACK. Key pushes remain untracked. No ACK receipt, retry protocol, timeout,
+  new field, public signature or persistence format is introduced.
+- The regression uses real file/folder uploads, both supported ACK failure
+  forms, another failure at EOF and a successful EOF confirmation. It checks
+  the original fid/path/content and durable removal only after success.
+- Independent runtime checks cover encrypted and resumed uploads, fresh-process
+  reload of failure snapshots, disabled progress tracking and deterministic
+  key-ACK failures before handshake completion. Evidence is recorded in
+  `docs/plans/ordinary-transfer-progress-inspection-o2-report.md`.
+- Progress inspection (O3), `delete_config` (O4) and the original FID plan's
+  later cutovers remain outside this change; O2 awaits human review.
+## Follow-up O3: local transfer inspection
+
+- O1 and O2 were separately reviewed before O3. Both TCP classes now expose
+  `get_transfer_progress(*, include_persisted=True)`. It returns detached,
+  JSON-ready memory rows and an optional separate read of the existing progress
+  file; it never loads, persists, resumes or writes transfer state.
+- Upload identity keeps the complete `(receiver, fid)` scope. Server and client
+  relay rows retain their existing authority and shape. Runtime flags are
+  observed only from local sets; disk rows use `null` for active/socket/pause
+  state. Missing, empty, malformed and unreadable files are distinct outcomes.
+- `/transfers` is intercepted by both local consoles, prints JSON even when
+  normal logging is disabled, and rejects arguments without sending them over
+  the network. Existing Web `/api/transfers` is unchanged.
+- Real API/console evidence, mutation checks and limitations are recorded in
+  `docs/plans/ordinary-transfer-progress-inspection-o3-report.md`. O4's
+  `delete_config` remains unimplemented and O3 awaits human review.
+
+
