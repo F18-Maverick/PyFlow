@@ -46,17 +46,40 @@ def test_lookup_returns_the_same_authoritative_route_from_upstream_and_targets(s
         ORIGINATOR,
         {TARGET_1: 305, TARGET_2: 306, TARGET_3: 307},
     )
-
     assert route == {"originator": ORIGINATOR, "targets": {
         TARGET_1: 305,
         TARGET_2: 306,
         TARGET_3: 307,
-    }}
+    }, "completed": set()}
     assert server._lookup_fid_route(None, 303) == (303, route)
     for target, child_fid in route["targets"].items():
         upstream_fid, found = server._lookup_fid_route(target, child_fid)
         assert upstream_fid == 303
         assert found is route
+
+
+def test_completion_is_identity_safe_and_removes_only_one_reverse_index(server):
+    route = server._register_fid_route(
+        303, ORIGINATOR, {TARGET_1: 305, TARGET_2: 306}
+    )
+    assert route is not None
+
+    assert server._complete_fid_target(303, route, TARGET_3, 305) is False
+    assert server._complete_fid_target(303, route, TARGET_1, 306) is False
+    assert server._complete_fid_target(303, {**route}, TARGET_1, 305) is False
+    assert server._complete_fid_target(303, route, TARGET_1, 305) is True
+    assert server._complete_fid_target(303, route, TARGET_1, 305) is False
+    assert route["completed"] == {TARGET_1}
+    assert server._lookup_fid_route(TARGET_1, 305) is None
+    assert server._lookup_fid_route(TARGET_2, 306) == (303, route)
+
+
+def test_registration_rejects_completed_outside_targets_without_mutation(server):
+    assert server._register_fid_route(
+        303, ORIGINATOR, {TARGET_1: 305}, completed=(TARGET_2,)
+    ) is None
+    assert server._fid_routes == {}
+    assert server._fid_route_index == {}
 
 
 def test_equal_child_fids_are_scoped_by_receiver_even_across_routes(server):
@@ -129,6 +152,7 @@ def test_route_persists_and_round_trips_through_a_fresh_server(tmp_path):
             "303": {
                 "originator": list(ORIGINATOR),
                 "targets": [[list(TARGET_1), 305], [list(TARGET_2), 306]],
+                "completed": [],
             }
         }
 
@@ -138,6 +162,7 @@ def test_route_persists_and_round_trips_through_a_fresh_server(tmp_path):
         restored = second._fid_routes[303]
         assert restored["originator"] == ORIGINATOR
         assert restored["targets"] == {TARGET_1: 305, TARGET_2: 306}
+        assert restored["completed"] == set()
         assert second._lookup_fid_route(TARGET_1, 305) == (303, restored)
         assert second._lookup_fid_route(TARGET_2, 306) == (303, restored)
     finally:
@@ -204,3 +229,65 @@ def test_unsupported_old_server_relay_snapshot_is_preserved_on_write_and_stop(tm
         # stop() is intentionally idempotent; the explicit call above checks the
         # shutdown persistence path while this cleanup handles assertion failures.
         server.stop()
+
+
+def test_completed_targets_survive_reload_without_recreating_their_indexes(tmp_path):
+    first = _server(tmp_path, "first")
+    second = _server(tmp_path, "second")
+    try:
+        route = first._register_fid_route(303, ORIGINATOR, {TARGET_1: 305, TARGET_2: 306})
+        assert first._complete_fid_target(303, route, TARGET_1, 305)
+        second.file_trans_progress_file = first.file_trans_progress_file
+        assert second._load_transfer_progress() == 1
+        restored = second._fid_routes[303]
+        assert restored["targets"] == {TARGET_1: 305, TARGET_2: 306}
+        assert restored["completed"] == {TARGET_1}
+        assert second._lookup_fid_route(None, 303)[1] is restored
+        assert second._lookup_fid_route(TARGET_1, 305) is None
+        assert second._lookup_fid_route(TARGET_2, 306)[1] is restored
+        assert second._fid_route_index == {(TARGET_2, 306): 303}
+        assert second._drop_fid_route(303, restored)
+        replacement = second._register_fid_route(303, TARGET_3, {TARGET_1: 305})
+        assert not second._complete_fid_target(303, restored, TARGET_2, 306)
+        assert second._lookup_fid_route(TARGET_1, 305)[1] is replacement
+    finally:
+        first.stop()
+        second.stop()
+
+
+@pytest.mark.parametrize("completed", [None, [list(TARGET_2)], [list(TARGET_1)] * 2])
+def test_invalid_completed_snapshot_is_preserved_on_load_write_and_stop(tmp_path, completed):
+    instance = _server(tmp_path)
+    snapshot = {"relays": {"303": {
+        "originator": list(ORIGINATOR), "targets": [[list(TARGET_1), 305]],
+        "completed": completed,
+    }}}
+    with open(instance.file_trans_progress_file, "w", encoding="utf-8") as stream:
+        json.dump(snapshot, stream)
+    with open(instance.file_trans_progress_file, "rb") as stream:
+        before = stream.read()
+    try:
+        assert instance._load_transfer_progress() == 0
+        assert instance._fid_routes == {}
+        assert instance._register_fid_route(303, ORIGINATOR, {TARGET_1: 305}) is not None
+        instance._persist_transfer_progress()
+        instance.stop()
+        with open(instance.file_trans_progress_file, "rb") as stream:
+            assert stream.read() == before
+    finally:
+        instance.stop()
+
+
+def test_canonical_snapshot_without_completed_has_no_acknowledged_targets(tmp_path):
+    instance = _server(tmp_path)
+    with open(instance.file_trans_progress_file, "w", encoding="utf-8") as stream:
+        json.dump({"relays": {"303": {
+            "originator": list(ORIGINATOR), "targets": [[list(TARGET_1), 305]],
+        }}}, stream)
+    try:
+        assert instance._load_transfer_progress() == 1
+        route = instance._fid_routes[303]
+        assert route["completed"] == set()
+        assert instance._lookup_fid_route(TARGET_1, 305)[1] is route
+    finally:
+        instance.stop()

@@ -666,12 +666,12 @@ five-item list:
   a download's entry, the receiver in an upload's. A forwarded transfer
   stores the original peer on both sides, never the relaying server.
 
-An entry appears when a transfer starts and is removed when it ends, so the
-stores hold exactly the transfers that are in flight at that moment (iterate
-over a copy while transfers are running). With
-``is_enable_file_transfer_progress_bar`` set to ``False`` no entry is ever
-recorded — and, since the stores are the state a reconnect resumes from, no
-transfer can be resumed either.
+An entry appears when a transfer starts. Successful direct transfers remove
+their entry; interrupted transfers and forwarded uploads awaiting final target
+completion retain it (iterate over a copy while transfers are running). A
+forwarded upload can therefore show all bytes sent while still pending. With
+``is_enable_file_transfer_progress_bar`` set to ``False`` no progress entry is
+recorded, and automatic partial-file recovery remains unsupported.
 
 ``is_enable_real_time_network_speed`` (``True`` by default) measures the
 protocol's current traffic — the control layer and every temporary
@@ -723,28 +723,49 @@ The temporary connections of a transfer are resumed after a disconnect:
   with ``/file <name> <fid>`` on the control channel. The receiver appends to
   the partial file only when the fid, the sender, the file name and the size
   all match the recorded entry; a size mismatch is refused and the partial file
-  is kept. A line that matches no entry is a new transfer. A forwarded transfer
-  is asked for through the server, which routes ``/forward_resume`` to the
-  originating client so it re-forwards just the missing part.
+  is kept. File and folder-item commands use the same identity checks. A line
+  that matches no entry is a new transfer. A forwarded transfer is requested
+  through the server, which routes ``/forward_resume`` to the originating
+  client. The source replays with ``/forward_item``'s optional
+  ``relay_fid=<upstream fid>`` and ``resume=<offset>`` fields. The server checks
+  the original sender and unresolved target, reusing both upstream and child
+  fids; the receiver writes its original full path. No new-ID/path alias is used.
 
 On the server, each upstream fid has one authoritative route containing its
-original sender and the full accepted ``receiver -> downstream fid`` mapping.
-A derived ``(receiver, downstream fid) -> upstream fid`` index locates that
-same route; no file paths, progress values or directory metadata are copied.
-Live relay buffers and pause conditions remain separate runtime state.
+original sender, full accepted ``receiver -> downstream fid`` mapping, and
+``completed`` set. Only a target's final data ACK adds it to that set. The
+derived ``(receiver, downstream fid) -> upstream fid`` index contains unresolved
+targets only. No file paths, progress values or directory metadata are copied;
+live relay buffers and pause conditions remain separate runtime state.
 
 The server's ``relays`` snapshot writes one row per upstream fid, containing
-``originator`` and ``targets: [[receiver, fid], ...]``. Loading rebuilds the
-index without replacing live upstream or downstream owners. Unsupported old
-server relay snapshots are rejected and preserved during writes and shutdown;
-archive them before persisting new routes. Client relay snapshots are unchanged.
+``originator``, ``targets: [[receiver, fid], ...]`` and
+``completed: [receiver, ...]``. Loading preserves completion and rebuilds only
+unresolved indexes without replacing live owners. A canonical route snapshot
+without ``completed`` means no target has acknowledged yet. Unsupported older
+server relay schemas or invalid completion sets are rejected and preserved on
+write and shutdown; archive them before persisting new routes. Client relay
+JSON fields and the five-item progress rows are unchanged; replay locks and
+per-fid send serialization are runtime-only.
 
-Targets accepted after reachability filtering remain in that route even when
-their listener connection or start handshake fails. The server removes the
-whole route only when all accepted targets acknowledge the transfer, not merely
-all connections that successfully opened. This does not yet change the source's
-upload ACK or its record lifetime: final-target completion notification remains
-a separately approved protocol change.
+Targets accepted after reachability filtering remain in the mapping even if
+their listener or start handshake fails. A successful target loses its reverse
+index immediately, but the accepted mapping remains until the current input
+stream is fully read and every accepted target has acknowledged. The server
+then forwards the existing final data-ACK marker upstream using the normal
+per-hop send path (encrypted when enabled). It drops the route only after that
+ACK write succeeds; an unsuccessful write leaves the completed route available
+for recovery. The source's original final-ACK wait is 30 seconds plus 10 seconds
+per 100 MiB. A long pause or slow downstream delivery can outlast that wait;
+timeout or a lost ACK conservatively retains the source record and upload
+progress, even if the server completed delivery. No separate receipt or retry
+protocol is used. If a target cannot send its final ACK, its receive entry
+survives even when the disk file is complete; an EOF replay with the same fid
+can confirm it without retransmitting the body. Retries for different targets
+of one upstream fid are serialized at the source, concurrent duplicate requests
+for the same target are coalesced, and completed targets are not replayed.
+Public-key pushes remain untracked and TOFU verification still precedes their
+ACK.
 
 The server requests a peer's interrupted downloads when that peer reconnects,
 and a client with ``is_auto_reconnect=True`` does the same after every connect,

@@ -1,9 +1,11 @@
-# Change note: one authoritative server FID route (atomic change 2)
+# Change note: server FID routes and final target completion (atomic changes 2–3)
 
-> Implements only atomic change 2 of `docs/plans/transfer-fid-and-resume-unify-plan.md`.
-> Atomic change 1 was reviewed and committed by the user. Source completion
-> notifications, resume-protocol unification and receiver-owned allocation are
-> separate, not-yet-approved changes.
+> Atomic changes 1 and 2 were reviewed and committed by the user. Atomic change
+> 3 adds per-target completion and stable-ID replay as approved, and awaits
+> review. The atomic-2 sections below record that step's original scope;
+> the atomic-3 section supersedes their deliberately deferred completion behavior.
+> Resume-command unification, handshake consolidation and receiver-owned
+> allocation remain later, unapproved changes.
 
 ## Core logic of this change
 
@@ -68,3 +70,53 @@
   its receiver. Do not put file metadata back into the server routing record.
 - `tfid`, fid kind, `/forward_resume` and `/forward_upload` remain current wire
   contracts for now. Their deletion requires the later approved changes.
+
+## Atomic change 3: completion across stable-ID replay
+
+- Forwarding completion uses the original final data ACK only. The server
+  preserves the full accepted `targets` mapping and tracks `completed`; only an
+  actual target final ACK adds that receiver to the set and releases its reverse
+  index. Setup failure, interrupted input, stream exhaustion and error signs
+  cannot count as target completion.
+- After the current input stream is read in full and every accepted target has
+  acknowledged, the server forwards the existing final ACK marker upstream
+  through the normal per-hop send path. It drops the route only after the ACK
+  write succeeds; a failed write leaves the completed route available for
+  recovery. This is not byte-for-byte packet forwarding and adds no message.
+- The source keeps its forwarding record and upload row unless its original
+  final-ACK wait observes that marker. That wait remains 30 seconds plus 10
+  seconds per 100 MiB. A long pause or slow downstream delivery can outlast it;
+  timeout or a lost ACK conservatively retains source state even if the receiver
+  completed. There is no receipt or automatic retry protocol.
+- Replay adds optional `relay_fid=` alongside `resume=` in `/forward_item`. The
+  server validates the original sender and unresolved target, then reuses the
+  upstream and child IDs without replacing the accepted target mapping. Source
+  retries for one upstream ID share a send lock; concurrent duplicates for the
+  same target coalesce. Completed targets are not sent again, and queued replay
+  cannot start after its record has been removed.
+- A receiver that cannot write its final ACK retains the receive row even at
+  EOF. A file or folder-item command matches fid, original source and basename;
+  the incoming size must match before reopening the original full path.
+  `_request_forward_resume` takes its offset from disk. The obsolete new-ID,
+  same-path `_resume_pending_paths`/`_take_pending_resume` bridge is removed.
+- `relays` JSON adds `completed: [receiver, ...]`. Reload reconstructs only
+  unresolved indexes; canonical snapshots lacking the optional field mean no
+  completed targets. Invalid completed sets and unsupported older schemas are
+  preserved, not overwritten. The client JSON shape is unchanged and excludes
+  runtime locks/replay sets; reload restores its original upload row alongside relay
+  metadata. Snapshot creation is serialized by the progress lock before
+  acquiring the route/record lock, preventing delayed older snapshots from
+  overwriting newer completion transitions.
+- The pump keys queues by `(receiver, child-fid)`, accounts for failed-writer
+  buffers, wakes backpressure waiters on reader failure, and bounds the final
+  target-sign read. The sender does not treat an error sign as success. Existing
+  direct sends and public-key pushes retain their data-ACK success contract;
+  TOFU still precedes the key ACK. This change does not claim to fix the Server's
+  ordinary-sender or receive-ACK gap. No CI, dependencies, coverage policy, file
+  bytes, allocation authority, kind/tfid naming, `/forward_resume` or
+  `/forward_upload` cutover is included.
+
+Keep regressions for zero ACK, partial ACK, EOF confirmation, file/folder replay,
+duplicate requests, lost final ACK, completed-state reload and malformed-state
+file preservation. Runtime evidence and explicit exclusions are recorded in
+`docs/plans/transfer-fid-and-resume-unify-atomic-3-report.md`.

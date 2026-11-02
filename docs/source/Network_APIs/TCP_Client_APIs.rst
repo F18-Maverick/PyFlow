@@ -78,9 +78,10 @@ The parameters of the ``__init__`` method are as follows:
   list. Downloads use integer fid keys; uploads use ``((host, port), fid)``
   keys, scoped to the connected server even for forwarded uploads.
   The value's ``peer`` remains the original sender (downloads) or logical
-  receiver (uploads), not the relay. The entry is removed once the transfer ends;
-  an interrupted one keeps its entry (and its partial file) so the reconnect
-  logic can resume it.
+  receiver (uploads), not the relay. Successful direct transfers remove their
+  entries; interrupted ones keep their partial files for reconnect. Forwarded
+  uploads retain their entry and source record until the existing final data ACK
+  is observed; all bytes sent alone is not final completion.
   ``file_trans_progress_file`` names the file under the protocol's ``.Flow``
   directory these stores are written to when the connection drops.
   Upload JSON keys encode ``[receiver, fid]`` as compact JSON strings.
@@ -775,6 +776,16 @@ And the low-level send mode function is:
 scope; an explicit local ``peer`` must be the server, not the logical target.
 The value's ``peer`` is the original receiver; ``resume_offset`` continues
 the interrupted file from the byte the receiver already holds.
+
+For a forwarded upload, the server forwards the existing final data-ACK marker
+after the full input stream and all accepted target ACKs complete. The source
+keeps its recovery state unless its original final-ACK wait observes that
+marker. The wait is 30 seconds plus 10 seconds per 100 MiB; a long pause or
+slow delivery can outlast it, and a lost ACK conservatively retains state. No
+separate receipt or retry protocol is used. Direct transfer and public-key
+confirmation remain data-ACK based. Forward replay retains the upstream/child
+IDs and full target mapping; different target retries on one upstream ID are
+serialized, and concurrent duplicate target requests are coalesced.
 
 We recommend that for client-to-server file transfers, 
 you use the console commands (``/file``, ``/file_folder``, 

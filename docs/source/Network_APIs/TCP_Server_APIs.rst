@@ -91,9 +91,10 @@ The parameters of the ``__init__`` method are as follows:
   Upload JSON keys encode ``[receiver, fid]`` as compact JSON strings.
   Older bare upload-id snapshots are rejected and preserved, not migrated.
   Forward routes are persisted once per upstream fid in ``relays``, with an
-  original sender and the full receiver/fid target mapping. Receiver-scoped
-  reverse indexes are rebuilt on load and never overwrite live routes. Older
-  server relay snapshots are rejected and preserved, not auto-migrated.
+  original sender, the full receiver/fid target mapping and ``completed`` peers.
+  Only unresolved targets have receiver-scoped reverse indexes after load;
+  loading never replaces live owners. Unsupported older server relay schemas
+  and invalid completion sets are rejected and preserved, not auto-migrated.
 - ``is_enable_real_time_network_speed``: A flag indicating whether the
   protocol's real-time network speed is measured. With ``True`` (the default)
   every send and receive — the control layer and every temporary connection,
@@ -633,10 +634,19 @@ Built-in client commands include:
   ``/start_trans <fid>`` hold and release the outbound transfer to the requesting
   peer. Local calls require ``pause_trans(fid, peer)`` / ``start_trans(fid, peer)``;
   the receiver scope is required even when arming a future transfer.
+  Forwarded replay adds optional ``relay_fid=<upstream fid>`` and
+  ``resume=<offset>`` to ``/forward_item``. After validating the original sender
+  and unresolved target, the server reuses the existing upstream/child IDs.
 - ``/resume_trans <fid> <offset>`` and ``/forward_resume <addr> <fid> <offset>``:
   internal transfer-reconnect messages: the receiver asks the sender (or, for
   a forwarded transfer, the originator) to continue the file from the bytes
   already on disk (see :ref:`transfer-pause-and-reconnect`).
+- Forwarded transfers return the existing final data-ACK marker upstream only
+  after the current input stream is complete and every accepted target has
+  acknowledged. The normal send path reframes the marker for the upstream hop;
+  the route is dropped only after the ACK write succeeds. A failed write keeps
+  the completed route for recovery. This does not change ordinary sender or
+  server receive-ACK behavior.
 - ``/server_file_transfer_port <port> <client_id>``: internal protocol message used to coordinate file transfer ports.
 
 In `handle_command`, the server will first 
