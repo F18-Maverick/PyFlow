@@ -1103,6 +1103,9 @@ are as follows:
     - `diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start`
     - `file_transfer_mode` / `file_transfer_mode_recv`: one transfer leg
     - `get_transfer_progress`
+    - `delete_config`: local allowlisted state-file deletion after shutdown;
+      ``is_list_config=True`` returns names without deleting. See the file
+      transfer documentation for whole-snapshot discard and lifetime rules.
     - `forward_item_to` / `forward_message_to`: single forward destinations
 
 5.1. The transfer pause and reconnect APIs (see

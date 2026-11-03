@@ -49,6 +49,9 @@ import uuid
 import errno
 import queue
 import json
+import stat
+from contextlib import ExitStack
+from functools import wraps
 from . import rsa_crypto
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -522,6 +525,106 @@ def _get_transfer_progress(instance, *, include_persisted, server_routes=False):
             persisted["status"] = "error"
             persisted["error"] = str(exc)
     return result
+
+
+def _config_lifecycle(*, starting):
+    """Serialize deletion against startup and shutdown without locking their I/O."""
+    def decorate(method):
+        @wraps(method)
+        def run(self, *args, **kwargs):
+            with self._transfer_progress_lock:
+                if starting:
+                    if self._progress_discarded:
+                        raise RuntimeError("transfer progress was discarded; create a new instance")
+                    self._config_started = True
+                self._config_busy += 1
+                self._config_closed = False
+            completed = False
+            try:
+                result = method(self, *args, **kwargs)
+                completed = True
+                return result
+            finally:
+                with self._transfer_progress_lock:
+                    self._config_busy -= 1
+                    if not starting:
+                        self._config_closed = completed
+        return run
+    return decorate
+
+
+_CONFIG_FILES = (
+    ("file_trans_progress_file", None),
+    ("messages_log_file", "messages"),
+    ("events_log_file", "events"),
+    ("sent_messages_log_file", "sent_messages"),
+    ("sent_events_log_file", "sent_events"),
+)
+
+
+def _delete_config(instance, config_name, *, is_list_config):
+    """List or unlink explicitly owned state files; never resolve user paths."""
+    files = {}
+    for attr, store in _CONFIG_FILES:
+        path = os.path.abspath(os.fspath(getattr(instance, attr)))
+        files.setdefault(os.path.basename(path), {}).setdefault(path, []).append(store)
+
+    def regular_file(path):
+        try:
+            return stat.S_ISREG(os.lstat(path).st_mode)
+        except FileNotFoundError:
+            return False
+
+    if is_list_config:
+        names = []
+        for name, paths in sorted(files.items()):
+            if len(paths) != 1:
+                raise ValueError(f"ambiguous configuration name: {name}")
+            if regular_file(next(iter(paths))):
+                names.append(name)
+        return names
+    if config_name is None:
+        raise ValueError("a configuration file name is required")
+    if not isinstance(config_name, str):
+        raise TypeError("config_name must be a file name string")
+    if (not config_name or config_name in (".", "..")
+            or any(char in config_name for char in "/\\\0*?[]") or config_name not in files):
+        raise ValueError("config_name must name an allowed local state file")
+    paths = files[config_name]
+    if len(paths) != 1:
+        raise ValueError(f"ambiguous configuration name: {config_name}")
+    path, stores = next(iter(paths.items()))
+    with instance._transfer_progress_lock:
+        if (instance.running or instance._config_busy
+                or (instance._config_started and not instance._config_closed)
+                or instance._active_transfer_fids or instance._active_transfer_sockets):
+            raise RuntimeError("stop the instance and finish active transfers before deletion")
+        if hasattr(instance, "_forward_relays"):
+            with instance._forward_relays_lock:
+                if instance._forward_relays:
+                    raise RuntimeError("finish active relays before deletion")
+        else:
+            with instance._forward_resume_lock:
+                if any(record.get("resuming") or (
+                    record.get("send_lock") is not None and record["send_lock"].locked()
+                ) for record in instance._forward_resume_records.values()):
+                    raise RuntimeError("finish active forwarding before deletion")
+        with ExitStack() as locks:
+            for store in stores:
+                if store is not None:
+                    locks.enter_context(getattr(instance, f"_{store}_dict_lock"))
+                    if getattr(instance, f"{store}_dict"):
+                        raise RuntimeError("flush pending records by closing before deletion")
+            try:
+                if not regular_file(path) and os.path.lexists(path):
+                    raise ValueError("only regular configuration files may be deleted")
+                os.unlink(path)
+                deleted = True
+            except FileNotFoundError:
+                deleted = False
+            if None in stores:
+                instance._progress_discarded = True
+            return deleted
 
 
 def _resume_offset_for(entry):
@@ -1963,6 +2066,10 @@ class TCP_Server_Base:  # TCP server class
             self.project_info_dir, "server_file_trans_progress.json"
         )
         self._transfer_progress_lock = threading.RLock()  # serialises the persist/load pair
+        self._progress_discarded = False
+        self._config_started = False
+        self._config_closed = False
+        self._config_busy = 0
         self.decode_command_table_file_path = os.path.join(
             self.project_dir, "decode_command_table.json"
         )
@@ -2322,6 +2429,27 @@ class TCP_Server_Base:  # TCP server class
         """
         return _get_transfer_progress(self, include_persisted=include_persisted, server_routes=True)
 
+    def delete_config(self, config_name=None, *, is_list_config=False) -> bool | list[str]:
+        """List or delete a named local progress snapshot or message/event log.
+
+        Args:
+            config_name (str | None): Allowed file basename, not a path.
+            is_list_config (bool): Only list existing regular files, ignoring
+                config_name. Defaults to False; listing is allowed while running.
+
+        Returns:
+            bool | list[str]: Sorted file names in list mode; otherwise True
+                when deleted, False when absent. Discarding progress permanently
+                disables this object's reload/write/start; create a new instance.
+
+        Raises:
+            ValueError: Invalid/ambiguous name, directory or symlink.
+            TypeError: A deletion name is not a string.
+            RuntimeError: Instance not closed, operations active or logs buffered.
+            OSError: The filesystem refuses inspection or deletion.
+        """
+        return _delete_config(self, config_name, is_list_config=is_list_config)
+
     def _persist_transfer_progress(self):
         """Write the transfer stores to the protocol's ``.Flow`` directory.
 
@@ -2334,6 +2462,8 @@ class TCP_Server_Base:  # TCP server class
                 failure is logged, never raised.
         """
         with self._transfer_progress_lock:
+            if self._progress_discarded:
+                return
             snapshot = self._transfer_progress_snapshot()
             if not any(snapshot.values()) and not os.path.exists(self.file_trans_progress_file):
                 return
@@ -2363,6 +2493,8 @@ class TCP_Server_Base:  # TCP server class
         int: Number of transfer entries and relay records restored.
         """
         with self._transfer_progress_lock:
+            if self._progress_discarded:
+                return 0
             try:
                 data = _read_transfer_progress(self.file_trans_progress_file, server_routes=True)
             except FileNotFoundError:
@@ -6624,6 +6756,7 @@ class TCP_Server_Base:  # TCP server class
         self._log(f"forward: relayed {fname} to {result['ok']}/{len(target_conns)} targets")
         return result["ok"]
 
+    @_config_lifecycle(starting=True)
     def start_TCP_Server(self):  # set up server socket
         """Bind the server socket, then accept clients until `stop` runs.
 
@@ -6842,6 +6975,7 @@ class TCP_Server_Base:  # TCP server class
                 self._log_exc()
                 pass
 
+    @_config_lifecycle(starting=False)
     def stop(self):  # shutting down the server
         """Stop the server and release everything it owns.
 
@@ -7077,6 +7211,10 @@ class TCP_Client_Base:  # TCP client class
             self.project_info_dir, "client_file_trans_progress.json"
         )
         self._transfer_progress_lock = threading.RLock()  # serialises the persist/load pair
+        self._progress_discarded = False
+        self._config_started = False
+        self._config_closed = False
+        self._config_busy = 0
         if os.path.exists(self.project_temp_info_dir) == False:
             os.mkdir(self.project_temp_info_dir)
         self.all_allocated_ports_list = []
@@ -7875,6 +8013,27 @@ class TCP_Client_Base:  # TCP client class
         """
         return _get_transfer_progress(self, include_persisted=include_persisted)
 
+    def delete_config(self, config_name=None, *, is_list_config=False) -> bool | list[str]:
+        """List or delete a named local progress snapshot or message/event log.
+
+        Args:
+            config_name (str | None): Allowed file basename, not a path.
+            is_list_config (bool): Only list existing regular files, ignoring
+                config_name. Defaults to False; listing is allowed while running.
+
+        Returns:
+            bool | list[str]: Sorted file names in list mode; otherwise True
+                when deleted, False when absent. Discarding progress permanently
+                disables this object's reload/write/start; create a new instance.
+
+        Raises:
+            ValueError: Invalid/ambiguous name, directory or symlink.
+            TypeError: A deletion name is not a string.
+            RuntimeError: Instance not closed, operations active or logs buffered.
+            OSError: The filesystem refuses inspection or deletion.
+        """
+        return _delete_config(self, config_name, is_list_config=is_list_config)
+
     def _persist_transfer_progress(self):
         """Write the transfer stores to the protocol's ``.Flow`` directory.
 
@@ -7887,6 +8046,8 @@ class TCP_Client_Base:  # TCP client class
                 failure is logged, never raised.
         """
         with self._transfer_progress_lock:
+            if self._progress_discarded:
+                return
             snapshot = self._transfer_progress_snapshot()
             if not any(snapshot.values()) and not os.path.exists(self.file_trans_progress_file):
                 return
@@ -7916,6 +8077,8 @@ class TCP_Client_Base:  # TCP client class
         int: Number of transfer entries and relay records restored.
         """
         with self._transfer_progress_lock:
+            if self._progress_discarded:
+                return 0
             try:
                 data = _read_transfer_progress(self.file_trans_progress_file)
             except FileNotFoundError:
@@ -8578,6 +8741,7 @@ class TCP_Client_Base:  # TCP client class
             return False
         return True
 
+    @_config_lifecycle(starting=True)
     def connect(self):  # connect to server
         """Connect to the server and start reading from it.
 
@@ -11048,6 +11212,7 @@ class TCP_Client_Base:  # TCP client class
         finally:
             server_file_socket.close()
 
+    @_config_lifecycle(starting=False)
     def close(self):  # close connection
         """Close the connection and release everything the client owns.
 

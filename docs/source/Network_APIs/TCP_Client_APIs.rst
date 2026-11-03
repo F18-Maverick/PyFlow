@@ -909,6 +909,10 @@ is as follows:
     - `file_transfer_client_recv_server_start_thread`
     - `file_folder_transfer_client_recv_server_start_thread`
     - `file_transfer_mode`
+    - `get_transfer_progress`
+    - `delete_config`: local allowlisted state-file deletion after shutdown;
+      ``is_list_config=True`` returns names without deleting. Discarding progress
+      requires a new instance for future connections; file contents are kept.
 
 5.1. The transfer pause and reconnect APIs (see
   :ref:`transfer-pause-and-reconnect`):

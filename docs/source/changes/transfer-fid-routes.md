@@ -1,4 +1,4 @@
-# Change note: server FID routes and transfer completion (2–3, O1–O2)
+# Change note: server FID routes and transfer lifecycle (2–3, O1–O4)
 
 > Atomic changes 1 and 2 were reviewed and committed by the user. Atomic change
 > 3 adds per-target completion and stable-ID replay as approved, and awaits
@@ -175,4 +175,23 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
   `docs/plans/ordinary-transfer-progress-inspection-o3-report.md`. O4's
   `delete_config` remains unimplemented and O3 awaits human review.
 
+
+## Follow-up O4: explicit named local state deletion
+
+- O1–O3 passed human review before O4 was approved. Both classes now expose
+  `delete_config(config_name=None, *, is_list_config=False)`. List mode returns
+  sorted existing allowlisted regular-file names without side effects; deletion
+  accepts only one current basename of progress or the four message/event logs.
+- Running, not-explicitly-closed, starting/stopping and active-transfer/relay
+  instances refuse deletion. Progress deletion shares the persist/load lock.
+  A successful or already-absent progress deletion permanently disables old-object
+  reload/publication/restart, preventing repeated shutdown or late finalization
+  from resurrecting the abandoned snapshot. New instances behave normally.
+- Log deletion checks its buffer under the existing record lock and does not
+  permanently disable logging. Other files, keys, locks, transfer contents,
+  remote protocols, JSON formats, CI and dependencies remain unchanged.
+- API-boundary and write/delete race regressions live in `test_delete_config.py`;
+  existing real transfer/ACK recovery regressions are reused unchanged. Runtime
+  evidence and limitations are in the O4 report; the supplemental O1–O4 overview
+  is `docs/plans/ordinary-transfer-progress-inspection-report.md`.
 

@@ -1,6 +1,6 @@
 # 普通传输失败保留、进度查询与按名清理：需求卡和增量计划
 
-状态：**O1/O2 已获人类审计通过；O3 已按批准实施，局部行为回归、独立真实 API/控制台烟测和完整相关套件均完成，待人工审查：49 个局部回归通过，完整相关套件 264 passed。O4 尚未实施，不自动推进；不进入原 FID 大计划的原子更改 4。**
+状态：**O1–O3 已获人类审计通过；补充 O4 delete_config 已按批准完成实现、定向回归与独立真实运行验证，待人类审查及补充项总验收。本轮定向 101 passed、完整相关套件 332 passed。不进入原 FID 大计划的原子更改 4–6，未创建 git 提交、未合并、未推送。**
 
 本任务插入 `transfer-fid-and-resume-unify-plan.md` 的更改 3 与更改 4 之间。更改 3 的历史验收只证明其原有范围，不作为本任务修复或新增查询功能的验收证据。
 
@@ -169,7 +169,7 @@ get_transfer_progress(self, *, include_persisted=True) -> dict
 | O1 | Server 普通发送只按最终 ACK 成功 | 修改 `PyFlow/network_api/connect_tcp.py`、`test/integration/network_api/test_tcp_transfer_resume.py`、`docs/source/File_Transfer/File_Transfer.rst`、`docs/source/changes/transfer-fid-routes.md`；新增 `docs/plans/ordinary-transfer-progress-inspection-o1-report.md` | 40–120 行，另附报告 | 开始/最终阶段错误、正常成功、文件/目录项、恢复及加密的真实发送行为 |
 | O2 | Server 普通接收 ACK 明确失败后保留 | 修改上述生产/恢复测试/传输说明/变更说明；新增 `docs/plans/ordinary-transfer-progress-inspection-o2-report.md` | 80–180 行，另附报告 | False/异常、原路径保留、进程读回、EOF 再确认、加密和公钥 ready |
 | O3 | 两端公开本地完整只读观察入口 | 修改 `connect_tcp.py`、`test/unit/network_api/test_TCP_client.py`、`test/integration/network_api/test_tcp_broadcast_alloc.py`、`docs/source/File_Transfer/File_Transfer.rst`、`docs/source/Network_APIs/TCP_Server_APIs.rst`、`docs/source/Network_APIs/TCP_Client_APIs.rst`、`docs/source/changes/transfer-fid-routes.md`；新增 `test/unit/network_api/test_transfer_progress_query.py` 和 `docs/plans/ordinary-transfer-progress-inspection-o3-report.md` | 300–450 行，另附报告 | scoped identity 不合并、内存/磁盘分离、只读错误边界和两端实际命令输出；本轮新增回归已运行 |
-| O4 | 两端按名列举/删除本地配置与关闭后放弃进度 | 修改 `connect_tcp.py`、`test/integration/network_api/test_tcp_transfer_resume.py`、两端 Network API 文档、文件传输说明和变更说明；新增 `test/unit/network_api/test_delete_config.py` 与 `docs/plans/ordinary-transfer-progress-inspection-o4-report.md` | 200–350 行，另附报告 | list 模式只读、按名白名单与错误边界、停止后清理、重复关闭/迟到写回不复活、新进程不恢复旧任务；详见第 9 节 |
+| O4 | 两端按名列举/删除本地配置与关闭后放弃进度 | 修改 `connect_tcp.py`、两端 Network API 文档、文件传输说明和变更说明；新增 `test/unit/network_api/test_delete_config.py`、O4 原子报告与补充计划总报告；既有恢复集成测试复用且不改写 | API/生命周期为单一 cutover；回归覆盖调用边界和持久化竞争 | list 模式只读、按名白名单与错误边界、停止后清理、重复关闭/迟到写回不复活、新进程不恢复旧任务；详见第 9 节 |
 
 四个原子项共同更新本计划的状态；批准后产生本任务总报告 `docs/plans/ordinary-transfer-progress-inspection-report.md`。O4 是本补充计划的第四项，不等同于原 FID 大计划的原子更改 4。如实际规模超过约 500 行或出现新执行路径，先修订拆分，不边实现边扩张。
 
@@ -201,11 +201,11 @@ get_transfer_progress(self, *, include_persisted=True) -> dict
 - 不触及 CI、依赖、覆盖率策略、五项持久化模型或远程协议。既有 Web 端点与 UI 刻意不改，避免把完整路径/历史快照扩散到其现有可访问范围。
 - 规则沉淀采用行为回归：错误符号不能成功清理、ACK 明确写出失败不能丢接收记录、查询不能恢复/写回或合并不同作用域身份、列表模式不能删除、显式清理后重复关闭/迟到写回不能复活进度文件。
 - 明确未覆盖：应用层 ACK 收据、自动去重/重传、逐 fid 人工删除、全局僵尸判定、跨实例/进程独占与共享文件隔离、变更端点迁移、历史完成任务以及未被进度开关记录过的任务。
-- 人类已审计通过 O2 并明确“开始更改03”，现 O3 实现与验证完成，提交人工审查；未获放行不进入 O4。原 FID 大计划的更改 4 仍单独等待批准。
+- 人类已审计通过 O3 并明确“开始O4 delete_config更改”，现仅执行补充 O4；实现、局部验证与原子/总体报告完成后交付人工审查。原 FID 大计划的更改 4–6 仍单独等待批准，不自行提交、合并或推送。
 
 ## 9. O4 补充：按名删除本地配置/状态文件
 
-人类新增要求：Server 与 Client 均增加 `delete_config` 公开接口；按传入的配置文件名删除；`is_list_config=True` 时只返回可删除文件名组成的 list，默认 False。用户可在关闭实例后主动删除持久化进度快照，放弃其中疑似僵尸任务的恢复记录。不增加自动清理或远程删除命令。本节是待确认的公共契约，不是已实现接口。
+人类已确认此公共契约并明确开始 O4：Server 与 Client 均增加 `delete_config`；按传入的配置文件名删除；`is_list_config=True` 时只返回可删除文件名组成的 list，默认 False。用户可在关闭实例后主动删除持久化进度快照，放弃其中疑似僵尸任务的恢复记录。不增加自动清理或远程删除命令。
 
 ### 9.1 方法与返回值
 
@@ -263,7 +263,7 @@ delete_config(self, config_name=None, *, is_list_config=False) -> bool | list[st
 | 用户判断后放弃进度；磁盘格式损坏或不支持 | 不要求能够解析快照才允许按白名单删除；源文件/接收文件和其他配置保持不变 |
 | 默认关闭未调用删除 | 可恢复进度照常写回并可由新实例读回，不弱化既有恢复 |
 
-O4 是独立原子项，接在 O3 后，不是原 FID 大计划中的“原子更改 4”。修改 `PyFlow/network_api/connect_tcp.py`、既有恢复集成测试、两端 Network API 文档、文件传输说明和变更说明；新增 `test/unit/network_api/test_delete_config.py`、`docs/plans/ordinary-transfer-progress-inspection-o4-report.md`，预计代码/测试/接口说明 200–350 行，另附报告。若生命周期触点导致超过可审范围，先修订拆分，再实现。
+O4 是独立原子项，接在 O3 后，不是原 FID 大计划中的“原子更改 4”。生产变更集中于 `connect_tcp.py`；新增 `test/unit/network_api/test_delete_config.py`，同步两端 API 文档、文件传输说明、变更说明与报告。既有恢复集成测试不重复加同路径装配，保留并完整回归；真实关闭/删除/新进程验证由独立烟测覆盖。生命周期与删除必须同次 cutover，不分离出会复活进度的 unlink-only 接口。
 
 批准后的定向验收命令：
 
@@ -273,7 +273,7 @@ O4 是独立原子项，接在 O3 后，不是原 FID 大计划中的“原子�
 
 独立运行时 smoke 在临时目录用真实实例产生文件进度及日志，停止并完成 worker 收尾后列举和删除指定文件；观察重复关闭/写回不复活、新进程不恢复旧任务、其他配置与传输内容 hash 不变。用默认未删除的实例作保持原持久化行为的对照。报告只记录实际执行的结果，不把计划中的验收当成已通过。
 
-### 9.5 拟用法（批准实现后生效）
+### 9.5 已实现用法（默认文件名）
 
 ```python
 # 列表模式只读；运行中也可以查看。
@@ -308,5 +308,11 @@ client.delete_config("client_file_trans_progress.json")
 - 授权：人类明确“审计通过，开始更改03”。仅增加 Server/Client 的同名本地 `get_transfer_progress` 与 `/transfers`；不增加远程协议、HTTP 端点或删除功能。
 - 复用两端 `_transfer_progress_snapshot` 和 `_read_transfer_progress`。返回的 relay 列表由既有快照生成，每条用整数 `fid` 标识快照主键；Server 保持 originator/targets/completed，Client 保持既有恢复元数据，不统一成虚假字段。
 - 运行时活动/socket 状态在进度锁内复制，暂停状态单独读取；磁盘读取不持有路由/暂停锁。只读格式化共用一个实现，不更改持久化来源或 Web 输出契约。
- - 49 个局部回归和独立真实 API/控制台烟测均通过；完整相关套件 **264 passed，282.21s**，编译通过，新增查询测试 F/E9 通过，联合检查仅保留既有 F841/未使用导入。覆盖作用域隔离、内存/磁盘分离、返回副本、文件错误状态、不读盘选项、日志关闭输出、参数错误不发网、并发查询无写回。独立 smoke 脚本及临时目录已清理，详见 `docs/plans/ordinary-transfer-progress-inspection-o3-report.md`。O3 待人工审查，不进入 O4。
+- O3 当轮 49 个局部回归、独立真实 API/控制台烟测与完整相关套件 264 passed 已完成，证据见 `docs/plans/ordinary-transfer-progress-inspection-o3-report.md`；随后人类已审计通过并授权开始 O4。该历史数量不替代 O4 本轮验收。
+
+## 13. O4 批准实施记录
+
+- 授权：人类明确“审计完毕，开始O4 delete_config更改”。O1–O3 已通过人工审查，本项实施范围以第 9 节为准，不实施原 FID 大计划的原子更改 4。
+- 生命周期边界：区分未启动、启动过但尚未关闭、关闭正在执行和关闭完成；只允许静止实例删除。进度的删除与持久化/加载共用既有进度锁，明确放弃后旧对象不再保存/加载，启动入口在网络操作前报错。
+- O4 本轮结果：定向回归 101 passed，完整相关套件 332 passed；独立真实程序在明文/加密、上传/下载、默认保留/主动删除 8 组双端场景中验证关闭、按名清理、32 次新进程读回及新实例正常运行，实际权限失败可见且原文件不变。编译与新增测试 F/E9 通过；联合检查仅既有 F841。证据见 O4 原子报告，补充项路径全集与风险见总报告。O4 和补充项总验收待人类放行；临时烟测脚本已删除。
 

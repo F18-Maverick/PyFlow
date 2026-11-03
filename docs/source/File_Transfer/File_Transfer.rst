@@ -733,6 +733,48 @@ The server and client console commands are local-only. The existing Web
 ``/api/transfers`` response remains the smaller live-progress contract and is
 not replaced by this diagnostic snapshot.
 
+Explicit local state deletion
+------------------------------
+
+Both classes expose ``delete_config(config_name=None, *, is_list_config=False)``.
+List mode takes precedence over the name and returns a sorted ``list[str]``
+of existing regular files in this instance's allowlist, without changing state.
+It is allowed while running. With the default ``False``, pass one basename:
+deletion returns ``True`` or ``False`` when the allowed file is already absent.
+
+The allowlist contains the instance's ``file_trans_progress_file`` and its four
+message/event logs. Default progress names are
+``server_file_trans_progress.json`` and ``client_file_trans_progress.json``;
+log names are ``messages_log.json``, ``events_log.json``,
+``sent_messages_log.json`` and ``sent_events_log.json``. Redirected path
+attributes retain their configured locations; use their current basenames.
+Paths, globs, ambiguous names, directories and symlinks are refused. Keys,
+TOFU registries, protocol tables, port locks, launcher/Web settings and file
+contents are outside the allowlist. Invalid names raise ``ValueError``;
+non-string deletion names raise ``TypeError``; filesystem errors propagate.
+
+Deletion requires an unstarted instance or a successful explicit shutdown,
+with no startup/shutdown operation, active transfer or relay remaining.
+An unexpected disconnect is not shutdown. Pending log buffers must be flushed
+before deleting their file. Otherwise ``RuntimeError`` is raised; the API does
+not stop workers or flush files implicitly.
+
+.. code-block:: python
+
+    names = server.delete_config(is_list_config=True)
+    server.stop()  # wait for startup/control/transfer workers to finish too
+    server.delete_config("server_file_trans_progress.json")
+    client.close()
+    client.delete_config("client_file_trans_progress.json")
+
+Deleting progress abandons the entire upload/download/relay snapshot, including
+any legitimate interrupted tasks. Missing progress is also an explicit discard.
+The old object cannot reload, republish or restart; use a new instance for the
+next run. Source and received files remain untouched. Logs have no permanent
+disable flag. Default shutdown without deletion still persists normally.
+Stop every writer sharing the selected path first: no cross-process ownership
+or isolation is provided. This is a local Python API, not a console/HTTP command.
+
 
 .. _transfer-pause-and-reconnect:
 

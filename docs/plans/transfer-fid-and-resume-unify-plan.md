@@ -1,6 +1,6 @@
 # 传输 FID 与恢复链路统一计划
 
-状态：原子更改 1、2 已审查并由人类提交；更改 3 已按人类要求保留到达端既有最终 ACK、删除第二结果通道。补充 O1/O2 已获人类审计通过；补充 O3 已按批准实施并完成局部验证与完整相关套件，待人工审查。未创建 git 提交，未推进补充 O4 或原计划更改 4–6。
+状态：原子更改 1、2 已审查并由人类提交；更改 3 已按人类要求保留到达端既有最终 ACK、删除第二结果通道。补充 O1–O3 已获人类审计通过；补充 O4 delete_config 已按批准实现并完成局部验证，待人类审查与补充项总验收。未创建 git 提交、未合并、未推送，未进入原计划更改 4–6。
 
 本文件替换先前“kind 位 + tfid 重放”的草案。后续实现不得沿用被替换的设计。
 
@@ -108,11 +108,11 @@ Server 将现有转发恢复记录收敛为一份 FID 路由关系：原始源�
 
 更改 3 仅提交审查，不自动推进后续原子更改。`/forward_resume`、`/forward_upload`、client 既有恢复记录、kind/tfid 和分配权仍是现行契约，其后续删除/切换没有提前实施。
 
-## 6. 更改 4 前的补充计划与 O1/O2 批准记录
+## 6. 更改 4 前的补充 O1–O4
 
 人类要求先给方案、确认前不写代码：修复 Server 普通发送错误符号误判成功、Server 普通接收最终 ACK 明确写出失败仍清理记录，增加 Server/Client 本地只读的公开进度查询与控制台命令；另增补充项 O4：公开 `delete_config`，通过 `is_list_config=True` 返回可删除名字 list，默认 False 时按指定名字在停止后删除本地配置/状态文件，支持主动放弃持久化进度。
 
-需求卡、完整查询/删除边界、O1→O2→O3→O4 原子拆分及验收证据见 [普通传输失败保留、进度查询与按名清理计划](ordinary-transfer-progress-inspection-plan.md)。人类已审计通过补充 O1 并明确“开始02”，本次仅实施补充 O2，完成后交付人工审查，不自动进入 O3/O4 或原 FID 大计划更改 4–6。补充项 O4 不等于原子更改 4；不增加 ACK 收据、自动重试、自动僵尸判定或逐记录删除命令。
+需求卡、查询/删除边界、O1→O2→O3→O4 拆分及验收证据见 [补充计划](ordinary-transfer-progress-inspection-plan.md)。人类已审计通过 O1–O3 并明确批准 O4；O4 不等于原 FID 大计划的原子更改 4。不增加 ACK 收据、自动重试、僵尸自动判定或逐记录删除命令，不自行进入原计划更改 4–6。
 
-补充 O1/O2 的证据见各自原子报告。随后批准的 O3 已增加 Server/Client 本地只读 `get_transfer_progress` 与 `/transfers`，不改 Web 或远程协议；49 个局部回归、独立真实 API/控制台烟测和完整相关套件 **264 passed** 已完成，证据见 [O3 原子报告](ordinary-transfer-progress-inspection-o3-report.md)。一次性 smoke 脚本已清理。O4 的 `delete_config` 尚未实施，O3 待人工审查。
+O4 已增加本地按名列举/删除状态文件及旧对象进度防复活边界；本轮定向 101 passed、完整相关套件 332 passed，独立真实程序验证明文/加密双向默认保留、关闭删除、新进程读回及新对象正常运行。证据见 [O4 报告](ordinary-transfer-progress-inspection-o4-report.md)，补充项路径全集与风险见 [总报告](ordinary-transfer-progress-inspection-report.md)。O4 和补充项总验收仍待人工放行。
 
