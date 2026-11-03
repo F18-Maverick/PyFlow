@@ -1,7 +1,8 @@
 # Change note: receiver-scoped transfer state (atomic change 1)
 
-> Implements only atomic change 1 of `docs/plans/transfer-fid-and-resume-unify-plan.md`.
-> Receiver-owned allocation, tfid/kind removal and resume-protocol unification are not part of this change.
+> Historical scope of atomic change 1 in `docs/plans/transfer-fid-and-resume-unify-plan.md`.
+> The atomic-4 section in `transfer-fid-routes.md` supersedes its old resume/kind descriptions;
+> receiver-owned allocation and handshake consolidation remain later steps.
 
 ## Core logic of this change
 
@@ -25,7 +26,7 @@
 - Upload JSON keys are compact JSON strings encoding `[receiver, fid]`, for example `[["127.0.0.1",6000],9]`. Download JSON keys remain decimal strings.
 - Old bare upload-id snapshots cannot select a receiver unambiguously under this contract. Loading rejects them; persistence and shutdown preserve the original file rather than silently replacing it. Archive the file before persisting new tasks. No automatic migration or compatibility alias is supplied.
 - The existing progress-recording flag still disables resumable progress when False. This does not disable in-flight scoped pauses or port matching.
-- Current ordinary/relay allocation, fid kind bits, tfid fields and `/forward_resume` remain in service until their separately approved cutovers.
+- At this step ordinary/relay allocation, kind bits, tfid fields and `/forward_resume` remained in service; the atomic-4 cutover supersedes kind and resume-command handling only.
 
 ## Changing this in six months
 

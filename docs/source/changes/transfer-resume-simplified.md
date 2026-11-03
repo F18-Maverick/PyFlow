@@ -1,8 +1,8 @@
 # Change note: transfer resume is driven by the reconnect, not by a public call
 
-> Per-change note for the simplification of the transfer resume path in
-> `connect_tcp`. `resume_transfers` is removed. No PR number is assigned yet;
-> rename the file when the PR is opened.
+> Historical note; details below record the pre-atomic-4 implementation. The
+> atomic-4 section in `transfer-fid-routes.md` supersedes the old wire and
+> Client-state descriptions; reconnect remains the driver.
 
 ## Core logic of this change
 - Problem: resuming an interrupted transfer had two drivers (`resume_transfers`
@@ -54,8 +54,9 @@
   disconnect followed by `connect()`. Add an end-to-end disconnect test before
   relying on the automatic path.
 - Gap: the encrypted path is covered for download resume only.
-- Translations: the `.po` catalogues under `docs/source/locale/` still describe
-  `resume_transfers`. They are not regenerated here (`sphinx-intl update`).
+- At the time this note was written, its extracted `.po` entries still described
+  `resume_transfers`; the atomic-4 cleanup later removed 80 obsolete entries
+  from 20 catalogs. Current descriptions were not fully regenerated or translated.
 - Duplication: the server and client copies of `file_transfer_mode_recv`,
   `resume_trans` and `_request_resumes` are still written twice. Merging them is
   a separate refactor.

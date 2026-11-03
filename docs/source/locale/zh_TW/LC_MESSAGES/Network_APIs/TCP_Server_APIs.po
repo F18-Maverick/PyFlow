@@ -1082,14 +1082,6 @@ msgid ""
 " switch as a public API)."
 msgstr ""
 
-#: ../../source/Network_APIs/TCP_Server_APIs.rst:601
-#: 7f3801d57ac34670bbe16736683db30e
-msgid ""
-"``/resume_trans <fid> <offset>`` and ``/forward_resume <addr> <fid> "
-"<offset>``: internal transfer-reconnect messages: the receiver asks the "
-"sender (or, for a forwarded transfer, the originator) to continue the "
-"file from the bytes already on disk. See `resume_transfers`."
-msgstr ""
 
 #: ../../source/Network_APIs/TCP_Server_APIs.rst:605
 #: abd7d3032e15468e92f96a0b5af1f926
@@ -1935,11 +1927,6 @@ msgstr ""
 #: ../../source/Network_APIs/TCP_Server_APIs.rst:1062
 #: f5615a6934a141c9aa2bb01bcab9aea0
 msgid "`pause_trans_remote` / `start_trans_remote`"
-msgstr ""
-
-#: ../../source/Network_APIs/TCP_Server_APIs.rst:1063
-#: 187f0ce4a65e41adb7ee99b021de4d2b
-msgid "`resume_transfers` / `resume_trans`"
 msgstr ""
 
 #: ../../source/Network_APIs/TCP_Server_APIs.rst:1065

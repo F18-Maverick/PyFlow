@@ -80,12 +80,14 @@ The parameters of the ``__init__`` method are as follows:
   The value's ``peer`` remains the original sender (downloads) or logical
   receiver (uploads), not the relay. Successful direct transfers remove their
   entries; interrupted ones keep their partial files for reconnect. Forwarded
-  uploads retain their entry and source record until the existing final data ACK
-  is observed; all bytes sent alone is not final completion.
+  uploads retain their existing five-item upload row until the final data ACK
+  is observed; bytes sent alone are not completion. No client recovery table
+  duplicates paths, targets or directory metadata; ``relays`` stays empty.
   ``file_trans_progress_file`` names the file under the protocol's ``.Flow``
   directory these stores are written to when the connection drops.
   Upload JSON keys encode ``[receiver, fid]`` as compact JSON strings.
-  Older bare upload-id snapshots are rejected and preserved, not migrated.
+  Older bare upload-id or nonempty client-relay snapshots are rejected and
+  preserved, not migrated.
 - ``is_enable_real_time_network_speed``: A flag indicating whether the
   protocol's real-time network speed is measured. With ``True`` (the default)
   every send and receive — the control layer and every temporary connection,
@@ -286,6 +288,12 @@ commands sent by the server, such as:
   handshake messages; a ``/crypto_mode`` mismatch closes the connection.
 - ``/forward_upload``, ``/pause_trans``, ``/start_trans``,
   ``/forward_error``: forwarding and transfer-control messages.
+- ``/resume_trans <fid> <offset> <origin> <target>``: the sole resume command,
+  with shell-quoted tuple endpoints. Only an origin matching this control
+  connection's own identity may resume a local upload. The existing upload row
+  supplies the source path; a non-server target is replayed through the server
+  with its stable upstream fid. The receiver's retained full path handles folder
+  items without copying directory or destination metadata at the source.
 
 If you have registered custom commands using the command 
 extension API, `handle_server_command` will also check 
@@ -782,13 +790,14 @@ the interrupted file from the byte the receiver already holds.
 
 For a forwarded upload, the server forwards the existing final data-ACK marker
 after the full input stream and all accepted target ACKs complete. The source
-keeps its recovery state unless its original final-ACK wait observes that
+keeps its existing upload row unless its original final-ACK wait observes that
 marker. The wait is 30 seconds plus 10 seconds per 100 MiB; a long pause or
 slow delivery can outlast it, and a lost ACK conservatively retains state. No
 separate receipt or retry protocol is used. Direct transfer and public-key
-confirmation remain data-ACK based. Forward replay retains the upstream/child
-IDs and full target mapping; different target retries on one upstream ID are
-serialized, and concurrent duplicate target requests are coalesced.
+confirmation remain data-ACK based. The server retains the upstream/child IDs
+and full target mapping. Transient source locks serialize different target
+requests on one upload and coalesce concurrent duplicates; they hold no file
+metadata and are released after the last in-flight request.
 
 We recommend that for client-to-server file transfers, 
 you use the console commands (``/file``, ``/file_folder``, 

@@ -1,11 +1,36 @@
-# Change note: server FID routes and transfer lifecycle (2–3, O1–O4)
+# Change note: server FID routes and unified recovery (2–4, O1–O4)
 
-> Atomic changes 1 and 2 were reviewed and committed by the user. Atomic change
-> 3 adds per-target completion and stable-ID replay as approved, and awaits
-> review. The atomic-2 sections below record that step's original scope;
-> the atomic-3 section supersedes their deliberately deferred completion behavior.
-> Resume-command unification, handshake consolidation and receiver-owned
-> allocation remain later, unapproved changes.
+> Atomic changes 1–3 and supplemental O1–O4 passed human review. Atomic change 4
+> now unifies resume commands and removes kind and Client recovery metadata;
+> its runtime evidence and review checkpoint are recorded in
+> `docs/plans/transfer-fid-and-resume-unify-atomic-4-report.md`.
+> Sections for earlier steps below are historical, not current wire contracts.
+> Handshake consolidation and receiver-owned allocation (5/6) remain unapproved.
+
+## Atomic change 4: one recovery command and one source of file metadata
+
+- The sole resume wire is `/resume_trans <fid> <offset> <origin> <target>`, with
+  shell-quoted tuple endpoints. Server checks target against the actual requester,
+  then either selects its own scoped upload or validates the downstream route
+  and origin before translating to the upstream fid. Client accepts only its
+  own current connection identity as origin. No old command alias remains.
+- Client recovery reads only existing five-item upload/download rows. Forwarded
+  folder items replay as files into the target's retained full path; no copied
+  targets/path/destination/folder metadata table remains. Client `relays` is empty;
+  nonempty legacy client relay snapshots are rejected and preserved on writes
+  and shutdown. Server routes/completed sets retain their existing authority.
+- Transient per-upload locks and target sets serialize distinct targets and
+  coalesce duplicates for both ordinary and forwarded resumes; they are released
+  after use and never persisted. Failed sends retain source progress. Server
+  offline requests coalesce to the latest offset per upstream fid/target; failed
+  delivery keeps them queued, while completed/missing routes cannot be replayed.
+- Fids carry no plain/relay kind; allocation calls have no kind argument, the
+  reserved low bit is zero, and diagnostic formatting is `e<epoch>.<counter>`.
+  Allocation authority, `tfid` naming, `/forward_upload` and `relay_fid=` remain
+  unchanged until separately approved steps 5/6. Final data-ACK aggregation and
+  stable upstream/downstream IDs are unchanged.
+
+## Atomic change 2 history
 
 ## Core logic of this change
 
@@ -18,9 +43,9 @@
   not a copied route. Scoped lookup and local upstream lookup return the same
   record. The route contains no file path, name, directory, size or byte-progress
   copies; those belong to the existing endpoint progress records.
-- `_forward_relays` remains transient buffer/condition/pause state only. The
-  server no longer has `_forward_resume_records`; the client's existing record
-  remains until its separately approved resume cutover.
+- `_forward_relays` remains transient buffer/condition/pause state only. Client
+  forwarding recovery now uses its ordinary upload row; no client relay record
+  exists.
 
 ## Modules and interactions
 
@@ -30,15 +55,15 @@
 - Ordinary progress restoration skips only route-owned identities in the
   appropriate local or downstream namespace. The allocator consults both
   route tables alongside existing progress stores.
-- Current `/resume_trans` handling resolves the requesting peer and child fid
-  to an upstream fid, then sends the existing `/forward_resume` line to the
-  original source. An unrelated peer cannot address another target's route.
+- Unified `/resume_trans` handling validates the requesting peer, origin and
+  target, then routes either to the local scoped upload or the authoritative
+  upstream route. It no longer emits a second resume command.
 - The `relays` JSON region now contains one row per upstream fid, with
   `originator` and `targets: [[receiver, fid], ...]`. Load rebuilds the derived
   index, counts authoritative routes, and does not overwrite live owners.
 - Unsupported old server relay schemas are logged and preserved on load,
-  persistence and shutdown; no migration shim or additional state file is
-  introduced. The client's relay snapshot format remains unchanged.
+  persistence and shutdown. Client relay snapshots are empty; nonempty legacy
+  client metadata is rejected and preserved.
 
 ## Implicit assumptions and easy-to-forget details
 
@@ -67,9 +92,8 @@
 - Preserve the full accepted mapping across restart and ensure all reverse
   lookups reach one authoritative object after loading.
 - Do not reintroduce raw target-fid aliases: downstream identity always includes
-  its receiver. Do not put file metadata back into the server routing record.
-- `tfid`, fid kind, `/forward_resume` and `/forward_upload` remain current wire
-  contracts for now. Their deletion requires the later approved changes.
+  its receiver. `tfid` and `/forward_upload` remain current until later steps;
+  kind bits and `/forward_resume` are no longer current contracts.
 
 ## Atomic change 3: completion across stable-ID replay
 
@@ -97,29 +121,28 @@
 - A receiver that cannot write its final ACK retains the receive row even at
   EOF. A file or folder-item command matches fid, original source and basename;
   the incoming size must match before reopening the original full path.
-  `_request_forward_resume` takes its offset from disk. The obsolete new-ID,
-  same-path `_resume_pending_paths`/`_take_pending_resume` bridge is removed.
-- `relays` JSON adds `completed: [receiver, ...]`. Reload reconstructs only
+- A receiver takes its offset from disk through the unified command; stable-ID
+  replay uses the existing upload row. No new-ID or same-path bridge is used.
+- ``relays`` JSON adds ``completed: [receiver, ...]``. Reload reconstructs only
   unresolved indexes; canonical snapshots lacking the optional field mean no
   completed targets. Invalid completed sets and unsupported older schemas are
-  preserved, not overwritten. The client JSON shape is unchanged and excludes
-  runtime locks/replay sets; reload restores its original upload row alongside relay
-  metadata. Snapshot creation is serialized by the progress lock before
-  acquiring the route/record lock, preventing delayed older snapshots from
-  overwriting newer completion transitions.
-- The pump keys queues by `(receiver, child-fid)`, accounts for failed-writer
+  preserved, not overwritten. The current Client snapshot is empty and has no
+  replay metadata; runtime locks and target sets are not persisted. Snapshot
+  creation is serialized by the progress lock before route state is read.
+- The pump keys queues by ``(receiver, child-fid)``, accounts for failed-writer
   buffers, wakes backpressure waiters on reader failure, and bounds the final
   target-sign read. The sender does not treat an error sign as success. Existing
   direct sends and public-key pushes retain their data-ACK success contract;
-  TOFU still precedes the key ACK. This change does not claim to fix the Server's
-  ordinary-sender or receive-ACK gap. No CI, dependencies, coverage policy, file
-  bytes, allocation authority, kind/tfid naming, `/forward_resume` or
-  `/forward_upload` cutover is included.
+  TOFU still precedes the key ACK. This change does not claim to fix the
+  Server's ordinary-sender or receive-ACK gap. No CI, dependencies, coverage
+  policy, file bytes, allocation authority, or ``/forward_upload`` cutover is
+  included.
 
 Keep regressions for zero ACK, partial ACK, EOF confirmation, file/folder replay,
 duplicate requests, lost final ACK, completed-state reload and malformed-state
 file preservation. Runtime evidence and explicit exclusions are recorded in
-`docs/plans/transfer-fid-and-resume-unify-atomic-3-report.md`.
+``docs/plans/transfer-fid-and-resume-unify-atomic-3-report.md``.
+
 
 ## Follow-up O1: direct Server error signs never complete an upload
 

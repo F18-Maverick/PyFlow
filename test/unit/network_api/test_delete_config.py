@@ -214,9 +214,9 @@ def test_active_transfers_relays_and_pending_logs_prevent_deletion(instance):
     if isinstance(instance, TCP_Server_Base):
         instance._forward_relays[6] = {}
     else:
-        lock = threading.Lock()
-        lock.acquire()
-        instance._forward_resume_records[6] = {"send_lock": lock}
+        instance._resume_sends[(PEER, 6)] = {
+            "lock": threading.RLock(), "users": 1, "targets": {PEER},
+        }
     try:
         with pytest.raises(RuntimeError):
             instance.delete_config(name)
@@ -224,13 +224,31 @@ def test_active_transfers_relays_and_pending_logs_prevent_deletion(instance):
         if isinstance(instance, TCP_Server_Base):
             instance._forward_relays.clear()
         else:
-            lock.release()
-            instance._forward_resume_records.clear()
+            instance._resume_sends.clear()
     instance.messages_dict["peer"] = [["late message", "now"]]
     with pytest.raises(RuntimeError):
         instance.delete_config(Path(instance.messages_log_file).name)
     close(instance)
     assert instance.delete_config(Path(instance.messages_log_file).name) is True
+
+
+@pytest.mark.parametrize("users,targets", [(0, set()), (1, set()), (0, {PEER})])
+def test_transient_resume_state_prevents_deletion_until_released(instance, users, targets):
+    populate(instance)
+    close(instance)
+    path = Path(instance.file_trans_progress_file)
+    before = path.read_bytes()
+    key = (PEER, 6)
+    state = {"lock": threading.RLock(), "users": users, "targets": targets}
+    instance._resume_sends[key] = state
+    try:
+        with pytest.raises(RuntimeError):
+            instance.delete_config(path.name)
+        assert path.read_bytes() == before
+        assert instance._resume_sends[key] is state
+    finally:
+        instance._resume_sends.clear()
+    assert instance.delete_config(path.name) is True
 
 
 def test_delete_waits_for_inflight_progress_publication(instance, monkeypatch):

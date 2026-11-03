@@ -1,6 +1,6 @@
 """Receiver-scoped allocator occupancy must not overwrite a live upload."""
 
-from PyFlow.network_api.connect_tcp import FID_LOW_BITS, _FidAllocator
+from PyFlow.network_api.connect_tcp import FID_LOW_BITS, _FidAllocator, format_fid
 
 
 def test_allocator_skips_a_live_upload_in_the_same_receiver_namespace():
@@ -47,3 +47,20 @@ def test_allocator_skips_restored_route_primary_and_scoped_downstream_ids():
     # remains globally occupied regardless of the requested receiver.
     allocator._counter = 0
     assert allocator.alloc(receiver=other_receiver) == downstream
+
+
+def test_all_allocations_have_reserved_zero_lowbit_and_kindless_log_format():
+    allocator = _FidAllocator(({}, {}, {}, {}))
+    for counter, receiver in enumerate((None, ("127.0.0.1", 40001), None), start=1):
+        fid = allocator.alloc(receiver=receiver)
+        assert fid == (counter << FID_LOW_BITS) | (allocator._epoch << 1)
+        assert fid & 1 == 0
+        assert format_fid(fid) == f"e{allocator._epoch}.{counter}"
+
+
+def test_allocator_no_longer_accepts_a_kind_selector():
+    import pytest
+
+    allocator = _FidAllocator(({}, {}, {}, {}))
+    with pytest.raises(TypeError):
+        allocator.alloc(kind=1)

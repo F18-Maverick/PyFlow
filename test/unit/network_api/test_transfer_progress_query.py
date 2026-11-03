@@ -1,7 +1,6 @@
 """Behavioral contracts for detached, local-only transfer inspection."""
 
 import json
-import threading
 from pathlib import Path
 
 import pytest
@@ -58,11 +57,9 @@ def test_memory_disk_and_returned_mutations_do_not_change_recovery_state(instanc
     if isinstance(instance, TCP_Server_Base):
         instance._register_fid_route(11, ORIGIN, {PEER_A: 12, PEER_B: 12}, (PEER_A,))
     else:
-        instance._forward_resume_records[11] = {
-            "fid": 11, "kind": "file", "path": "/send/source.bin", "fname": "source.bin",
-            "rel_dir": "", "destination": None, "targets": [list(PEER_A), list(PEER_B)],
-            "send_lock": threading.Lock(),
-        }
+        instance.file_upload_progress[(PEER_A, 11)] = [
+            100, 100, None, "/send/source.bin", PEER_B,
+        ]
     original = instance._transfer_progress_snapshot()
     disk = {"upload": {}, "download": {"9": [20, 100, None, "/recv/old.bin", list(PEER_A)],
                                        "10": [5, 50, None, "/recv/disk_only.bin", list(PEER_B)]},
@@ -77,18 +74,25 @@ def test_memory_disk_and_returned_mutations_do_not_change_recovery_state(instanc
     assert set(saved) == {9, 10} and saved[9]["transferred"] == 20
     assert saved[10]["path"] == "/recv/disk_only.bin"
     assert all(saved[9][field] is None for field in ("active", "socket_registered", "paused"))
-    relay, = view["memory"]["relays"]
-    assert relay["fid"] == 11
     if isinstance(instance, TCP_Server_Base):
+        relay, = view["memory"]["relays"]
+        assert relay["fid"] == 11
         assert relay["completed"] == [list(PEER_A)]
         assert relay["targets"] == [[list(PEER_A), 12], [list(PEER_B), 12]]
         assert "path" not in relay
+        relay["targets"].clear()
     else:
-        assert relay["path"] == "/send/source.bin" and "completed" not in relay
-        assert "send_lock" not in relay
+        assert view["memory"]["relays"] == []
+        assert view["persisted"]["snapshot"]["relays"] == []
+        assert original["relays"] == {}
+        upload, = view["memory"]["uploading"]
+        assert upload["fid"] == 11
+        assert upload["receiver"] == list(PEER_A)
+        assert upload["peer"] == list(PEER_B)
+        assert upload["path"] == "/send/source.bin"
+        upload["path"] = "changed"
     json.dumps(view)
     current["peer"][0] = "changed"
-    relay["targets"].clear()
     saved[10]["path"] = "changed"
     assert instance._transfer_progress_snapshot() == original
     assert path.read_bytes() == before
@@ -153,3 +157,31 @@ def test_disabled_tracking_reports_existing_records_but_no_live_speed(instance):
     assert row["path"] == "/recv/retained.bin" and row["total"] == row["transferred"] == 9
     assert row["speed"] is None and row["active"] is False
     assert instance.file_recv_progress[2][2] == 100.0
+
+
+def test_client_legacy_relay_file_is_rejected_without_losing_original_bytes(tmp_path):
+    client = TCP_Client_Base(
+        host="127.0.0.1", port=0, is_extend_command=True,
+        is_input_command_in_console=False, is_enable_encrypto=False, is_print_log=False,
+    )
+    for attr in ("messages_log_file", "events_log_file", "sent_messages_log_file",
+                 "sent_events_log_file", "file_trans_progress_file"):
+        setattr(client, attr, str(tmp_path / f"legacy_{attr}.json"))
+    path = Path(client.file_trans_progress_file)
+    original = json.dumps({"upload": {}, "download": {}, "relays": {
+        "302": {"path": "/old/source.bin", "targets": [list(PEER_A)]},
+    }}).encode()
+    path.write_bytes(original)
+    try:
+        assert client._load_transfer_progress() == 0
+        assert client._transfer_progress_snapshot() == {
+            "upload": {}, "download": {}, "relays": {},
+        }
+        assert client.get_transfer_progress()["persisted"]["status"] == "error"
+        client.file_recv_progress[304] = [1, 2, None, "/recv/current.bin", PEER_B]
+        client._persist_transfer_progress()
+        assert path.read_bytes() == original
+        client.close()
+        assert path.read_bytes() == original
+    finally:
+        client.close()

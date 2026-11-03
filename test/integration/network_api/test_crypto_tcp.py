@@ -935,7 +935,7 @@ def test_encrypted_forward_between_clients(tmp_path, monkeypatch):
         assert received.read_bytes() == payload
         assert stamps and stamps[0].startswith("enc:"), "the target leg was not encrypted"
         assert raw and payload not in raw, "the payload appeared in the clear on the wire"
-        assert sender._forward_resume_records == {}
+        assert sender._transfer_progress_snapshot()["relays"] == {}
         assert sender.file_upload_progress == {}
         assert wait_until(lambda: not server._fid_routes and not server._fid_route_index)
     finally:

@@ -1,10 +1,11 @@
 """Unit tests for the server's authoritative, receiver-scoped FID routes."""
 
 import json
+import socket
 
 import pytest
 
-from PyFlow.network_api.connect_tcp import TCP_Server_Base
+from PyFlow.network_api.connect_tcp import TCP_Server_Base, parse_resume_command
 
 
 ORIGINATOR = ("127.0.0.1", 50001)
@@ -291,3 +292,64 @@ def test_canonical_snapshot_without_completed_has_no_acknowledged_targets(tmp_pa
         assert instance._lookup_fid_route(TARGET_1, 305)[1] is route
     finally:
         instance.stop()
+
+
+@pytest.mark.parametrize("downstream", [304, 305])
+def test_resume_uses_scoped_route_not_id_lowbit_and_rejects_forged_endpoints(server, downstream):
+    route = server._register_fid_route(302, ORIGINATOR, {TARGET_1: downstream})
+    for peer, origin, target, fid in (
+        (TARGET_1, TARGET_2, TARGET_1, downstream),
+        (TARGET_1, ORIGINATOR, TARGET_2, downstream),
+        (TARGET_2, ORIGINATOR, TARGET_2, downstream),
+        (TARGET_1, ORIGINATOR, TARGET_1, downstream + 2),
+    ):
+        assert not server._resume_request(peer, fid, 7, origin, target)
+        assert server._pending_originator_resumes == {}
+        assert server._fid_routes[302] is route
+    # Offline is not success, but a verified receiver's request is retained.
+    assert not server._resume_request(TARGET_1, downstream, 7, ORIGINATOR, TARGET_1)
+    assert not server._resume_request(TARGET_1, downstream, 19, ORIGINATOR, TARGET_1)
+    assert server._pending_originator_resumes == {ORIGINATOR: {(302, TARGET_1): 19}}
+    assert server._fid_route_index == {(TARGET_1, downstream): 302}
+
+
+def test_pending_resume_survives_failed_send_and_prunes_completed_or_missing_routes(server):
+    route = server._register_fid_route(302, ORIGINATOR, {TARGET_1: 304, TARGET_2: 306})
+    for target, child in route["targets"].items():
+        assert not server._resume_request(target, child, 13, ORIGINATOR, target)
+    broken, peer = socket.socketpair()
+    peer.close()
+    server.running = True
+    server.clients[ORIGINATOR] = {"socket": broken}
+    try:
+        assert server._flush_pending_originator_resumes(ORIGINATOR) == 0
+        assert server._pending_originator_resumes == {
+            ORIGINATOR: {(302, TARGET_1): 13, (302, TARGET_2): 13}
+        }
+    finally:
+        broken.close()
+    assert server._complete_fid_target(302, route, TARGET_1, 304)
+    writer, reader = socket.socketpair()
+    reader.settimeout(2)
+    server.clients[ORIGINATOR] = {"socket": writer}
+    try:
+        assert server._flush_pending_originator_resumes(ORIGINATOR) == 1
+        assert parse_resume_command(reader.recv(4096).decode()) == (
+            302, 13, ORIGINATOR, TARGET_2
+        )
+        assert server._pending_originator_resumes == {}
+        assert not server._resume_request(TARGET_1, 304, 0, ORIGINATOR, TARGET_1)
+        # An accepted request must not outlive its owning route.
+        assert server._queue_resume_to_originator(302, route, TARGET_2, 29)
+        reader.recv(4096)
+        server.clients.pop(ORIGINATOR)
+        assert not server._queue_resume_to_originator(302, route, TARGET_2, 31)
+        assert server._drop_fid_route(302, route)
+        server.clients[ORIGINATOR] = {"socket": writer}
+        assert server._flush_pending_originator_resumes(ORIGINATOR) == 0
+        assert server._pending_originator_resumes == {}
+    finally:
+        server.running = False
+        server.clients.clear()
+        writer.close()
+        reader.close()

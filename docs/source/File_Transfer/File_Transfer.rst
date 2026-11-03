@@ -718,8 +718,9 @@ the integer ``fid``, the complete upload ``receiver`` scope when applicable,
 the logical ``peer``, path/name, byte counts, speed, local ``active`` and
 ``socket_registered`` observations, and upload ``paused`` state. Uploads with
 the same numeric fid but different receivers remain separate. Server relay
-rows show ``originator``, all accepted ``targets`` and ``completed`` targets;
-client rows show its existing forwarding-recovery metadata.
+rows show ``originator``, all accepted ``targets`` and ``completed`` targets.
+Clients expose forwarded uploads through their existing upload rows; their
+``relays`` section is empty, with no second recovery-metadata table.
 
 By default, ``persisted`` reads the instance's existing progress JSON without
 loading it into memory or changing it. Its ``status`` is ``ok``, ``missing``,
@@ -808,19 +809,22 @@ The temporary connections of a transfer are resumed after a disconnect:
 - an interrupted transfer keeps its progress entry and its partial file
   instead of dropping them, so the file on disk is exactly the state to
   continue from;
-- after a reconnect each side asks its peer to continue every interrupted
-  download (`_request_resumes`): the receiver sends ``/resume_trans <fid>
-  <offset>`` with the byte offset its partial file holds. The sender answers
-  with ``/file <name> <fid>`` on the control channel. The receiver appends to
-  the partial file only when the fid, the sender, the file name and the size
-  all match the recorded entry; a size mismatch is refused and the partial file
-  is kept. File and folder-item commands use the same identity checks. A line
-  that matches no entry is a new transfer. A forwarded transfer is requested
-  through the server, which routes ``/forward_resume`` to the originating
-  client. The source replays with ``/forward_item``'s optional
-  ``relay_fid=<upstream fid>`` and ``resume=<offset>`` fields. The server checks
-  the original sender and unresolved target, reusing both upstream and child
-  fids; the receiver writes its original full path. No new-ID/path alias is used.
+- after a reconnect each receiver sends ``/resume_trans <fid> <offset>
+  <origin> <target>`` for its interrupted downloads (``_request_resumes``).
+  Both addresses are shell-quoted tuple literals. ``origin`` is the original
+  sender, ``target`` the requesting receiver, and ``offset`` the bytes on disk.
+  The server requires target to equal the actual control requester. A server
+  origin selects its scoped local upload; otherwise the downstream fid and
+  origin must match its authoritative route before translation to the upstream
+  fid and forwarding of the same command to the source. A client sends only
+  when origin matches its current control-connection identity.
+  Local uploads answer with ``/file <name> <fid>``. Forward replay uses
+  ``/forward_item`` with ``relay_fid=<upstream fid>`` and ``resume=<offset>``;
+  ``/forward_upload`` still coordinates the upload slot. The server validates
+  the sender and unresolved target and reuses the upstream and child fids.
+  The receiver matches fid, original sender, basename and total size, then
+  writes its retained full path, including nested folder items. A size mismatch
+  preserves the partial file. No new-ID/path alias or old resume command is used.
 
 On the server, each upstream fid has one authoritative route containing its
 original sender, full accepted ``receiver -> downstream fid`` mapping, and
@@ -835,9 +839,13 @@ The server's ``relays`` snapshot writes one row per upstream fid, containing
 unresolved indexes without replacing live owners. A canonical route snapshot
 without ``completed`` means no target has acknowledged yet. Unsupported older
 server relay schemas or invalid completion sets are rejected and preserved on
-write and shutdown; archive them before persisting new routes. Client relay
-JSON fields and the five-item progress rows are unchanged; replay locks and
-per-fid send serialization are runtime-only.
+write and shutdown; archive them before persisting new routes. Client snapshots
+keep ``relays`` empty; nonempty older client relay metadata is rejected and its
+file preserved, including on shutdown. Five-item upload/download values remain
+unchanged. The source recovers a forwarded file from its upload path alone;
+directory/destination metadata is not duplicated because the target retains
+its full receive path. Per-upload locks and in-flight target sets are transient
+and released after use, not persisted.
 
 Targets accepted after reachability filtering remain in the mapping even if
 their listener or start handshake fails. A successful target loses its reverse
@@ -848,13 +856,20 @@ per-hop send path (encrypted when enabled). It drops the route only after that
 ACK write succeeds; an unsuccessful write leaves the completed route available
 for recovery. The source's original final-ACK wait is 30 seconds plus 10 seconds
 per 100 MiB. A long pause or slow downstream delivery can outlast that wait;
-timeout or a lost ACK conservatively retains the source record and upload
-progress, even if the server completed delivery. No separate receipt or retry
+timeout or a lost ACK conservatively retains the source upload progress,
+even if the server completed delivery. No separate receipt or retry
 protocol is used. If a target cannot send its final ACK, its receive entry
 survives even when the disk file is complete; an EOF replay with the same fid
 can confirm it without retransmitting the body. Retries for different targets
 of one upstream fid are serialized at the source, concurrent duplicate requests
 for the same target are coalesced, and completed targets are not replayed.
+Ordinary resumes share the same in-flight coalescing. Offline-source requests
+are kept on the server per upstream fid/target, retaining the latest offset.
+Reconnect sends through the same secure control path; a failed send keeps the
+request, and completed or missing routes are never replayed.
+Fids no longer encode a plain/relay kind: the reserved low bit is always zero,
+and diagnostics use ``e<epoch>.<counter>``. New-transfer allocation authority and
+the current child-fid naming are unchanged in this step.
 Public-key pushes remain untracked and TOFU verification still precedes their
 ACK.
 

@@ -1438,28 +1438,6 @@ msgid ""
 "continue from;"
 msgstr ""
 
-#: ../../source/File_Transfer/File_Transfer.rst:706
-#: c7017b370d4147128e54a94458a7b536
-msgid ""
-"after a reconnect the receiver drives the resume (`resume_transfers`): it"
-" opens a fresh transfer listener, announces it and sends ``/resume_trans "
-"<fid> <offset>`` with the byte offset its partial file holds. The sender "
-"re-establishes the leg, reads its source from that offset and only the "
-"remainder of the file travels. A forwarded transfer is asked for through "
-"the server, which routes ``/forward_resume`` to the originating client so"
-" it re-forwards just the missing part."
-msgstr ""
-
-#: ../../source/File_Transfer/File_Transfer.rst:714
-#: ee858a76e93f44d5934cb2d89f6709a5
-msgid ""
-"The server resumes a peer's transfers when it reconnects, and a client "
-"with ``is_auto_reconnect=True`` reconnects on its own and resumes every "
-"transfer it can reach; `resume_transfers` is public, so an application "
-"can also drive the resume itself. Legs the previous session left behind "
-"are closed before the resume runs, so two legs never write the same "
-"transfer."
-msgstr ""
 
 #: ../../source/File_Transfer/File_Transfer.rst:723
 #: fe9377db9cf04b9da0dbe4d07c730adf
@@ -1687,12 +1665,6 @@ msgstr ""
 #: ../../source/File_Transfer/File_Transfer.rst:897
 #: 7641e3ece9314197863d872836635218
 msgid "``pause_trans_remote`` / ``start_trans_remote`` (ask a client to do it)"
-msgstr ""
-
-#: ../../source/File_Transfer/File_Transfer.rst:898
-#: ../../source/File_Transfer/File_Transfer.rst:918
-#: 9c62709c2c06456dbfddee1f1ce6871e de496a0be32c490585ae0cbafc931a71
-msgid "``resume_transfers`` / ``resume_trans`` (continue interrupted transfers)"
 msgstr ""
 
 #: ../../source/File_Transfer/File_Transfer.rst:900

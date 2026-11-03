@@ -1734,11 +1734,6 @@ msgstr ""
 msgid "`pause_trans_remote` / `start_trans_remote`"
 msgstr ""
 
-#: ../../source/Network_APIs/TCP_Client_APIs.rst:872
-#: 0f3b14e3c193426191323ee76959278e
-msgid "`resume_transfers` / `resume_trans`"
-msgstr ""
-
 #: ../../source/Network_APIs/TCP_Client_APIs.rst:874
 #: 5bf1072901734d3d8d0b119e5f50627c
 msgid "The client console commands (interactive mode):"

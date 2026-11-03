@@ -637,10 +637,13 @@ Built-in client commands include:
   Forwarded replay adds optional ``relay_fid=<upstream fid>`` and
   ``resume=<offset>`` to ``/forward_item``. After validating the original sender
   and unresolved target, the server reuses the existing upstream/child IDs.
-- ``/resume_trans <fid> <offset>`` and ``/forward_resume <addr> <fid> <offset>``:
-  internal transfer-reconnect messages: the receiver asks the sender (or, for
-  a forwarded transfer, the originator) to continue the file from the bytes
-  already on disk (see :ref:`transfer-pause-and-reconnect`).
+- ``/resume_trans <fid> <offset> <origin> <target>``: the only internal
+  transfer-reconnect command. Addresses are shell-quoted tuple literals; target
+  must match the actual requesting peer. A server origin selects its scoped
+  local upload; otherwise the server validates the downstream route and original
+  sender, translates to the stable upstream fid, and forwards the same command.
+  Unknown or mismatched identities never fall back to another route
+  (see :ref:`transfer-pause-and-reconnect`). No fid kind selects this branch.
 - Forwarded transfers return the existing final data-ACK marker upstream only
   after the current input stream is complete and every accepted target has
   acknowledged. The normal send path reframes the marker for the upstream hop;

@@ -7,7 +7,11 @@ a new transfer and must never be matched to an existing partial file.
 
 import pytest
 
-from PyFlow.network_api.connect_tcp import _resumable_entry
+from PyFlow.network_api.connect_tcp import (
+    _resumable_entry,
+    format_resume_line,
+    parse_resume_command,
+)
 
 PEER = ("127.0.0.1", 6000)
 
@@ -54,3 +58,25 @@ def test_persisted_peer_list_matches_a_peer_tuple():
 )
 def test_anything_else_is_a_new_transfer(progress, fid, peer, command_part):
     assert _resumable_entry(progress, fid, peer, command_part) is None
+
+
+def test_resume_command_preserves_shell_quoted_endpoint_identity():
+    origin = ("sender's host", 50001)
+    target = ("target host", 50002)
+    line = format_resume_line(304, 12345, origin, target)
+    assert parse_resume_command(line) == (304, 12345, origin, target)
+
+
+@pytest.mark.parametrize("line", [
+    "/resume_trans 304 1",
+    "/forward_resume '(\"host\", 5)' 304 1",
+    "/resume_trans 304 -1 '(\"host\", 5)' '(\"target\", 6)'",
+    "/resume_trans -1 1 '(\"host\", 5)' '(\"target\", 6)'",
+    "/resume_trans 304 1 '[\"host\", 5]' '(\"target\", 6)'",
+    "/resume_trans 304 1 '(\"host\", \"5\")' '(\"target\", 6)'",
+    "/resume_trans 304 1 '(\"host\", 5)' '(\"target\",)'",
+    "/resume_trans 304 1 '(\"host\", 5)' '(\"target\", 6)' extra",
+    "/resume_trans 304 1 'unterminated",
+])
+def test_resume_command_rejects_ambiguous_or_malformed_identity(line):
+    assert parse_resume_command(line) is None

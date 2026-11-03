@@ -18,14 +18,13 @@
 - an interrupted transfer is resumed after a disconnect: both sides persist
   their transfer stores under the protocol's ``.Flow`` directory and the
   receiver asks the sender to continue the file from the bytes already on
-  disk (``_request_resumes``; the wire lines are ``/resume_trans`` and
-  ``/forward_resume``).
+  disk (``_request_resumes``; every request uses ``/resume_trans`` with its
+  original sender and final target).
 
 The forwarding extensions use the module-level parsers
 `parse_forwarded_message`, `parse_forward_items_and_addrs`,
 `parse_forward_originator` and `forward_skip_message`; the reconnect logic
-uses `parse_resume_command`, `parse_forward_resume_command` and
-`_resume_offset_for`.
+uses `parse_resume_command`, `format_resume_line` and `_resume_offset_for`.
 
 Concepts live in ``docs/source/Network_APIs/TCP_Server_APIs.rst`` and
 ``TCP_Client_APIs.rst``; argument, return and exception contracts live in the
@@ -50,7 +49,7 @@ import errno
 import queue
 import json
 import stat
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from functools import wraps
 from . import rsa_crypto
 from datetime import datetime
@@ -151,7 +150,6 @@ NETWORK_SPEED_MIN_SPAN = 0.1  # seconds floor, so one short burst is not extrapo
 # drops (see _persist_transfer_progress). After a reconnect the receiver asks
 # the sender to continue from the bytes it already holds (/resume_trans).
 RESUME_LINE = "/resume_trans"  # receiver -> sender: continue this transfer from an offset
-FORWARD_RESUME_LINE = "/forward_resume"  # server -> forwarder: re-forward one item from an offset
 RESUME_ACCEPT_TIMEOUT = 20.0  # seconds a resumed transfer waits for the sender to connect
 RESUME_PORT_TIMEOUT = 20.0  # seconds a resumed sender waits for the receiver's transfer port
 RESUME_SECURE_TIMEOUT = 10.0  # seconds a resume drive waits for the framed control channel
@@ -447,6 +445,8 @@ def _read_transfer_progress(path, *, server_routes=False):
                         raise ValueError
             except (TypeError, ValueError, KeyError, AttributeError):
                 raise ValueError("unsupported server relay progress; archive the old file") from None
+        elif data.get("relays"):
+            raise ValueError("unsupported client relay progress; archive the old file")
     return data
 
 
@@ -597,18 +597,13 @@ def _delete_config(instance, config_name, *, is_list_config):
     with instance._transfer_progress_lock:
         if (instance.running or instance._config_busy
                 or (instance._config_started and not instance._config_closed)
-                or instance._active_transfer_fids or instance._active_transfer_sockets):
+                or instance._active_transfer_fids or instance._active_transfer_sockets
+                or instance._resume_sends):
             raise RuntimeError("stop the instance and finish active transfers before deletion")
         if hasattr(instance, "_forward_relays"):
             with instance._forward_relays_lock:
                 if instance._forward_relays:
                     raise RuntimeError("finish active relays before deletion")
-        else:
-            with instance._forward_resume_lock:
-                if any(record.get("resuming") or (
-                    record.get("send_lock") is not None and record["send_lock"].locked()
-                ) for record in instance._forward_resume_records.values()):
-                    raise RuntimeError("finish active forwarding before deletion")
         with ExitStack() as locks:
             for store in stores:
                 if store is not None:
@@ -651,26 +646,82 @@ def _resume_offset_for(entry):
 
 
 def parse_resume_command(command):
-    """Split a ``/resume_trans <fid> <offset>`` line.
+    """Parse ``/resume_trans <fid> <offset> <origin> <target>`` or return None.
 
-        Args:
-            command (str): Wire line in ``/resume_trans <fid> <offset>`` format;
-                ``fid`` and ``offset`` must be integers.
-
-        Returns:
-            tuple | None: ``(fid, offset)``, or None when the line is malformed.
-        
+    Addresses are shell-quoted two-item tuple literals. Return the integer
+    fid/offset and two endpoint tuples; routing validates their actual owners.
     """
     try:
         parts = shlex.split(command)
-    except ValueError:
+        if len(parts) != 5 or parts[0].lower() != RESUME_LINE:
+            return None
+        fid, offset = int(parts[1]), int(parts[2])
+        endpoints = [ast.literal_eval(text) for text in parts[3:]]
+        if fid < 0 or offset < 0 or any(
+            not isinstance(peer, tuple) or len(peer) != 2
+            or not isinstance(peer[0], str) or not isinstance(peer[1], int)
+            for peer in endpoints
+        ):
+            return None
+        return fid, offset, *endpoints
+    except (ValueError, SyntaxError, TypeError):
         return None
-    if len(parts) != 3 or parts[0].lower() != RESUME_LINE:
-        return None
+
+
+def format_resume_line(fid, offset, origin, target):
+    """Format the only resume wire command, preserving both endpoint identities."""
+    return (f"{RESUME_LINE} {fid} {offset} "
+            f"{shlex.quote(repr(tuple(origin)))} {shlex.quote(repr(tuple(target)))}")
+
+
+@contextmanager
+def _sending_transfer(instance, key):
+    """Serialize sends for one scoped fid; release after the last in-flight user."""
+    with instance._transfer_progress_lock:
+        state = instance._resume_sends.get(key)
+        if state is None:
+            state = {"lock": threading.RLock(), "users": 0, "targets": set()}
+            instance._resume_sends[key] = state
+        state["users"] += 1
     try:
-        return int(parts[1]), int(parts[2])
-    except ValueError:
-        return None
+        with state["lock"]:
+            yield state
+    finally:
+        with instance._transfer_progress_lock:
+            state["users"] -= 1
+            if not state["users"] and not state["targets"]:
+                instance._resume_sends.pop(key, None)
+
+
+def _start_resume_send(instance, key, target, send):
+    """Reserve a target before starting its worker; duplicates join that request."""
+    with instance._transfer_progress_lock:
+        if instance._progress_discarded or key not in instance.file_upload_progress:
+            return False
+        state = instance._resume_sends.get(key)
+        if state is None and key in instance._active_transfer_fids:
+            return True  # an initial ordinary send already owns this upload
+        if state is None:
+            state = {"lock": threading.RLock(), "users": 0, "targets": set()}
+            instance._resume_sends[key] = state
+        if target in state["targets"]:
+            return True
+        state["targets"].add(target)
+
+    def run():
+        try:
+            with _sending_transfer(instance, key):
+                entry = instance.file_upload_progress.get(key)
+                if entry is not None:
+                    send(entry)
+        finally:
+            with instance._transfer_progress_lock:
+                state["targets"].discard(target)
+                if not state["users"] and not state["targets"]:
+                    instance._resume_sends.pop(key, None)
+
+    threading.Thread(target=run, daemon=True).start()
+    return True
 
 
 def _pause_command_fid(command):
@@ -805,35 +856,6 @@ def _resumable_entry(progress, fid, peer, command_part):
         return None
     return entry
 
-def parse_forward_resume_command(command):
-    """Split a ``/forward_resume <addr> <fid> <offset>`` line.
-
-        Args:
-            command (str): Wire line with a two-item tuple address, transfer ID,
-                and byte offset; the address host must be a string and both values
-                must be integers.
-
-        Returns:
-            tuple | None: ``(target, fid, offset)``, or None when the line is
-                malformed.
-        
-    """
-    try:
-        parts = shlex.split(command)
-    except ValueError:
-        return None
-    if len(parts) != 4 or parts[0].lower() != FORWARD_RESUME_LINE:
-        return None
-    try:
-        target = ast.literal_eval(parts[1])
-    except (ValueError, SyntaxError):
-        return None
-    if not (isinstance(target, tuple) and len(target) == 2 and isinstance(target[0], str)):
-        return None
-    try:
-        return target, int(parts[2]), int(parts[3])
-    except ValueError:
-        return None
 
 
 def parse_forwarded_message(command):
@@ -950,12 +972,12 @@ def parse_forward_originator(command, own_address=None):
 # socket registry, and it travels on the wire as the last token of ``/file``
 # and ``/file_folder`` lines. One allocator per instance:
 #
-#     fid = (counter << 32) | (epoch << 1) | kind
+#     fid = (counter << 32) | (epoch << 1)
 #
 # ``epoch`` is random per instance, reducing restart collisions; scoped progress
 # keys, not random uniqueness, isolate receivers and directions. ``counter``
-# only grows in the high bits. ``kind`` is still 0 for a plain leg and 1 for
-# a relay until the separately approved wire cutover.
+# only grows in the high bits. The low bit is reserved, always zero, and never
+# selects a transfer's route or direction.
 #
 # The counters this replaced started at 0 in every instance and were also
 # decremented when a leg ended, so an inbound fid from one peer and an outbound
@@ -963,25 +985,11 @@ def parse_forward_originator(command, own_address=None):
 # (``_active_transfer_fids``, ``_active_transfer_sockets``, ``_transfer_pause``)
 # then let one leg's cleanup tear down the other's socket.
 
-FID_LOW_BITS = 32  # low 32 bits: epoch (31) + kind (1)
-FID_KIND_PLAIN = 0
-FID_KIND_RELAY = 1
-
-
-def fid_kind(fid):
-    """Return 0 (plain leg) or 1 (relay leg) of a transfer id.
-
-    Args:
-        fid (int): Transfer id.
-
-    Returns:
-    int: ``FID_KIND_PLAIN`` or ``FID_KIND_RELAY``.
-    """
-    return fid & 1
+FID_LOW_BITS = 32  # low 32 bits: epoch (31) plus one reserved zero bit
 
 
 def format_fid(fid):
-    """Render a transfer id for logs as ``e<epoch>.<kind>.<counter>``.
+    """Render a transfer id for logs as ``e<epoch>.<counter>``.
 
     Args:
         fid (int): Transfer id.
@@ -990,7 +998,7 @@ def format_fid(fid):
     str: Readable form; the inverse of the allocator's packing.
     """
     low = fid & 0xFFFFFFFF
-    return f"e{low >> 1}.{low & 1}.{fid >> FID_LOW_BITS}"
+    return f"e{low >> 1}.{fid >> FID_LOW_BITS}"
 
 
 class _FidAllocator:
@@ -1007,28 +1015,27 @@ class _FidAllocator:
 
         Args:
             live_tables (tuple): Dicts whose keys are ids still in use —
-                progress stores plus server routes/indexes or client forwarding
-                records. Held by reference, never copied.
+                progress stores and server routes/indexes. Held by reference,
+                never copied.
         """
         self._epoch = int.from_bytes(os.urandom(4), "big") & 0x7FFFFFFF
         self._counter = 0
         self._live_tables = live_tables
         self._lock = threading.Lock()
 
-    def alloc(self, kind=FID_KIND_PLAIN, *, receiver=None):
-        """Return an unused transfer id.
+    def alloc(self, *, receiver=None):
+        """Return an unused kindless transfer id.
 
         Args:
-            kind (int): ``FID_KIND_PLAIN`` or ``FID_KIND_RELAY``.
             receiver (tuple | None): Receiver namespace of an outbound progress key.
 
         Returns:
-        int: Transfer id.
+            int: Transfer id with the reserved low bit cleared.
         """
         with self._lock:
             while True:
                 self._counter += 1
-                fid = (self._counter << FID_LOW_BITS) | (self._epoch << 1) | kind
+                fid = (self._counter << FID_LOW_BITS) | (self._epoch << 1)
                 scoped = (tuple(receiver), fid) if receiver is not None else None
                 if not any(fid in table or scoped in table for table in self._live_tables):
                     return fid
@@ -2035,8 +2042,8 @@ class TCP_Server_Base:  # TCP server class
         self._fid_routes = {}
         self._fid_route_index = {}  # (receiver, downstream fid) -> upstream fid
         # Resume requests that arrived before the originator reconnected:
-        # originator (ip, port) -> [(fid, target (ip, port), offset), ...].
-        self._pending_relay_resumes = {}
+        # originator -> {(upstream fid, target): latest disk offset}.
+        self._pending_originator_resumes = {}
         # Transfer ids for the legs this instance sends (see `_FidAllocator`).
         # Inbound ids use local integer keys; outbound ids use (receiver, fid).
         # Equal numbers cannot share progress, pause state or sockets.
@@ -2066,6 +2073,7 @@ class TCP_Server_Base:  # TCP server class
             self.project_info_dir, "server_file_trans_progress.json"
         )
         self._transfer_progress_lock = threading.RLock()  # serialises the persist/load pair
+        self._resume_sends = {}  # transient locks and request sets; no file metadata
         self._progress_discarded = False
         self._config_started = False
         self._config_closed = False
@@ -4278,7 +4286,7 @@ class TCP_Server_Base:  # TCP server class
                     break
             time.sleep(0.05)
         try:
-            client_id = self._fid_alloc.alloc(FID_KIND_PLAIN, receiver=client_address)
+            client_id = self._fid_alloc.alloc(receiver=client_address)
             send_msg = f"/crypto_pub_key {client_id}"
             self.send_message(client_socket, send_msg, is_send_raw=True)
             file_transfer_client_port = self.palloc()
@@ -4817,7 +4825,7 @@ class TCP_Server_Base:  # TCP server class
             if parsed is not None:
                 threading.Thread(
                     target=self._resume_request,
-                    args=(client_address, parsed[0], parsed[1]),
+                    args=(client_address, *parsed),
                     daemon=True,
                 ).start()
             return None
@@ -5798,7 +5806,7 @@ class TCP_Server_Base:  # TCP server class
             self._log_exc()
             return False
         self._debug(client_socket, client_address, message)
-        client_id = self._fid_alloc.alloc(FID_KIND_PLAIN, receiver=client_ip)
+        client_id = self._fid_alloc.alloc(receiver=client_ip)
         send_msg = message.strip() + " " + str(client_id) + "\n"
         try:
             waiting_time = 0
@@ -6074,7 +6082,7 @@ class TCP_Server_Base:  # TCP server class
 
         Reads the persisted stores back (`_load_transfer_progress`). Every download
         this instance was receiving from ``peer`` gets its offset set to the bytes
-        already on disk, and ``/resume_trans <fid> <offset>`` is sent; the sender
+        already on disk, and the unified origin/target request is sent; the sender
         answers with ``/file <name> <fid>`` and the continued leg is received by
         `file_transfer_mode_recv`. Uploads need no action here.
 
@@ -6102,158 +6110,128 @@ class TCP_Server_Base:  # TCP server class
                 if fid in self._active_transfer_fids:
                     continue  # a leg is already running for this fid
             entry[0] = _resume_offset_for(entry)
-            if self.send_message(info["socket"], f"{RESUME_LINE} {fid} {entry[0]}"):
+            target = (self.host, self.port)
+            if self.send_message(
+                info["socket"], format_resume_line(fid, entry[0], peer, target)
+            ):
                 started += 1
         return started
 
     def resume_trans(self, peer_addr, fid, offset):
-        """Continue one interrupted transfer this instance was sending.
+        """Queue direct or forwarded recovery from the existing upload row.
 
-        Runs when a receiver asks to continue a transfer (``/resume_trans``,
-        see `_request_resumes` on the receiving side): ``/file <name> <fid>``
-        is sent so the receiver opens a listener, and the source file is read
-        from the byte offset the receiver already holds. Also the public API
-        for resuming one transfer on demand.
+        The unified request has validated origin, target and route before this
+        method. Direct recovery sends ``/file``; forwarded replay keeps the
+        stable upstream fid and uses ``/forward_item`` with ``relay_fid=``.
 
         Args:
-            peer_addr (tuple | None): Receiver ``(ip, port)`` the request came
-                from; None cannot select a receiver and returns False.
+            peer_addr (tuple | None): Receiver ``(ip, port)`` for this upload.
             fid (int): Transfer id of the interrupted transfer.
             offset (int): Byte offset the receiver already holds.
 
         Returns:
-            bool: True when the resume leg was started.
+            bool: True when the request was queued or joined in flight.
         """
-        entry = self.file_upload_progress.get((tuple(peer_addr), fid)) if peer_addr is not None else None
-        if entry is None:
-            self._log(f"resume: no outgoing transfer with fid {fid} to continue")
+        if peer_addr is None:
             return False
-        if peer_addr is not None and entry[4] is not None and tuple(entry[4]) != tuple(peer_addr):
-            self._log(f"resume: transfer {fid} is for {entry[4]}, not {peer_addr}, ignored")
+        peer_addr = tuple(peer_addr)
+        key = (peer_addr, fid)
+        entry = self.file_upload_progress.get(key)
+        if entry is None or entry[4] is None or tuple(entry[4]) != peer_addr:
+            self._log(f"resume: no outgoing transfer {fid} for {peer_addr}")
             return False
         with self.client_lock:
-            info = self.clients.get(tuple(peer_addr)) if peer_addr is not None else None
+            info = self.clients.get(peer_addr)
         if info is None:
-            self._log(f"resume: {peer_addr} is not connected, transfer {fid} kept")
             return False
-        self._forget_transfer_port(fid, peer_addr)  # drop only this receiver's old announcement
-        if not self.send_message(
-            info["socket"], f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
-        ):
-            self._log(f"resume: cannot send /file for transfer {fid} to {peer_addr}")
-            return False
-        port_info = self._wait_transfer_server_port(fid, peer_addr)
-        if port_info is None:
-            self._log(f"resume: {peer_addr} did not announce a transfer port for {fid}")
-            return False
-        port, stamp = port_info
-        def run_resume_send_leg():
+
+        def send(entry):
+            self._forget_transfer_port(fid, peer_addr)
+            if not self.send_message(
+                info["socket"], f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
+            ):
+                return
+            port_info = self._wait_transfer_server_port(fid, peer_addr)
+            if port_info is None:
+                self._log(f"resume: {peer_addr} did not announce a transfer port for {fid}")
+                return
+            port, stamp = port_info
             client_port = self.palloc()
             try:
                 self.file_transfer_mode(
-                    entry[3],
-                    peer_addr[0],
-                    port,
-                    client_port,
-                    control_socket=info["socket"],
-                    crypto=stamp,
-                    fid=fid,
-                    peer=tuple(peer_addr),
-                    resume_offset=offset,
+                    entry[3], peer_addr[0], port, client_port,
+                    control_socket=info["socket"], crypto=stamp, fid=fid,
+                    peer=peer_addr, resume_offset=offset,
                 )
             finally:
                 self.pfree(client_port)
 
-        threading.Thread(target=run_resume_send_leg, daemon=True).start()
-        return True
+        return _start_resume_send(self, key, peer_addr, send)
 
 
-    def _resume_request(self, client_address, fid, offset):
-        """Route one client's ``/resume_trans`` to the transfer it names.
-
-        The fid identifies either this server's own outbound leg to that
-                client, or a target leg of a forward relay — the relay record then
-                names the originator, which is asked to re-forward to this client.
-
-        Args:
-            client_address (tuple): Value used by the operation.
-            fid (int): Value used by the operation.
-            offset (int): Value used by the operation.
-
-        Returns:
-            object: Result produced by the operation.
-        """
-        if fid_kind(fid) == FID_KIND_RELAY:
-            found = self._lookup_fid_route(client_address, fid)
-            if found is not None:
-                upstream, route = found
-                if route["originator"] != tuple(client_address):
-                    return self._route_forward_resume(upstream, route, client_address, offset)
-            self._log(
-                f"resume: relay id {format_fid(fid)} has no live record, ignored"
-            )
+    def _resume_request(self, client_address, fid, offset, origin, target):
+        """Validate requester, origin, target and scoped route before recovery."""
+        client_address, origin, target = tuple(client_address), tuple(origin), tuple(target)
+        if target != client_address:
             return False
-        return self.resume_trans(client_address, fid, offset)
-
-    def _route_forward_resume(self, originator_fid, route, target_addr, offset):
-        """Ask a forwarded transfer's originator to continue it for one target.
-
-        The server only relays: the record of the dead relay names the
-                originating client, which re-drives the item to this target from the
-                offset the target already holds (``/forward_resume``). An originator
-                that is not back yet gets the request as soon as it reconnects.
-
-        Args:
-            originator_fid (int): Server-local upstream fid.
-            route (dict): Authoritative route naming the original sender.
-            target_addr (object): Value used by the operation.
-            offset (int): Value used by the operation.
-
-        Returns:
-            bool | object: Result produced by the operation.
-        """
-        originator = route["originator"]
-        request = (
-            f"{FORWARD_RESUME_LINE} {shlex.quote(repr(tuple(target_addr)))} "
-            f"{originator_fid} {offset}"
-        )
-        with self.client_lock:
-            info = self.clients.get(tuple(originator))
-        if info is None:
-            with self._forward_relays_lock:
-                self._pending_relay_resumes.setdefault(tuple(originator), []).append(
-                    (originator_fid, tuple(target_addr), offset)
-                )
-            self._log(
-                f"resume: originator {tuple(originator)} is not connected, "
-                f"request for {tuple(target_addr)} kept"
-            )
+        if origin == (self.host, self.port):
+            return self.resume_trans(client_address, fid, offset)
+        found = self._lookup_fid_route(client_address, fid)
+        if found is not None:
+            upstream, route = found
+            if route["originator"] == origin:
+                return self._queue_resume_to_originator(upstream, route, target, offset)
             return False
-        self._log(
-            f"resume: asking {tuple(originator)} to continue forwarded transfer "
-            f"{originator_fid} for {tuple(target_addr)}"
-        )
-        return self.send_message(info["socket"], request)
+        self._log(f"resume: transfer {format_fid(fid)} has no matching origin/target route")
+        return False
 
-    def _flush_pending_relay_resumes(self, client_address):
-        """Send the forwarded-resume requests that waited for this originator.
-
-        Args:
-            client_address (tuple): Value used by the operation.
-        """
+    def _queue_resume_to_originator(self, originator_fid, route, target_addr, offset):
+        """Keep the latest target offset until its originator accepts the request."""
+        originator, target = route["originator"], tuple(target_addr)
         with self._forward_relays_lock:
-            pending = self._pending_relay_resumes.pop(tuple(client_address), None)
-        if not pending:
-            return
+            if (self._fid_routes.get(originator_fid) is not route
+                    or target not in route["targets"] or target in route["completed"]):
+                return False
+            self._pending_originator_resumes.setdefault(originator, {})[
+                (originator_fid, target)
+            ] = offset
+        return self._flush_pending_originator_resumes(originator) > 0
+
+    def _flush_pending_originator_resumes(self, client_address):
+        """Send queued requests through the secure control path without early removal."""
+        client_address = tuple(client_address)
+        with self._forward_relays_lock:
+            pending = list(self._pending_originator_resumes.get(client_address, {}).items())
         with self.client_lock:
-            info = self.clients.get(tuple(client_address))
-        if info is None:
-            return
-        for fid, target, offset in pending:
-            self.send_message(
-                info["socket"],
-                f"{FORWARD_RESUME_LINE} {shlex.quote(repr(tuple(target)))} {fid} {offset}",
-            )
+            info = self.clients.get(client_address)
+        if not pending or info is None or not self._wait_control_secure(info["socket"]):
+            return 0
+        sent = 0
+        for (fid, target), offset in pending:
+            with _sending_transfer(self, (client_address, fid)):
+                with self._forward_relays_lock:
+                    waiting = self._pending_originator_resumes.get(client_address, {})
+                    if waiting.get((fid, target)) != offset:
+                        continue  # another flush sent it, or a newer offset replaced it
+                    route = self._fid_routes.get(fid)
+                    valid = (route is not None and route["originator"] == client_address
+                             and target in route["targets"] and target not in route["completed"])
+                if valid:
+                    try:
+                        if not self.send_message(
+                            info["socket"], format_resume_line(fid, offset, client_address, target)
+                        ):
+                            continue
+                    except OSError:
+                        continue
+                    sent += 1
+                with self._forward_relays_lock:
+                    waiting = self._pending_originator_resumes.get(client_address, {})
+                    if waiting.get((fid, target)) == offset:
+                        waiting.pop((fid, target), None)
+                    if not waiting:
+                        self._pending_originator_resumes.pop(client_address, None)
+        return sent
 
     def _resume_after_connect(self, client_address):
         """Continue this peer's interrupted transfers after it (re)connected.
@@ -6262,8 +6240,8 @@ class TCP_Server_Base:  # TCP server class
             client_address (tuple): Value used by the operation.
         """
         self._drop_stale_transfers(peer=tuple(client_address))
-        self._flush_pending_relay_resumes(tuple(client_address))
         self._request_resumes(tuple(client_address))
+        self._flush_pending_originator_resumes(tuple(client_address))
 
     # ---- native in-memory forward relay (server side) ----------------------
 
@@ -6494,8 +6472,8 @@ class TCP_Server_Base:  # TCP server class
         """
         targets = list(dict.fromkeys(tuple(target) for target in targets))
         if relay_fid is None:
-            fid = self._fid_alloc.alloc(FID_KIND_RELAY)
-            tfids = [self._fid_alloc.alloc(FID_KIND_RELAY, receiver=target) for target in targets]
+            fid = self._fid_alloc.alloc()
+            tfids = [self._fid_alloc.alloc(receiver=target) for target in targets]
             route = self._register_fid_route(fid, originator_addr, dict(zip(targets, tfids)))
         else:
             fid = relay_fid
@@ -7182,10 +7160,6 @@ class TCP_Client_Base:  # TCP client class
         self._upload_speed_total = 0  # bytes held in the sample windows
         self._recv_speed_total = 0
         self._forward_upload_queue = queue.Queue()
-        # One record per upstream relay fid, retained until the final data ACK.
-        # Runtime send serialization and duplicate-request state stay out of JSON.
-        self._forward_resume_records = {}
-        self._forward_resume_lock = threading.Lock()
         self._forward_error = None
         # Outbound-transfer pause switches (see `pause_trans`/`start_trans`):
         # (receiver, fid) -> bool, including forwarded uploads to the server.
@@ -7211,6 +7185,7 @@ class TCP_Client_Base:  # TCP client class
             self.project_info_dir, "client_file_trans_progress.json"
         )
         self._transfer_progress_lock = threading.RLock()  # serialises the persist/load pair
+        self._resume_sends = {}  # transient locks and request sets; no file metadata
         self._progress_discarded = False
         self._config_started = False
         self._config_closed = False
@@ -7249,7 +7224,7 @@ class TCP_Client_Base:  # TCP client class
         # Inbound keys are local integers; outbound keys include the server.
         # Forward uploads keep their logical target in the progress value.
         self._fid_alloc = _FidAllocator(
-            (self.file_upload_progress, self.file_recv_progress, self._forward_resume_records)
+            (self.file_upload_progress, self.file_recv_progress)
         )
         MAX_CONCURRENT_FILES = self.max_thread_num
         self.file_semaphore = threading.Semaphore(MAX_CONCURRENT_FILES)
@@ -7980,23 +7955,10 @@ class TCP_Client_Base:  # TCP client class
                 for fid, entry in list(store.items())
             }
 
-        with self._forward_resume_lock:
-            relays = {
-                str(key): {
-                    "fid": record.get("fid"),
-                    "kind": record.get("kind"),
-                    "rel_dir": record.get("rel_dir"),
-                    "fname": record.get("fname"),
-                    "path": record.get("path"),
-                    "destination": record.get("destination"),
-                    "targets": [list(target) for target in record.get("targets") or []],
-                }
-                for key, record in list(self._forward_resume_records.items())
-            }
         return {
             "upload": entries(self.file_upload_progress),
             "download": entries(self.file_recv_progress),
-            "relays": relays,
+            "relays": {},
         }
 
     def get_transfer_progress(self, *, include_persisted=True) -> dict:
@@ -8037,13 +7999,11 @@ class TCP_Client_Base:  # TCP client class
     def _persist_transfer_progress(self):
         """Write the transfer stores to the protocol's ``.Flow`` directory.
 
-        Every in-flight transfer — uploads, downloads, and the relay records
-                of the forwards this client started — is written to
-                ``client_file_trans_progress.json`` when a connection drops, and the
-                file is what the reconnect logic reads back. Once nothing is left to
-                transfer the file is emptied; it is only rewritten while it exists, so
-                a run without an interrupted transfer never creates it. A write
-                failure is logged, never raised.
+        Upload and download rows are written to ``client_file_trans_progress.json``
+        when a connection drops. Forwarded uploads use those same five-item rows;
+        the ``relays`` area is empty. The reconnect logic reads the rows back.
+        Once nothing is left the existing file is emptied; an uninterrupted run
+        creates no progress file. Write failures are logged, never raised.
         """
         with self._transfer_progress_lock:
             if self._progress_discarded:
@@ -8068,13 +8028,12 @@ class TCP_Client_Base:  # TCP client class
     def _load_transfer_progress(self):
         """Read the persisted interrupted transfers back into the stores.
 
-        Every entry read back keeps the bytes it had already transferred, so
-                the reconnect logic can ask the sender to continue from there; every
-                relay record comes back so an interrupted forward can be re-driven.
-                Entries a live transfer (or a relay) already owns are left alone.
+        Existing five-item rows retain bytes and full paths for reconnect.
+        Live scoped keys are not overwritten. Nonempty legacy client relay
+        metadata is rejected without modifying the old snapshot.
 
         Returns:
-        int: Number of transfer entries and relay records restored.
+            int: Number of upload and download rows restored.
         """
         with self._transfer_progress_lock:
             if self._progress_discarded:
@@ -8089,22 +8048,6 @@ class TCP_Client_Base:  # TCP client class
             if not isinstance(data, dict):
                 return 0
             restored = 0
-            with self._forward_resume_lock:
-                for key_text, record in (data.get("relays") or {}).items():
-                    try:
-                        key = int(key_text)
-                    except (TypeError, ValueError):
-                        continue
-                    if not isinstance(record, dict):
-                        continue
-                    record = dict(record)
-                    record["targets"] = [
-                        target
-                        for target in (_peer_from_json(t) for t in record.get("targets") or [])
-                        if target
-                    ]
-                    self._forward_resume_records.setdefault(key, record)
-                    restored += 1
             for key, store in (
                 ("download", self.file_recv_progress),
                 ("upload", self.file_upload_progress),
@@ -9501,7 +9444,7 @@ class TCP_Client_Base:  # TCP client class
                     break
             time.sleep(0.05)
         try:
-            client_id = self._fid_alloc.alloc(FID_KIND_PLAIN, receiver=(self.host, self.port))
+            client_id = self._fid_alloc.alloc(receiver=(self.host, self.port))
             send_msg = f"/crypto_pub_key {client_id}"
             self.send_message(self.client_socket, send_msg, is_send_raw=True)
             file_transfer_client_port = self.palloc()
@@ -9594,8 +9537,8 @@ class TCP_Client_Base:  # TCP client class
         connection), ``/client_alloc_port_range``, the ``/crypto_*`` exchange lines,
         and the transfer lines ``/file``, ``/file_folder``,
         ``/server_file_transfer_port``, ``/forward_upload``, ``/pause_trans``,
-        ``/start_trans``, ``/resume_trans``, ``/forward_resume`` and
-        ``/forward_error``. Any other name goes to the handlers registered for
+        ``/start_trans``, ``/resume_trans`` and ``/forward_error``.
+        Any other name goes to the handlers registered for
         the "server" side via `register_command`; an unknown command is only
         reported on the console.
 
@@ -9741,16 +9684,10 @@ class TCP_Client_Base:  # TCP client class
                 self.start_trans(fid)
         elif shlex.split(command.lower())[0] == RESUME_LINE:
             parsed = parse_resume_command(command)
-            if parsed is not None:
-                threading.Thread(
-                    target=self.resume_trans,
-                    args=((self.host, self.port), parsed[0], parsed[1]),
-                    daemon=True,
-                ).start()
-        elif shlex.split(command.lower())[0] == FORWARD_RESUME_LINE:
-            parsed = parse_forward_resume_command(command)
-            if parsed is not None:
-                self._resume_forward(parsed[0], parsed[1], parsed[2])
+            if parsed is not None and self.client_socket is not None:
+                fid, offset, origin, target = parsed
+                if origin == self.client_socket.getsockname():
+                    self.resume_trans(target, fid, offset)
         elif shlex.split(command.lower())[0] == "/forward_error":
             self._forward_error = command
         else:
@@ -10107,7 +10044,7 @@ class TCP_Client_Base:  # TCP client class
             message (object): Value used by the operation.
             file_folder_abspath (str): Value used by the operation.
         """
-        client_id = self._fid_alloc.alloc(FID_KIND_PLAIN, receiver=(self.host, self.port))
+        client_id = self._fid_alloc.alloc(receiver=(self.host, self.port))
         send_msg = message.strip() + " " + str(client_id)
         try:
             waiting_time = 0
@@ -10378,11 +10315,9 @@ class TCP_Client_Base:  # TCP client class
     def _request_resumes(self):
         """Continue this client's interrupted downloads after it (re)connected.
 
-        Reads the persisted stores back (`_load_transfer_progress`). A download
-        from the server gets its offset set to the bytes already on disk and
-        ``/resume_trans <fid> <offset>`` is sent to the server. A download
-        forwarded from another client is requested through the server
-        (`_request_forward_resume`). Uploads need no action here.
+        Loads the existing receive rows and sends their stable fid, disk offset,
+        original sender and this connection's target identity through one wire
+        command. Upload rows are resumed only when their receivers ask.
 
         Returns:
             int: Number of resume requests sent.
@@ -10392,169 +10327,77 @@ class TCP_Client_Base:  # TCP client class
             self._log(f"transfer reconnect: restored {restored} interrupted transfer(s)")
         if not self.running or self.client_socket is None:
             return 0
-        server_peer = (self.host, self.port)
         if not self._wait_control_secure(self.client_socket):
             return 0
         started = 0
         for fid, entry in list(self.file_recv_progress.items()):
             if entry[4] is None:
                 continue  # without a peer there is nobody to continue with
-            with self._forward_resume_lock:
-                if fid in self._forward_resume_records:
-                    continue  # this client relays that transfer: its target drives it
             with self._transfer_progress_lock:
                 if fid in self._active_transfer_fids:
                     continue  # a leg is already running for this fid
-            peer_addr = tuple(entry[4])
-            if peer_addr == server_peer:
-                entry[0] = _resume_offset_for(entry)
-                if self.send_message(self.client_socket, f"{RESUME_LINE} {fid} {entry[0]}"):
-                    started += 1
-            elif self._request_forward_resume(fid, entry, peer_addr):
+            entry[0] = _resume_offset_for(entry)
+            if self.send_message(
+                self.client_socket,
+                format_resume_line(fid, entry[0], entry[4], self.client_socket.getsockname()),
+            ):
                 started += 1
         return started
 
-    def _request_forward_resume(self, fid, entry, originator):
-        """Ask the server to have a forward's originator continue a transfer.
-
-        The existing receive entry retains the stable downstream fid, full
-        path and disk offset; replay does not register a path alias or new ID.
-
-        Args:
-            fid (int): Value used by the operation.
-            entry (object): Value used by the operation.
-            originator (object): Value used by the operation.
-
-        Returns:
-            bool: Result produced by the operation.
-        """
-        offset = _resume_offset_for(entry)
-        entry[0] = offset
-        if not self.send_message(self.client_socket, f"{RESUME_LINE} {fid} {offset}"):
-            return False
-        self._log(
-            f"resume: asked the server to continue transfer {fid} from {originator} "
-            f"at byte {offset}"
-        )
-        return True
-
 
     def resume_trans(self, peer_addr, fid, offset):
-        """Continue one interrupted transfer this instance was sending.
+        """Queue direct or forwarded recovery from the existing upload row.
 
-        Runs when a receiver asks to continue a transfer (``/resume_trans``,
-        see `_request_resumes` on the receiving side): ``/file <name> <fid>``
-        is sent so the receiver opens a listener, and the source file is read
-        from the byte offset the receiver already holds. Also the public API
-        for resuming one transfer on demand.
+        Server-bound uploads answer with ``/file``; other final targets replay
+        through the server with the stable upstream fid. The retained upload
+        path is sufficient because the receiver owns its full destination path.
+        Runtime locks coalesce duplicate targets and serialize different
+        targets without persisting file metadata.
 
         Args:
-            peer_addr (tuple | None): Receiver ``(ip, port)`` the request came
-                from; None skips the peer check.
+            peer_addr (tuple | None): Final receiver; None selects the server.
             fid (int): Transfer id of the interrupted transfer.
             offset (int): Byte offset the receiver already holds.
 
         Returns:
-            bool: True when the resume leg was started.
+            bool: True when the request was queued or joined in flight.
         """
-        entry = self.file_upload_progress.get(((self.host, self.port), fid))
-        if entry is None:
-            self._log(f"resume: no outgoing transfer with fid {fid} to continue")
-            return False
-        if peer_addr is not None and entry[4] is not None and tuple(entry[4]) != tuple(peer_addr):
-            self._log(f"resume: transfer {fid} is for {entry[4]}, not {peer_addr}, ignored")
-            return False
+        server_peer = (self.host, self.port)
+        target = tuple(peer_addr) if peer_addr is not None else server_peer
+        key = (server_peer, fid)
         if not self.running or self.client_socket is None:
-            self._log(f"resume: not connected to the server, transfer {fid} kept")
             return False
-        self._forget_transfer_port(fid, (self.host, self.port))
-        if not self.send_message(
-            self.client_socket, f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
-        ):
-            self._log(f"resume: cannot send /file for transfer {fid}")
-            return False
-        port_info = self._wait_transfer_server_port(fid, (self.host, self.port))
-        if port_info is None:
-            self._log(f"resume: {peer_addr} did not announce a transfer port for {fid}")
-            return False
-        port, stamp = port_info
-        def run_resume_send_leg():
+
+        def send(entry):
+            if target != server_peer:
+                self._forward_one(
+                    "file", "", os.path.basename(str(entry[3])), entry[3], [target],
+                    resume_offset=offset, relay_fid=fid,
+                )
+                return
+            if entry[4] is None or tuple(entry[4]) != server_peer:
+                return
+            self._forget_transfer_port(fid, server_peer)
+            if not self.send_message(
+                self.client_socket, f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
+            ):
+                return
+            port_info = self._wait_transfer_server_port(fid, server_peer)
+            if port_info is None:
+                self._log(f"resume: server did not announce a transfer port for {fid}")
+                return
+            port, stamp = port_info
             client_port = self.palloc()
             try:
                 self.file_transfer_mode(
-                    entry[3],
-                    peer_addr[0] if peer_addr else self.host,
-                    port,
-                    client_port,
-                    control_socket=self.client_socket,
-                    crypto=stamp,
-                    fid=fid,
-                    peer=peer_addr,
-                    resume_offset=offset,
+                    entry[3], self.host, port, client_port,
+                    control_socket=self.client_socket, crypto=stamp, fid=fid,
+                    peer=server_peer, resume_offset=offset,
                 )
             finally:
                 self.pfree(client_port)
 
-        threading.Thread(target=run_resume_send_leg, daemon=True).start()
-        return True
-
-
-    def _forward_resume_record(self, fid):
-        """Return a forwarding record with its in-memory synchronization state."""
-        with self._forward_resume_lock:
-            record = self._forward_resume_records.get(fid)
-            if record is None:
-                return None
-            if "send_lock" not in record:
-                record.update(send_lock=threading.Lock(), resuming=set())
-            return record
-
-
-    def _resume_forward(self, target, fid, offset):
-        """Re-drive one unresolved forwarded target without allocating new IDs."""
-        target = tuple(target)
-        record = self._forward_resume_record(fid)
-        if record is None:
-            self._log(f"resume: no forwarded transfer with fid {fid} to continue")
-            return False
-        with self._forward_resume_lock:
-            targets = {tuple(item) for item in record.get("targets") or []}
-            if target not in targets:
-                self._log(f"resume: {target} is not a target of forwarded transfer {fid}, ignored")
-                return False
-            if target in record["resuming"]:
-                return True
-            record["resuming"].add(target)
-            kind = record.get("kind") or "file"
-            rel_dir = record.get("rel_dir") or ""
-            fname = record.get("fname") or os.path.basename(str(record.get("path") or ""))
-            path = record.get("path")
-            destination = record.get("destination")
-        if path is None or not os.path.isfile(path):
-            with self._forward_resume_lock:
-                record["resuming"].discard(target)
-            self._log(f"resume: the source of forwarded transfer {fid} is gone, giving up")
-            return False
-
-        def run_resume():
-            try:
-                self._forward_one(
-                    kind,
-                    rel_dir,
-                    fname,
-                    path,
-                    [target],
-                    destination,
-                    resume_offset=offset,
-                    relay_fid=fid,
-                )
-            finally:
-                with self._forward_resume_lock:
-                    record["resuming"].discard(target)
-
-        self._log(f"resume: forwarding {path} to {target} again, from byte {offset}")
-        threading.Thread(target=run_resume, daemon=True).start()
-        return True
+        return _start_resume_send(self, key, target, send)
 
 
     # ---- native in-memory forward (client side) ----------------------------
@@ -10720,16 +10563,12 @@ class TCP_Client_Base:  # TCP client class
         if not os.path.isfile(abspath):
             self._log(f"forward: {abspath} is not a valid file, skipped")
             return False
-        record = self._forward_resume_record(relay_fid) if relay_fid is not None else None
-        if relay_fid is not None and record is None:
-            self._log(f"forward: no relay record for stable fid {relay_fid}")
-            return False
-        send_lock = record["send_lock"] if record is not None else threading.Lock()
-        with send_lock:
-            if record is not None:
-                with self._forward_resume_lock:
-                    if self._forward_resume_records.get(relay_fid) is not record:
-                        return False  # a completed attempt already released this owner
+        with ExitStack() as sends:
+            if relay_fid is not None:
+                key = ((self.host, self.port), relay_fid)
+                sends.enter_context(_sending_transfer(self, key))
+                if key not in self.file_upload_progress:
+                    return False
             msg = f"/forward_item {kind}"
             if relay_fid is not None:
                 msg += f" relay_fid={int(relay_fid)}"
@@ -10768,23 +10607,8 @@ class TCP_Client_Base:  # TCP client class
                 (_peer_from_json(target) or (target[0], int(target[1])))
                 for target in addrs
             ]
-            if record is None:
-                record = {
-                    "fid": fid,
-                    "kind": kind,
-                    "rel_dir": rel_dir,
-                    "fname": fname,
-                    "path": abspath,
-                    "destination": destination_path,
-                    "targets": [list(target) for target in targets],
-                    "send_lock": send_lock,
-                    "resuming": set(),
-                }
-                with self._forward_resume_lock:
-                    self._forward_resume_records[fid] = record
-            elif record.get("fid") != fid:
-                self._log(f"forward: stable relay record {relay_fid} mismatched upload {fid}")
-                return False
+            if relay_fid is None:
+                sends.enter_context(_sending_transfer(self, ((self.host, self.port), fid)))
             client_port = self.palloc()
             try:
                 sent = self.file_transfer_mode(
@@ -10802,12 +10626,6 @@ class TCP_Client_Base:  # TCP client class
                 self.pfree(client_port)
                 with self._transfer_pause_cond:
                     self._transfer_pause.pop(((self.host, self.port), fid), None)
-            if sent:
-                with self._forward_resume_lock:
-                    if self._forward_resume_records.get(fid) is record:
-                        del self._forward_resume_records[fid]
-                if os.path.exists(self.file_trans_progress_file):
-                    self._persist_transfer_progress()
             return sent
 
     def file_folder_transfer_client_recv_server_start_thread(
