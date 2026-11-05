@@ -138,6 +138,26 @@ def _is_closed_socket_error(exc):
         10038,  # WSAENOTSOCK (Windows)
     )
 
+def _is_local_port_conflict(exc):
+    """Return true when a bind or connect lost its local port to an older socket.
+
+    The same endpoint can be refused at either step. POSIX fails the bind;
+    Windows accepts it under ``SO_REUSEADDR`` and reports WSAEADDRINUSE
+    (10048) from the connect instead, because the previous socket is still in
+    TIME_WAIT. Both mean "this port is not ours to take right now".
+
+    Args:
+        exc (object): Exception raised by a socket bind or connect.
+
+    Returns:
+        bool: True for EADDRINUSE / WSAEADDRINUSE.
+    """
+    if not isinstance(exc, OSError):
+        return False
+    if exc.errno == errno.EADDRINUSE:
+        return True
+    return getattr(exc, "winerror", None) == 10048  # WSAEADDRINUSE (Windows)
+
 
 MAX_DECODE_FAILURES = 3  # circuit breaker: close after N consecutive decode failures (re-exchange storm / garbage injection)
 SEND_WAIT_TIMEOUT = 30.0  # seconds a non-blocking client write waits for buffer room
@@ -8787,19 +8807,25 @@ class TCP_Client_Base:  # TCP client class
         """
         while True:
             try:
-                self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                if self.timeout != None:
-                    self.client_socket.settimeout(self.timeout)  # connect over 5 seconds timeout
-                else:
-                    self.client_socket.settimeout(5)
-                self._log(f"connecting to {self.host}:{self.port}...")
-                if self.client_port == None:
-                    pass
-                else:
-                    self.local_address = (self.client_host, self.client_port)
+                local_address = (
+                    (self.client_host, self.client_port)
+                    if self.client_port is not None
+                    else None
+                )
+                while True:
+                    self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    self.client_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    if self.timeout != None:
+                        self.client_socket.settimeout(self.timeout)  # connect over 5 seconds timeout
+                    else:
+                        self.client_socket.settimeout(5)
+                    self._log(f"connecting to {self.host}:{self.port}...")
+                    self.local_address = local_address
                     try:
-                        self.client_socket.bind(self.local_address)
+                        if local_address is not None:
+                            self.client_socket.bind(local_address)
+                        self.client_socket.connect((self.host, self.port))
+                        break
                     except OSError as e:
                         # the configured port is not ours to take right now (a
                         # session that just ended can keep it, in TIME_WAIT on
@@ -8807,12 +8833,17 @@ class TCP_Client_Base:  # TCP client class
                         # The interrupted transfers of the previous session
                         # are matched by address, so they stay stored until a
                         # reconnect that can use the configured port again.
+                        # Windows accepts the bind under SO_REUSEADDR and only
+                        # reports the conflict from the connect, so both steps
+                        # fall back, each attempt using a fresh socket.
+                        self.client_socket.close()
+                        if local_address is None or not _is_local_port_conflict(e):
+                            raise
                         self._log(
                             f"client port {self.client_port} is not available ({e}); "
                             f"connecting from an OS-assigned port instead"
                         )
-                        self.local_address = None
-                self.client_socket.connect((self.host, self.port))
+                        local_address = None
                 if self._stopped:
                     # close() arrived while the socket was connecting: stay
                     # closed instead of reviving the connection
