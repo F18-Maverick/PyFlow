@@ -368,6 +368,11 @@ def test_pending_resume_survives_failed_send_and_prunes_completed_or_missing_rou
         assert not server._resume_request(target, child, 13, ORIGINATOR, target)
     broken, peer = socket.socketpair()
     peer.close()
+    # A closed peer does not make the next write fail on every platform: Windows
+    # accepts the first send into the local buffer and only reports the reset
+    # later. Shut the writing half down as well, so "the send failed" is a
+    # property of the socket here, not of the platform's timing.
+    broken.shutdown(socket.SHUT_WR)
     server.running = True
     server.clients[ORIGINATOR] = {"socket": broken}
     try:
