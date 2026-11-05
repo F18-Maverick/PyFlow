@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from helpers import free_port, isolate_instance_files, server_ready, wait_until
+from helpers import free_port, isolate_instance_files, request_transfer_listener, server_ready, wait_until
 
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base, format_resume_line
 
@@ -26,17 +26,6 @@ def _isolate(instance, tmp_path, name):
     """Keep an instance's logs and its transfer progress file out of the repo."""
     isolate_instance_files(instance, tmp_path, name)
 
-
-def _wait_port(instance, timeout=10.0):
-    """Wait for the transfer port the instance's peer announced."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        with instance.file_transfer_server_port_lock:
-            ports = list(instance.file_server_port_list)
-        if ports:
-            return ports[0][0]
-        time.sleep(0.05)
-    return None
 
 
 def _redirect_crypto(crypto, tmp_path, ssh_dir, subdir="pub_key"):
@@ -266,17 +255,12 @@ def test_equal_server_upload_fids_are_isolated_by_receiver(tmp_path):
             payloads.append(payload)
             outputs.append(recv_dir / src.name)
             assert server.pause_trans(fid, receiver) is False
-            client.file_transfer_client_recv_server_start_thread(
-                "cid", client.client_socket, f"/file {shlex.quote(str(src))} {fid}"
+            results[receiver] = request_transfer_listener(
+                server, client, f"/file {shlex.quote(str(src))} {fid}"
             )
 
-        assert wait_until(lambda: len(server.file_server_port_list) == 2, timeout=10)
-        # Both announcements have the same fid; select in reverse receiver
-        # order so neither cache ordering nor a fid-only lookup can mask it.
-        ports = {
-            receiver: server._wait_transfer_server_port(fid, receiver, timeout=10)
-            for receiver in reversed(receivers)
-        }
+        # Both listeners share a numeric FID but have distinct request sockets.
+        ports = {receiver: results.pop(receiver) for receiver in reversed(receivers)}
         assert all(port is not None for port in ports.values())
 
         def send(receiver, src):
@@ -481,17 +465,12 @@ def test_paused_transfer_is_persisted_when_the_connection_drops(tmp_path):
         src.write_bytes(payload)
         fid = 76  # even low bit: a plain leg's id
 
-        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-        sender_id = "%s:%s" % client.client_socket.getsockname()
-        server.file_transfer_server_recv_server_start_thread(
-            sender_id, server_sock, f"/file {src} {fid}"
-        )
-        assert _wait_port(client) is not None
+        transfer_port, _stamp = request_transfer_listener(client, server, f"/file {src} {fid}")
 
         client.pause_trans(fid)  # hold the leg before its first chunk
         sender = threading.Thread(
             target=client.file_transfer_mode,
-            args=(str(src), "127.0.0.1", _wait_port(client) or 0, 0),
+            args=(str(src), "127.0.0.1", transfer_port, 0),
             kwargs={"fid": fid, "peer": (server.host, server.port)},
             daemon=True,
         )
@@ -570,13 +549,9 @@ def test_upload_resumes_after_a_reconnect(tmp_path):
         assert wait_until(lambda: client_addr in server.clients, timeout=10), (
             "server never registered the reconnecting client"
         )
-        server_sock = server.clients[client_addr]["socket"]
-        client_id = "%s:%s" % client_addr
-        server.file_transfer_server_recv_server_start_thread(
-            client_id, server_sock, f"/file {shlex.quote(str(src))} {fid}"
+        transfer_port, _stamp = request_transfer_listener(
+            client, server, f"/file {shlex.quote(str(src))} {fid}"
         )
-        transfer_port = _wait_port(client)
-        assert transfer_port is not None, "the client never announced a transfer port"
 
         client.pause_trans(fid)  # freeze the leg, then give it a partial file
         sender = threading.Thread(
@@ -649,8 +624,6 @@ def test_server_ack_failure_keeps_received_file_until_eof_confirmation(
         clients.append(client)
         peer = client.client_socket.getsockname()
         assert wait_until(lambda: peer in server.clients)
-        control = server.clients[peer]["socket"]
-        client_id = "%s:%s" % peer
         src = tmp_path / "ack_failure.bin"
         payload = os.urandom(64 * 1024 + 37)
         src.write_bytes(payload)
@@ -678,17 +651,11 @@ def test_server_ack_failure_keeps_received_file_until_eof_confirmation(
 
         monkeypatch.setattr(server, "send_message", fail_final_ack)
         monkeypatch.setattr(client, "file_transfer_mode", observe_transfer)
-        if kind == "folder":
-            server.file_folder_transfer_server_recv_server_start_thread(
-                f"/file_folder bundle/nested {src.name} {fid}", client_id, control
-            )
-        else:
-            server.file_transfer_server_recv_server_start_thread(
-                client_id, control, f"/file {shlex.quote(str(src))} {fid}"
-            )
-        port_info = client._wait_transfer_server_port(fid, (server.host, server.port), timeout=10)
-        assert port_info is not None
-        port, stamp = port_info
+        command = (
+            f"/file_folder bundle/nested {src.name} {fid}" if kind == "folder"
+            else f"/file {shlex.quote(str(src))} {fid}"
+        )
+        port, stamp = request_transfer_listener(client, server, command)
         assert client.file_transfer_mode(
             str(src), server.host, port, 0, control_socket=client.client_socket,
             crypto=stamp, fid=fid, peer=(server.host, server.port),
@@ -829,15 +796,11 @@ def test_server_final_error_keeps_upload_until_successful_resume(
 
         monkeypatch.setattr(server, "receive_message", observe_header)
         monkeypatch.setattr(client, "send_message", reject_final_ack)
-        if kind == "folder":
-            client.file_folder_transfer_client_recv_server_start_thread(
-                f"/file_folder bundle/nested {src.name} {fid}", "cid", client.client_socket
-            )
-        else:
-            client.file_transfer_client_recv_server_start_thread(
-                "cid", client.client_socket, f"/file {shlex.quote(str(src))} {fid}"
-            )
-        port, stamp = server._wait_transfer_server_port(fid, receiver, timeout=10)
+        command = (
+            f"/file_folder bundle/nested {src.name} {fid}" if kind == "folder"
+            else f"/file {shlex.quote(str(src))} {fid}"
+        )
+        port, stamp = request_transfer_listener(server, client, command)
         result = server.file_transfer_mode(
             str(src), receiver[0], port, 0,
             control_socket=server.clients[receiver]["socket"], crypto=stamp,
@@ -925,6 +888,336 @@ def test_forwarded_file_resumes_through_the_server(tmp_path, monkeypatch):
         _close_socket_workers(server, clients, workers)
 
 
+def test_sender_owned_fids_to_distinct_targets_survive_out_of_order_replies(
+    tmp_path, monkeypatch
+):
+    """Keep source-owned upstream FIDs paired with targets after reply reordering."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    release_first = threading.Event()
+    first_reply_waiting = threading.Event()
+    first_port_blocked = threading.Event()
+    second_reply_sent = threading.Event()
+    request_lock = threading.Lock()
+    request_names = {}
+    fids_by_name = {}
+    route_registrations = []
+    server_allocations = []
+    sender_threads = []
+    try:
+        source = _start_client(tmp_path, server, name="source")
+        targets = []
+        target_dirs = []
+        for name in ("first", "second"):
+            recv_dir = tmp_path / f"{name}_target"
+            recv_dir.mkdir()
+            target_dirs.append(recv_dir)
+            targets.append(
+                _start_client(tmp_path, server, name=f"{name}_target", recv_dir=recv_dir)
+            )
+        clients.extend((source, *targets))
+        source_addr = source.client_socket.getsockname()
+        target_addrs = [target.client_socket.getsockname() for target in targets]
+        payloads = {
+            "first.bin": os.urandom(96 * 1024 + 11),
+            "second.bin": os.urandom(80 * 1024 + 7),
+        }
+        paths = {}
+        for name, payload in payloads.items():
+            path = tmp_path / name
+            path.write_bytes(payload)
+            paths[name] = path
+        assert wait_until(lambda: all(
+            addr in server.clients for addr in [source_addr, *target_addrs]
+        ))
+
+        real_source_send = source.send_message
+
+        def capture_source_request(sock, message, is_send_raw=False):
+            if isinstance(message, str) and message.startswith("/forward_item "):
+                parts = shlex.split(message)
+                name = next(name for name in payloads if name in parts)
+                upstream_fid = int(next(part[4:] for part in parts if part.startswith("fid=")))
+                upload_key = ((source.host, source.port), upstream_fid)
+                assert source.file_upload_progress[upload_key][3] == str(paths[name])
+                with request_lock:
+                    request_names[upstream_fid] = name
+                    fids_by_name[name] = upstream_fid
+            return real_source_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(source, "send_message", capture_source_request)
+        real_wait = source._transfer_handshakes.wait
+
+        def observe_wait(record, timeout):
+            with request_lock:
+                name = request_names.get(record["key"][1])
+            if name == "first.bin":
+                first_reply_waiting.set()
+            return real_wait(record, timeout)
+
+        monkeypatch.setattr(source._transfer_handshakes, "wait", observe_wait)
+        real_register = server._register_fid_route
+
+        def capture_route(fid, originator, route_targets, completed=()):
+            route_registrations.append((fid, tuple(originator), dict(route_targets)))
+            return real_register(fid, originator, route_targets, completed)
+
+        monkeypatch.setattr(server, "_register_fid_route", capture_route)
+        real_allocate = server._fid_alloc.alloc
+
+        def capture_allocation(*, receiver=None):
+            fid = real_allocate(receiver=receiver)
+            server_allocations.append((tuple(receiver) if receiver is not None else None, fid))
+            return fid
+
+        monkeypatch.setattr(server._fid_alloc, "alloc", capture_allocation)
+        real_server_send = server.send_message
+
+        def send_second_port_first(sock, message, is_send_raw=False):
+            if isinstance(message, str) and message.startswith("/server_file_transfer_port "):
+                parts = shlex.split(message)
+                with request_lock:
+                    name = request_names.get(int(parts[2]))
+                if name == "first.bin":
+                    first_port_blocked.set()
+                    assert release_first.wait(timeout=20), "first port release was not signaled"
+                    return real_server_send(sock, message, is_send_raw=is_send_raw)
+                if name == "second.bin":
+                    sent = real_server_send(sock, message, is_send_raw=is_send_raw)
+                    second_reply_sent.set()
+                    return sent
+            return real_server_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(server, "send_message", send_second_port_first)
+        outcomes = {}
+        failures = []
+
+        def forward(name, target_addr):
+            try:
+                outcomes[name] = source._forward_one(
+                    "file", "", name, str(paths[name]), [target_addr]
+                )
+            except Exception as exc:
+                failures.append((name, exc))
+
+        first_sender = threading.Thread(
+            target=forward, args=("first.bin", target_addrs[0]), daemon=True
+        )
+        sender_threads.append(first_sender)
+        first_sender.start()
+        assert first_reply_waiting.wait(timeout=15), "first upload never waited for its port"
+
+        second_sender = threading.Thread(
+            target=forward, args=("second.bin", target_addrs[1]), daemon=True
+        )
+        sender_threads.append(second_sender)
+        second_sender.start()
+        assert second_reply_sent.wait(timeout=20), "second target did not get its port first"
+        second_output = target_dirs[1] / "second.bin"
+        assert wait_until(
+            lambda: second_output.exists() and second_output.read_bytes() == payloads["second.bin"],
+            timeout=20,
+        ), "the second target consumed the first target's transfer"
+        assert first_port_blocked.wait(timeout=15), "first port response was not held"
+
+        release_first.set()
+        first_output = target_dirs[0] / "first.bin"
+        assert wait_until(
+            lambda: first_output.exists() and first_output.read_bytes() == payloads["first.bin"],
+            timeout=20,
+        ), "the first target did not receive its own delayed transfer"
+        for sender in sender_threads:
+            sender.join(timeout=10)
+        assert not any(sender.is_alive() for sender in sender_threads)
+        assert failures == []
+        assert outcomes == {"first.bin": True, "second.bin": True}
+        assert set(fids_by_name) == set(payloads)
+
+        routes_by_fid = {
+            fid: (originator, route_targets)
+            for fid, originator, route_targets in route_registrations
+        }
+        assert len(routes_by_fid) == 2
+        assert len(server_allocations) == 2
+        for name, target_addr in zip(payloads, target_addrs, strict=True):
+            upstream_fid = fids_by_name[name]
+            assert routes_by_fid[upstream_fid][0] == source_addr
+            assert set(routes_by_fid[upstream_fid][1]) == {target_addr}
+        child_fids = {
+            next(iter(route_targets.values()))
+            for _, route_targets in routes_by_fid.values()
+        }
+        expected_allocations = {
+            (target_addr, child_fid)
+            for _, route_targets in routes_by_fid.values()
+            for target_addr, child_fid in route_targets.items()
+        }
+        assert set(server_allocations) == expected_allocations
+        assert {target for target, _ in server_allocations} == set(target_addrs)
+        assert {fid for _, fid in server_allocations} == child_fids
+        assert not source.file_upload_progress
+        assert not server._fid_routes
+        assert not server._forward_relays
+    finally:
+        release_first.set()
+        _close_socket_workers(server, clients, workers)
+
+
+def test_forward_resume_with_zero_offset_reuses_existing_route(tmp_path, monkeypatch):
+    """A zero offset explicitly replays the existing route instead of allocating a new one."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    try:
+        recv_dir = tmp_path / "zero_offset_target"
+        recv_dir.mkdir()
+        target = _start_client(tmp_path, server, name="zero_offset_target", recv_dir=recv_dir)
+        source = _start_client(tmp_path, server, name="zero_offset_source")
+        clients.extend((source, target))
+        target_addr = target.client_socket.getsockname()
+        source_addr = source.client_socket.getsockname()
+        server_peer = (source.host, source.port)
+        src = tmp_path / "empty.bin"
+        src.write_bytes(b"")
+        output = recv_dir / src.name
+        output.write_bytes(b"")
+
+        upstream_fid = source._fid_alloc.alloc(receiver=server_peer)
+        child_fid = server._fid_alloc.alloc(receiver=target_addr)
+        upload_key = (server_peer, upstream_fid)
+        source.file_upload_progress[upload_key] = [0, 0, None, str(src), target_addr]
+        target.file_recv_progress[child_fid] = [0, 0, None, str(output), source_addr]
+        route = server._register_fid_route(
+            upstream_fid, source_addr, {target_addr: child_fid}
+        )
+        assert route is not None
+
+        commands = []
+        real_send = source.send_message
+
+        def capture_command(sock, message, is_send_raw=False):
+            if isinstance(message, str) and message.startswith("/forward_item "):
+                commands.append(shlex.split(message))
+            return real_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(source, "send_message", capture_command)
+        registrations = []
+        real_register = server._register_fid_route
+
+        def observe_registration(fid, originator, route_targets, completed=()):
+            registrations.append(fid)
+            return real_register(fid, originator, route_targets, completed)
+
+        monkeypatch.setattr(server, "_register_fid_route", observe_registration)
+        dropped_routes = []
+        real_drop = server._drop_fid_route
+
+        def observe_drop(fid, candidate):
+            dropped_routes.append(candidate)
+            return real_drop(fid, candidate)
+
+        monkeypatch.setattr(server, "_drop_fid_route", observe_drop)
+        allocations = []
+        real_allocate = server._fid_alloc.alloc
+
+        def observe_allocation(*, receiver=None):
+            allocated = real_allocate(receiver=receiver)
+            allocations.append((tuple(receiver) if receiver is not None else None, allocated))
+            return allocated
+
+        monkeypatch.setattr(server._fid_alloc, "alloc", observe_allocation)
+
+        assert source._forward_one(
+            "file", "", src.name, str(src), [target_addr],
+            resume_offset=0, upstream_fid=upstream_fid,
+        ) is True
+
+        assert output.read_bytes() == b""
+        assert commands and f"fid={upstream_fid}" in commands[0]
+        assert "resume=0" in commands[0]
+        assert registrations == []
+        assert dropped_routes == [route]
+        assert allocations == []
+        assert upstream_fid not in server._fid_routes
+        assert upload_key not in source.file_upload_progress
+        assert child_fid not in target.file_recv_progress
+    finally:
+        _close_socket_workers(server, clients, workers)
+
+
+def test_duplicate_upstream_fid_is_rejected_without_replacing_existing_route(
+    tmp_path, monkeypatch
+):
+    """A duplicate source FID fails without mutating the existing route or progress."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    try:
+        source = _start_client(tmp_path, server, name="first_source")
+        duplicate = _start_client(tmp_path, server, name="duplicate_source")
+        target = _start_client(tmp_path, server, name="collision_target")
+        clients.extend((source, duplicate, target))
+        target_addr = target.client_socket.getsockname()
+        source_addr = source.client_socket.getsockname()
+        duplicate_addr = duplicate.client_socket.getsockname()
+        server_peer = (source.host, source.port)
+        upstream_fid = source._fid_alloc.alloc(receiver=server_peer)
+        child_fid = server._fid_alloc.alloc(receiver=target_addr)
+        source_path = tmp_path / "original.bin"
+        duplicate_path = tmp_path / "duplicate.bin"
+        payload = os.urandom(4096)
+        source_path.write_bytes(payload)
+        duplicate_path.write_bytes(payload[::-1])
+        source_upload_key = (server_peer, upstream_fid)
+        source.file_upload_progress[source_upload_key] = [
+            0, len(payload), None, str(source_path), target_addr
+        ]
+        route = server._register_fid_route(
+            upstream_fid, source_addr, {target_addr: child_fid}
+        )
+        assert route is not None
+        routes_before = dict(server._fid_routes)
+        indexes_before = dict(server._fid_route_index)
+
+        monkeypatch.setattr(
+            duplicate._fid_alloc, "alloc", lambda *, receiver=None: upstream_fid
+        )
+        duplicate.is_enable_file_transfer_progress_bar = True
+        errors = []
+        real_server_send = server.send_message
+
+        def observe_error(sock, message, is_send_raw=False):
+            if isinstance(message, str) and message.startswith("/forward_error "):
+                errors.append(shlex.split(message))
+            return real_server_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(server, "send_message", observe_error)
+
+        assert duplicate._forward_one(
+            "file", "", duplicate_path.name, str(duplicate_path), [target_addr]
+        ) is False
+
+        assert wait_until(lambda: bool(errors))
+        assert errors[0][0] == "/forward_error"
+        assert errors[0][2] == "relay fid is already in use"
+        assert server._fid_routes == routes_before
+        assert server._fid_route_index == indexes_before
+        assert server._fid_routes[upstream_fid] is route
+        assert source.file_upload_progress[source_upload_key] == [
+            0, len(payload), None, str(source_path), target_addr
+        ]
+        duplicate_upload_key = (server_peer, upstream_fid)
+        assert duplicate.file_upload_progress[duplicate_upload_key] == [
+            0, len(payload), None, str(duplicate_path), target_addr
+        ]
+        assert target.file_recv_progress == {}
+        assert not server._forward_relays
+        assert duplicate_addr != source_addr
+    finally:
+        _close_socket_workers(server, clients, workers)
+
+
 @pytest.mark.parametrize("kind", ["file", "folder"])
 @pytest.mark.parametrize("successful_targets", [0, 1], ids=["zero-ack", "partial-ack"])
 def test_forward_ack_loss_retains_state_and_resumes_original_ids(
@@ -1005,10 +1298,10 @@ def test_forward_ack_loss_retains_state_and_resumes_original_ids(
         def observe_forward(*args, **kwargs):
             call = {
                 "targets": list(args[4]),
-                "relay_fid": kwargs.get("relay_fid"),
+                "upstream_fid": kwargs.get("upstream_fid"),
                 "offset": kwargs.get("resume_offset", 0),
             }
-            replay_fid = call["relay_fid"]
+            replay_fid = call["upstream_fid"]
             if replay_fid is not None:
                 call["upload"] = source.file_upload_progress.get(
                     ((source.host, source.port), replay_fid)
@@ -1029,11 +1322,16 @@ def test_forward_ack_loss_retains_state_and_resumes_original_ids(
 
         monkeypatch.setattr(source, "resume_trans", observe_resume)
         upstream_acks = []
+        terminal_controls = []
+        source_control = server.clients[source_addr]["socket"]
         real_server_send = server.send_message
 
         def observe_upstream_ack(sock, message, is_send_raw=False):
             marker = message.encode("utf-8") if isinstance(message, str) else message
             written = real_server_send(sock, message, is_send_raw=is_send_raw)
+            if (sock is source_control and isinstance(message, str)
+                    and message.startswith(("/server_file_transfer_port ", "/forward_error "))):
+                terminal_controls.append(shlex.split(message)[0])
             if marker == server.server_received_file_data_sign.encode("utf-8") and written:
                 upstream_acks.append(marker)
             return written
@@ -1058,6 +1356,7 @@ def test_forward_ack_loss_retains_state_and_resumes_original_ids(
             (addr, original_targets[addr]): fid for addr in failed
         }
         assert upstream_acks == []
+        assert terminal_controls == ["/server_file_transfer_port"]
         upload_key = ((source.host, source.port), fid)
         assert set(source.file_upload_progress) == {upload_key}
         upload = source.file_upload_progress[upload_key]
@@ -1101,7 +1400,9 @@ def test_forward_ack_loss_retains_state_and_resumes_original_ids(
             assert wait_until(lambda: not server._forward_relays, timeout=10)
             assert outcomes[-1] is (index == len(failed) - 1)
             assert len(upstream_acks) == (1 if index == len(failed) - 1 else 0)
-            assert calls[-1]["relay_fid"] == fid
+            assert terminal_controls == ["/server_file_transfer_port"] * (index + 2)
+            assert source.client_socket.fileno() >= 0 and source.running
+            assert calls[-1]["upstream_fid"] == fid
             assert calls[-1]["targets"] == [addr]
             assert calls[-1]["offset"] == len(payload)
             assert calls[-1]["upload"] is not None
@@ -1325,11 +1626,13 @@ def test_forward_route_survives_a_refused_target_listener_and_reload(tmp_path, m
 
         def advertise_refused_listener(client_id, client_socket, command,
                                        new_save_path=None, file_name=None):
-            tfid = int(shlex.split(command)[-1])
+            parts = shlex.split(command)
+            tfid = int(parts[-1])
             stamp = bad._crypto_transfer_stamp(client_socket)
             bad.send_message(
                 client_socket,
-                f"/server_file_transfer_port {refused_listener.getsockname()[1]} {tfid} {stamp}\n",
+                f"/server_file_transfer_port {refused_listener.getsockname()[1]} "
+                f"{tfid} {stamp}\n",
                 is_send_raw=True,
             )
             advertised.set()
@@ -1537,16 +1840,12 @@ def test_pause_and_start_trans_control_a_plain_transfer(tmp_path):
         src.write_bytes(payload)
         fid = 404  # even low bit: a plain leg's id
 
-        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-        server.file_transfer_server_recv_server_start_thread(
-            "cid", server_sock, f"/file {src} {fid}"
-        )
-        assert _wait_port(client) is not None
+        transfer_port, _stamp = request_transfer_listener(client, server, f"/file {src} {fid}")
 
         assert client.pause_trans(fid) is False  # armed before the leg starts
         sender = threading.Thread(
             target=client.file_transfer_mode,
-            args=(str(src), "127.0.0.1", _wait_port(client) or 0, 0),
+            args=(str(src), "127.0.0.1", transfer_port, 0),
             kwargs={"fid": fid, "peer": (server.host, server.port)},
             daemon=True,
         )
@@ -1818,6 +2117,9 @@ def test_download_resumes_after_connect_without_a_manual_call(tmp_path):
         assert wait_until(lambda: dead_socket.fileno() == -1, timeout=20), (
             "the reconnect did not release the dead session's socket"
         )
+        assert wait_until(lambda: dead_leg.fileno() == -1, timeout=10), (
+            "the disconnected control session left its paused data socket open"
+        )
         # the reconnecting client sweeps the dead session's legs and then asks
         # for the remainder; only the swept leg may be released, or it would
         # write from its own offset into the file the resumed leg continues
@@ -1899,6 +2201,7 @@ def test_unified_resume_serializes_distinct_offsets_without_local_fid_fallback(t
         monkeypatch.setattr(first, "send_message", hold_ack)
         monkeypatch.setattr(source, "file_transfer_mode", observe_mode)
         assert first._request_resumes() == 1
+        assert held.wait(timeout=10), "the first target never reached its ACK barrier"
         assert second._request_resumes() == 1
         assert first.send_message(
             first.client_socket, format_resume_line(502, 999, source_addr, first_addr)
@@ -1921,4 +2224,272 @@ def test_unified_resume_serializes_distinct_offsets_without_local_fid_fallback(t
             assert not (output.parents[2] / src.name).exists()
     finally:
         release.set()
+        _close_socket_workers(server, clients, workers)
+
+def test_concurrent_forward_upload_handshakes_match_out_of_order_replies(tmp_path, monkeypatch):
+    """A later relay reply cannot hand its port/FID to the first waiting upload."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    release_first = threading.Event()
+    first_reply_waiting = threading.Event()
+    first_port_blocked = threading.Event()
+    second_reply_sent = threading.Event()
+    request_names = {}
+    request_lock = threading.Lock()
+    sender_threads = []
+    try:
+        source = _start_client(tmp_path, server, name="ordered_source")
+        target_dir = tmp_path / "ordered_target"
+        target_dir.mkdir()
+        target = _start_client(
+            tmp_path, server, name="ordered_target", recv_dir=target_dir
+        )
+        clients.extend((source, target))
+        source_addr = source.client_socket.getsockname()
+        target_addr = target.client_socket.getsockname()
+        payloads = {
+            "first.bin": os.urandom(96 * 1024 + 11),
+            "second.bin": os.urandom(80 * 1024 + 7),
+        }
+        paths = {}
+        for name, payload in payloads.items():
+            path = tmp_path / name
+            path.write_bytes(payload)
+            paths[name] = path
+        assert wait_until(lambda: source_addr in server.clients and target_addr in server.clients)
+
+        original_client_send = source.send_message
+
+        def track_forward_request(sock, message, is_send_raw=False):
+            if isinstance(message, str) and message.startswith("/forward_item "):
+                parts = shlex.split(message)
+                fid = int(next(part[4:] for part in parts if part.startswith("fid=")))
+                name = next(item for item in payloads if item in parts)
+                with request_lock:
+                    request_names[fid] = name
+            return original_client_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(source, "send_message", track_forward_request)
+        original_wait = source._transfer_handshakes.wait
+
+        def observe_wait(record, timeout):
+            with request_lock:
+                name = request_names.get(record["key"][1])
+            if name == "first.bin":
+                first_reply_waiting.set()
+            return original_wait(record, timeout)
+
+        monkeypatch.setattr(source._transfer_handshakes, "wait", observe_wait)
+        original_server_send = server.send_message
+
+        def send_second_port_first(sock, message, is_send_raw=False):
+            if isinstance(message, str) and message.startswith("/server_file_transfer_port "):
+                parts = shlex.split(message)
+                with request_lock:
+                    name = request_names.get(int(parts[2]))
+                if name == "first.bin":
+                    first_port_blocked.set()
+                    assert release_first.wait(timeout=20), "first port response was not held"
+                    return original_server_send(sock, message, is_send_raw=is_send_raw)
+                if name == "second.bin":
+                    sent = original_server_send(sock, message, is_send_raw=is_send_raw)
+                    second_reply_sent.set()
+                    return sent
+            return original_server_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(server, "send_message", send_second_port_first)
+        outcomes = {}
+        failures = []
+
+        def forward(name):
+            try:
+                outcomes[name] = source._forward_one(
+                    "file", "", name, str(paths[name]), [target_addr]
+                )
+            except Exception as exc:
+                failures.append((name, exc))
+
+        first_sender = threading.Thread(target=forward, args=("first.bin",), daemon=True)
+        sender_threads.append(first_sender)
+        first_sender.start()
+        assert first_reply_waiting.wait(timeout=15), "first upload never waited for its port"
+
+        second_sender = threading.Thread(target=forward, args=("second.bin",), daemon=True)
+        sender_threads.append(second_sender)
+        second_sender.start()
+        assert second_reply_sent.wait(timeout=20), "second upload did not get its port first"
+        second_output = target_dir / "second.bin"
+        assert wait_until(
+            lambda: second_output.exists() and second_output.read_bytes() == payloads["second.bin"],
+            timeout=20,
+        ), "second transfer consumed the first request's port/FID"
+        assert first_port_blocked.wait(timeout=15), "first port response was not held"
+
+        release_first.set()
+        first_output = target_dir / "first.bin"
+        assert wait_until(
+            lambda: first_output.exists() and first_output.read_bytes() == payloads["first.bin"],
+            timeout=20,
+        ), "first transfer did not resume on its own delayed port/FID"
+        for sender in sender_threads:
+            sender.join(timeout=10)
+        assert not any(sender.is_alive() for sender in sender_threads)
+        assert failures == []
+        assert outcomes == {"first.bin": True, "second.bin": True}
+        assert set(request_names.values()) == {"first.bin", "second.bin"}
+        assert len(request_names) == 2
+        assert not source.file_upload_progress
+        assert not server._fid_routes
+        assert not server._forward_relays
+    finally:
+        release_first.set()
+        _close_socket_workers(server, clients, workers)
+
+
+@pytest.mark.parametrize("server_sends", [False, True], ids=["upload", "download"])
+def test_unresolved_listener_isolates_same_session_fid(tmp_path, monkeypatch, server_sends):
+    """A late terminal response cannot reopen an uncertain same-session FID."""
+    from PyFlow.network_api.connect_tcp import _send_transfer_request, _transfer_handshake
+
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    old_reply = []
+    try:
+        recv_dir = tmp_path / "late_ports"
+        recv_dir.mkdir()
+        client = _start_client(tmp_path, server, name="late_ports", recv_dir=recv_dir)
+        clients.append(client)
+        server.file_transfer_dir = str(recv_dir)
+        peer = client.client_socket.getsockname()
+        assert wait_until(lambda: peer in server.clients)
+        sender, receiver = (server, client) if server_sends else (client, server)
+        control = server.clients[peer]["socket"] if server_sends else client.client_socket
+        actual_send = receiver.send_message
+        fid = 806
+        held = threading.Event()
+
+        orphan_src = tmp_path / "orphan.bin"
+        orphan_src.write_bytes(b"orphan listener payload")
+
+        def hold_first_listener_reply(sock, message, is_send_raw=False):
+            if isinstance(message, str) and message.startswith("/server_file_transfer_port "):
+                if not old_reply:
+                    old_reply.append(message)
+                    held.set()
+                    return True
+            return actual_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(receiver, "send_message", hold_first_listener_reply)
+        with _transfer_handshake(sender, control, fid) as record:
+            assert _send_transfer_request(
+                sender, record, f"/file {shlex.quote(str(orphan_src))} {fid}"
+            )
+            assert held.wait(timeout=10), "the original listener response was not held"
+            assert sender._transfer_handshakes.wait(record, 0) is None
+        assert old_reply
+        with _transfer_handshake(sender, control, fid) as blocked:
+            assert blocked is None
+            assert not _send_transfer_request(sender, blocked, f"/file retry.bin {fid}")
+
+        late_port = old_reply[0]
+        late_error = f"/forward_error {fid} {shlex.quote('late listener error')}"
+        if server_sends:
+            server.handle_command(control, peer, late_port)
+            assert not sender._transfer_handshakes.resolve_error(
+                control, fid, "late listener error"
+            )
+        else:
+            client.handle_server_command(late_port, control_socket=control)
+            client.handle_server_command(late_error, control_socket=control)
+
+        src = tmp_path / "fresh.bin"
+        payload = os.urandom(96 * 1024 + 13)
+        src.write_bytes(payload)
+        port, stamp = request_transfer_listener(sender, receiver, f"/file {src} {fid + 1}")
+        assert sender.file_transfer_mode(
+            str(src), "127.0.0.1", port, 0, control_socket=control, crypto=stamp,
+            fid=fid + 1, peer=peer if server_sends else (server.host, server.port),
+        )
+        assert (recv_dir / src.name).read_bytes() == payload
+        command_dir = recv_dir / "made" / "by" / "command"
+        assert sender.send_message(control, "/file_folder /made/by/command")
+        assert wait_until(command_dir.is_dir)
+        assert sender._transfer_handshakes.register(control, fid) is None
+    finally:
+        _close_socket_workers(server, clients, workers)
+
+
+@pytest.mark.parametrize("server_sends", [False, True], ids=["upload", "download"])
+def test_reconnected_handshake_rejects_reply_from_old_control_socket(tmp_path, monkeypatch, server_sends):
+    """An old-session callback cannot resolve a new-session listener request."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    try:
+        recv_dir = tmp_path / "session_ports"
+        recv_dir.mkdir()
+        client = _start_client(
+            tmp_path, server, name="session_ports", recv_dir=recv_dir, client_port=free_port()
+        )
+        clients.append(client)
+        server.file_transfer_dir = str(recv_dir)
+        old_client = client.client_socket
+        old_peer = old_client.getsockname()
+        assert wait_until(lambda: old_peer in server.clients)
+        old_server = server.clients[old_peer]["socket"]
+        old_sender = server if server_sends else client
+        old_receiver = client if server_sends else server
+        old_control = old_server if server_sends else old_client
+        old_receiver_control = old_client if server_sends else old_server
+        old_src = tmp_path / "old_session.bin"
+        old_src.write_bytes(b"old session listener")
+        old_port, old_stamp = request_transfer_listener(
+            old_sender, old_receiver, f"/file {shlex.quote(str(old_src))} 808"
+        )
+        old_callback = f"/server_file_transfer_port {old_port} 808 {old_stamp}\n"
+        old_resources = tuple(
+            old_receiver._transfer_handshakes._resources[old_receiver_control]
+        )
+        old_client.shutdown(socket.SHUT_RDWR)
+        assert wait_until(lambda: not client.running and old_peer not in server.clients)
+        client.receive_thread.join(timeout=10)
+        client._release_client_socket()
+        assert old_resources and all(sock.fileno() == -1 for sock in old_resources)
+        assert client.connect()
+        peer = client.client_socket.getsockname()
+        assert wait_until(lambda: peer in server.clients)
+        sender, receiver = (server, client) if server_sends else (client, server)
+        control = server.clients[peer]["socket"] if server_sends else client.client_socket
+        assert control is not old_control
+        actual_send = receiver.send_message
+        rejected = []
+
+        def replay_old_session_callback(sock, message, is_send_raw=False):
+            if isinstance(message, str) and message.startswith("/server_file_transfer_port "):
+                if server_sends:
+                    server.handle_command(old_server, old_peer, old_callback)
+                else:
+                    client.handle_server_command(old_callback, control_socket=old_client)
+                record = sender._transfer_handshakes._pending[(control, 808)]
+                assert record["result"] is None
+                rejected.append(record)
+            return actual_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(receiver, "send_message", replay_old_session_callback)
+        src = tmp_path / "new_session.bin"
+        payload = os.urandom(32781)
+        src.write_bytes(payload)
+        port, stamp = request_transfer_listener(
+            sender, receiver, f"/file {shlex.quote(str(src))} 808"
+        )
+        assert len(rejected) == 1
+        assert sender.file_transfer_mode(
+            str(src), "127.0.0.1", port, 0, control_socket=control, crypto=stamp, fid=808,
+            peer=peer if server_sends else (server.host, server.port),
+        )
+        assert (recv_dir / src.name).read_bytes() == payload
+        assert not sender._transfer_handshakes._pending
+    finally:
         _close_socket_workers(server, clients, workers)

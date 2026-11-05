@@ -155,16 +155,6 @@ msgstr ""
 "``error_sign`` — отправляется любой стороной при возникновении ошибки, "
 "приводящей к закрытию сокета передачи."
 
-#: ../../source/File_Transfer/File_Transfer.rst:72
-#: 41f6d3d6e0e848bc8f6aecb995223622
-msgid ""
-"The remaining keys of the table cover the other three direction/phase "
-"combinations. Protocol control lines that are not part of this table "
-"(``/server_file_transfer_port``, ``/client_alloc_port_range``, "
-"``/pause_trans``, ``/start_trans``, ``/forward_item``, "
-"``/forward_upload``, ``/forward_error``, ``/crypto_*``) are hardcoded in "
-"``connect_tcp.py``."
-msgstr ""
 
 #: ../../source/File_Transfer/File_Transfer.rst:80
 #: 45a36aa9239d4caba8752e4dc4fd551b
@@ -394,18 +384,6 @@ msgstr ""
 "Получите локальный порт для исходящего сокета передачи файлов, вызвав "
 "``palloc()``."
 
-#: ../../source/File_Transfer/File_Transfer.rst:172
-#: 37226a4f2e1e4a878ba325fca05df9bf
-msgid ""
-"Wait (up to 20 seconds) for the server to reply with a port number. The "
-"server's reply (``/server_file_transfer_port <port> <client_id>``) is "
-"received by the main connection and stored in ``file_server_port_list``. "
-"When a matching entry is found, the port is extracted."
-msgstr ""
-"Подождите (до 20 секунд), пока сервер ответит номером порта. Ответ "
-"сервера (``/server_file_transfer_port <port> <client_id>``) принимается "
-"основным соединением и сохраняется в ``file_server_port_list``. Когда "
-"соответствующая запись найдена, порт извлекается."
 
 #: ../../source/File_Transfer/File_Transfer.rst:180
 #: e9cd68239fe3498597f07ccfa774ae22
@@ -503,22 +481,6 @@ msgstr ""
 "Вызывает ``file_transfer_mode_recv(хост, порт, client_socket, client_id, "
 "new_save_path, file_name, команда)``."
 
-#: ../../source/File_Transfer/File_Transfer.rst:224
-#: 2f6675b7698c41938542b09cbfb482e8
-msgid ""
-"This low-level receive function sets up a listening socket on the "
-"allocated port, sends the port number back to the client (as "
-"``/server_file_transfer_port <port> <client_id>``), accepts the client's "
-"connection, and performs the protocol steps described in :ref:`file-"
-"transfer-protocol`. The received file is saved under ``received_files/`` "
-"(or a subdirectory if a folder transfer was requested)."
-msgstr ""
-"Эта низкоуровневая функция приема устанавливает сокет прослушивания на "
-"выделенном порту, отправляет номер порта обратно клиенту (как "
-"``/server_file_transfer_port <port> <client_id>``), принимает соединение "
-"клиента и выполняет шаги протокола, описанные в :ref:`file-transfer-"
-"protocol`. Полученный файл сохраняется в папке ``received_files/`` (или в"
-" подкаталоге, если была запрошена передача папки)."
 
 #: ../../source/File_Transfer/File_Transfer.rst:234
 #: 9fe861572b8746aeaa8266d8d30f963f
@@ -618,16 +580,6 @@ msgstr ""
 msgid "Allocate a local port with ``palloc()``."
 msgstr "Выделите локальный порт с помощью palloc()."
 
-#: ../../source/File_Transfer/File_Transfer.rst:279
-#: 723a05b6c3974b65a539af723f1e0872
-msgid ""
-"Wait for the client to reply with its own port number (via "
-"``/server_file_transfer_port``), which is stored in "
-"``file_server_port_list`` by the main connection's message handler."
-msgstr ""
-"Подождите, пока клиент ответит своим собственным номером порта (через "
-"``/server_file_transfer_port``), который хранится в "
-"``file_server_port_list`` обработчиком сообщений основного соединения."
 
 #: ../../source/File_Transfer/File_Transfer.rst:284
 #: 878572ca3d2948a9acbb6741f00ddd62

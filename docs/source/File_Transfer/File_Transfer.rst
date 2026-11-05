@@ -70,12 +70,40 @@ attributes used by the transfer loop are:
   transfer socket to be closed.
 
 The remaining keys of the table cover the other three
-direction/phase combinations. Protocol control lines that are
-not part of this table (``/server_file_transfer_port``,
-``/client_alloc_port_range``, ``/pause_trans``,
-``/start_trans``, ``/forward_item``, ``/forward_upload``,
-``/forward_error``, ``/crypto_*``) are hardcoded in
-``connect_tcp.py``.
+direction/phase combinations. Protocol control lines not
+listed here (``/server_file_transfer_port <port> <fid> <stamp>``,
+``/client_alloc_port_range``, ``/pause_trans``, ``/start_trans``,
+``/forward_item``, FID-scoped ``/forward_error`` and ``/crypto_*``)
+are hardcoded in ``connect_tcp.py``.
+
+Temporary Listener Correlation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+All ordinary file/folder, public-key, relay-target and relay-upload listeners
+use one handshake. The sender registers the actual control socket and sender-owned
+FID before sending the command. ``/file`` and ``/file_folder`` retain their
+fields and trailing FID; public-key requests use ``/crypto_pub_key <fid>``.
+The listener replies with exactly four tokens:
+``/server_file_transfer_port <port> <fid> <stamp>``.
+
+Dispatch matches the actual control socket and FID, not an address alone. Each
+relay target has an independent registration. The relay source allocates its
+upstream FID and sends ``/forward_item <kind> fid=<upstream_fid> [resume=<offset>]
+<fields>``; the Server preserves it and allocates a separate child FID per target.
+Every retry includes ``resume=<offset>``, including ``resume=0``, and reuses the
+route and child IDs. An upstream collision with an existing route, receive
+record or target-scoped live transfer/pause identity is rejected without
+replacing existing state. Forward failures use ``/forward_error <fid> <reason>``.
+
+Each negotiation has one terminal control reply, either a port and stamp or an
+error. Late, duplicate and mismatched replies are discarded, not cached. If a
+sent request times out or is cancelled without a terminal reply, its FID remains
+unresolved and cannot be retried on that control session; other FIDs and commands
+continue. Natural disconnect clears that session's waiters, unresolved marks,
+pending listeners and data sockets; reconnect can resume using the same stable
+FID. Data or ACK failure does not disconnect a healthy control connection. There
+is no forwarding-upload FIFO or shared error slot. Data framing, public-key
+plaintext bytes, ACKs and five-item progress rows are unchanged.
 
 ### Metadata Exchange
 
@@ -160,23 +188,15 @@ Its logic is as follows:
 
 1. Allocate a unique client ID using the lock
    ``file_client_id_lock``.
-2. Extend the original command string with the client
-   ID (e.g.,
-   ``/file mydoc.txt`` becomes ``/file mydoc.txt 42``)
-   and send it to the server
-   over the main control connection using
+2. Register the actual server control socket and expected FID, then send the
+   command with its trailing ID (for example, ``/file mydoc.txt 42``) using
    ``send_message()``.
 3. Obtain a local port for the outgoing file transfer
    socket by calling
    ``palloc()``.
-4. Wait (up to 20 seconds) for the server to reply with
-   a port number. The
-   server's reply (``/server_file_transfer_port <port>
-   <client_id>``) is
-   received by the main connection and stored in
-   ``file_server_port_list``.
-   When a matching entry is found, the port is
-   extracted.
+4. Wait (up to 20 seconds) for
+   ``/server_file_transfer_port <port> <fid> <stamp>``. Only the matching
+   control socket and FID can deliver the port and stamp; there is no port cache.
 5. Call the low-level send function
    ``file_transfer_mode(filename, server_host,
    server_port, client_port)``.
@@ -202,8 +222,8 @@ around its own transfer, so the concurrent transfers are capped by
 
 ### Server-Side Handler (Receiving)
 
-When the server receives an extended command like ``/file
-mydoc.txt 42`` on the
+When the server receives an extended command like
+``/file mydoc.txt 42`` on the
 main control connection, ``handle_command`` detects it and
 calls:
 
@@ -223,7 +243,7 @@ The server then:
 4. This low-level receive function sets up a listening
    socket on the allocated
    port, sends the port number back to the client (as
-   ``/server_file_transfer_port <port> <client_id>``),
+   ``/server_file_transfer_port <port> <fid> <stamp>``),
    accepts the client's
    connection, and performs the protocol steps
    described in
@@ -270,16 +290,11 @@ performs the following steps:
    ``(127.0.0.1,54321)``) using ``ast.literal_eval()``.
    Obtain the client's
    socket from ``self.clients``.
-2. Allocate a unique client ID and extend the command
-   with it, then send the
-   extended command to the client over the main
-   connection.
+2. Allocate a unique FID, register it against the actual client control socket,
+   then send the extended command with the trailing FID.
 3. Allocate a local port with ``palloc()``.
-4. Wait for the client to reply with its own port
-   number (via
-   ``/server_file_transfer_port``), which is stored in
-   ``file_server_port_list``
-   by the main connection's message handler.
+4. Wait for ``/server_file_transfer_port <port> <fid> <stamp>``. The message
+   handler matches the actual control socket and FID without caching unmatched replies.
 5. Call ``file_transfer_mode(filename, client_host,
    client_port, local_port)``
    to send the file.
@@ -293,7 +308,7 @@ This starts a receiver thread analogous to the server's
 receiver for
 client-initiated transfers: it allocates a port, replies
 with
-``/server_file_transfer_port``, and calls
+``/server_file_transfer_port <port> <fid> <stamp>``, and calls
 ``file_transfer_mode_recv`` to receive
 and save the file.
 
@@ -818,13 +833,18 @@ The temporary connections of a transfer are resumed after a disconnect:
   origin must match its authoritative route before translation to the upstream
   fid and forwarding of the same command to the source. A client sends only
   when origin matches its current control-connection identity.
-  Local uploads answer with ``/file <name> <fid>``. Forward replay uses
-  ``/forward_item`` with ``relay_fid=<upstream fid>`` and ``resume=<offset>``;
-  ``/forward_upload`` still coordinates the upload slot. The server validates
-  the sender and unresolved target and reuses the upstream and child fids.
-  The receiver matches fid, original sender, basename and total size, then
-  writes its retained full path, including nested folder items. A size mismatch
-  preserves the partial file. No new-ID/path alias or old resume command is used.
+  Local uploads answer with ``/file <name> <fid>``. Forward replay sends
+  ``/forward_item <kind> fid=<upstream fid> resume=<offset>`` with its fields.
+  New transfers omit ``resume=``; retries include ``resume=<offset>``, even at
+  zero. The source owns the upstream FID and the Server allocates one child FID
+  per target. Every listener replies through the same four-token
+  ``/server_file_transfer_port <port> <fid> <stamp>`` line; the server validates
+  the sender and unresolved target and reuses the upstream and child FIDs. Stale
+  or mismatched responses cannot satisfy another request. The receiver matches
+  fid, original sender, basename
+  and total size, then writes its retained full path, including nested folder
+  items. A size mismatch preserves the partial file. No new-ID/path alias or old
+  resume command is used.
 
 On the server, each upstream fid has one authoritative route containing its
 original sender, full accepted ``receiver -> downstream fid`` mapping, and
@@ -868,8 +888,9 @@ are kept on the server per upstream fid/target, retaining the latest offset.
 Reconnect sends through the same secure control path; a failed send keeps the
 request, and completed or missing routes are never replayed.
 Fids no longer encode a plain/relay kind: the reserved low bit is always zero,
-and diagnostics use ``e<epoch>.<counter>``. New-transfer allocation authority and
-the current child-fid naming are unchanged in this step.
+and diagnostics use ``e<epoch>.<counter>``. Ordinary senders own their FIDs;
+the relay source owns the upstream FID and the Server allocates one child FID
+per target. Resumes reuse the existing upstream and child FIDs.
 Public-key pushes remain untracked and TOFU verification still precedes their
 ACK.
 

@@ -212,9 +212,7 @@ def test_forward_records_keyed_by_originator(trio):
 
 
 def test_public_forward_api(trio):
-    """The packaged forward API for extension authors: forward_message_to
-    tags the envelope, forward_target_command builds the tagged transfer
-    command, and unreachable targets are reported."""
+    """The packaged forward API tags messages and builds target commands."""
     server, a, b = trio
     received = []
     b.add_message_listener(lambda sender, text: received.append((sender, text)))
@@ -224,7 +222,7 @@ def test_public_forward_api(trio):
     )
     cmd = server.forward_target_command("file", "", "a.txt", _addr(a), 7)
     assert parse_forward_originator(cmd) == _client_key(a)
-    assert server.forward_message_to(("127.0.0.1", 1), "x", _addr(a)) is False  # unreachable
+    assert server.forward_message_to(("127.0.0.1", 1), "x", _addr(a)) is False
 
 
 def test_extension_command_cannot_hijack_envelope(trio):

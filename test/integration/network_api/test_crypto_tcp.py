@@ -15,7 +15,7 @@ import time
 import pytest
 
 
-from helpers import free_port, server_ready, wait_until
+from helpers import free_port, request_transfer_listener, server_ready, wait_until
 
 from PyFlow.network_api import rsa_crypto
 from PyFlow.network_api.connect_tcp import (
@@ -824,12 +824,7 @@ def test_encrypted_file_transfer_client_to_server(tcp_pair, tmp_path, monkeypatc
     src = tmp_path / "payload.bin"
     src.write_bytes(payload)
 
-    server_sock = _server_sock(server, client)
-    server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
-    assert wait_until(lambda: list(client.file_server_port_list), timeout=10)
-    with client.file_transfer_server_port_lock:
-        port, _cid, stamp, receiver = client.file_server_port_list[0]
-    assert receiver == (server.host, server.port)
+    port, stamp = request_transfer_listener(client, server, f"/file {src} 0")
     assert stamp.startswith("enc:"), f"listener stamped {stamp!r}"
     assert client.file_transfer_mode(
         str(src), "127.0.0.1", port, 0, control_socket=client.client_socket, crypto=stamp
@@ -858,13 +853,7 @@ def test_encrypted_file_transfer_server_to_client(tcp_pair, tmp_path, monkeypatc
     src = tmp_path / "big.bin"
     src.write_bytes(payload)
 
-    client.file_transfer_client_recv_server_start_thread(
-        "cid", client.client_socket, f"/file {src} 0"
-    )
-    assert wait_until(lambda: list(server.file_server_port_list), timeout=10)
-    with server.file_transfer_server_port_lock:
-        port, _cid, stamp, receiver = server.file_server_port_list[0]
-    assert receiver == client.client_socket.getsockname()
+    port, stamp = request_transfer_listener(server, client, f"/file {src} 0")
     assert stamp.startswith("enc:"), f"listener stamped {stamp!r}"
     assert server.file_transfer_mode(
         str(src),

@@ -600,12 +600,6 @@ msgid ""
 "allocation range from the line the server sends it on connect."
 msgstr "``/client_alloc_port_range``：根據伺服器廣播設定客戶端手動連接埠分配範圍。"
 
-#: ../../source/Network_APIs/TCP_Client_APIs.rst:275
-#: f84404f7844d4779af2e6030e795b5d0
-msgid ""
-"``/server_file_transfer_port``: receives the file transfer port assigned "
-"by the server for an ongoing file operation."
-msgstr "``/server_file_transfer_port``：接收伺服器為正在進行的檔案操作分配的檔案傳輸連接埠。"
 
 #: ../../source/Network_APIs/TCP_Client_APIs.rst:277
 #: 4eb4fe22d5db4b56b622dfd29459c3b7
@@ -623,12 +617,6 @@ msgid ""
 "the connection."
 msgstr ""
 
-#: ../../source/Network_APIs/TCP_Client_APIs.rst:283
-#: 31a62335177b49a19f708aee2aa5b0b1
-msgid ""
-"``/forward_upload``, ``/pause_trans``, ``/start_trans``, "
-"``/forward_error``: forwarding and transfer-control messages."
-msgstr ""
 
 #: ../../source/Network_APIs/TCP_Client_APIs.rst:286
 #: b4c3c6ea61f344b8a3d3baf6b659d9c7
@@ -934,21 +922,6 @@ msgstr ""
 msgid "Encrypted transfer connections"
 msgstr ""
 
-#: ../../source/Network_APIs/TCP_Client_APIs.rst:471
-#: a47f9db0c3674a12ab6d3ab5d056a8c4
-msgid ""
-"File and folder transfers, forwarded items and the forward relay run on "
-"temporary TCP connections. The listening side stamps each leg with its "
-"mode and a fresh nonce in the port advertisement "
-"(``/server_file_transfer_port``, ``/forward_upload``); with "
-"``is_enable_encrypto`` enabled both sides then frame that connection "
-"exactly like the control channel, with the same session key material, so "
-"file contents, names and sizes no longer cross the wire in the clear. The"
-" public-key pushes themselves stay plaintext by construction: they carry "
-"the keys the session is built on. A leg whose stamp promises encryption "
-"is aborted when the session key material is not ready rather than "
-"silently downgraded."
-msgstr ""
 
 #: ../../source/Network_APIs/TCP_Client_APIs.rst:483
 #: 6740137a28b84e5dbb3f85e8d58d32b5

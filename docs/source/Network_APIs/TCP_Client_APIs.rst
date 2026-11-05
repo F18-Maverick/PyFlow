@@ -278,22 +278,34 @@ commands sent by the server, such as:
 
 - ``/client_alloc_port_range``: configures the client's manual 
   port allocation range from the line the server sends it on connect.
-- ``/server_file_transfer_port``: receives the file transfer 
-  port assigned by the server for an ongoing file operation.
-- ``/file`` and ``/file_folder``: handle file transfer requests 
-  initiated by the server (server-to-client transfers).
+- ``/server_file_transfer_port <port> <fid> <stamp>``: four-token listener reply,
+  dispatched only to the registered actual control socket and FID. Unmatched or
+  late replies are discarded without cache or fallback. Each negotiation has one
+  terminal port or error reply. A sent request timed out or cancelled without a
+  terminal reply leaves that FID unresolved and blocked on this session; other
+  FIDs and commands continue. Natural disconnect clears session-owned waiters,
+  unresolved marks, pending listeners and data sockets; reconnect can resume the
+  same stable FID. Data or ACK failure does not disconnect healthy control.
+- ``/file`` and ``/file_folder``: server-initiated requests retain their fields
+  and trailing sender FID; public-key requests use ``/crypto_pub_key <fid>``.
 - ``/crypto_mode``, ``/crypto_key_exchange``,
   ``/crypto_key_exchange_ack``, ``/crypto_reject``,
   ``/crypto_pub_key``, ``/crypto_ready``: the encrypted-channel
   handshake messages; a ``/crypto_mode`` mismatch closes the connection.
-- ``/forward_upload``, ``/pause_trans``, ``/start_trans``,
-  ``/forward_error``: forwarding and transfer-control messages.
+- ``/pause_trans``, ``/start_trans`` and ``/forward_error <fid> <reason>``:
+  transfer control and FID-scoped forwarding failures. Forward uploads use
+  the common ``/server_file_transfer_port`` reply; no ``/forward_upload`` line.
 - ``/resume_trans <fid> <offset> <origin> <target>``: the sole resume command,
   with shell-quoted tuple endpoints. Only an origin matching this control
   connection's own identity may resume a local upload. The existing upload row
   supplies the source path; a non-server target is replayed through the server
   with its stable upstream fid. The receiver's retained full path handles folder
   items without copying directory or destination metadata at the source.
+
+For a new relay upload, the source client allocates the upstream FID before it
+sends ``/forward_item ... fid=<fid>``. The server returns that same upstream FID
+and allocates a separate child FID for each target. A resume includes
+``resume=<offset>``, including ``resume=0``, and reuses the existing route.
 
 If you have registered custom commands using the command 
 extension API, `handle_server_command` will also check 
@@ -508,14 +520,14 @@ Encrypted transfer connections
 
 File and folder transfers, forwarded items and the forward relay run on
 temporary TCP connections. The listening side stamps each leg with its mode
-and a fresh nonce in the port advertisement (``/server_file_transfer_port``,
-``/forward_upload``); with ``is_enable_encrypto`` enabled both sides then
-frame that connection exactly like the control channel, with the same
-session key material, so file contents, names and sizes no longer cross the
-wire in the clear. The public-key pushes themselves stay plaintext by
-construction: they carry the keys the session is built on. A leg whose
-stamp promises encryption is aborted when the session key material is not
-ready rather than silently downgraded.
+and a fresh nonce in the common port advertisement
+(``/server_file_transfer_port <port> <fid> <stamp>``). With
+``is_enable_encrypto`` enabled, both sides then frame that connection exactly
+like the control channel, with the same session key material, so file contents,
+names and sizes no longer cross the wire in the clear. Public-key pushes stay
+plaintext because they carry the keys the session is built on. A leg whose
+stamp promises encryption is aborted when key material is not ready rather than
+silently downgraded.
 
 Decode verification and key rotation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

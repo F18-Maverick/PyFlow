@@ -49,6 +49,7 @@ import errno
 import queue
 import json
 import stat
+import weakref
 from contextlib import ExitStack, contextmanager
 from functools import wraps
 from . import rsa_crypto
@@ -316,30 +317,7 @@ def _debug_line(enabled, is_debug, parts):
 
 
 def _parse_destination_path(command_part):
-    """Extract the trailing destination directory from a received transfer
-
-    command, or None when the command carries no destination.
-
-        ``<id>`` is the file-client id appended by the sender; ``<addr>`` is a
-        quoted client address tuple. The destination (when present) is the token
-        before ``<id>``, except for folder-creation commands, which carry no id
-        and put the destination last:
-
-          /file <src> <id>
-          /file <src> <dest> <id>
-          /file <src> <addr> <id>
-          /file <src> <addr> <dest> <id>
-          /file_folder <rel>            folder creation, default location
-          /file_folder <rel> <dest>     folder creation with destination
-          /file_folder <rel> <file> <id>
-          /file_folder <rel> <file> <dest> <id>
-
-    Args:
-        command_part (object): Value used by the operation.
-
-    Returns:
-        NoneType | object: Result produced by the operation.
-    """
+    """Extract the optional destination preceding a transfer's trailing FID."""
     if len(command_part) < 3:
         return None
     if command_part[0].lower() == "/file_folder":
@@ -1088,7 +1066,7 @@ RSA_SMALL_TEXT_LIMIT = 190
 
 # Plaintext lines still tolerated on an encrypted socket: the crypto
 # handshake/re-exchange lines, the frames-start announcement and the transfer
-# port coordination messages. Anything else plaintext is dropped, so an
+# port coordination message. Anything else plaintext is dropped, so an
 # injected line can neither run commands nor substitute key material
 # (``/crypto_ecdh_pub`` is only ever accepted inside an RSA frame).
 _PLAINTEXT_LINE_PREFIXES = (
@@ -1099,11 +1077,10 @@ _PLAINTEXT_LINE_PREFIXES = (
     "/crypto_mode",
     CRYPTO_FRAMES_START,
     "/server_file_transfer_port",
-    "/forward_upload",
 )
 # A plaintext handshake line means the peer reset its secure state
 # (re-exchange): drop framing so the dance runs in raw mode again.
-_PLAINTEXT_RESET_PREFIXES = _PLAINTEXT_LINE_PREFIXES[:-3]
+_PLAINTEXT_RESET_PREFIXES = _PLAINTEXT_LINE_PREFIXES[:-2]
 
 
 class _FrameError(Exception):
@@ -1157,6 +1134,169 @@ def _stamp_nonce(stamp):
     return None
 
 
+def _parse_transfer_port_announcement(command):
+    """Parse the four-token listener reply; legacy UUID replies are rejected."""
+    try:
+        parts = shlex.split(command)
+        if len(parts) != 4 or parts[0].lower() != "/server_file_transfer_port":
+            return None
+        port, fid = int(parts[1]), int(parts[2])
+        if not (0 < port < 65536 and fid >= 0):
+            return None
+        return port, fid, parts[3]
+    except (ValueError, TypeError):
+        return None
+
+
+def _transfer_port_announcement(port, fid, stamp):
+    """Return one listener's port and encryption stamp for the sender's FID."""
+    return f"/server_file_transfer_port {port} {fid} {stamp}\n"
+
+
+class _TransferHandshakeRegistry:
+    """Own socket/FID negotiations and resources for each actual control session."""
+
+    def __init__(self):
+        self._changed = threading.Condition()
+        self._pending = {}
+        self._unresolved = set()
+        self._closed = weakref.WeakSet()
+        self._resources = {}
+
+    def register(self, control_socket, fid):
+        key = (control_socket, fid)
+        with self._changed:
+            if (control_socket in self._closed or key in self._pending
+                    or key in self._unresolved):
+                return None
+            record = {"key": key, "sent": False, "result": None, "cancelled": False}
+            self._pending[key] = record
+            return record
+
+    def mark_sent(self, record):
+        """Reserve possible transmission before calling the control send path."""
+        with self._changed:
+            if (record is None or self._pending.get(record["key"]) is not record
+                    or record["sent"]):
+                return False
+            record["sent"] = True
+            return True
+
+    def resolve_port(self, control_socket, fid, port, stamp):
+        return self._resolve((control_socket, fid), ("port", fid, port, stamp))
+
+    def resolve_error(self, control_socket, fid, message):
+        return self._resolve((control_socket, fid), ("error", message))
+
+    def pending(self, control_socket, fid):
+        with self._changed:
+            return self._pending.get((control_socket, fid))
+
+    def _resolve(self, key, result):
+        with self._changed:
+            record = self._pending.get(key)
+            if (record is None or not record["sent"] or record["cancelled"]
+                    or record["result"] is not None or key in self._unresolved):
+                return False
+            record["result"] = result
+            self._changed.notify_all()
+            return True
+
+    def _retire(self, record):
+        key = record["key"]
+        if self._pending.get(key) is record:
+            del self._pending[key]
+            if (record["sent"] and record["result"] is None
+                    and key[0] not in self._closed):
+                self._unresolved.add(key)
+
+    def wait(self, record, timeout):
+        results = self.wait_many((record,), timeout)
+        return results[record["key"]] if results is not None else None
+
+    def wait_many(self, records, timeout):
+        with self._changed:
+            if any(record is None for record in records):
+                return None
+            self._changed.wait_for(
+                lambda: any(record["cancelled"] for record in records)
+                or all(record["result"] is not None for record in records),
+                timeout=max(0, timeout),
+            )
+            # Decide result versus uncertainty under the same condition lock.
+            for record in records:
+                self._retire(record)
+            if any(record["cancelled"] or record["result"] is None for record in records):
+                return None
+            return {record["key"]: record["result"] for record in records}
+
+    def cancel(self, record):
+        if record is None:
+            return
+        with self._changed:
+            self._retire(record)
+            record["cancelled"] = True
+            self._changed.notify_all()
+
+    def track_socket(self, control_socket, transfer_socket):
+        """Register listeners before announcing them, and accepted/data sockets."""
+        if control_socket is None:
+            return True
+        with self._changed:
+            if control_socket in self._closed:
+                self._close_socket(transfer_socket)
+                return False
+            self._resources.setdefault(control_socket, set()).add(transfer_socket)
+            return True
+
+    def release_socket(self, control_socket, transfer_socket):
+        with self._changed:
+            resources = self._resources.get(control_socket)
+            if resources is not None:
+                resources.discard(transfer_socket)
+                if not resources:
+                    del self._resources[control_socket]
+
+    @staticmethod
+    def _close_socket(sock):
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+        sock.close()
+
+    def cancel_socket(self, control_socket):
+        with self._changed:
+            self._closed.add(control_socket)
+            for key, record in list(self._pending.items()):
+                if key[0] is control_socket:
+                    record["cancelled"] = True
+                    del self._pending[key]
+            self._unresolved.difference_update(
+                key for key in tuple(self._unresolved) if key[0] is control_socket
+            )
+            resources = self._resources.pop(control_socket, ())
+            self._changed.notify_all()
+        for sock in resources:
+            self._close_socket(sock)
+
+
+@contextmanager
+def _transfer_handshake(instance, control_socket, fid):
+    """Register before sending; an uncertain sent negotiation cannot be reused."""
+    record = instance._transfer_handshakes.register(control_socket, fid)
+    try:
+        yield record
+    finally:
+        instance._transfer_handshakes.cancel(record)
+
+
+def _send_transfer_request(instance, record, message, *, is_send_raw=False):
+    if not instance._transfer_handshakes.mark_sent(record):
+        return False
+    return instance.send_message(record["key"][0], message, is_send_raw=is_send_raw)
+
+
 def _crypto_is_protocol_line(message):
     """Return true for the protocol's own handshake/coordination lines.
 
@@ -1173,7 +1313,7 @@ def _crypto_is_protocol_line(message):
     """
     if message.startswith("/crypto"):
         return True
-    return message.startswith(("/server_file_transfer_port", "/forward_upload"))
+    return message.startswith("/server_file_transfer_port")
 
 
 class _CryptoSession:
@@ -2095,8 +2235,7 @@ class TCP_Server_Base:  # TCP server class
         self.alloc_port(port_add_step, port_range_num)
         self.server_socket = None
         self.clients = {}  # store client info
-        self.file_transfer_server_port_lock = threading.Lock()
-        self.file_server_port_list = []
+        self._transfer_handshakes = _TransferHandshakeRegistry()
         self.client_lock = threading.Lock()  # add the threading lock
         self.max_file_transfer_thread_num = max_file_transfer_thread_num
         MAX_CONCURRENT_FILES = self.max_file_transfer_thread_num
@@ -2327,20 +2466,41 @@ class TCP_Server_Base:  # TCP server class
             self._persist_transfer_progress()
 
     def _register_fid_route(self, fid, originator, targets, completed=()):
-        """Register a complete route, indexing only targets still awaiting ACK."""
+        """Register a route only when its upstream and target legs are unclaimed."""
         targets = {tuple(target): child for target, child in targets.items()}
         completed = {tuple(target) for target in completed}
         route = {"originator": tuple(originator), "targets": targets, "completed": completed}
-        with self._forward_relays_lock:
-            if not targets or not completed.issubset(targets) or fid in self._fid_routes or any(
-                (target, child) in self._fid_route_index
-                for target, child in targets.items() if target not in completed
-            ):
-                return None
-            self._fid_routes[fid] = route
-            for target, child in targets.items():
-                if target not in completed:
-                    self._fid_route_index[(target, child)] = fid
+        upstream_leg_keys = {(target, fid) for target in targets}
+        with self._transfer_progress_lock:
+            active_collision = (
+                fid in self._active_transfer_fids
+                or fid in self._active_transfer_sockets
+                or any(key in self._active_transfer_fids for key in upstream_leg_keys)
+                or any(key in self._active_transfer_sockets for key in upstream_leg_keys)
+            )
+            with self._transfer_pause_cond:
+                paused_collision = any(key in self._transfer_pause for key in upstream_leg_keys)
+                with self._forward_relays_lock:
+                    if (
+                        not targets
+                        or not completed.issubset(targets)
+                        or fid in self._fid_routes
+                        or fid in self.file_recv_progress
+                        or any(key in self.file_upload_progress for key in upstream_leg_keys)
+                        or active_collision
+                        or paused_collision
+                        or any(key in self._forward_relays for key in upstream_leg_keys)
+                        or any(key in self._fid_route_index for key in upstream_leg_keys)
+                        or any(
+                            (target, child) in self._fid_route_index
+                            for target, child in targets.items() if target not in completed
+                        )
+                    ):
+                        return None
+                    self._fid_routes[fid] = route
+                    for target, child in targets.items():
+                        if target not in completed:
+                            self._fid_route_index[(target, child)] = fid
         return route
 
     def _lookup_fid_route(self, peer, fid):
@@ -2739,49 +2899,10 @@ class TCP_Server_Base:  # TCP server class
             return
         with self._transfer_pause_cond:
             while self._transfer_pause.get(fid, False):
-                if not self.running:
+                sock = self._active_transfer_sockets.get(fid)
+                if not self.running or (sock is not None and sock.fileno() < 0):
                     return
                 self._transfer_pause_cond.wait(timeout=0.5)
-
-    def _wait_transfer_server_port(self, fid, peer, timeout=RESUME_PORT_TIMEOUT):
-        """Wait for the peer's ``/server_file_transfer_port`` of one fid.
-
-        Args:
-            fid (int): Transfer id the peer announces its listener under.
-            peer (tuple): Receiver whose control connection announced the port.
-            timeout (float): Seconds to wait.
-
-        Returns:
-        tuple | None: ``(port, stamp)`` announced for this fid, or None
-                        when the announcement does not arrive in time.
-        """
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            with self.file_transfer_server_port_lock:
-                for info in reversed(list(self.file_server_port_list)):
-                    if info[1] == fid and info[3] == tuple(peer):
-                        # the newest announcement wins: an older one may belong
-                        # to a leg of a session that is already gone
-                        self.file_server_port_list.remove(info)
-                        stamp = info[2]
-                        return info[0], stamp
-            time.sleep(0.1)
-        return None
-
-    def _forget_transfer_port(self, fid, peer):
-        """Drop pending port announcements of a fid an older session left behind.
-
-        Args:
-            fid (int): Value used by the operation.
-            peer (tuple): Receiver namespace whose stale announcements are dropped.
-        """
-        if fid is None:
-            return
-        with self.file_transfer_server_port_lock:
-            self.file_server_port_list[:] = [
-                info for info in self.file_server_port_list
-                if not (info[1] == fid and info[3] == tuple(peer))
-            ]
 
     def _wait_control_secure(self, control_socket, timeout=RESUME_SECURE_TIMEOUT):
         """Wait until a control channel may carry framed protocol lines.
@@ -4287,34 +4408,27 @@ class TCP_Server_Base:  # TCP server class
             time.sleep(0.05)
         try:
             client_id = self._fid_alloc.alloc(receiver=client_address)
-            send_msg = f"/crypto_pub_key {client_id}"
-            self.send_message(client_socket, send_msg, is_send_raw=True)
-            file_transfer_client_port = self.palloc()
-            file_server_port = None
-            waiting_time = 0
-            while True:
-                time.sleep(0.05)
-                with self.file_transfer_server_port_lock:
-                    for port_info in list(self.file_server_port_list):
-                        if port_info[1] == client_id and port_info[3] == tuple(client_address):
-                            file_server_port = port_info[0]
-                            self.file_server_port_list.remove(port_info)
-                            break
-                if file_server_port is not None:
-                    break
-                waiting_time += 1
-                if waiting_time >= 200:
+            with _transfer_handshake(self, client_socket, client_id) as handshake:
+                send_msg = f"/crypto_pub_key {client_id}"
+                if not _send_transfer_request(self, handshake, send_msg, is_send_raw=True):
+                    return False
+                result = self._transfer_handshakes.wait(handshake, 10.0)
+                if result is None or result[0] != "port" or result[1] != client_id:
                     self._log("crypto: transfer port waiting timeout, public key push failed")
                     return False
-            self.file_transfer_mode(  # a key push carries the keys themselves: always plaintext
-                self.crypto.pub_path,
-                client_address[0],
-                file_server_port,
-                file_transfer_client_port,
-                control_socket=client_socket,
-                crypto="plain",
-            )
-            self.pfree(file_transfer_client_port)
+                _, _, file_server_port, _stamp = result
+                file_transfer_client_port = self.palloc()
+                try:
+                    self.file_transfer_mode(  # public-key bytes always travel plaintext
+                        self.crypto.pub_path,
+                        client_address[0],
+                        file_server_port,
+                        file_transfer_client_port,
+                        control_socket=client_socket,
+                        crypto="plain",
+                    )
+                finally:
+                    self.pfree(file_transfer_client_port)
         except Exception:
             self._log_exc()
             return False
@@ -4678,12 +4792,15 @@ class TCP_Server_Base:  # TCP server class
             client_address (tuple): Peer ``(ip, port)``.
             client_id (str): Client id used in the console log.
         """
+        self._transfer_handshakes.cancel_socket(client_socket)
         with self.client_lock:
-            if client_address in self.clients:
+            owns_peer = self.clients.get(client_address, {}).get("socket") is client_socket
+            if owns_peer:
                 del self.clients[client_address]
         with self._crypto_lock:
-            self._crypto_state.pop(client_address, None)
-            self._crypto_sessions.pop(client_address, None)
+            if owns_peer:
+                self._crypto_state.pop(client_address, None)
+                self._crypto_sessions.pop(client_address, None)
             self._crypto_sock_addr.pop(client_socket, None)
             self._crypto_peer.pop(client_socket, None)
             self._crypto_push_active.discard(client_socket)
@@ -4785,18 +4902,10 @@ class TCP_Server_Base:  # TCP server class
                 command, client_id, client_socket
             )
         elif shlex.split(command.lower())[0] == "/server_file_transfer_port":
-            parts = command.split(" ")
-            with self.file_transfer_server_port_lock:
-                self.file_transfer_server_port = int(parts[1])
-                try:
-                    file_client_id = int(parts[2])
-                    stamp = parts[3] if len(parts) > 3 else "plain"  # listener mode+nonce
-                    self.file_server_port_list.append(
-                        [self.file_transfer_server_port, file_client_id, stamp, tuple(client_address)]
-                    )
-                except:
-                    self._log_exc()
-                    pass
+            announcement = _parse_transfer_port_announcement(command)
+            if announcement is not None:
+                port, fid, stamp = announcement
+                self._transfer_handshakes.resolve_port(client_socket, fid, port, stamp)
         elif shlex.split(command.lower())[0] == "/forward_item":
             threading.Thread(
                 target=self._forward_item_handler,
@@ -5018,25 +5127,10 @@ class TCP_Server_Base:  # TCP server class
         return True
 
     def forward_target_command(
-        self, kind, rel_dir, fname, originator_addr, tfid, destination_path=None
+        self, kind, rel_dir, fname, originator_addr, tfid,
+        destination_path=None,
     ):
-        """Build the tagged wire command that pushes one forwarded item.
-
-        Public API for forward extensions. The originator tuple sits before the
-        trailing transfer id, where the receiver's existing parsers ignore it and
-        `parse_forward_originator` recovers it for attribution.
-
-        Args:
-            kind (str): "file" or "file_folder".
-            rel_dir (str): Relative folder path (folders only).
-            fname (str): File or folder name.
-            originator_addr (tuple): Originating client ``(ip, port)``.
-            tfid (int): Transfer id shared by the pushed item.
-            destination_path (str | None): Receiver-side destination directory.
-
-        Returns:
-            str: Command line to hand to `send_message`.
-        """
+        """Build the receiver command using its sender-allocated child FID."""
         originator = shlex.quote(repr(originator_addr))
         if kind == "file":
             if destination_path:
@@ -5050,41 +5144,28 @@ class TCP_Server_Base:  # TCP server class
                 f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(fname)} "
                 f"{originator} {shlex.quote(destination_path)} {tfid}"
             )
-        return f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(fname)} {originator} {tfid}"
+        return (
+            f"/file_folder {shlex.quote(rel_dir)} {shlex.quote(fname)} "
+            f"{originator} {tfid}"
+        )
 
     def forward_item_to(
-        self, target, kind, rel_dir, fname, originator_addr, tfid, destination_path=None
+        self, target, kind, rel_dir, fname, originator_addr, tfid,
+        destination_path=None,
     ):
-        """Push one forwarded file or folder item to a connected target.
-
-        Public API for forward extensions: sends the line built by
-        `forward_target_command`, which the receiver attributes with
-        `parse_forward_originator`.
-
-        Args:
-            target (tuple): Destination ``(ip, port)``.
-            kind (str): "file" or "file_folder".
-            rel_dir (str): Relative folder path (folders only).
-            fname (str): File or folder name.
-            originator_addr (tuple): Originating client ``(ip, port)``.
-            tfid (int): Transfer id shared by the pushed item.
-            destination_path (str | None): Receiver-side destination directory.
-
-        Returns:
-            bool: False when ``target`` is not connected (a console notice is
-                printed); True when the command was sent.
-        """
+        """Push one forwarded item to its target's receive listener."""
         client_info = self.clients.get(target)
         if client_info is None:
             self._log(forward_skip_message(target))
             return False
-        self.send_message(
-            client_info["socket"],
+        control = client_info["socket"]
+        handshake = self._transfer_handshakes.pending(control, tfid)
+        return _send_transfer_request(
+            self, handshake,
             self.forward_target_command(
-                kind, rel_dir, fname, originator_addr, tfid, destination_path
+                kind, rel_dir, fname, originator_addr, tfid, destination_path,
             ),
         )
-        return True
 
     def _execute_custom_handler(self, handler, command, client_socket=None, client_address=None):
         """Handle the operation.
@@ -5238,8 +5319,12 @@ class TCP_Server_Base:  # TCP server class
             nonlocal server_file_socket
             file_running = False
             self._crypto_drop_channel(client_file_socket)
-            client_file_socket.close()
-            server_file_socket.close()
+            if client_file_socket is not None:
+                client_file_socket.close()
+                self._transfer_handshakes.release_socket(client_socket, client_file_socket)
+            if server_file_socket is not None:
+                server_file_socket.close()
+                self._transfer_handshakes.release_socket(client_socket, server_file_socket)
 
         def setting_file_save_path():
             """Resolve, and create, the directory this leg writes into."""
@@ -5459,25 +5544,34 @@ class TCP_Server_Base:  # TCP server class
         server_file_socket.bind((server_file_address, server_file_port))
         file_transfer_server_port = server_file_socket.getsockname()[1]
         command_part = shlex.split(command)
-        file_client_id = command_part[len(command_part) - 1]
+        try:
+            file_client_id = int(command_part[-1])
+            if file_client_id < 0:
+                raise ValueError
+        except (IndexError, ValueError):
+            server_file_socket.close()
+            return
         progress_fid = _transfer_fid(command_part)  # keys this leg in file_recv_progress
         resume_entry = _resumable_entry(self.file_recv_progress, progress_fid, peer, command_part)
         destination_path = _parse_destination_path(command_part)
         stamp = self._crypto_transfer_stamp(
             client_socket, force_plain=command_part[0] == "/crypto_pub_key"
         )
-        transfer_server_port_msg = "/server_file_transfer_port {} {} {}\n".format(
+        transfer_server_port_msg = _transfer_port_announcement(
             file_transfer_server_port, file_client_id, stamp
         )
-        self.send_message(
-            client_socket, transfer_server_port_msg, is_send_raw=True
-        )  # coordination line: always plaintext (like the handshake)
         server_file_socket.listen(1)
         if resume_entry is not None:
             # the sender answers this resume with /file; its connection is the continued leg
             server_file_socket.settimeout(RESUME_ACCEPT_TIMEOUT)
         try:
+            if not self._transfer_handshakes.track_socket(client_socket, server_file_socket):
+                return
+            if not self.send_message(client_socket, transfer_server_port_msg, is_send_raw=True):
+                return
             client_file_socket, client_file_address = server_file_socket.accept()
+            if not self._transfer_handshakes.track_socket(client_socket, client_file_socket):
+                return
             if resume_entry is not None:
                 client_file_socket.settimeout(None)  # the accept timeout is the listener's only
             self._crypto_attach_transfer_in(client_file_socket, client_socket, stamp)
@@ -5505,6 +5599,7 @@ class TCP_Server_Base:  # TCP server class
             close_socket()
         finally:
             server_file_socket.close()
+            self._transfer_handshakes.release_socket(client_socket, server_file_socket)
 
     def diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(self, message):
         """Send grouped files and folders to their listed clients.
@@ -5807,47 +5902,30 @@ class TCP_Server_Base:  # TCP server class
             return False
         self._debug(client_socket, client_address, message)
         client_id = self._fid_alloc.alloc(receiver=client_ip)
-        send_msg = message.strip() + " " + str(client_id) + "\n"
         try:
-            waiting_time = 0
             if shlex.split(message.lower())[0] == "/file_folder":
                 filename = os.path.join(file_folder_abspath, shlex.split(message)[2])
             else:
                 filename = shlex.split(message)[1]
-            self.send_message(client_socket, send_msg)
-            file_transfer_client_port = self.palloc()
-            file_server_port = None
-            stamp = "plain"
-            is_find_port = True
-            while is_find_port:
-                time.sleep(1)
-                if len(self.file_server_port_list) > 0:
-                    with self.file_transfer_server_port_lock:
-                        for port_info in self.file_server_port_list:
-                            if port_info[1] == client_id and port_info[3] == tuple(client_ip):
-                                file_server_port = port_info[0]
-                                stamp = port_info[2]  # the listener's mode+nonce
-                                self.file_server_port_list.remove(port_info)
-                                is_find_port = False
-                                break
-                    pass
-                waiting_time += 1
-                if waiting_time >= 20:
-                    self._log(
-                        "ErrorWhileReceiveFileServerPort: transfer port waiting timeout, file sending failed"
-                    )
+            with _sending_transfer(self, (tuple(client_ip), client_id)), \
+                    _transfer_handshake(self, client_socket, client_id) as handshake:
+                send_msg = f"{message.strip()} {client_id}\n"
+                if not _send_transfer_request(self, handshake, send_msg):
                     return False
-            self.file_transfer_mode(
-                filename,
-                client_address,
-                file_server_port,
-                file_transfer_client_port,
-                control_socket=client_socket,
-                crypto=stamp,
-                fid=client_id,
-                peer=client_ip,  # the receiver a resume is asked to continue from
-            )
-            self.pfree(file_transfer_client_port)
+                result = self._transfer_handshakes.wait(handshake, RESUME_PORT_TIMEOUT)
+                if result is None or result[0] != "port" or result[1] != client_id:
+                    self._log("ErrorWhileReceiveFileServerPort: transfer port waiting timeout, file sending failed")
+                    return False
+                _, _, file_server_port, stamp = result
+                file_transfer_client_port = self.palloc()
+                try:
+                    self.file_transfer_mode(
+                        filename, client_address, file_server_port, file_transfer_client_port,
+                        control_socket=client_socket, crypto=stamp, fid=client_id,
+                        peer=client_ip,
+                    )
+                finally:
+                    self.pfree(file_transfer_client_port)
         except IndexError:
             self._log("invalid command, please use '/file <filename>'")
             self._log_exc()
@@ -5894,17 +5972,22 @@ class TCP_Server_Base:  # TCP server class
             nonlocal client_file_socket
             file_running = False
             self._crypto_drop_channel(client_file_socket)
+            self._transfer_handshakes.release_socket(control_socket, client_file_socket)
             client_file_socket.close()
 
         while True:
             try:
                 client_file_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                if not self._transfer_handshakes.track_socket(control_socket, client_file_socket):
+                    return False
                 client_file_socket.bind((self.host, client_port))
                 client_file_socket.connect((server_address, server_port))
                 break
             except Exception as e:
                 self._log(f"file transfer connection error: {e}")
                 self._log_exc()
+                self._transfer_handshakes.release_socket(control_socket, client_file_socket)
+                client_file_socket.close()
                 if reset_time >= 20:
                     close_socket()
                     self._log("unable to connect to file transfer server, file sending failed")
@@ -6122,7 +6205,8 @@ class TCP_Server_Base:  # TCP server class
 
         The unified request has validated origin, target and route before this
         method. Direct recovery sends ``/file``; forwarded replay keeps the
-        stable upstream fid and uses ``/forward_item`` with ``relay_fid=``.
+        stable upstream fid and uses ``/forward_item`` with ``fid=`` and
+        ``resume=``.
 
         Args:
             peer_addr (tuple | None): Receiver ``(ip, port)`` for this upload.
@@ -6146,25 +6230,24 @@ class TCP_Server_Base:  # TCP server class
             return False
 
         def send(entry):
-            self._forget_transfer_port(fid, peer_addr)
-            if not self.send_message(
-                info["socket"], f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
-            ):
-                return
-            port_info = self._wait_transfer_server_port(fid, peer_addr)
-            if port_info is None:
-                self._log(f"resume: {peer_addr} did not announce a transfer port for {fid}")
-                return
-            port, stamp = port_info
-            client_port = self.palloc()
-            try:
-                self.file_transfer_mode(
-                    entry[3], peer_addr[0], port, client_port,
-                    control_socket=info["socket"], crypto=stamp, fid=fid,
-                    peer=peer_addr, resume_offset=offset,
-                )
-            finally:
-                self.pfree(client_port)
+            with _transfer_handshake(self, info["socket"], fid) as handshake:
+                command = f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
+                if not _send_transfer_request(self, handshake, command):
+                    return
+                result = self._transfer_handshakes.wait(handshake, RESUME_PORT_TIMEOUT)
+                if result is None or result[0] != "port" or result[1] != fid:
+                    self._log(f"resume: {peer_addr} did not announce a transfer port for {fid}")
+                    return
+                _, _, port, stamp = result
+                client_port = self.palloc()
+                try:
+                    self.file_transfer_mode(
+                        entry[3], peer_addr[0], port, client_port,
+                        control_socket=info["socket"], crypto=stamp, fid=fid,
+                        peer=peer_addr, resume_offset=offset,
+                    )
+                finally:
+                    self.pfree(client_port)
 
         return _start_resume_send(self, key, peer_addr, send)
 
@@ -6245,15 +6328,12 @@ class TCP_Server_Base:  # TCP server class
 
     # ---- native in-memory forward relay (server side) ----------------------
 
-    def _forward_notify_error(self, sock, msg):
-        """Handle the operation.
-
-        Args:
-            sock (object): Value used by the operation.
-            msg (object): Value used by the operation.
-        """
+    def _forward_notify_error(self, sock, msg, fid):
+        """Return one forwarding setup failure to its socket/FID negotiation."""
+        if fid is None:
+            return
         try:
-            self.send_message(sock, f"/forward_error {msg}")
+            self.send_message(sock, f"/forward_error {fid} {shlex.quote(str(msg))}")
         except Exception:
             pass
 
@@ -6284,44 +6364,42 @@ class TCP_Server_Base:  # TCP server class
         return items, addrs
 
     def _forward_item_handler(self, sock, addr, cmd):
-        """Handle /forward_item <kind> [relay_fid=<fid>] [resume=<offset>] <...>.
-
-        The server streams the remaining ``size - offset`` bytes without
-        touching disk. A replay supplies its original upstream relay ID; its
-        unresolved target keeps the existing child ID and receive path.
-
-        Args:
-            sock (object): Value used by the operation.
-            addr (tuple): Value used by the operation.
-            cmd (object): Value used by the operation.
-        """
+        """Start a relay whose upstream FID was allocated by the sender."""
         try:
             parts = shlex.split(cmd)
-        except Exception:
-            self._forward_notify_error(sock, "invalid forward command")
+        except ValueError:
             return
-        if len(parts) < 3:
-            self._forward_notify_error(sock, "invalid forward command")
+        if len(parts) < 4:
+            self._log("forward: rejected command without an upstream FID")
             return
         kind = parts[1].lower()
         rest = parts[2:]
+        upstream_fid = None
+        resume_requested = False
         resume_offset = 0
-        relay_fid = None
-        while rest and rest[0].startswith(("resume=", "relay_fid=")):
+        while rest and rest[0].startswith(("resume=", "fid=")):
             option, value = rest.pop(0).split("=", 1)
             try:
                 number = int(value)
                 if number < 0:
                     raise ValueError
             except ValueError:
-                self._forward_notify_error(sock, f"invalid {option}")
+                self._forward_notify_error(sock, f"invalid {option}", upstream_fid)
                 return
             if option == "resume":
+                if resume_requested:
+                    self._forward_notify_error(sock, "duplicate resume", upstream_fid)
+                    return
                 resume_offset = number
+                resume_requested = True
             else:
-                relay_fid = number
-        # optional destination directory is the very last argument, after the
-        # client address tuples
+                if upstream_fid is not None:
+                    self._forward_notify_error(sock, "duplicate fid", upstream_fid)
+                    return
+                upstream_fid = number
+        if upstream_fid is None:
+            self._log("forward: rejected command without an upstream FID")
+            return
         destination_path = None
         if rest and not (rest[-1].startswith("(") and rest[-1].endswith(")")):
             destination_path = rest[-1]
@@ -6337,27 +6415,28 @@ class TCP_Server_Base:  # TCP server class
                 continue
             valid_targets.append(target)
         if not valid_targets:
-            self._forward_notify_error(sock, "no reachable targets to forward to")
+            self._forward_notify_error(sock, "no reachable targets to forward to", upstream_fid)
             return
         if kind == "file":
             if not items:
-                self._forward_notify_error(sock, "missing file name")
+                self._forward_notify_error(sock, "missing file name", upstream_fid)
                 return
-            rel_dir = ""
-            fname = items[0]
+            rel_dir, fname = "", items[0]
         elif kind == "folder":
             if len(items) < 2:
-                self._forward_notify_error(sock, "missing folder file")
+                self._forward_notify_error(sock, "missing folder file", upstream_fid)
                 return
-            rel_dir = items[0]
-            fname = items[1]
+            rel_dir, fname = items[0], items[1]
         else:
-            self._forward_notify_error(sock, f"unknown forward kind: {kind}")
+            self._forward_notify_error(sock, f"unknown forward kind: {kind}", upstream_fid)
             return
         threading.Thread(
             target=self._forward_relay,
             args=(sock, addr, kind, rel_dir, fname, valid_targets, destination_path, resume_offset),
-            kwargs={"relay_fid": relay_fid},
+            kwargs={
+                "upstream_fid": upstream_fid,
+                "resume_requested": resume_requested,
+            },
             daemon=True,
         ).start()
 
@@ -6450,7 +6529,8 @@ class TCP_Server_Base:  # TCP server class
         targets,
         destination_path=None,
         resume_offset=0,
-        relay_fid=None,
+        upstream_fid=None,
+        resume_requested=False,
     ):
         """Relay one file/folder item to every target, streaming from the
 
@@ -6468,25 +6548,33 @@ class TCP_Server_Base:  # TCP server class
             targets (object): Value used by the operation.
             destination_path (str): Value used by the operation.
             resume_offset (object): Value used by the operation.
-            relay_fid (int | None): Existing upstream ID for a resumed target.
+            upstream_fid (int): Upstream ID allocated by the source sender.
         """
         targets = list(dict.fromkeys(tuple(target) for target in targets))
-        if relay_fid is None:
-            fid = self._fid_alloc.alloc()
-            tfids = [self._fid_alloc.alloc(receiver=target) for target in targets]
-            route = self._register_fid_route(fid, originator_addr, dict(zip(targets, tfids)))
-        else:
-            fid = relay_fid
+        fid = upstream_fid
+        if fid is None:
+            self._log("forward: rejected relay without an upstream FID")
+            return
+        if resume_requested:
             with self._forward_relays_lock:
                 route = self._fid_routes.get(fid)
                 if (route is None or route["originator"] != tuple(originator_addr)
                         or not targets or any(target not in route["targets"] for target in targets)
                         or any(target in route["completed"] for target in targets)):
-                    self._forward_notify_error(forwarder_sock, "no pending relay target for this sender")
+                    self._forward_notify_error(
+                        forwarder_sock, "no pending relay target for this sender", fid
+                    )
                     return
                 tfids = [route["targets"][target] for target in targets]
+        else:
+            tfids = [self._fid_alloc.alloc(receiver=target) for target in targets]
+            route = self._register_fid_route(
+                fid, originator_addr, dict(zip(targets, tfids))
+            )
         if route is None:
-            self._forward_notify_error(forwarder_sock, "relay route is already in use")
+            self._forward_notify_error(
+                forwarder_sock, "relay fid is already in use", fid
+            )
             return
         relay = {
             "cond": threading.Condition(),
@@ -6496,7 +6584,10 @@ class TCP_Server_Base:  # TCP server class
         relay_keys = [(target, leg_fid) for target, tfid in zip(targets, tfids) for leg_fid in (fid, tfid)]
         with self._forward_relays_lock:
             if any(key in self._forward_relays for key in relay_keys):
-                return  # an identical attempt already owns the live sockets
+                self._forward_notify_error(
+                    forwarder_sock, "relay target is already active", fid
+                )
+                return
             for key in relay_keys:
                 self._forward_relays[key] = relay
         if os.path.exists(self.file_trans_progress_file):
@@ -6504,34 +6595,57 @@ class TCP_Server_Base:  # TCP server class
         target_conns = []
         up_sock = up_client = None
         sport = None
+        target_handshakes = {}
+        owned_sockets = []
+        terminal_sent = False
+
+        def fail(message):
+            nonlocal terminal_sent
+            if not terminal_sent:
+                terminal_sent = True
+                self._forward_notify_error(forwarder_sock, message, fid)
+
+        def own(control, transfer):
+            if not self._transfer_handshakes.track_socket(control, transfer):
+                return False
+            owned_sockets.append((control, transfer))
+            return True
+
         try:
-            # ask every target to open a receive transfer socket; the
-            # destination directory (if any) goes before the target id so
-            # the receiver's own destination parsing sees it
             for target, tfid in zip(targets, tfids):
-                self.forward_item_to(
-                    target, kind, rel_dir, fname, originator_addr, tfid, destination_path
-                )
-            # collect every target's advertised transfer port and mode stamp
-            ports = {}
-            expected_ports = set(zip(targets, tfids))
-            deadline = time.time() + 20
-            while len(ports) < len(tfids) and time.time() < deadline:
-                with self.file_transfer_server_port_lock:
-                    for info in list(self.file_server_port_list):
-                        key = (info[3], info[1])
-                        if key in expected_ports and key not in ports:
-                            ports[key] = (info[0], info[2])
-                            self.file_server_port_list.remove(info)
-                if len(ports) < len(tfids):
-                    time.sleep(0.05)
-            if len(ports) < len(tfids):
-                self._forward_notify_error(forwarder_sock, "target port setup timed out")
+                target_control = self.clients.get(target, {}).get("socket")
+                handshake = (self._transfer_handshakes.register(target_control, tfid)
+                             if target_control is not None else None)
+                if handshake is None:
+                    fail(f"target {target} has no available listener negotiation")
+                    return
+                target_handshakes[(target, tfid)] = handshake
+            for target, tfid in zip(targets, tfids):
+                if not self.forward_item_to(
+                    target, kind, rel_dir, fname, originator_addr, tfid, destination_path,
+                ):
+                    fail(f"could not request a listener from {target}")
+                    return
+            results = self._transfer_handshakes.wait_many(
+                tuple(target_handshakes.values()), 20.0
+            )
+            if results is None:
+                fail("target port setup timed out")
                 return
+            ports = {}
+            for target, tfid in zip(targets, tfids):
+                result = results[target_handshakes[(target, tfid)]["key"]]
+                if result[0] != "port":
+                    fail(f"target {target} rejected its listener")
+                    return
+                ports[(target, tfid)] = (result[2], result[3])
             # connect to each target and wait for its start sign
             for target, tfid in zip(targets, tfids):
                 tport, stamp = ports[(target, tfid)]
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                target_control = target_handshakes[(target, tfid)]["key"][0]
+                if not own(target_control, sock) or not own(forwarder_sock, sock):
+                    return
                 try:
                     sock.connect((target[0], tport))
                 except Exception as e:
@@ -6539,7 +6653,6 @@ class TCP_Server_Base:  # TCP server class
                     sock.close()
                     continue
                 try:
-                    target_control = self.clients.get(target, {}).get("socket")
                     self._crypto_attach_transfer_out(sock, target_control, stamp)
                 except _CryptoUnavailable as exc:
                     self._log(f"forward: target {target} transfer aborted: {exc}")
@@ -6551,10 +6664,12 @@ class TCP_Server_Base:  # TCP server class
                     continue
                 target_conns.append((tfid, target, sock))
             if not target_conns:
-                self._forward_notify_error(forwarder_sock, "no target accepted the transfer")
+                fail("no target accepted the transfer")
                 return
             # open the upload listener and hand it to the forwarder
             up_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            if not own(forwarder_sock, up_sock):
+                return
             up_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             up_sock.bind((self.host, self.palloc()))
             sport = up_sock.getsockname()[1]
@@ -6562,10 +6677,15 @@ class TCP_Server_Base:  # TCP server class
             up_sock.listen(1)
             # coordination line: always plaintext, so it also reaches a peer
             # that has not finished flipping to framed mode
-            self.send_message(
-                forwarder_sock, f"/forward_upload {fid} {sport} {up_stamp}", is_send_raw=True
-            )
+            terminal_sent = True
+            if not self.send_message(
+                forwarder_sock, _transfer_port_announcement(sport, fid, up_stamp),
+                is_send_raw=True,
+            ):
+                return
             up_client, _ = up_sock.accept()
+            if not own(forwarder_sock, up_client):
+                return
             self._crypto_attach_transfer_in(up_client, forwarder_sock, up_stamp)
             self.send_message(up_client, self.server_start_file_transfer_sign)
             self._forward_pump(
@@ -6573,13 +6693,18 @@ class TCP_Server_Base:  # TCP server class
             )
         except Exception as exc:
             self._log(f"forward: relay {fid} interrupted: {exc}")
+            fail(f"relay setup interrupted: {exc}")
         finally:
+            for control, transfer in owned_sockets:
+                self._transfer_handshakes.release_socket(control, transfer)
             for transfer_socket in [up_client, up_sock, *(sock for _, _, sock in target_conns)]:
                 if transfer_socket is not None:
                     self._crypto_drop_channel(transfer_socket)
                     transfer_socket.close()
             if sport is not None:
                 self.pfree(sport)
+            for handshake in target_handshakes.values():
+                self._transfer_handshakes.cancel(handshake)
             with self._forward_relays_lock:
                 for key in relay_keys:
                     if self._forward_relays.get(key) is relay:
@@ -6645,7 +6770,9 @@ class TCP_Server_Base:  # TCP server class
                 while True:
                     with cond:
                         while writer_pause.get(target, False) and not state["failed"]:
-                            cond.wait()
+                            if sock.fileno() < 0:
+                                return
+                            cond.wait(timeout=0.5)
                     item = pending.get()
                     if item is END:
                         break
@@ -6690,7 +6817,9 @@ class TCP_Server_Base:  # TCP server class
                 while remaining > 0:
                     with cond:
                         while state["paused"]:
-                            cond.wait()
+                            if up_sock.fileno() < 0:
+                                raise ConnectionError("uploader control session closed")
+                            cond.wait(timeout=0.5)
                     chunk = self._forward_recv_exact(
                         up_sock, min(self.file_transfer_chunk_len, remaining)
                     )
@@ -6970,6 +7099,7 @@ class TCP_Server_Base:  # TCP server class
         self._persist_transfer_progress()
         with self.client_lock:  # close all clients connections
             for client_info in self.clients.values():
+                self._transfer_handshakes.cancel_socket(client_info["socket"])
                 try:
                     # a client thread blocked in recv() keeps the connection half
                     # open past close(): the shutdown sends its FIN and wakes it
@@ -7159,8 +7289,6 @@ class TCP_Client_Base:  # TCP client class
         self._recv_speed_samples = collections.deque()
         self._upload_speed_total = 0  # bytes held in the sample windows
         self._recv_speed_total = 0
-        self._forward_upload_queue = queue.Queue()
-        self._forward_error = None
         # Outbound-transfer pause switches (see `pause_trans`/`start_trans`):
         # (receiver, fid) -> bool, including forwarded uploads to the server.
         self._transfer_pause = {}
@@ -7194,9 +7322,7 @@ class TCP_Client_Base:  # TCP client class
             os.mkdir(self.project_temp_info_dir)
         self.all_allocated_ports_list = []
         self.is_hand_alloc_port = None
-        self.file_transfer_server_port = None
-        self.file_server_port_list = []
-        self.file_transfer_server_port_lock = threading.Lock()
+        self._transfer_handshakes = _TransferHandshakeRegistry()
         self.client_ports_list = []
         self.client_port = client_port
         self.host = host
@@ -8234,49 +8360,10 @@ class TCP_Client_Base:  # TCP client class
             return
         with self._transfer_pause_cond:
             while self._transfer_pause.get(fid, False):
-                if not self.running:
+                sock = self._active_transfer_sockets.get(fid)
+                if not self.running or (sock is not None and sock.fileno() < 0):
                     return
                 self._transfer_pause_cond.wait(timeout=0.5)
-
-    def _wait_transfer_server_port(self, fid, peer, timeout=RESUME_PORT_TIMEOUT):
-        """Wait for the peer's ``/server_file_transfer_port`` of one fid.
-
-        Args:
-            fid (int): Transfer id the peer announces its listener under.
-            peer (tuple): Receiver whose control connection announced the port.
-            timeout (float): Seconds to wait.
-
-        Returns:
-        tuple | None: ``(port, stamp)`` announced for this fid, or None
-                        when the announcement does not arrive in time.
-        """
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            with self.file_transfer_server_port_lock:
-                for info in reversed(list(self.file_server_port_list)):
-                    if info[1] == fid and info[3] == tuple(peer):
-                        # the newest announcement wins: an older one may belong
-                        # to a leg of a session that is already gone
-                        self.file_server_port_list.remove(info)
-                        stamp = info[2]
-                        return info[0], stamp
-            time.sleep(0.1)
-        return None
-
-    def _forget_transfer_port(self, fid, peer):
-        """Drop pending port announcements of a fid an older session left behind.
-
-        Args:
-            fid (int): Value used by the operation.
-            peer (tuple): Receiver namespace whose stale announcements are dropped.
-        """
-        if fid is None:
-            return
-        with self.file_transfer_server_port_lock:
-            self.file_server_port_list[:] = [
-                info for info in self.file_server_port_list
-                if not (info[1] == fid and info[3] == tuple(peer))
-            ]
 
     def _wait_control_secure(self, control_socket, timeout=RESUME_SECURE_TIMEOUT):
         """Wait until a control channel may carry framed protocol lines.
@@ -8804,10 +8891,13 @@ class TCP_Client_Base:  # TCP client class
         lines additionally go to `handle_server_command`. Any end of the
         connection clears ``running`` and releases the port range.
         """
+        control_socket = self.client_socket
         buffer = ""
-        while self.running:
+        while self.running and self.client_socket is control_socket:
             try:
-                data = self.receive_message(self.client_socket, self.recv_messages_chunk_len)
+                data = self.receive_message(control_socket, self.recv_messages_chunk_len)
+                if self.client_socket is not control_socket:
+                    break
                 if not data:
                     self._log("\nbreak the connection from server")
                     self.running = False
@@ -8843,9 +8933,9 @@ class TCP_Client_Base:  # TCP client class
                         else:
                             # a command from the server: reported to the listeners
                             # like every inbound line, then handled
-                            self._record_event(self.client_socket, message)
+                            self._record_event(control_socket, message)
                             self._notify_message_received(sender, message)
-                            self.handle_server_command(message)
+                            self.handle_server_command(message, control_socket=control_socket)
                             self._log(f"\n[server] {message}")
                             continue
                     self._notify_message_received(sender, message)
@@ -8855,6 +8945,8 @@ class TCP_Client_Base:  # TCP client class
             except socket.timeout:
                 continue
             except ConnectionResetError:
+                if self.client_socket is not control_socket:
+                    break
                 self._log("\nReset by server, connection closed")
                 self._log_exc()
                 self.running = False
@@ -8862,6 +8954,8 @@ class TCP_Client_Base:  # TCP client class
                 self._persist_transfer_progress()
                 break
             except Exception as e:
+                if self.client_socket is not control_socket:
+                    break
                 if not _is_closed_socket_error(e):
                     self._log(f"\nget msg error: {e}")
                     self._log_exc()
@@ -8869,6 +8963,7 @@ class TCP_Client_Base:  # TCP client class
                 self.free_port()
                 self._persist_transfer_progress()
                 break
+        self._transfer_handshakes.cancel_socket(control_socket)
 
     def send_message(self, client_socket, message, is_send_raw=False):
         # send msg to server
@@ -9435,50 +9530,44 @@ class TCP_Client_Base:  # TCP client class
         Returns:
             bool: Result produced by the operation.
         """
+        control_socket = self.client_socket
         while (
             True
         ):  # serialise pushes: wait for a concurrent push (double handshake) instead of skipping it
             with self._crypto_lock:
-                if self.client_socket not in self._crypto_push_active:
-                    self._crypto_push_active.add(self.client_socket)
+                if control_socket not in self._crypto_push_active:
+                    self._crypto_push_active.add(control_socket)
                     break
             time.sleep(0.05)
         try:
             client_id = self._fid_alloc.alloc(receiver=(self.host, self.port))
-            send_msg = f"/crypto_pub_key {client_id}"
-            self.send_message(self.client_socket, send_msg, is_send_raw=True)
-            file_transfer_client_port = self.palloc()
-            file_server_port = None
-            waiting_time = 0
-            while True:
-                time.sleep(0.05)
-                with self.file_transfer_server_port_lock:
-                    for port_info in list(self.file_server_port_list):
-                        if port_info[1] == client_id and port_info[3] == (self.host, self.port):
-                            file_server_port = port_info[0]
-                            self.file_server_port_list.remove(port_info)
-                            break
-                if file_server_port is not None:
-                    break
-                waiting_time += 1
-                if waiting_time >= 200:
+            with _transfer_handshake(self, control_socket, client_id) as handshake:
+                send_msg = f"/crypto_pub_key {client_id}"
+                if not _send_transfer_request(self, handshake, send_msg, is_send_raw=True):
+                    return False
+                result = self._transfer_handshakes.wait(handshake, 10.0)
+                if result is None or result[0] != "port" or result[1] != client_id:
                     self._log("crypto: transfer port waiting timeout, public key push failed")
                     return False
-            self.file_transfer_mode(  # a key push carries the keys themselves: always plaintext
-                self.crypto.pub_path,
-                self.host,
-                file_server_port,
-                file_transfer_client_port,
-                control_socket=self.client_socket,
-                crypto="plain",
-            )
-            self.pfree(file_transfer_client_port)
+                _, _, file_server_port, _stamp = result
+                file_transfer_client_port = self.palloc()
+                try:
+                    self.file_transfer_mode(  # public-key bytes always travel plaintext
+                        self.crypto.pub_path,
+                        self.host,
+                        file_server_port,
+                        file_transfer_client_port,
+                        control_socket=control_socket,
+                        crypto="plain",
+                    )
+                finally:
+                    self.pfree(file_transfer_client_port)
         except Exception:
             self._log_exc()
             return False
         finally:
             with self._crypto_lock:
-                self._crypto_push_active.discard(self.client_socket)
+                self._crypto_push_active.discard(control_socket)
         return True
 
     def _crypto_store_received_pub(self, full_path, peer_role, server_addr):
@@ -9530,21 +9619,26 @@ class TCP_Client_Base:  # TCP client class
         with self._crypto_lock:
             self._crypto_server_pub_event.set()
 
-    def handle_server_command(self, command):  # deal with special command from server
+    def handle_server_command(self, command, control_socket=None):
         """Dispatch one command line pushed by the server.
 
         Handles the protocol's own lines: ``/crypto_mode`` (a mismatch closes the
         connection), ``/client_alloc_port_range``, the ``/crypto_*`` exchange lines,
         and the transfer lines ``/file``, ``/file_folder``,
-        ``/server_file_transfer_port``, ``/forward_upload``, ``/pause_trans``,
-        ``/start_trans``, ``/resume_trans`` and ``/forward_error``.
+        ``/server_file_transfer_port``, ``/pause_trans``, ``/start_trans``,
+        ``/resume_trans`` and FID-scoped ``/forward_error``.
         Any other name goes to the handlers registered for
         the "server" side via `register_command`; an unknown command is only
         reported on the console.
 
         Args:
             command (str): Line including its leading ``/``.
+            control_socket (socket.socket | None): Actual source socket of the line.
         """
+        if control_socket is None:
+            control_socket = self.client_socket
+        if control_socket is not self.client_socket:
+            return  # a replaced control session cannot dispatch into the new one
         client_id = f"{self.client_host}:{self.client_port}"
         if command.lower().split(" ")[0] == "/crypto_mode":
             try:
@@ -9574,18 +9668,10 @@ class TCP_Client_Base:  # TCP client class
                     f"server allocated port range for each client: {self.each_client_port_range}"
                 )
         elif shlex.split(command.lower())[0] == "/server_file_transfer_port":
-            parts = command.split(" ")
-            with self.file_transfer_server_port_lock:
-                self.file_transfer_server_port = int(parts[1])
-                try:
-                    file_client_id = int(parts[2])
-                    stamp = parts[3] if len(parts) > 3 else "plain"  # listener mode+nonce
-                    self.file_server_port_list.append(
-                        [self.file_transfer_server_port, file_client_id, stamp, (self.host, self.port)]
-                    )
-                except:
-                    self._log_exc()
-                    pass
+            announcement = _parse_transfer_port_announcement(command)
+            if announcement is not None:
+                port, fid, stamp = announcement
+                self._transfer_handshakes.resolve_port(control_socket, fid, port, stamp)
         elif (
             self.is_enable_encrypto
             and self.crypto is not None
@@ -9665,15 +9751,6 @@ class TCP_Client_Base:  # TCP client class
             self.file_folder_transfer_client_recv_server_start_thread(
                 command, client_id, self.client_socket
             )
-        elif shlex.split(command.lower())[0] == "/forward_upload":
-            try:
-                parts = shlex.split(command)
-                fid = int(parts[1])
-                sport = int(parts[2])
-            except (IndexError, ValueError):
-                return
-            stamp = parts[3] if len(parts) > 3 else "plain"  # upload leg's mode+nonce
-            self._forward_upload_queue.put((fid, sport, stamp))
         elif shlex.split(command.lower())[0] == "/pause_trans":
             fid = _pause_command_fid(command)
             if fid is not None:
@@ -9689,7 +9766,16 @@ class TCP_Client_Base:  # TCP client class
                 if origin == self.client_socket.getsockname():
                     self.resume_trans(target, fid, offset)
         elif shlex.split(command.lower())[0] == "/forward_error":
-            self._forward_error = command
+            try:
+                parts = shlex.split(command)
+            except ValueError:
+                return
+            try:
+                fid = int(parts[1]) if len(parts) == 3 else -1
+            except ValueError:
+                return
+            if fid >= 0:
+                self._transfer_handshakes.resolve_error(control_socket, fid, parts[2])
         else:
             cmd_parts = shlex.split(command.strip())
             if not cmd_parts:
@@ -10045,47 +10131,32 @@ class TCP_Client_Base:  # TCP client class
             file_folder_abspath (str): Value used by the operation.
         """
         client_id = self._fid_alloc.alloc(receiver=(self.host, self.port))
-        send_msg = message.strip() + " " + str(client_id)
+        peer = (self.host, self.port)
+        control_socket = self.client_socket
         try:
-            waiting_time = 0
             if shlex.split(message.lower())[0] == "/file_folder":
                 filename = os.path.join(file_folder_abspath, shlex.split(message)[2])
             else:
                 filename = shlex.split(message)[1]
-            self.send_message(self.client_socket, send_msg)
-            file_transfer_client_port = self.palloc()
-            file_server_port = None
-            stamp = "plain"
-            is_find_port = True
-            while is_find_port:
-                time.sleep(1)
-                if len(self.file_server_port_list) > 0:
-                    with self.file_transfer_server_port_lock:
-                        for port_info in self.file_server_port_list:
-                            if port_info[1] == client_id and port_info[3] == (self.host, self.port):
-                                file_server_port = port_info[0]
-                                stamp = port_info[2]  # the listener's mode+nonce
-                                self.file_server_port_list.remove(port_info)
-                                is_find_port = False
-                                break
-                    pass
-                waiting_time += 1
-                if waiting_time >= 20:
-                    self._log(
-                        "ErrorWhileReceiveFileServerPort: transfer port waiting timeout, file sending failed"
-                    )
+            with _sending_transfer(self, (peer, client_id)), \
+                    _transfer_handshake(self, control_socket, client_id) as handshake:
+                send_msg = f"{message.strip()} {client_id}"
+                if not _send_transfer_request(self, handshake, send_msg):
                     return False
-            self.file_transfer_mode(
-                filename,
-                self.host,
-                file_server_port,
-                file_transfer_client_port,
-                control_socket=self.client_socket,
-                crypto=stamp,
-                fid=client_id,
-                peer=(self.host, self.port),  # the receiver a resume is asked to continue from
-            )
-            self.pfree(file_transfer_client_port)
+                result = self._transfer_handshakes.wait(handshake, RESUME_PORT_TIMEOUT)
+                if result is None or result[0] != "port" or result[1] != client_id:
+                    self._log("ErrorWhileReceiveFileServerPort: transfer port waiting timeout, file sending failed")
+                    return False
+                _, _, file_server_port, stamp = result
+                file_transfer_client_port = self.palloc()
+                try:
+                    self.file_transfer_mode(
+                        filename, self.host, file_server_port, file_transfer_client_port,
+                        control_socket=control_socket, crypto=stamp, fid=client_id,
+                        peer=peer,
+                    )
+                finally:
+                    self.pfree(file_transfer_client_port)
         except IndexError:
             self._log_exc()
             self._log("invalid command, please use '/file <filename>'")
@@ -10129,17 +10200,22 @@ class TCP_Client_Base:  # TCP client class
             nonlocal client_file_socket
             file_running = False
             self._crypto_drop_channel(client_file_socket)
+            self._transfer_handshakes.release_socket(control_socket, client_file_socket)
             client_file_socket.close()
 
         while True:
             try:
                 client_file_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                if not self._transfer_handshakes.track_socket(control_socket, client_file_socket):
+                    return False
                 client_file_socket.bind((self.client_host, client_port))
                 client_file_socket.connect((server_address, server_port))
                 break
             except Exception as e:
                 self._log(f"file transfer connection error: {e}")
                 self._log_exc()
+                self._transfer_handshakes.release_socket(control_socket, client_file_socket)
+                client_file_socket.close()
                 if reset_time >= 20:
                     close_socket()
                     self._log("unable to connect to file transfer server, file sending failed")
@@ -10367,35 +10443,35 @@ class TCP_Client_Base:  # TCP client class
         key = (server_peer, fid)
         if not self.running or self.client_socket is None:
             return False
+        control_socket = self.client_socket
 
         def send(entry):
             if target != server_peer:
                 self._forward_one(
                     "file", "", os.path.basename(str(entry[3])), entry[3], [target],
-                    resume_offset=offset, relay_fid=fid,
+                    resume_offset=offset, upstream_fid=fid,
                 )
                 return
             if entry[4] is None or tuple(entry[4]) != server_peer:
                 return
-            self._forget_transfer_port(fid, server_peer)
-            if not self.send_message(
-                self.client_socket, f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
-            ):
-                return
-            port_info = self._wait_transfer_server_port(fid, server_peer)
-            if port_info is None:
-                self._log(f"resume: server did not announce a transfer port for {fid}")
-                return
-            port, stamp = port_info
-            client_port = self.palloc()
-            try:
-                self.file_transfer_mode(
-                    entry[3], self.host, port, client_port,
-                    control_socket=self.client_socket, crypto=stamp, fid=fid,
-                    peer=server_peer, resume_offset=offset,
-                )
-            finally:
-                self.pfree(client_port)
+            with _transfer_handshake(self, control_socket, fid) as handshake:
+                command = f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
+                if not _send_transfer_request(self, handshake, command):
+                    return
+                result = self._transfer_handshakes.wait(handshake, RESUME_PORT_TIMEOUT)
+                if result is None or result[0] != "port" or result[1] != fid:
+                    self._log(f"resume: server did not announce a transfer port for {fid}")
+                    return
+                _, _, port, stamp = result
+                client_port = self.palloc()
+                try:
+                    self.file_transfer_mode(
+                        entry[3], self.host, port, client_port,
+                        control_socket=control_socket, crypto=stamp, fid=fid,
+                        peer=server_peer, resume_offset=offset,
+                    )
+                finally:
+                    self.pfree(client_port)
 
         return _start_resume_send(self, key, target, send)
 
@@ -10557,66 +10633,65 @@ class TCP_Client_Base:  # TCP client class
         addrs,
         destination_path=None,
         resume_offset=0,
-        relay_fid=None,
+        upstream_fid=None,
     ):
-        """Forward one item, retaining its source state until relay completion."""
+        """Forward one item using a source-owned upstream FID."""
         if not os.path.isfile(abspath):
             self._log(f"forward: {abspath} is not a valid file, skipped")
             return False
-        with ExitStack() as sends:
-            if relay_fid is not None:
-                key = ((self.host, self.port), relay_fid)
-                sends.enter_context(_sending_transfer(self, key))
-                if key not in self.file_upload_progress:
-                    return False
-            msg = f"/forward_item {kind}"
-            if relay_fid is not None:
-                msg += f" relay_fid={int(relay_fid)}"
-            if resume_offset:
-                msg += f" resume={int(resume_offset)}"
-            if kind == "folder":
-                msg += f" {shlex.quote(rel_dir)}"
-            msg += f" {shlex.quote(fname)} " + " ".join(
-                shlex.quote(str(a)) for a in addrs
-            )
-            if destination_path:
-                msg += f" {shlex.quote(destination_path)}"
-            self._forward_error = None
-            if not self.send_message(self.client_socket, msg):
+        server_peer = (self.host, self.port)
+        control_socket = self.client_socket
+        is_resume = upstream_fid is not None
+        if is_resume:
+            key = (server_peer, upstream_fid)
+            if key not in self.file_upload_progress:
                 return False
-            upload = None
-            deadline = time.time() + 30
-            while time.time() < deadline:
-                if self._forward_error is not None:
-                    self._log(f"forward: server error: {self._forward_error}")
-                    self._forward_error = None
+        else:
+            upstream_fid = self._fid_alloc.alloc(receiver=server_peer)
+            key = (server_peer, upstream_fid)
+            if self.is_enable_file_transfer_progress_bar:
+                self.file_upload_progress[key] = [
+                    0, os.path.getsize(abspath), None, str(abspath),
+                    (_peer_from_json(addrs[0]) or tuple(addrs[0])) if addrs else None,
+                ]
+                self._persist_transfer_progress()
+        with _sending_transfer(self, key):
+            with _transfer_handshake(self, control_socket, upstream_fid) as handshake:
+                msg = f"/forward_item {kind} fid={int(upstream_fid)}"
+                if is_resume:
+                    msg += f" resume={int(resume_offset)}"
+                if kind == "folder":
+                    msg += f" {shlex.quote(rel_dir)}"
+                msg += f" {shlex.quote(fname)} " + " ".join(
+                    shlex.quote(str(address)) for address in addrs
+                )
+                if destination_path:
+                    msg += f" {shlex.quote(destination_path)}"
+                if not _send_transfer_request(self, handshake, msg):
                     return False
-                try:
-                    upload = self._forward_upload_queue.get(timeout=0.2)
-                    break
-                except queue.Empty:
-                    continue
-            if upload is None:
+                result = self._transfer_handshakes.wait(handshake, 30.0)
+            if result is None:
                 self._log(f"forward: timed out waiting for an upload slot for {fname}")
                 return False
-            fid, sport, stamp = upload
-            if relay_fid is not None and fid != relay_fid:
-                self._log(f"forward: server changed stable relay fid {relay_fid} to {fid}")
+            if result[0] == "error":
+                self._log(f"forward: server error: {result[1]}")
                 return False
+            if result[0] != "port" or result[1] != upstream_fid:
+                self._log(f"forward: server changed upstream fid for {fname}")
+                return False
+            _, fid, sport, stamp = result
             targets = [
                 (_peer_from_json(target) or (target[0], int(target[1])))
                 for target in addrs
             ]
-            if relay_fid is None:
-                sends.enter_context(_sending_transfer(self, ((self.host, self.port), fid)))
             client_port = self.palloc()
             try:
-                sent = self.file_transfer_mode(
+                return self.file_transfer_mode(
                     abspath,
                     self.host,
                     sport,
                     client_port,
-                    control_socket=self.client_socket,
+                    control_socket=control_socket,
                     crypto=stamp,
                     fid=fid,
                     peer=targets[0] if targets else None,
@@ -10625,8 +10700,7 @@ class TCP_Client_Base:  # TCP client class
             finally:
                 self.pfree(client_port)
                 with self._transfer_pause_cond:
-                    self._transfer_pause.pop(((self.host, self.port), fid), None)
-            return sent
+                    self._transfer_pause.pop((server_peer, fid), None)
 
     def file_folder_transfer_client_recv_server_start_thread(
         self, command, client_id, client_socket
@@ -10774,8 +10848,12 @@ class TCP_Client_Base:  # TCP client class
             nonlocal server_file_socket
             file_running = False
             self._crypto_drop_channel(client_file_socket)
-            client_file_socket.close()
-            server_file_socket.close()
+            if client_file_socket is not None:
+                client_file_socket.close()
+                self._transfer_handshakes.release_socket(client_socket, client_file_socket)
+            if server_file_socket is not None:
+                server_file_socket.close()
+                self._transfer_handshakes.release_socket(client_socket, server_file_socket)
 
         def setting_file_save_path():
             """Resolve, and create, the directory this leg writes into."""
@@ -10983,25 +11061,34 @@ class TCP_Client_Base:  # TCP client class
         server_file_socket.bind((server_file_address, server_file_port))
         file_transfer_server_port = server_file_socket.getsockname()[1]
         command_part = shlex.split(command)
-        file_client_id = command_part[len(command_part) - 1]
+        try:
+            file_client_id = int(command_part[-1])
+            if file_client_id < 0:
+                raise ValueError
+        except (IndexError, ValueError):
+            server_file_socket.close()
+            return
         progress_fid = _transfer_fid(command_part)  # keys this leg in file_recv_progress
         resume_entry = _resumable_entry(self.file_recv_progress, progress_fid, peer, command_part)
         destination_path = _parse_destination_path(command_part)
         stamp = self._crypto_transfer_stamp(
             client_socket, force_plain=command_part[0] == "/crypto_pub_key"
         )
-        transfer_server_port_msg = "/server_file_transfer_port {} {} {}\n".format(
+        transfer_server_port_msg = _transfer_port_announcement(
             file_transfer_server_port, file_client_id, stamp
         )
-        self.send_message(
-            client_socket, transfer_server_port_msg, is_send_raw=True
-        )  # coordination line: always plaintext (like the handshake)
         server_file_socket.listen(1)
         if resume_entry is not None:
             # the sender answers this resume with /file; its connection is the continued leg
             server_file_socket.settimeout(RESUME_ACCEPT_TIMEOUT)
         try:
+            if not self._transfer_handshakes.track_socket(client_socket, server_file_socket):
+                return
+            if not self.send_message(client_socket, transfer_server_port_msg, is_send_raw=True):
+                return
             client_file_socket, client_file_address = server_file_socket.accept()
+            if not self._transfer_handshakes.track_socket(client_socket, client_file_socket):
+                return
             if resume_entry is not None:
                 client_file_socket.settimeout(None)  # the accept timeout is the listener's only
             self._crypto_attach_transfer_in(client_file_socket, client_socket, stamp)
@@ -11029,6 +11116,7 @@ class TCP_Client_Base:  # TCP client class
             close_socket()
         finally:
             server_file_socket.close()
+            self._transfer_handshakes.release_socket(client_socket, server_file_socket)
 
     @_config_lifecycle(starting=False)
     def close(self):  # close connection
@@ -11051,6 +11139,7 @@ class TCP_Client_Base:  # TCP client class
                 self._control_sockets.discard(self.client_socket)
             self._crypto_session = None
         if self.client_socket:
+            self._transfer_handshakes.cancel_socket(self.client_socket)
             try:
                 # the receive thread may be blocked in recv() on this socket:
                 # close() alone sends no FIN and leaves that read waiting for its
@@ -11078,6 +11167,7 @@ class TCP_Client_Base:  # TCP client class
         sock = self.client_socket
         if sock is None:
             return
+        self._transfer_handshakes.cancel_socket(sock)
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
         except OSError:

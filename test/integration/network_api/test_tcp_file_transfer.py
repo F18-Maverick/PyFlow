@@ -2,14 +2,20 @@
 
 import os
 import threading
-import time
 import shlex
 from pathlib import Path
 
 import pytest
 
 
-from helpers import free_port, isolate_instance_files, server_ready, wait_for_text, wait_until
+from helpers import (
+    free_port,
+    isolate_instance_files,
+    request_transfer_listener,
+    server_ready,
+    wait_for_text,
+    wait_until,
+)
 
 from PyFlow.network_api.connect_tcp import (
     TCP_Client_Base,
@@ -61,31 +67,13 @@ def pair(tmp_path):
     server.stop()
 
 
-def _wait_port(client, timeout=5.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        with client.file_transfer_server_port_lock:
-            ports = list(client.file_server_port_list)
-        if ports:
-            return ports[0][0]
-        time.sleep(0.05)
-    return None
-
-
 def test_client_receives_file_from_server(pair, tmp_path):
     server, client, recv_dir = pair
     src = tmp_path / "payload.bin"
     payload = os.urandom(2048)
     src.write_bytes(payload)
 
-    # the client side of the transfer: it believes the server sent a
-    # "/file" command, so it opens a temporary server and advertises the
-    # port to the server over the control channel
-    client.file_transfer_client_recv_server_start_thread(
-        "cid", client.client_socket, f"/file {src} 0"
-    )
-    server_port = _wait_port(server)
-    assert server_port is not None
+    server_port, _stamp = request_transfer_listener(server, client, f"/file {src} 0")
 
     server.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
 
@@ -100,12 +88,7 @@ def test_client_receives_large_file_from_server(pair, tmp_path):
     src = tmp_path / "big.bin"
     payload = os.urandom(300 * 1024)  # ~300 KB, many chunks
     src.write_bytes(payload)
-
-    client.file_transfer_client_recv_server_start_thread(
-        "cid", client.client_socket, f"/file {src} 1"
-    )
-    server_port = _wait_port(server)
-    assert server_port is not None
+    server_port, _stamp = request_transfer_listener(server, client, f"/file {src} 1")
 
     server.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
 
@@ -124,12 +107,7 @@ def test_server_receives_file_from_client(pair, tmp_path):
     payload = os.urandom(8192)
     src.write_bytes(payload)
 
-    # the server believes the client sent a "/file" command: it opens a
-    # temporary server and advertises the port back to the client
-    server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-    server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
-    server_port = _wait_port(client)
-    assert server_port is not None
+    server_port, _stamp = request_transfer_listener(client, server, f"/file {src} 0")
 
     client.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
 
@@ -179,10 +157,7 @@ def test_transfer_thread_survives_a_stop_before_the_start_sign(pair, tmp_path):
     server.send_message = stop_then_send
     threading.excepthook = hook
     try:
-        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-        server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
-        server_port = _wait_port(client)
-        assert server_port is not None
+        server_port, _stamp = request_transfer_listener(client, server, f"/file {src} 0")
         client.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
         assert wait_until(stopped_first.is_set, timeout=10), (
             "the server-side transfer never reached its start sign"
@@ -195,7 +170,6 @@ def test_transfer_thread_survives_a_stop_before_the_start_sign(pair, tmp_path):
         threading.excepthook = previous_hook
         client.close()
         server.stop()
-
     thread = transfer_thread[0]
     assert not thread.is_alive(), "the transfer thread did not end"
     failures = [args for args in escaped if args.thread is thread]
@@ -241,12 +215,7 @@ def test_custom_file_transfer_chunk_len_is_honored_in_both_directions(tmp_path):
         payload = os.urandom(64 * 1024 + 123)  # 64 chunks of 1 KiB, plus a tail
         src.write_bytes(payload)
 
-        # server -> client (server sends, client writes to disk)
-        client.file_transfer_client_recv_server_start_thread(
-            "cid", client.client_socket, f"/file {src} 0"
-        )
-        server_port = _wait_port(server)
-        assert server_port is not None
+        server_port, _stamp = request_transfer_listener(server, client, f"/file {src} 0")
         server.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
         assert wait_until(lambda: any(recv_dir.iterdir()), timeout=15), (
             "client did not receive the file"
@@ -257,10 +226,7 @@ def test_custom_file_transfer_chunk_len_is_honored_in_both_directions(tmp_path):
         server_recv = tmp_path / "server_recv"
         server_recv.mkdir()
         server.file_transfer_dir = str(server_recv)
-        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-        server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
-        client_port = _wait_port(client)
-        assert client_port is not None
+        client_port, _stamp = request_transfer_listener(client, server, f"/file {src} 0")
         client.file_transfer_mode(str(src), "127.0.0.1", client_port, 0)
         assert wait_until(lambda: any(server_recv.iterdir()), timeout=15), (
             "server did not receive the file"
@@ -306,13 +272,9 @@ def test_server_receives_file_at_destination(pair, tmp_path):
     dest.mkdir()
 
     # paths must be quoted: shlex treats an unquoted backslash as an escape,
-    # which mangles Windows paths like C:\Users\...
-    server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-    server.file_transfer_server_recv_server_start_thread(
-        "cid", server_sock, f'/file "{src}" "{dest}" 0'
+    server_port, _stamp = request_transfer_listener(
+        client, server, f'/file "{src}" "{dest}" 0'
     )
-    server_port = _wait_port(client)
-    assert server_port is not None
 
     client.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
 
@@ -556,7 +518,6 @@ def _forward_client(server, recv_dir):
 def test_parse_forward_originator():
     """The originator tuple in a pushed /file or /file_folder command is
     recovered; a direct send (the receiver's own address) is filtered out."""
-    # the wire form produced by forward_target_command (tuple shlex-quoted)
     cmd = lambda *a: TCP_Server_Base.forward_target_command(None, *a)
     assert parse_forward_originator(cmd("file", "", "a.txt", ("127.0.0.1", 3000), 7)) == (
         "127.0.0.1:3000"
@@ -848,13 +809,7 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
     fid = 4242
     upload_key = ((client.host, client.port), fid)
 
-    server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-    client_id = "%s:%s" % client.client_socket.getsockname()
-    server.file_transfer_server_recv_server_start_thread(
-        client_id, server_sock, f"/file {src} {fid}"
-    )
-    server_port = _wait_port(client)
-    assert server_port is not None
+    server_port, _stamp = request_transfer_listener(client, server, f"/file {src} {fid}")
 
     assert client.pause_trans(fid) is False  # armed before the leg exists
     sender = threading.Thread(
@@ -916,14 +871,7 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
     receiver = client.client_socket.getsockname()
     upload_key = (receiver, fid)
 
-    # the client side of the transfer: it believes the server sent a
-    # "/file" command, so it opens a temporary server and advertises the
-    # port to the server over the control channel
-    client.file_transfer_client_recv_server_start_thread(
-        "cid", client.client_socket, f"/file {src} {fid}"
-    )
-    server_port = _wait_port(server)
-    assert server_port is not None
+    server_port, _stamp = request_transfer_listener(server, client, f"/file {src} {fid}")
 
     assert server.pause_trans(fid, receiver) is False  # armed before the leg exists
     sender = threading.Thread(
@@ -1004,12 +952,7 @@ def test_file_progress_and_speed_can_be_disabled(tmp_path):
         src.write_bytes(payload)
         fid = 7
 
-        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-        server.file_transfer_server_recv_server_start_thread(
-            "cid", server_sock, f"/file {src} {fid}"
-        )
-        server_port = _wait_port(client)
-        assert server_port is not None
+        server_port, _stamp = request_transfer_listener(client, server, f"/file {src} {fid}")
 
         client.pause_trans(fid)  # the pause works with tracking off too
         sender = threading.Thread(

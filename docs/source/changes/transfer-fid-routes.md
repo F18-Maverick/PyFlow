@@ -1,11 +1,77 @@
-# Change note: server FID routes and unified recovery (2–4, O1–O4)
+# Change note: server FID routes, sender ownership and socket/FID recovery
 
-> Atomic changes 1–3 and supplemental O1–O4 passed human review. Atomic change 4
-> now unifies resume commands and removes kind and Client recovery metadata;
-> its runtime evidence and review checkpoint are recorded in
-> `docs/plans/transfer-fid-and-resume-unify-atomic-4-report.md`.
-> Sections for earlier steps below are historical, not current wire contracts.
-> Handshake consolidation and receiver-owned allocation (5/6) remain unapproved.
+> Atomic changes 1–4 and supplemental O1–O4 passed human review; their historical
+> reports remain unchanged. Sender-ownership revision R1 and socket/FID revision
+> R2 are implemented and verified, awaiting human review. The final affected suite
+> passed 434 tests; independent plaintext/encrypted runs and the documentation
+> build passed. Known lint/doc warnings and earlier failed runs are disclosed in
+> `docs/plans/transfer-sender-fid-r2-report.md`. No commit, merge or push.
+
+## Revision R1: sender-owned relay upstream FID
+
+- A relay source allocates and binds a fresh upstream FID before `/forward_item`.
+  It sends the required `fid=<upstream_fid>` field; the Server preserves that ID
+  in the route and listener response. The Server continues to allocate a distinct
+  child FID for each target using the existing allocator and receiver scope.
+- A new upload omits `resume=`. Every replay includes `resume=<offset>`, including
+  `resume=0`; the Server accepts it only when the existing route belongs to the
+  actual originator and contains every requested unresolved target. Upstream and
+  child FIDs, progress rows, paths and final data ACK behavior remain stable.
+- The Server rejects an upstream FID already used by a route, receive row, or a
+  target-scoped active upload, socket, route index, relay or pause state. The
+  FID-scoped `/forward_error` reports rejection; the existing owner's route,
+  indexes and progress remain unchanged. Distinct receiver scopes remain distinct.
+- Ordinary file, folder and public-key senders retain their allocation. R2 removes
+  the historical UUID handshake without changing progress JSON or adding a route table.
+
+R1 behavior evidence and remaining review items are in
+`docs/plans/transfer-sender-fid-r1-report.md`.
+
+## Revision R2: actual socket and sender FID correlation
+
+- `/file` and `/file_folder` retain their fields and trailing sender FID;
+  `/crypto_pub_key <fid>` and `/forward_item <kind> fid=<upstream_fid> [resume=<offset>] <fields>`
+  contain no request marker. The terminal reply is exactly
+  `/server_file_transfer_port <port> <fid> <stamp>` or `/forward_error <fid> <reason>`.
+- Waiters match actual control socket plus FID. A sent request without a terminal
+  result on timeout or cancellation leaves its FID unresolved for that session;
+  late replies cannot unblock it, but unrelated FIDs and commands continue.
+  Natural disconnect cleans that session's waiters, unresolved marks, listeners
+  and data legs; reconnect can resume with the same FID. Data or ACK failure
+  does not disconnect healthy control. Each negotiation has one terminal reply.
+
+## Historical atomic change 5: superseded listener-correlation protocol
+
+- Ordinary file/folder pushes, public-key legs, relay target listeners and relay
+  source uploads use a one-shot `request=<uuidhex>` marker. The marker belongs to
+  one control request only: it is not a FID, is not persisted, and is not reused
+  for a retry. `/file`, `/file_folder` and `/crypto_pub_key` put the marker
+  before the trailing FID; `/forward_item` puts it immediately after its kind.
+  The common reply is `/server_file_transfer_port <port> <fid> <stamp> <request_id>`.
+- The requester registers before sending and dispatches only when the actual
+  control socket identity, request ID and expected FID match. Relay upload
+  accepts its server-assigned upstream FID without changing allocation authority.
+  Relay targets register independently and may reply in any order. Success
+  consumes registration; failure, timeout, cancellation and teardown retire it
+  and wake its waiter. Late, duplicate or mismatched replies are discarded,
+  never cached, with no fallback or alias. Forward setup errors carry their
+  request ID and cannot wake another upload.
+- `/forward_upload`, its FIFO queue and the shared `_forward_error` slot are
+  removed. Stable upstream/child FIDs, progress rows, route state, transfer
+  payload, ACK behavior and crypto framing are unchanged. Public-key transfer
+  bytes remain plaintext; the temporary server-assigned port is associated by
+  request ID without changing the key-exchange order.
+- Keep the real-socket concurrent-forward regression that deliberately blocks
+  the first port response while the second request completes. It catches
+  request-agnostic FIFO consumption; also retain timeout, cancellation, wrong
+  peer/FID, duplicate response and public-key/async regressions.
+- Locale cleanup removes only 54 obsolete extracted gettext blocks from 19
+  catalogs: the File_Transfer and TCP_Client_APIs/TCP_Server_APIs catalogs for
+  `ja`, `ko`, `ru`, `zh_CN` and `zh_TW`, plus the connect_tcp API catalogs for
+  `ko`, `ru`, `zh_CN` and `zh_TW`. Removed blocks teach the legacy port cache,
+  dedicated forwarding-upload command or outdated port response. No global
+  regeneration or replacement translations are supplied; new source text uses
+  English fallback pending translation.
 
 ## Atomic change 4: one recovery command and one source of file metadata
 
@@ -26,74 +92,9 @@
   delivery keeps them queued, while completed/missing routes cannot be replayed.
 - Fids carry no plain/relay kind; allocation calls have no kind argument, the
   reserved low bit is zero, and diagnostic formatting is `e<epoch>.<counter>`.
-  Allocation authority, `tfid` naming, `/forward_upload` and `relay_fid=` remain
-  unchanged until separately approved steps 5/6. Final data-ACK aggregation and
-  stable upstream/downstream IDs are unchanged.
-
-## Atomic change 2 history
-
-## Core logic of this change
-
-- Problem: the server indexed the same forwarding record by an upstream fid and
-  every target fid. Its snapshot duplicated that record; loading reconstructed
-  independent copies. Lookup also lacked the receiver scope of a target fid.
-- `_fid_routes[upstream_fid]` is the only authoritative route. It stores the
-  original sender and a complete `{receiver: downstream_fid}` mapping.
-- `_fid_route_index[(receiver, downstream_fid)]` points to the upstream fid,
-  not a copied route. Scoped lookup and local upstream lookup return the same
-  record. The route contains no file path, name, directory, size or byte-progress
-  copies; those belong to the existing endpoint progress records.
-- `_forward_relays` remains transient buffer/condition/pause state only. Client
-  forwarding recovery now uses its ordinary upload row; no client relay record
-  exists.
-
-## Modules and interactions
-
-- `PyFlow/network_api/connect_tcp.py` adds server registration, lookup and
-  identity-safe removal of route/index owners under `_forward_relays_lock`.
-  Registration is all-or-nothing when a primary or downstream key is occupied.
-- Ordinary progress restoration skips only route-owned identities in the
-  appropriate local or downstream namespace. The allocator consults both
-  route tables alongside existing progress stores.
-- Unified `/resume_trans` handling validates the requesting peer, origin and
-  target, then routes either to the local scoped upload or the authoritative
-  upstream route. It no longer emits a second resume command.
-- The `relays` JSON region now contains one row per upstream fid, with
-  `originator` and `targets: [[receiver, fid], ...]`. Load rebuilds the derived
-  index, counts authoritative routes, and does not overwrite live owners.
-- Unsupported old server relay schemas are logged and preserved on load,
-  persistence and shutdown. Client relay snapshots are empty; nonempty legacy
-  client metadata is rejected and preserved.
-
-## Implicit assumptions and easy-to-forget details
-
-- Targets passed to the relay after reachability filtering form the accepted
-  set. Duplicate addresses denote one target. Port, connection, crypto attach
-  or start-sign failure must not shrink that set in the recovery route.
-- Whole-route deletion compares acknowledged deliveries with all accepted
-  targets, not merely the subset of target connections that opened.
-- The route does not yet track individual completion transitions. If a subset
-  succeeds, the entire accepted mapping remains. Per-target completion and
-  final-source notification belong to atomic change 3.
-- In particular, the source's existing data ACK can still report upload success
-  despite an incomplete target set. Retaining the server route does not fix
-  source-record lifetime; do not claim final end-to-end recovery is complete.
-- A route must be removed only by its owning object. An old leg finishing after
-  another registration cannot remove the new primary record or its indexes.
-- Snapshot loading acquires the progress lock and then route lock; allocation
-  must remain outside these locks. Removal releases the route lock before
-  persisting, avoiding a reverse lock nesting.
-
-## Changing this in six months
-
-- Keep the real-socket regression where one target advertises a bound but
-  non-listening port and another receives the complete file. It catches the
-  misleading `delivered == len(target_conns)` cleanup condition.
-- Preserve the full accepted mapping across restart and ensure all reverse
-  lookups reach one authoritative object after loading.
-- Do not reintroduce raw target-fid aliases: downstream identity always includes
-  its receiver. `tfid` and `/forward_upload` remain current until later steps;
-  kind bits and `/forward_resume` are no longer current contracts.
+  Allocation authority, `tfid` naming and `relay_fid=` remain unchanged until
+  separately approved step 6. Atomic 5 removes the old upload handshake.
+  Final data-ACK aggregation and stable upstream/downstream IDs are unchanged.
 
 ## Atomic change 3: completion across stable-ID replay
 
@@ -143,6 +144,71 @@ duplicate requests, lost final ACK, completed-state reload and malformed-state
 file preservation. Runtime evidence and explicit exclusions are recorded in
 ``docs/plans/transfer-fid-and-resume-unify-atomic-3-report.md``.
 
+## Atomic change 2 history
+
+### Core logic of this change
+
+- Problem: the server indexed the same forwarding record by an upstream fid and
+  every target fid. Its snapshot duplicated that record; loading reconstructed
+  independent copies. Lookup also lacked the receiver scope of a target fid.
+- `_fid_routes[upstream_fid]` is the only authoritative route. It stores the
+  original sender and a complete `{receiver: downstream_fid}` mapping.
+- `_fid_route_index[(receiver, downstream_fid)]` points to the upstream fid,
+  not a copied route. Scoped lookup and local upstream lookup return the same
+  record. The route contains no file path, name, directory, size or byte-progress
+  copies; those belong to the existing endpoint progress records.
+- `_forward_relays` remains transient buffer/condition/pause state only. Client
+  forwarding recovery now uses its ordinary upload row; no client relay record
+  exists.
+
+### Modules and interactions
+
+- `PyFlow/network_api/connect_tcp.py` adds server registration, lookup and
+  identity-safe removal of route/index owners under `_forward_relays_lock`.
+  Registration is all-or-nothing when a primary or downstream key is occupied.
+- Ordinary progress restoration skips only route-owned identities in the
+  appropriate local or downstream namespace. The allocator consults both
+  route tables alongside existing progress stores.
+- Unified `/resume_trans` handling validates the requesting peer, origin and
+  target, then routes either to the local scoped upload or the authoritative
+  upstream route. It no longer emits a second resume command.
+- The `relays` JSON region now contains one row per upstream fid, with
+  `originator` and `targets: [[receiver, fid], ...]`. Load rebuilds the derived
+  index, counts authoritative routes, and does not overwrite live owners.
+- Unsupported old server relay schemas are logged and preserved on load,
+  persistence and shutdown. Client relay snapshots are empty; nonempty legacy
+  client metadata is rejected and preserved.
+
+### Implicit assumptions and easy-to-forget details
+
+- Targets passed to the relay after reachability filtering form the accepted
+  set. Duplicate addresses denote one target. Port, connection, crypto attach
+  or start-sign failure must not shrink that set in the recovery route.
+- Whole-route deletion compares acknowledged deliveries with all accepted
+  targets, not merely the subset of target connections that opened.
+- The route does not yet track individual completion transitions. If a subset
+  succeeds, the entire accepted mapping remains. Per-target completion and
+  final-source notification belong to atomic change 3.
+- In particular, the source's existing data ACK can still report upload success
+  despite an incomplete target set. Retaining the server route does not fix
+  source-record lifetime; do not claim final end-to-end recovery is complete.
+- A route must be removed only by its owning object. An old leg finishing after
+  another registration cannot remove the new primary record or its indexes.
+- Snapshot loading acquires the progress lock and then route lock; allocation
+  must remain outside these locks. Removal releases the route lock before
+  persisting, avoiding a reverse lock nesting.
+
+### Changing this in six months
+
+- Keep the real-socket regression where one target advertises a bound but
+  non-listening port and another receives the complete file. It catches the
+  misleading `delivered == len(target_conns)` cleanup condition.
+- Preserve the full accepted mapping across restart and ensure all reverse
+  lookups reach one authoritative object after loading.
+- Do not reintroduce raw target-fid aliases: downstream identity always includes
+  its receiver. `tfid` remains until step 6; `/forward_upload`, kind bits and
+  `/forward_resume` are not current contracts.
+
 
 ## Follow-up O1: direct Server error signs never complete an upload
 
@@ -181,6 +247,7 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
   `docs/plans/ordinary-transfer-progress-inspection-o2-report.md`.
 - Progress inspection (O3), `delete_config` (O4) and the original FID plan's
   later cutovers remain outside this change; O2 awaits human review.
+
 ## Follow-up O3: local transfer inspection
 
 - O1 and O2 were separately reviewed before O3. Both TCP classes now expose

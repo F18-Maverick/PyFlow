@@ -148,21 +148,6 @@ msgid ""
 "closed."
 msgstr "``error_sign`` - エラーが発生したときにどちらかの側から送信され、転送ソケットが閉じられます。"
 
-#: ../../source/File_Transfer/File_Transfer.rst:72
-#: 41f6d3d6e0e848bc8f6aecb995223622
-msgid ""
-"The remaining keys of the table cover the other three direction/phase "
-"combinations. Protocol control lines that are not part of this table "
-"(``/server_file_transfer_port``, ``/client_alloc_port_range``, "
-"``/pause_trans``, ``/start_trans``, ``/forward_item``, "
-"``/forward_upload``, ``/forward_error``, ``/crypto_*``) are hardcoded in "
-"``connect_tcp.py``."
-msgstr ""
-"表の残りのキーは、他の3つの方向/位相の組み合わせをカバーしています。このテーブルの一部ではないプロトコル制御ライン（''/ "
-"server_file_transfer_port ''、''/ client_alloc_port_range ''、''/ "
-"pause_trans ''、''/ start_trans ''、''/ forward_item ''、''/ forward_upload "
-"''、''/ forward_error ''、''/ crypto _*''）は、'' connect_tcp.py "
-"''にハードコードされています。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:80
 #: 45a36aa9239d4caba8752e4dc4fd551b
@@ -373,17 +358,6 @@ msgid ""
 "``palloc()``."
 msgstr "``palloc()`` を呼び出して、送信ファイル転送ソケットのローカルポートを取得します。"
 
-#: ../../source/File_Transfer/File_Transfer.rst:172
-#: 37226a4f2e1e4a878ba325fca05df9bf
-msgid ""
-"Wait (up to 20 seconds) for the server to reply with a port number. The "
-"server's reply (``/server_file_transfer_port <port> <client_id>``) is "
-"received by the main connection and stored in ``file_server_port_list``. "
-"When a matching entry is found, the port is extracted."
-msgstr ""
-"サーバーがポート番号を応答するまで (最大 20 秒) 待ちます。サーバーの応答 (``/server_file_transfer_port "
-"<port> <client_id>``) はメイン接続によって受信され、``file_server_port_list`` "
-"に保存されます。一致するエントリが見つかると、ポートが抽出されます。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:180
 #: e9cd68239fe3498597f07ccfa774ae22
@@ -478,21 +452,6 @@ msgstr ""
 "「file_transfer_mode_recv(host, port, client_socket, client_id, "
 "new_save_path, file_name, command)」を呼び出します。"
 
-#: ../../source/File_Transfer/File_Transfer.rst:224
-#: 2f6675b7698c41938542b09cbfb482e8
-msgid ""
-"This low-level receive function sets up a listening socket on the "
-"allocated port, sends the port number back to the client (as "
-"``/server_file_transfer_port <port> <client_id>``), accepts the client's "
-"connection, and performs the protocol steps described in :ref:`file-"
-"transfer-protocol`. The received file is saved under ``received_files/`` "
-"(or a subdirectory if a folder transfer was requested)."
-msgstr ""
-"この低レベルの受信関数は、割り当てられたポート上で待機ソケットを設定し、ポート番号をクライアントに送り返し "
-"(``/server_file_transfer_port <port> <client_id>`` "
-"として)、クライアントの接続を受け入れ、:ref:`file-transfer-protocol` "
-"で説明されているプロトコル手順を実行します。受信したファイルは ``received_files/'' "
-"(フォルダ転送が要求された場合はサブディレクトリ) に保存されます。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:234
 #: 9fe861572b8746aeaa8266d8d30f963f
@@ -582,16 +541,6 @@ msgstr "一意のクライアント ID を割り当て、それを使用して�
 msgid "Allocate a local port with ``palloc()``."
 msgstr "``palloc()`` でローカルポートを割り当てます。"
 
-#: ../../source/File_Transfer/File_Transfer.rst:279
-#: 723a05b6c3974b65a539af723f1e0872
-msgid ""
-"Wait for the client to reply with its own port number (via "
-"``/server_file_transfer_port``), which is stored in "
-"``file_server_port_list`` by the main connection's message handler."
-msgstr ""
-"クライアントが独自のポート番号 (`/server_file_transfer_port` 経由) "
-"で応答するのを待ちます。このポート番号は、メイン接続のメッセージ ハンドラーによって `file_server_port_list` "
-"に保存されます。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:284
 #: 878572ca3d2948a9acbb6741f00ddd62

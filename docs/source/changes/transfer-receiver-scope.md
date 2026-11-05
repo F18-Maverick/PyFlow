@@ -1,8 +1,9 @@
 # Change note: receiver-scoped transfer state (atomic change 1)
 
 > Historical scope of atomic change 1 in `docs/plans/transfer-fid-and-resume-unify-plan.md`.
-> The atomic-4 section in `transfer-fid-routes.md` supersedes its old resume/kind descriptions;
-> receiver-owned allocation and handshake consolidation remain later steps.
+> Later atomic changes supersede its old resume, kind and port-cache descriptions.
+> The sender-FID revision supersedes receiver-owned allocation; R2 in progress
+> replaces atomic 5's request-token correlation with actual socket and FID.
 
 ## Core logic of this change
 
@@ -10,7 +11,7 @@
 - Upload progress now uses `(receiver, fid)` keys. Download progress retains local integer fid keys. Values remain `[bytes, total, speed, local_path, logical_peer]`.
 - Outbound activity, sockets and pause switches use the upload identity; inbound activity and sockets use the local integer key. Cleanup and ownership checks never cross those namespaces.
 - The receiver is the actual next-hop control endpoint. Client uploads, including forwarded uploads, use the configured server. A forwarded upload's fifth progress item still names its original logical target.
-- Port announcements carry their control peer in the local cache. Ordinary sends, resumes, public-key pushes and relay target collection match both peer and fid. The wire format is unchanged.
+- Atomic 1 originally scoped cached port announcements by peer and fid. Atomic 5 replaced the cache with request-token registration; R2 supersedes that historical contract with actual-control-socket/FID matching and no cache or fallback.
 
 ## Modules and interactions
 
@@ -22,7 +23,7 @@
 ## Implicit assumptions and easy-to-forget details
 
 - Never infer the receiver namespace from a forwarded upload's logical `peer` slot. Use its next-hop server.
-- Do not remove outbound port announcements when opening an incoming listener with the same numeric fid.
+- Opening an incoming listener must not retire another outgoing request with the same numeric fid. Request lifecycle belongs to its actual control socket and one-shot token.
 - Upload JSON keys are compact JSON strings encoding `[receiver, fid]`, for example `[["127.0.0.1",6000],9]`. Download JSON keys remain decimal strings.
 - Old bare upload-id snapshots cannot select a receiver unambiguously under this contract. Loading rejects them; persistence and shutdown preserve the original file rather than silently replacing it. Archive the file before persisting new tasks. No automatic migration or compatibility alias is supplied.
 - The existing progress-recording flag still disables resumable progress when False. This does not disable in-flight scoped pauses or port matching.

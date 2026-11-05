@@ -121,6 +121,55 @@ def test_registration_collision_is_atomic_for_primary_and_downstream_indexes(ser
     assert server._fid_route_index == index_before
 
 
+@pytest.mark.parametrize(
+    "owner",
+    [
+        "receive", "upload", "active_fid", "active_receive_fid",
+        "active_socket", "active_receive_socket", "pause", "relay", "route_index",
+    ],
+)
+def test_registration_rejects_upstream_fid_that_collides_with_live_transfer_identity(
+    server, owner
+):
+    fid = 303
+    target_key = (TARGET_1, fid)
+    if owner == "receive":
+        server.file_recv_progress[fid] = [0, 1, None, "/tmp/live", ORIGINATOR]
+    elif owner == "upload":
+        server.file_upload_progress[target_key] = [0, 1, None, "/tmp/live", TARGET_1]
+    elif owner == "active_fid":
+        server._active_transfer_fids.add(target_key)
+    elif owner == "active_receive_fid":
+        server._active_transfer_fids.add(fid)
+    elif owner == "active_socket":
+        server._active_transfer_sockets[target_key] = object()
+    elif owner == "active_receive_socket":
+        server._active_transfer_sockets[fid] = object()
+    elif owner == "pause":
+        server._transfer_pause[target_key] = True
+    elif owner == "relay":
+        server._forward_relays[target_key] = object()
+    else:
+        assert server._register_fid_route(404, ORIGINATOR, {TARGET_1: fid}) is not None
+
+    routes_before = dict(server._fid_routes)
+    indexes_before = dict(server._fid_route_index)
+
+    assert server._register_fid_route(303, ORIGINATOR, {TARGET_1: 306}) is None
+    assert server._fid_routes == routes_before
+    assert server._fid_route_index == indexes_before
+
+
+def test_registration_scopes_live_downstream_upload_conflicts_by_receiver(server):
+    fid = 303
+    server.file_upload_progress[(TARGET_2, fid)] = [0, 1, None, "/tmp/live", TARGET_2]
+
+    route = server._register_fid_route(fid, ORIGINATOR, {TARGET_1: 305})
+
+    assert route is not None
+    assert server._lookup_fid_route(TARGET_1, 305) == (fid, route)
+
+
 def test_route_removal_is_identity_safe_and_clears_all_owned_indexes(server):
     route = server._register_fid_route(303, ORIGINATOR, {TARGET_1: 305, TARGET_2: 306})
     assert route is not None

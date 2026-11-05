@@ -13,7 +13,7 @@ import threading
 import time
 
 import pytest
-from helpers import free_port, server_ready, wait_until
+from helpers import free_port, request_transfer_listener, server_ready, wait_until
 
 from PyFlow.network_api import rsa_crypto
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
@@ -216,10 +216,7 @@ def test_file_transfer_over_coroutine_control_channel(asynic, tmp_path):
     try:
         assert client.connect()
         assert wait_until(lambda: len(server.clients) == 1)
-        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-        server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
-        port = _wait_transfer_port(client, timeout=30)
-        assert port is not None, "client did not advertise a transfer port"
+        port, _stamp = request_transfer_listener(client, server, f"/file {src} 0", timeout=30.0)
 
         sent = client.file_transfer_mode(str(src), "127.0.0.1", port, 0)
 
@@ -233,17 +230,6 @@ def test_file_transfer_over_coroutine_control_channel(asynic, tmp_path):
         client.close()
         _stop_server(server, thread, join=asynic)
 
-
-def _wait_transfer_port(instance, timeout=10.0):
-    """Wait until an instance advertised a file transfer port."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        with instance.file_transfer_server_port_lock:
-            ports = list(instance.file_server_port_list)
-        if ports:
-            return ports[0][0]
-        time.sleep(0.05)
-    return None
 
 
 def test_stop_ends_the_event_loop(asynic_server):

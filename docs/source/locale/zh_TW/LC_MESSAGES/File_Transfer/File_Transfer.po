@@ -130,16 +130,6 @@ msgid ""
 "closed."
 msgstr "``error_sign`` - 當發生錯誤時由任何一方發送，導致傳輸套接字關閉。"
 
-#: ../../source/File_Transfer/File_Transfer.rst:72
-#: 41f6d3d6e0e848bc8f6aecb995223622
-msgid ""
-"The remaining keys of the table cover the other three direction/phase "
-"combinations. Protocol control lines that are not part of this table "
-"(``/server_file_transfer_port``, ``/client_alloc_port_range``, "
-"``/pause_trans``, ``/start_trans``, ``/forward_item``, "
-"``/forward_upload``, ``/forward_error``, ``/crypto_*``) are hardcoded in "
-"``connect_tcp.py``."
-msgstr ""
 
 #: ../../source/File_Transfer/File_Transfer.rst:80
 #: 45a36aa9239d4caba8752e4dc4fd551b
@@ -341,16 +331,6 @@ msgid ""
 "``palloc()``."
 msgstr "透過呼叫“palloc()”來取得傳出檔案傳輸套接字的本機連接埠。"
 
-#: ../../source/File_Transfer/File_Transfer.rst:172
-#: 37226a4f2e1e4a878ba325fca05df9bf
-msgid ""
-"Wait (up to 20 seconds) for the server to reply with a port number. The "
-"server's reply (``/server_file_transfer_port <port> <client_id>``) is "
-"received by the main connection and stored in ``file_server_port_list``. "
-"When a matching entry is found, the port is extracted."
-msgstr ""
-"等待（最多 20 秒）伺服器回覆連接埠號碼。伺服器的回應（``/server_file_transfer_port <port> "
-"<client_id>``）由主連線接收並儲存在``file_server_port_list``中。當找到符合的條目時，將提取連接埠。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:180
 #: e9cd68239fe3498597f07ccfa774ae22
@@ -434,19 +414,6 @@ msgid ""
 "new_save_path, file_name, command)``."
 msgstr "呼叫「file_transfer_mode_recv(主機、連接埠、client_socket、client_id、new_save_path、file_name、command)」。"
 
-#: ../../source/File_Transfer/File_Transfer.rst:224
-#: 2f6675b7698c41938542b09cbfb482e8
-msgid ""
-"This low-level receive function sets up a listening socket on the "
-"allocated port, sends the port number back to the client (as "
-"``/server_file_transfer_port <port> <client_id>``), accepts the client's "
-"connection, and performs the protocol steps described in :ref:`file-"
-"transfer-protocol`. The received file is saved under ``received_files/`` "
-"(or a subdirectory if a folder transfer was requested)."
-msgstr ""
-"這個低階接收函數在指派的連接埠上設定一個監聽套接字，將連接埠號碼傳回客戶端（如「/server_file_transfer_port <port>"
-" "
-"<client_id>」），接受客戶端的連接，並執行檔案傳輸協定中所述的協定步驟。接收到的檔案保存在「received_files/」下（如果請求資料夾傳輸，則儲存在子目錄下）。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:234
 #: 9fe861572b8746aeaa8266d8d30f963f
@@ -537,13 +504,6 @@ msgstr "分配唯一的客戶端 ID 並用它擴展命令，然後透過主連�
 msgid "Allocate a local port with ``palloc()``."
 msgstr "使用 palloc() 分配本地連接埠。"
 
-#: ../../source/File_Transfer/File_Transfer.rst:279
-#: 723a05b6c3974b65a539af723f1e0872
-msgid ""
-"Wait for the client to reply with its own port number (via "
-"``/server_file_transfer_port``), which is stored in "
-"``file_server_port_list`` by the main connection's message handler."
-msgstr "等待用戶端回覆自己的連接埠號碼（透過「/server_file_transfer_port」），該連接埠號碼由主連線的訊息處理程序儲存在「file_server_port_list」中。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:284
 #: 878572ca3d2948a9acbb6741f00ddd62

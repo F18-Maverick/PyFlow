@@ -2,7 +2,9 @@
 
 > Historical note; details below record the pre-atomic-4 implementation. The
 > atomic-4 section in `transfer-fid-routes.md` supersedes the old wire and
-> Client-state descriptions; reconnect remains the driver.
+> Client-state descriptions; reconnect remains the driver. R2 in progress
+> supersedes atomic 5's request-token correlation with actual socket and FID,
+> unresolved same-session isolation and cleanup on natural disconnect.
 
 ## Core logic of this change
 - Problem: resuming an interrupted transfer had two drivers (`resume_transfers`

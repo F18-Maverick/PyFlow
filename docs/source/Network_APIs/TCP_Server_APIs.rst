@@ -470,14 +470,14 @@ Encrypted transfer connections
 
 File and folder transfers, forwarded items and the forward relay run on
 temporary TCP connections. The listening side stamps each leg with its mode
-and a fresh nonce in the port advertisement (``/server_file_transfer_port``,
-``/forward_upload``); with ``is_enable_encrypto`` enabled both sides then
-frame that connection exactly like the control channel, with the same
-session key material, so file contents, names and sizes no longer cross the
-wire in the clear. The public-key pushes themselves stay plaintext by
-construction: they carry the keys the session is built on. A leg whose
-stamp promises encryption is aborted when the session key material is not
-ready rather than silently downgraded.
+and a fresh nonce in the common port advertisement
+(``/server_file_transfer_port <port> <fid> <stamp>``). With
+``is_enable_encrypto`` enabled, both sides then frame that connection exactly
+like the control channel, with the same session key material, so file contents,
+names and sizes no longer cross the wire in the clear. Public-key pushes stay
+plaintext because they carry the keys the session is built on. A leg whose
+stamp promises encryption is aborted when key material is not ready rather than
+silently downgraded.
 
 Decode verification and key rotation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -623,8 +623,7 @@ Built-in client commands include:
   down, so a client that stays after sending ``/quit`` is disconnected by the
   server.
 - ``/file <file_path> [destination_file_path]``: starts a file transfer from
-  the client to the server. The trailing token of the wire line is the
-  sender's own transfer id, appended by the sending client.
+  the client to the server. The wire command ends with the sender's transfer ID.
 - ``/file_folder <folder_path> [destination_file_path]``: starts a folder
   transfer from the client to the server (same trailing id).
 - ``/crypto_mode <0|1>``, ``/crypto_pub_key``, ``/crypto_pub_key_request``:
@@ -634,9 +633,11 @@ Built-in client commands include:
   ``/start_trans <fid>`` hold and release the outbound transfer to the requesting
   peer. Local calls require ``pause_trans(fid, peer)`` / ``start_trans(fid, peer)``;
   the receiver scope is required even when arming a future transfer.
-  Forwarded replay adds optional ``relay_fid=<upstream fid>`` and
-  ``resume=<offset>`` to ``/forward_item``. After validating the original sender
-  and unresolved target, the server reuses the existing upstream/child IDs.
+  Forwarded requests carry a source-allocated ``fid=<upstream fid>``. A new
+  upload omits ``resume=``; replay includes ``resume=<offset>``, including zero,
+  and must match an existing route before the Server reuses its upstream and
+  child FIDs. The Server rejects a colliding upstream FID without replacing an
+  existing route, receive record or target-scoped live transfer state.
 - ``/resume_trans <fid> <offset> <origin> <target>``: the only internal
   transfer-reconnect command. Addresses are shell-quoted tuple literals; target
   must match the actual requesting peer. A server origin selects its scoped
@@ -650,7 +651,17 @@ Built-in client commands include:
   the route is dropped only after the ACK write succeeds. A failed write keeps
   the completed route for recovery. This does not change ordinary sender or
   server receive-ACK behavior.
-- ``/server_file_transfer_port <port> <client_id>``: internal protocol message used to coordinate file transfer ports.
+- ``/server_file_transfer_port <port> <fid> <stamp>``: the four-token listener
+  reply for ordinary, public-key and relay legs. Replies match the actual control
+  socket and FID (the source-provided upstream FID for relay upload). Each
+  negotiation produces one terminal port or error reply; unmatched, duplicate or
+  late replies are discarded without a cache. Forward failures use
+  ``/forward_error <fid> <reason>``. There is no forwarding-upload FIFO.
+  If a sent request times out or is cancelled without a terminal result, that
+  FID is blocked for the session while unrelated FIDs and commands continue.
+  Natural disconnect clears its waiters, unresolved marks, pending listeners and
+  data sockets; reconnect can resume the same stable FID. Data or ACK failure
+  does not disconnect a healthy control connection.
 
 In `handle_command`, the server will first 
 check if the command matches any built-in commands. 
@@ -940,15 +951,16 @@ data transfer operations.*
 
 Client-to-server transfer flow:
 
-1. The client sends ``/file`` or ``/file_folder`` to 
-   request a transfer.
+1. The client registers the sender FID on its actual control socket and sends
+   ``/file`` or ``/file_folder`` with that trailing FID. Public-key requests use
+   ``/crypto_pub_key <fid>``; relay targets register independently.
 2. ``handle_command`` starts a dedicated file-server 
    thread: ``file_transfer_server_recv_server_start_thread`` for ``/file``
    and ``file_folder_transfer_server_recv_server_start_thread`` for
    ``/file_folder``.
 3. The server allocates an ephemeral transfer port 
    with ``palloc`` and sends 
-   ``/server_file_transfer_port <port> <client_id>`` 
+   ``/server_file_transfer_port <port> <fid> <stamp>``
    back to the client.
 4. The client connects to that transfer port and sends 
    file metadata, including length-prefixed filename 

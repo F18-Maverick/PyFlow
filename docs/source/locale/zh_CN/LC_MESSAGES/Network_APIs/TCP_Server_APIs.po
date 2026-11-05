@@ -870,21 +870,6 @@ msgstr ""
 msgid "Encrypted transfer connections"
 msgstr ""
 
-#: ../../source/Network_APIs/TCP_Server_APIs.rst:457
-#: 8ca69d91005b459a8a56f21902eaa690
-msgid ""
-"File and folder transfers, forwarded items and the forward relay run on "
-"temporary TCP connections. The listening side stamps each leg with its "
-"mode and a fresh nonce in the port advertisement "
-"(``/server_file_transfer_port``, ``/forward_upload``); with "
-"``is_enable_encrypto`` enabled both sides then frame that connection "
-"exactly like the control channel, with the same session key material, so "
-"file contents, names and sizes no longer cross the wire in the clear. The"
-" public-key pushes themselves stay plaintext by construction: they carry "
-"the keys the session is built on. A leg whose stamp promises encryption "
-"is aborted when the session key material is not ready rather than "
-"silently downgraded."
-msgstr ""
 
 #: ../../source/Network_APIs/TCP_Server_APIs.rst:469
 #: b32b4fa4788d4f9d88926958c81ad73f
@@ -1093,12 +1078,6 @@ msgid ""
 msgstr ""
 
 
-#: ../../source/Network_APIs/TCP_Server_APIs.rst:605
-#: abd7d3032e15468e92f96a0b5af1f926
-msgid ""
-"``/server_file_transfer_port <port> <client_id>``: internal protocol "
-"message used to coordinate file transfer ports."
-msgstr "``/server_file_transfer_port <port> <client_id>``：用于协调文件传输端口的内部协议消息。"
 
 #: ../../source/Network_APIs/TCP_Server_APIs.rst:607
 #: 1e9e32071bb1425b8617a419a7ef87f6
@@ -1521,14 +1500,6 @@ msgid ""
 "``/file_folder``."
 msgstr "“handle_command”使用“file_transfer_server_recv_server_start_thread”启动专用文件服务器线程。"
 
-#: ../../source/Network_APIs/TCP_Server_APIs.rst:899
-#: e5ef46040255421fa92c6de33d976671
-msgid ""
-"The server allocates an ephemeral transfer port with ``palloc`` and sends"
-" ``/server_file_transfer_port <port> <client_id>`` back to the client."
-msgstr ""
-"服务器使用“palloc”分配临时传输端口并将“/server_file_transfer_port <port> "
-"<client_id>”发送回客户端。"
 
 #: ../../source/Network_APIs/TCP_Server_APIs.rst:903
 #: 6eaa70d4d985489e8f0e683baa6b52a1

@@ -84,3 +84,32 @@ def isolate_instance_files(instance, tmp_path, name):
     instance.messages_log_file = str(tmp_path / f"{name}_messages_log.json")
     instance.events_log_file = str(tmp_path / f"{name}_events_log.json")
     instance.file_trans_progress_file = str(tmp_path / f"{name}_file_trans_progress.json")
+
+
+def request_transfer_listener(sender, receiver, command, *, timeout=10.0):
+    """Request a real listener over the control channel before low-level I/O.
+
+    ``command`` contains its existing trailing FID; this helper registers that
+    socket/FID pair before sending the unchanged command.
+    """
+    from PyFlow.network_api.connect_tcp import (
+        TCP_Server_Base,
+        _send_transfer_request,
+        _transfer_handshake,
+    )
+
+    if isinstance(sender, TCP_Server_Base):
+        peer = receiver.client_socket.getsockname()
+        assert wait_until(lambda: peer in sender.clients), "receiver not registered"
+        control = sender.clients[peer]["socket"]
+    else:
+        control = sender.client_socket
+    command = command.strip()
+    fid = int(command.rsplit(" ", 1)[1])
+    with _transfer_handshake(sender, control, fid) as record:
+        sent = _send_transfer_request(sender, record, command)
+        assert sent, ("listener request was not sent", command)
+        result = sender._transfer_handshakes.wait(record, timeout)
+    assert result is not None and result[0] == "port", ("listener did not reply", result)
+    assert result[1] == fid, ("listener changed the FID", result)
+    return result[2], result[3]
