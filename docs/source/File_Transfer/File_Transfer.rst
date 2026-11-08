@@ -69,6 +69,38 @@ attributes used by the transfer loop are:
   occurs, causing the
   transfer socket to be closed.
 
+Transfer signs are newline-terminated protocol lines, including the relay's
+upstream final ACK. A socket read is not a message boundary: both senders
+consume complete signs and buffer an unterminated tail for the next read.
+Thus a header sign and final ACK sharing a read, or a sign split across reads,
+have the same meaning as separately received lines. EOF does not discard an
+already parsed ACK, and an unterminated sign is not a completion ACK. This
+applies to plaintext and decrypted transfer bytes without changing ACK timing,
+timeouts or the receiver's close behavior.
+
+Each direct sender caps the combined **unscanned wire-byte quota** (queued
+line lengths before stripping/decoding, plus the partial tail) at 64 KiB.
+Every complete line is checked on receipt. When the quota reaches the limit,
+all complete queued lines are scanned, recognized start/ACK/error results are
+latched under the queue lock, and the scanned prefix is deleted as one batch;
+parsing then continues. Reaching the aggregate quota is not itself a transfer
+error, even when one read contains many batches of short lines. If adding one
+complete line would cross the limit, the current complete batch is scanned
+first. A single line, including its terminating newline, must fit within 64
+KiB; an unterminated line that reaches the limit is rejected because its
+boundary cannot yet be recovered. Unknown and header lines leave no permanent
+history. The sender scans pending records before deciding that a closed data
+connection failed. File payload bytes do not use this parser and are not
+limited to 64 KiB. Python object overhead, socket receive data and encrypted-
+frame buffers are separate from this wire-byte quota.
+
+Relay target start/ACK waits retain their existing byte-marker matching and
+deadline. They scan at most 64 KiB per window, then retain only the suffix
+needed to match a marker split across reads: 36 bytes for the default start
+marker, 24 for the default final ACK. An error marker still takes precedence
+over a target marker in the same read; scanning windows does not restart the
+timeout. The upstream final ACK remains a newline-terminated protocol line.
+
 The remaining keys of the table cover the other three
 direction/phase combinations. Protocol control lines not
 listed here (``/server_file_transfer_port <port> <fid> <stamp>``,

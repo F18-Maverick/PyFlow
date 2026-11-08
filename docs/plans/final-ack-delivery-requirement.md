@@ -1,10 +1,10 @@
-# 终态 ACK 交付可靠性：需求卡（待确认，未实施）
+# 终态 ACK 交付可靠性：需求卡与机制结论
 
-状态：需求卡阶段。未写实现代码，未进入计划与拆分。等人类确认执行路径全集与机制判断后再定拆分。
+状态：代码与确定性回归已实施，运行证据及审查报告见 [final-ack-delivery-report.md](final-ack-delivery-report.md)。未创建 git 提交、未合并、未推送，人工审查仍未放行。原会话将修复按轻量增量执行；本次恢复其未完成的边界测试、验收与文档收尾，不重构 ACK 发送时机。
 
 ## 1. 目标
 
-接收端在数据传输腿正常收完文件后，要让发送端**可靠地**观察到终态数据 ACK（`server_received_file_data_sign`），再关闭传输连接；发送端据此把该次传输判定为成功并清理上传进度记录。
+接收端仍在原先的时机发送终态数据 ACK（`server_received_file_data_sign`）并关闭传输连接；发送端必须正确解析 TCP 字节流中的 ACK，不能因粘包、拆包或紧随其后的 EOF 而误判失败、遗留上传进度记录。不保证 TCP 写成功但实际传输丢失的 ACK 交付。
 
 ## 2. 非目标
 
@@ -12,17 +12,17 @@
 - 不改错误 sign 的语义与发送时机。
 - 不改断点续传的匹配规则、进度记录的五项格式、FID 分配。
 - 不改加密算法、鉴权、CI、依赖、覆盖率阈值。
-- 不引入"等待对端确认关闭"的新握手（见 §6 备选方案，需单独批准）。
+- 不引入 ACK-of-ACK、新结果通道、延迟关闭、drain 或新的超时。
 
-## 3. 受影响的执行路径清单（待确认是否为全集）
+## 3. 受影响的执行路径清单
 
-终态 ACK 的发送点（接收侧）：
+终态 ACK 的既有发送点（不改变发送时机）：
 
-1. `TCP_Server_Base.file_transfer_mode_recv`（约 5505）：服务端接收客户端上传。当前代码：`finished_ok = bool(self.send_message(client_file_socket, server_received_file_data_sign))`，紧接着 `close_socket()`，没有 `shutdown(SHUT_WR)`，也没有 drain。
-2. `TCP_Client_Base.file_transfer_mode_recv`（约 11024）：客户端接收服务端下发的文件，同一模式。
-3. 转发中继 `writer()` 中的 `_forward_read_sign`（约 6786）：中继在目标腿收 ACK 后聚合回传上游，之后 `sock.close()`。
+1. `TCP_Server_Base.file_transfer_mode_recv`：服务端收完上传后，通过 `send_message` 发送 ACK 并关闭传输 socket。
+2. `TCP_Client_Base.file_transfer_mode_recv`：客户端下载接收侧，同一模式。
+3. `TCP_Server_Base._forward_pump`：每个目标的 writer 读到真实 ACK，全部已接受目标完成后，上游仍通过 `send_message` 回传该 ACK；本次修正此处的换行终止。
 
-必须逐条给出结论的路径：
+必须逐条给出结论的路径（下表保留最初的故障证据；本次验收见报告）：
 
 | # | 路径 | 触发场景 | 当前证据 |
 |---|---|---|---|
@@ -45,26 +45,22 @@ Linux 3.10 CI：
 
 三次尝试的服务端日志都打印了 `file ack_failure.bin received ... size 65573 bytes`，即 **ACK 的发送点都被走到了**，失败发生在 ACK 写出之后。
 
-## 5. 机制判断（推断，需运行时证据确认）
+## 5. 已确认的根因与修复决策
 
-服务端 `close_socket()` 只做 `close()`：
+原会话用真实传输探针对照确认：不合并读时 `file_transfer_mode=True`，把 header sign 与 final ACK 合并到一次读后为 `False`。原实现用 `data.decode("utf-8").strip()` 的全部结果与单个 sign 做 `==` 比较；两行一起到达时匹配失败，随后 EOF 导致返回 `False`。这不是“只保留最后一行”，而是把整次读误当一条消息。
 
-- 对端（发送端）在本端接收缓冲里仍有未读数据时，`close()` 触发 RST，内核丢弃已排队但未送达的发送数据 —— 终态 ACK 随之丢失。
-- 即使没有 RST，`close()` 之后立刻 FIN，ACK 与 FIN 的相对可见性依赖调度；发送端在 `file_transfer_mode` 里先检查 `file_receive_data_from_server`、再检查 `not file_running`（`connect_tcp.py:10326-10335`），只要 EOF 先被读到就返回 False。
+此前的 RST、ACK/FIN 顺序假说并未证明是本缺陷根因，不能据此增加 shutdown/drain 或改变发送时机。原会话回归测试还记录了修复前必失败、修复后通过；本次扩展为上传/下载与初传/EOF 重放四种确定性粘包场景。
 
-对照：错误路径（`except` 分支）里 `close_socket()` 之后还会再发一次 error sign，同样的问题存在，但本需求只处理终态 ACK。
+决策：两端发送腿均累积完整 sign 行；未遇换行的尾部以 bytes 保留到下次读，完整行才 UTF-8 解码。错误 sign 仍走既有失败路径，真实 ACK 才能成功；不以 EOF 刷出未终止的尾部。
 
-待确认的两点：
+中继的 `_forward_read_sign` 返回不带换行的 marker bytes，而 `send_message` 只给 str 加换行。上游改为发送该已确认 marker 的文本形式，继续走同一发送/加密入口；不生成第二个确认信号，不改变全目标完成门槛。
 
-- P3 的第三次尝试 `remaining == 0`，发送端只发了 4+N+8 字节 header，服务端不应有未读数据；因此 RST 假说解释不了 P3，需要考虑"ACK 与 FIN 紧邻导致的读取顺序"这一分支。
-- 3.10 之外全部通过，说明窗口极窄。需要能用运行时手段（见 §7）稳定复现，否则无法证明修复有效。
+## 6. 实施范围与审查边界
 
-## 6. 备选方案（未选定，需批准）
-
-- A：`send_message` 终态 ACK 之后先 `shutdown(SHUT_WR)`，再继续读取直到 EOF/超时，然后 `close()`。语义：本端不再发送，对端读到 ACK 后读到 EOF。风险：对端可能不发 EOF 就断开，需要超时兜底；改变现有"发完即关"的时延特征。
-- B：终态 ACK 后 `close()` 前加一次短 drain（等对端 EOF 或固定短超时）。风险：增加每条腿的收尾时延。
-- C：发送端侧兜底 —— `file_receive_data_from_server` 为终态 ACK 时即使 `file_running` 已 False 也判定成功。风险：把竞态从接收侧转移到发送侧，可能掩盖真实的 ACK 丢失。
-- D：接收侧发 ACK 后等待对端关闭（读直到 EOF），超时视为成功。与 A 接近。
+- 产品实现只改 `PyFlow/network_api/connect_tcp.py` 内的分行器、两处发送腿接收循环和中继 ACK 的文本发送。
+- 验证文件：`test/integration/network_api/test_tcp_transfer_resume.py` 的真实 socket 粘包回归；`test/unit/network_api/test_wire_lines.py` 的所有读边界、空行及未终止 ACK 契约。
+- 公共 API、FID/进度数据模型、依赖、CI、加密握手、接收端 ACK 时机均不改动。
+- 人工最终审查与平台 CI 仍是交付闸门；不能把本地通过写成 Windows 已验收。
 
 ## 7. 验收证据要求
 
@@ -83,4 +79,4 @@ Linux 3.10 CI：
 
 ## 9. 风险等级
 
-中。触及所有传输腿的收尾时序；改错会把"失败"误判为"成功"并清理进度记录，造成不可恢复的数据丢失。
+中。影响两端发送腿的 sign 识别与中继 ACK 的换行终止，不改变接收端收尾时序。若把未完成/错误传输误识别为成功，会清理进度记录并破坏恢复；必须保留错误路径与未终止 ACK 的失败证据。

@@ -19,7 +19,13 @@ import pytest
 
 from helpers import free_port, isolate_instance_files, request_transfer_listener, server_ready, wait_until
 
-from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base, format_resume_line
+from PyFlow.network_api.connect_tcp import (
+    TRANSFER_SIGN_BUFFER_LIMIT,
+    TCP_Client_Base,
+    TCP_Server_Base,
+    _TransferSignBuffer,
+    format_resume_line,
+)
 
 
 def _isolate(instance, tmp_path, name):
@@ -826,6 +832,195 @@ def test_server_final_error_keeps_upload_until_successful_resume(
         if kind == "folder":
             assert not (recv_dir / src.name).exists()
     finally:
+        _close_socket_workers(server, clients, workers)
+
+
+def _coalesce_receiver_signs(monkeypatch, sender, control, ack):
+    """Deliver the real start line, then combine the real header and ACK."""
+    real_receive = sender.receive_message
+    pending = b""
+    start_delivered = False
+    merged = []
+
+    def receive(sock, length):
+        nonlocal pending, start_delivered
+        if sock is control or merged:
+            return real_receive(sock, length)
+        while True:
+            if not start_delivered and b"\n" in pending:
+                start, pending = pending.split(b"\n", 1)
+                start_delivered = True
+                return start + b"\n"
+            if start_delivered and pending.endswith(ack):
+                merged.append(pending)
+                pending = b""
+                return merged[-1]
+            chunk = real_receive(sock, length)
+            if not chunk:
+                data, pending = pending, b""
+                return data
+            pending += chunk
+
+    monkeypatch.setattr(sender, "receive_message", receive)
+    return merged
+
+
+@pytest.mark.parametrize("server_sends", [False, True], ids=["upload", "download"])
+@pytest.mark.parametrize("eof_replay", [False, True], ids=["initial", "eof"])
+def test_coalesced_receiver_signs_keep_the_final_ack(
+    tmp_path, monkeypatch, server_sends, eof_replay
+):
+    """Both senders retain a final ACK sharing a read with the header sign."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    try:
+        client = _start_client(tmp_path, server)
+        clients.append(client)
+        client_addr = client.client_socket.getsockname()
+        assert wait_until(lambda: client_addr in server.clients)
+        sender, receiver = (server, client) if server_sends else (client, server)
+        peer = client_addr if server_sends else (server.host, server.port)
+        origin = (server.host, server.port) if server_sends else client_addr
+        control = server.clients[client_addr]["socket"] if server_sends else client.client_socket
+        recv_dir = tmp_path / "coalesced_recv"
+        recv_dir.mkdir()
+        receiver.file_transfer_dir = str(recv_dir)
+        src = tmp_path / "coalesced.bin"
+        payload = os.urandom(48 * 1024 + 11)
+        src.write_bytes(payload)
+        output = recv_dir / src.name
+        fid = 707
+        offset = len(payload) if eof_replay else 0
+        if eof_replay:
+            output.write_bytes(payload)
+            receiver.file_recv_progress[fid] = [
+                offset, len(payload), None, str(output), origin
+            ]
+            sender.file_upload_progress[(peer, fid)] = [
+                offset, len(payload), None, str(src), peer
+            ]
+        header = (receiver.server_received_file_header_sign + "\n").encode("utf-8")
+        ack = (receiver.server_received_file_data_sign + "\n").encode("utf-8")
+        merged = _coalesce_receiver_signs(monkeypatch, sender, control, ack)
+        port, stamp = request_transfer_listener(
+            sender, receiver, f"/file {shlex.quote(str(src))} {fid}"
+        )
+        assert sender.file_transfer_mode(
+            str(src), peer[0], port, 0, control_socket=control,
+            crypto=stamp, fid=fid, peer=peer, resume_offset=offset,
+        ) is True
+        assert merged == [header + ack], "the real receiver signs did not share one read"
+        assert output.read_bytes() == payload
+        assert wait_until(lambda: fid not in receiver.file_recv_progress)
+        assert (peer, fid) not in sender.file_upload_progress
+    finally:
+        _close_socket_workers(server, clients, workers)
+
+
+def _watch_sign_capacity(monkeypatch, sender, receiver, overflow, capacity_handled):
+    """Hold body transmission while queued signs compact or a line overflows."""
+    body_held = threading.Event()
+    retained = []
+    errors = []
+    compactions = []
+    real_feed = _TransferSignBuffer.feed
+    real_scan = _TransferSignBuffer._scan_pending_locked
+    real_send = receiver.send_message
+
+    def observe_scan(signs):
+        before = signs.pending_bytes
+        real_scan(signs)
+        if before >= TRANSFER_SIGN_BUFFER_LIMIT:
+            compactions.append(before)
+            capacity_handled.set()
+
+    def observe_feed(signs, data):
+        try:
+            return real_feed(signs, data)
+        except ValueError as exc:
+            errors.append(str(exc))
+            capacity_handled.set()
+            raise
+        finally:
+            with signs.lock:
+                retained.append(signs.pending_bytes + len(signs.partial))
+
+    def inject_after_header(sock, message, is_send_raw=False):
+        written = real_send(sock, message, is_send_raw=is_send_raw)
+        if message == receiver.server_received_file_header_sign:
+            assert body_held.wait(timeout=10)
+            noise = (
+                b"x" * TRANSFER_SIGN_BUFFER_LIMIT if overflow == "partial"
+                else b"x\n" * (TRANSFER_SIGN_BUFFER_LIMIT // 2 + 1)
+            )
+            try:
+                real_send(sock, noise)
+            except OSError:
+                pass  # the sender may already have rejected an overlong line
+        return written
+
+    def hold_body(_key):
+        body_held.set()
+        assert capacity_handled.wait(timeout=10), "the buffer never reached or rejected its limit"
+
+    monkeypatch.setattr(_TransferSignBuffer, "feed", observe_feed)
+    monkeypatch.setattr(_TransferSignBuffer, "_scan_pending_locked", observe_scan)
+    monkeypatch.setattr(receiver, "send_message", inject_after_header)
+    monkeypatch.setattr(sender, "_wait_transfer_paused", hold_body)
+    return retained, errors, compactions
+
+@pytest.mark.parametrize("server_sends", [False, True], ids=["upload", "download"])
+@pytest.mark.parametrize("overflow", ["partial", "pending"])
+def test_sign_capacity_compacts_complete_rows_and_rejects_oversized_line(
+    tmp_path, monkeypatch, server_sends, overflow
+):
+    """Full-line batches compact; a single unterminated line still fails."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    capacity_handled = threading.Event()
+    try:
+        client = _start_client(tmp_path, server)
+        clients.append(client)
+        client_addr = client.client_socket.getsockname()
+        assert wait_until(lambda: client_addr in server.clients)
+        sender, receiver = (server, client) if server_sends else (client, server)
+        peer = client_addr if server_sends else (server.host, server.port)
+        control = server.clients[client_addr]["socket"] if server_sends else client.client_socket
+        recv_dir = tmp_path / "overflow_recv"
+        recv_dir.mkdir()
+        receiver.file_transfer_dir = str(recv_dir)
+        src = tmp_path / "overflow.bin"
+        payload = b"222\n\n111 " * 1024
+        src.write_bytes(payload)
+        fid = 709
+        retained, errors, compactions = _watch_sign_capacity(
+            monkeypatch, sender, receiver, overflow, capacity_handled
+        )
+        port, stamp = request_transfer_listener(sender, receiver, f"/file {src} {fid}")
+        result = sender.file_transfer_mode(
+            str(src), peer[0], port, 0, control_socket=control,
+            crypto=stamp, fid=fid, peer=peer,
+        )
+        assert capacity_handled.is_set()
+        assert retained and max(retained) <= TRANSFER_SIGN_BUFFER_LIMIT
+        if overflow == "partial":
+            assert result is False
+            assert len(errors) == 1 and "unterminated transfer sign" in errors[0]
+            assert not compactions
+            row = sender.file_upload_progress[(peer, fid)]
+            assert row[1] == len(payload) and row[3] == str(src) and row[4] == peer
+            with open(sender.file_trans_progress_file, encoding="utf-8") as stream:
+                persisted = json.load(stream)["upload"]
+            assert json.dumps((peer, fid), separators=(",", ":")) in persisted
+        else:
+            assert result is True
+            assert not errors and compactions and max(compactions) == TRANSFER_SIGN_BUFFER_LIMIT
+            assert (recv_dir / src.name).read_bytes() == payload
+            assert (peer, fid) not in sender.file_upload_progress
+    finally:
+        capacity_handled.set()
         _close_socket_workers(server, clients, workers)
 
 

@@ -1,6 +1,6 @@
 # 测试端修复报告：Windows socketpair 写失败假设 + 加密用例的瞬时态采样
 
-状态：已实施，待人工审查；未创建 git 提交、未合并、未推送。产品代码本轮未改动（ACK 机制重构另行讨论）。
+状态：已实施，待人工审查；未创建 git 提交、未合并、未推送。本报告记录的测试端修复不含产品改动；后续 ACK 交付修复见 [final-ack-delivery-report.md](final-ack-delivery-report.md)。
 
 ## 1. 提交意图
 
@@ -71,4 +71,4 @@ n == MAX_DECODE_FAILURES -> do_close -> 连接关闭 -> _wait_disconnected
 
 ## 7. 与协议端待办的关系
 
-终态 ACK 交付缺陷（Linux 3.10 的 4 个 resume 失败）**未在此提交中改动**，按你的计划随 ACK 发送机制重构一起处理。需求卡仍在 `docs/plans/final-ack-delivery-requirement.md`，届时可据此更新路径清单。
+本报告形成时，终态 ACK 交付缺陷尚未处理。随后需求方取消 ACK 发送时机重构，改为继续增量修复交付问题；实际根因、执行范围与验收见 [final-ack-delivery-requirement.md](final-ack-delivery-requirement.md) 和 [final-ack-delivery-report.md](final-ack-delivery-report.md)。本报告的“本轮未处理”不表示当前工作区仍未修复。

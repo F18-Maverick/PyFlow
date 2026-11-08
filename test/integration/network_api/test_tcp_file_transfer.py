@@ -414,8 +414,8 @@ def test_client_uploads_multiple_files_to_destination(pair, tmp_path):
 
     client.multiple_file_transfer_client_recv_client_start(f'/multiple_file "{f1}" "{f2}" "{dest}"')
 
-    assert wait_until(lambda: (dest / "one.bin").exists(), timeout=10), "one.bin not at destination"
-    assert wait_until(lambda: (dest / "two.bin").exists(), timeout=10), "two.bin not at destination"
+    assert wait_for_text(dest / "one.bin", "one", timeout=10), "one.bin incomplete at destination"
+    assert wait_for_text(dest / "two.bin", "two", timeout=10), "two.bin incomplete at destination"
     assert (dest / "one.bin").read_bytes() == b"one"
     assert (dest / "two.bin").read_bytes() == b"two"
 

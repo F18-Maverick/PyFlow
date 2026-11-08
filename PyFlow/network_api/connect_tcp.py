@@ -1122,6 +1122,81 @@ def _pem_body_of(pem):
     return body
 
 
+TRANSFER_SIGN_BUFFER_LIMIT = 64 * 1024
+
+
+class _TransferSignBuffer:
+    """Bound protocol bytes and batch-scan complete records at the limit."""
+
+    def __init__(self, start_sign, ack_sign, error_sign):
+        self.start_sign = start_sign
+        self.ack_sign = ack_sign
+        self.error_sign = error_sign
+        self.lock = threading.Lock()
+        self.pending = []
+        self.pending_bytes = 0
+        self.partial = bytearray()
+        # Producer-side threshold scans and the caller consume under this lock.
+        self.start_seen = False
+        self.ack_seen = False
+        self.error_seen = False
+
+    def feed(self, data):
+        """Queue complete lines and batch-scan when the byte quota is reached.
+
+        Raises:
+            ValueError: A single unterminated line reaches the limit.
+        """
+        offset = 0
+        error_received = False
+        view = memoryview(data)
+        while offset < len(data):
+            with self.lock:
+                end = min(len(data), offset + TRANSFER_SIGN_BUFFER_LIMIT - len(self.partial))
+                newline = data.find(b"\n", offset, end)
+                stop = newline + 1 if newline >= 0 else end
+                wire_size = len(self.partial) + stop - offset
+                if newline < 0 and wire_size >= TRANSFER_SIGN_BUFFER_LIMIT:
+                    raise ValueError("unterminated transfer sign reaches 64 KiB")
+                if self.pending_bytes + wire_size > TRANSFER_SIGN_BUFFER_LIMIT:
+                    self._scan_pending_locked()
+                self.partial.extend(view[offset:stop])
+                offset = stop
+                if newline >= 0:
+                    line = self.partial.decode("utf-8").strip()
+                    if line:
+                        self.pending.append((line, wire_size))
+                        self.pending_bytes += wire_size
+                        error_received |= line == self.error_sign
+                    self.partial.clear()
+                if self.pending_bytes + len(self.partial) >= TRANSFER_SIGN_BUFFER_LIMIT:
+                    self._scan_pending_locked()
+        return error_received
+
+    def _scan_pending_locked(self):
+        """Latch every pending marker and release the entire scanned prefix."""
+        processed_count = 0
+        consumed_bytes = 0
+        for read_index in range(len(self.pending)):
+            line, wire_size = self.pending[read_index]
+            if line == self.start_sign:
+                self.start_seen = True
+            elif line == self.ack_sign:
+                self.ack_seen = True
+            elif line == self.error_sign:
+                self.error_seen = True
+            processed_count += 1
+            consumed_bytes += wire_size
+        del self.pending[:processed_count]
+        self.pending_bytes -= consumed_bytes
+
+    def consume(self):
+        """Scan and delete queued records, returning a thread-safe result snapshot."""
+        with self.lock:
+            self._scan_pending_locked()
+            return self.start_seen, self.ack_seen, self.error_seen
+
+
 def _pem_text_of(body):
     """Rebuild a standard PEM text from its one-line base64 body.
 
@@ -6023,13 +6098,16 @@ class TCP_Server_Base:  # TCP server class
             return False
         file_running = True
         self._register_transfer_socket(transfer_key, client_file_socket)
-        file_receive_data_from_server = ""
+        transfer_signs = _TransferSignBuffer(
+            self.server_start_file_transfer_sign,
+            self.server_received_file_data_sign,
+            self.error_sign,
+        )
 
         def receive_file_transfer_messages():
             """Handle the operation."""
             nonlocal file_running
             nonlocal client_file_socket
-            nonlocal file_receive_data_from_server
             while file_running:
                 try:
                     data = self.receive_message(client_file_socket, self.recv_messages_chunk_len)
@@ -6041,8 +6119,7 @@ class TCP_Server_Base:  # TCP server class
                             pass  # send_message already logged real errors; a dead peer is expected
                         close_socket()
                         break
-                    file_receive_data_from_server = data.decode("utf-8").strip()
-                    if file_receive_data_from_server == self.error_sign:
+                    if transfer_signs.feed(data):
                         self._log(
                             "\nError sign received from server, file transfer may have failed"
                         )
@@ -6067,12 +6144,16 @@ class TCP_Server_Base:  # TCP server class
         source_missing = False  # True when the source file no longer exists
         try:
             while True:
-                if file_receive_data_from_server == self.server_start_file_transfer_sign:
+                # Snapshot closure before consuming so ACK + EOF cannot race
+                # a stale empty-queue check into a false failure.
+                running = file_running
+                start_seen, _, error_seen = transfer_signs.consume()
+                if start_seen:
                     break
-                if file_receive_data_from_server == self.error_sign:
+                if error_seen:
                     close_socket()
                     return False
-                if not file_running:
+                if not running:
                     # peer closed the file connection: the receive thread
                     # already cleaned up; nothing more to wait for
                     return False
@@ -6107,6 +6188,7 @@ class TCP_Server_Base:  # TCP server class
                 if resume_offset:
                     f.seek(resume_offset)
                 while True:
+                    transfer_signs.consume()
                     self._wait_transfer_paused(transfer_key)
                     file_data = f.read(self.file_transfer_chunk_len)
                     if not file_data:
@@ -6116,12 +6198,14 @@ class TCP_Server_Base:  # TCP server class
             extra_time = (file_size // (100 * 1024 * 1024)) * 10
             timeout = int(30 + extra_time)
             while True:
-                if file_receive_data_from_server == self.server_received_file_data_sign:
+                running = file_running
+                _, ack_seen, error_seen = transfer_signs.consume()
+                if ack_seen:
                     break
-                if file_receive_data_from_server == self.error_sign:
+                if error_seen:
                     close_socket()
                     return False
-                if not file_running:
+                if not running:
                     # peer closed the file connection: the receive thread
                     # already cleaned up; nothing more to wait for
                     return False
@@ -6477,6 +6561,9 @@ class TCP_Server_Base:  # TCP server class
         buf = b""
         target = sign.encode("utf-8")
         err = self.error_sign.encode("utf-8")
+        overlap = max(len(target), len(err)) - 1
+        if overlap >= TRANSFER_SIGN_BUFFER_LIMIT:
+            return None
         deadline = time.monotonic() + timeout
         previous_timeout = sock.gettimeout()
         try:
@@ -6488,10 +6575,19 @@ class TCP_Server_Base:  # TCP server class
                     return None
                 if not data:
                     return None
-                buf += data
-                if err in buf:
-                    return None
-                if target in buf:
+                offset = 0
+                matched = False
+                while offset < len(data):
+                    end = min(len(data), offset + TRANSFER_SIGN_BUFFER_LIMIT - len(buf))
+                    window = buf + data[offset:end]
+                    offset = end
+                    if err in window:
+                        return None
+                    matched |= target in window
+                    buf = window[-overlap:] if overlap else b""
+                # Scan the whole read before accepting a match: a later error
+                # in that same read still takes precedence, as before.
+                if matched:
                     return target
             return None
         finally:
@@ -6875,7 +6971,11 @@ class TCP_Server_Base:  # TCP server class
         try:
             # A target's existing ACK is the only success marker. Never confirm
             # upstream receipt independently of the full accepted target set.
-            written = self.send_message(up_sock, result["ack"] if complete else self.error_sign)
+            # Send it as a protocol line: send_message adds no newline to bytes.
+            written = self.send_message(
+                up_sock,
+                result["ack"].decode("ascii") if complete else self.error_sign,
+            )
             if complete and written:
                 self._drop_fid_route(fid, route)
         except Exception as exc:
@@ -10262,13 +10362,16 @@ class TCP_Client_Base:  # TCP client class
             return False
         file_running = True
         self._register_transfer_socket(transfer_key, client_file_socket)
-        file_receive_data_from_server = ""
+        transfer_signs = _TransferSignBuffer(
+            self.server_start_file_transfer_sign,
+            self.server_received_file_data_sign,
+            self.error_sign,
+        )
 
         def receive_file_transfer_messages():
             """Handle the operation."""
             nonlocal file_running
             nonlocal client_file_socket
-            nonlocal file_receive_data_from_server
             while file_running:
                 try:
                     data = self.receive_message(client_file_socket, self.recv_messages_chunk_len)
@@ -10280,8 +10383,7 @@ class TCP_Client_Base:  # TCP client class
                             pass  # send_message already logged real errors; a dead peer is expected
                         close_socket()
                         break
-                    file_receive_data_from_server = data.decode("utf-8").strip()
-                    if file_receive_data_from_server == self.error_sign:
+                    if transfer_signs.feed(data):
                         self._log(
                             "\nError sign received from server, file transfer may have failed"
                         )
@@ -10306,12 +10408,14 @@ class TCP_Client_Base:  # TCP client class
         source_missing = False  # True when the source file no longer exists
         try:
             while True:
-                if file_receive_data_from_server == self.server_start_file_transfer_sign:
+                running = file_running
+                start_seen, _, error_seen = transfer_signs.consume()
+                if start_seen:
                     break
-                if file_receive_data_from_server == self.error_sign:
+                if error_seen:
                     close_socket()
                     return False
-                if not file_running:
+                if not running:
                     # peer closed the file connection: the receive thread
                     # already cleaned up; nothing more to wait for
                     return False
@@ -10346,6 +10450,7 @@ class TCP_Client_Base:  # TCP client class
                 if resume_offset:
                     f.seek(resume_offset)
                 while True:
+                    transfer_signs.consume()
                     self._wait_transfer_paused(transfer_key)
                     file_data = f.read(self.file_transfer_chunk_len)
                     if not file_data:
@@ -10355,12 +10460,14 @@ class TCP_Client_Base:  # TCP client class
             extra_time = (file_size // (100 * 1024 * 1024)) * 10
             timeout = int(30 + extra_time)
             while True:
-                if file_receive_data_from_server == self.server_received_file_data_sign:
+                running = file_running
+                _, ack_seen, error_seen = transfer_signs.consume()
+                if ack_seen:
                     break
-                if file_receive_data_from_server == self.error_sign:
+                if error_seen:
                     close_socket()
                     return False
-                if not file_running:
+                if not running:
                     # peer closed the file connection: the receive thread
                     # already cleaned up; nothing more to wait for
                     return False
