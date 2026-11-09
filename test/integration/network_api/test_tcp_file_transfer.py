@@ -10,6 +10,7 @@ import pytest
 
 from helpers import (
     free_port,
+    inject_wsaeacces_once,
     isolate_instance_files,
     request_transfer_listener,
     server_ready,
@@ -116,6 +117,92 @@ def test_server_receives_file_from_client(pair, tmp_path):
     )
     files = list(server_recv.iterdir())
     assert files[0].read_bytes() == payload
+
+
+@pytest.mark.parametrize(
+    "sender_role", ["server", "client"], ids=["server-sender", "client-sender"]
+)
+@pytest.mark.parametrize("operation", ["bind", "connect"])
+def test_sender_falls_back_when_fixed_source_port_returns_wsaeacces(
+    pair, tmp_path, monkeypatch, sender_role, operation
+):
+    server, client, client_recv = pair
+    source = tmp_path / "wsaeacces.bin"
+    payload = os.urandom(8192)
+    source.write_bytes(payload)
+    fixed_port = free_port()
+
+    if sender_role == "server":
+        sender, receiver = server, client
+        destination = client_recv / source.name
+    else:
+        sender, receiver = client, server
+        destination_dir = tmp_path / "server_recv"
+        destination_dir.mkdir()
+        server.file_transfer_dir = str(destination_dir)
+        destination = destination_dir / source.name
+
+    transfer_port, _stamp = request_transfer_listener(
+        sender, receiver, f"/file {shlex.quote(str(source))} 0"
+    )
+    address = (
+        ("127.0.0.1", fixed_port)
+        if operation == "bind"
+        else ("127.0.0.1", transfer_port)
+    )
+    injected = inject_wsaeacces_once(
+        monkeypatch, operation=operation, address=address
+    )
+    assert sender.file_transfer_mode(
+        str(source), "127.0.0.1", transfer_port, fixed_port
+    ) is True
+    assert injected["raised"]
+    binds = [call[1] for call in injected["calls"] if call[0] == "bind"]
+    assert binds[:2] == [("127.0.0.1", fixed_port), ("127.0.0.1", 0)]
+    assert wait_until(destination.exists, timeout=10), "the receiver did not create the file"
+    assert destination.read_bytes() == payload
+
+
+@pytest.mark.parametrize(
+    "receiver_role", ["server", "client"], ids=["server-listener", "client-listener"]
+)
+def test_receiver_listener_falls_back_when_fixed_port_returns_wsaeacces(
+    pair, tmp_path, monkeypatch, receiver_role
+):
+    server, client, client_recv = pair
+    source = tmp_path / "listener-wsaeacces.bin"
+    payload = os.urandom(4096)
+    source.write_bytes(payload)
+    fixed_port = free_port()
+
+    if receiver_role == "server":
+        sender, receiver = client, server
+        destination_dir = tmp_path / "server_recv"
+        destination_dir.mkdir()
+        server.file_transfer_dir = str(destination_dir)
+        listener_address = (server.host, fixed_port)
+    else:
+        sender, receiver = server, client
+        destination_dir = client_recv
+        listener_address = (client.client_host, fixed_port)
+    monkeypatch.setattr(receiver, "palloc", lambda: fixed_port)
+    injected = inject_wsaeacces_once(
+        monkeypatch, operation="bind", address=listener_address
+    )
+
+    transfer_port, _stamp = request_transfer_listener(
+        sender, receiver, f"/file {shlex.quote(str(source))} 0"
+    )
+    assert injected["raised"]
+    assert transfer_port != fixed_port
+    binds = [call[1] for call in injected["calls"] if call[0] == "bind"]
+    assert binds[:2] == [listener_address, (listener_address[0], 0)]
+    assert sender.file_transfer_mode(
+        str(source), "127.0.0.1", transfer_port, 0
+    ) is True
+    destination = destination_dir / source.name
+    assert wait_until(destination.exists, timeout=10), "the receiver did not create the file"
+    assert destination.read_bytes() == payload
 
 
 def test_transfer_thread_survives_a_stop_before_the_start_sign(pair, tmp_path):

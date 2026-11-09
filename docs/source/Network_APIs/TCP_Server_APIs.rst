@@ -949,6 +949,13 @@ and server-initiated transfers. They handle the coordination
 of transfer ports, client connections, and the actual file 
 data transfer operations.*
 
+For built-in file transfers, a nonzero port returned by ``palloc`` is
+best-effort. If a sender's local ``bind`` or ``connect`` reports a port
+conflict, it retries with an OS-assigned source port. If a receive or relay
+listener's ``bind`` conflicts, it binds port ``0`` and advertises the actual
+port returned by ``getsockname()``. An allocated listener port remains reserved
+until cleanup releases the original ``palloc`` value.
+
 Client-to-server transfer flow:
 
 1. The client registers the sender FID on its actual control socket and sends

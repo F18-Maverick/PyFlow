@@ -139,24 +139,49 @@ def _is_closed_socket_error(exc):
     )
 
 def _is_local_port_conflict(exc):
-    """Return true when a bind or connect lost its local port to an older socket.
+    """Return whether an OSError means a fixed local port is unavailable.
 
-    The same endpoint can be refused at either step. POSIX fails the bind;
-    Windows accepts it under ``SO_REUSEADDR`` and reports WSAEADDRINUSE
-    (10048) from the connect instead, because the previous socket is still in
-    TIME_WAIT. Both mean "this port is not ours to take right now".
-
-    Args:
-        exc (object): Exception raised by a socket bind or connect.
-
-    Returns:
-        bool: True for EADDRINUSE / WSAEADDRINUSE.
+    Windows may report an occupied source port as WSAEADDRINUSE (10048) or
+    WSAEACCES (10013), depending on the socket state and reserved-port rules.
+    POSIX reports EADDRINUSE from bind. EACCES is accepted only on Windows;
+    callers must additionally confirm that the local port is fixed and nonzero.
     """
     if not isinstance(exc, OSError):
         return False
     if exc.errno == errno.EADDRINUSE:
         return True
-    return getattr(exc, "winerror", None) == 10048  # WSAEADDRINUSE (Windows)
+    if getattr(exc, "winerror", None) in (10048, 10013):
+        return True
+    return os.name == "nt" and exc.errno == errno.EACCES
+
+
+def _should_fallback_local_port(port, exc):
+    """Return true only for a conflict on a fixed, nonzero local port."""
+    return port not in (None, 0) and _is_local_port_conflict(exc)
+
+
+def _bind_local_port_with_fallback(sock, local_address, log, port_label):
+    """Bind a listener port, falling back to an OS-assigned port once."""
+    used_fallback = False
+    try:
+        try:
+            sock.bind(local_address)
+        except OSError as exc:
+            if not _should_fallback_local_port(local_address[1], exc):
+                raise
+            sock.bind((local_address[0], 0))
+            used_fallback = True
+        port = sock.getsockname()[1]
+    except Exception:
+        sock.close()
+        raise
+    if used_fallback:
+        log(
+            f"{port_label} port {local_address[1]} is not available; "
+            f"using OS-assigned port {port}"
+        )
+    return port
+
 
 
 MAX_DECODE_FAILURES = 3  # circuit breaker: close after N consecutive decode failures (re-exchange storm / garbage injection)
@@ -5636,8 +5661,12 @@ class TCP_Server_Base:  # TCP server class
 
         server_file_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_file_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server_file_socket.bind((server_file_address, server_file_port))
-        file_transfer_server_port = server_file_socket.getsockname()[1]
+        file_transfer_server_port = _bind_local_port_with_fallback(
+            server_file_socket,
+            (server_file_address, server_file_port),
+            self._log,
+            "file transfer listener",
+        )
         command_part = shlex.split(command)
         try:
             file_client_id = int(command_part[-1])
@@ -6079,10 +6108,17 @@ class TCP_Server_Base:  # TCP server class
                 client_file_socket.connect((server_address, server_port))
                 break
             except Exception as e:
-                self._log(f"file transfer connection error: {e}")
-                self._log_exc()
                 self._transfer_handshakes.release_socket(control_socket, client_file_socket)
                 client_file_socket.close()
+                if _should_fallback_local_port(client_port, e):
+                    self._log(
+                        f"file transfer source port {client_port} is not available ({e}); "
+                        "retrying from an OS-assigned port"
+                    )
+                    client_port = 0
+                    continue
+                self._log(f"file transfer connection error: {e}")
+                self._log_exc()
                 if reset_time >= 20:
                     close_socket()
                     self._log("unable to connect to file transfer server, file sending failed")
@@ -6711,6 +6747,7 @@ class TCP_Server_Base:  # TCP server class
         target_conns = []
         up_sock = up_client = None
         sport = None
+        allocated_sport = None
         target_handshakes = {}
         owned_sockets = []
         terminal_sent = False
@@ -6787,8 +6824,13 @@ class TCP_Server_Base:  # TCP server class
             if not own(forwarder_sock, up_sock):
                 return
             up_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            up_sock.bind((self.host, self.palloc()))
-            sport = up_sock.getsockname()[1]
+            allocated_sport = self.palloc()
+            sport = _bind_local_port_with_fallback(
+                up_sock,
+                (self.host, allocated_sport),
+                self._log,
+                "forward listener",
+            )
             up_stamp = self._crypto_transfer_stamp(forwarder_sock)
             up_sock.listen(1)
             # coordination line: always plaintext, so it also reaches a peer
@@ -6817,8 +6859,8 @@ class TCP_Server_Base:  # TCP server class
                 if transfer_socket is not None:
                     self._crypto_drop_channel(transfer_socket)
                     transfer_socket.close()
-            if sport is not None:
-                self.pfree(sport)
+            if allocated_sport is not None:
+                self.pfree(allocated_sport)
             for handshake in target_handshakes.values():
                 self._transfer_handshakes.cancel(handshake)
             with self._forward_relays_lock:
@@ -8927,17 +8969,14 @@ class TCP_Client_Base:  # TCP client class
                         self.client_socket.connect((self.host, self.port))
                         break
                     except OSError as e:
-                        # the configured port is not ours to take right now (a
-                        # session that just ended can keep it, in TIME_WAIT on
-                        # Windows): connect anyway, from an OS-assigned port.
-                        # The interrupted transfers of the previous session
-                        # are matched by address, so they stay stored until a
-                        # reconnect that can use the configured port again.
-                        # Windows accepts the bind under SO_REUSEADDR and only
-                        # reports the conflict from the connect, so both steps
-                        # fall back, each attempt using a fresh socket.
+                        # The configured source port may be unavailable because
+                        # of TIME_WAIT or a Windows reserved-port denial. The
+                        # previous session can then no longer match transfers by
+                        # local address; as before, reconnect from an OS port.
                         self.client_socket.close()
-                        if local_address is None or not _is_local_port_conflict(e):
+                        if local_address is None or not _should_fallback_local_port(
+                            local_address[1], e
+                        ):
                             raise
                         self._log(
                             f"client port {self.client_port} is not available ({e}); "
@@ -10343,10 +10382,17 @@ class TCP_Client_Base:  # TCP client class
                 client_file_socket.connect((server_address, server_port))
                 break
             except Exception as e:
-                self._log(f"file transfer connection error: {e}")
-                self._log_exc()
                 self._transfer_handshakes.release_socket(control_socket, client_file_socket)
                 client_file_socket.close()
+                if _should_fallback_local_port(client_port, e):
+                    self._log(
+                        f"file transfer source port {client_port} is not available ({e}); "
+                        "retrying from an OS-assigned port"
+                    )
+                    client_port = 0
+                    continue
+                self._log(f"file transfer connection error: {e}")
+                self._log_exc()
                 if reset_time >= 20:
                     close_socket()
                     self._log("unable to connect to file transfer server, file sending failed")
@@ -11196,8 +11242,12 @@ class TCP_Client_Base:  # TCP client class
 
         server_file_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         server_file_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server_file_socket.bind((server_file_address, server_file_port))
-        file_transfer_server_port = server_file_socket.getsockname()[1]
+        file_transfer_server_port = _bind_local_port_with_fallback(
+            server_file_socket,
+            (server_file_address, server_file_port),
+            self._log,
+            "file transfer listener",
+        )
         command_part = shlex.split(command)
         try:
             file_client_id = int(command_part[-1])

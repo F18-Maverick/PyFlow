@@ -21,6 +21,7 @@ def test_tcp_client_init():
     assert client.upload_network_speed is None
     assert client.recv_network_speed is None
 
+import errno  # noqa: E402
 import socket  # noqa: E402
 import threading  # noqa: E402
 import time  # noqa: E402
@@ -34,6 +35,18 @@ def _client(**kwargs):
     options = {"host": "127.0.0.1", "port": 65004, "client_host": "127.0.0.1"}
     options.update(kwargs)
     return TCP_Client_Base(is_extend_command=True, **options)
+
+
+def test_eacces_is_a_local_port_conflict_only_on_windows(monkeypatch):
+    error = OSError(errno.EACCES, "access denied")
+    assert _connect_tcp._is_local_port_conflict(error) is (_connect_tcp.os.name == "nt")
+    assert not _connect_tcp._should_fallback_local_port(None, error)
+    assert not _connect_tcp._should_fallback_local_port(0, error)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(_connect_tcp.os, "name", "nt")
+        assert _connect_tcp._is_local_port_conflict(error)
+        assert _connect_tcp._should_fallback_local_port(49152, error)
 
 
 def test_console_custom_command_matches_the_whole_first_token(monkeypatch):

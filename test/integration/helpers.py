@@ -1,6 +1,7 @@
 """Shared helpers for the integration tests."""
 
 import collections
+import errno
 import socket
 import time
 
@@ -40,6 +41,36 @@ def free_port():
             _recent_ports.append(port)
             return port
     raise RuntimeError("the OS kept handing out recently used ports")
+
+
+def inject_wsaeacces_once(monkeypatch, *, operation, address):
+    """Inject one Windows access-denied socket error on a matching operation."""
+    state = {"raised": False, "calls": []}
+    real_socket = socket.socket
+
+    def access_denied():
+        error = OSError(errno.EACCES, "simulated WSAEACCES")
+        error.winerror = 10013
+        return error
+
+    class WsaeaccesSocket(real_socket):
+        def bind(self, local_address):
+            state["calls"].append(("bind", local_address, self.getsockname()))
+            if operation == "bind" and local_address == address and not state["raised"]:
+                state["raised"] = True
+                raise access_denied()
+            return super().bind(local_address)
+
+        def connect(self, remote_address):
+            state["calls"].append(("connect", remote_address, self.getsockname()))
+            if operation == "connect" and remote_address == address and not state["raised"]:
+                state["raised"] = True
+                raise access_denied()
+            return super().connect(remote_address)
+
+    monkeypatch.setattr(socket, "socket", WsaeaccesSocket)
+    return state
+
 
 def read_text_or_none(path):
     """Return a file's text, or None while it is missing or unreadable.

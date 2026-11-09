@@ -101,10 +101,11 @@ Every parameter has default values:
 - ``host``: Default is ``None`` (must be provided before connecting)
 - ``client_host``: Default is ``'127.0.0.1'``
 - ``port``: Default is ``65432``
-- ``client_port``: Default is ``None`` (OS assigns ephemeral port). A
-  configured port that cannot be bound — a session that just ended can hold
-  it in the operating system's ``TIME_WAIT`` — is reported and the connection
-  is made from an OS-assigned port instead.
+- ``client_port``: Default is ``None`` (the OS assigns an ephemeral port). A
+  configured nonzero port that conflicts during ``bind`` or ``connect`` — for
+  example, while an earlier session remains in ``TIME_WAIT``, including Windows
+  ``WSAEACCES`` (10013) — is logged and the control connection uses an
+  OS-assigned port instead. ``None`` and ``0`` let the OS choose.
 - ``timeout``: Default is ``None``
 - ``port_add_step``: Default is ``1``
 - ``max_thread_num``: Default is ``10``
@@ -825,6 +826,13 @@ handshake protocol as the server: the initiator sends
 a command over the main connection, then a temporary 
 port is negotiated, and the actual file data is transferred 
 over a separate TCP connection.*
+
+For built-in file transfers, a configured nonzero sender source port is
+best-effort: a local bind/connect conflict retries from an OS-assigned port.
+If a receiver's configured nonzero listener port conflicts during ``bind``,
+the listener uses port ``0`` and advertises the actual bound port. Port ``0``
+already delegates selection to the OS. These transfer fallbacks do not change
+the generic temporary client/server APIs.
 
 Port allocation API
 -------------------

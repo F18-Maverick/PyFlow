@@ -17,7 +17,14 @@ import time
 
 import pytest
 
-from helpers import free_port, isolate_instance_files, request_transfer_listener, server_ready, wait_until
+from helpers import (
+    free_port,
+    inject_wsaeacces_once,
+    isolate_instance_files,
+    request_transfer_listener,
+    server_ready,
+    wait_until,
+)
 
 from PyFlow.network_api.connect_tcp import (
     TRANSFER_SIGN_BUFFER_LIMIT,
@@ -1069,12 +1076,33 @@ def test_forwarded_file_resumes_through_the_server(tmp_path, monkeypatch):
             fid, forwarder_addr, {target_addr: tfid}
         ) is not None
 
+        allocated_port = free_port()
+        released_ports = []
+        real_pfree = server.pfree
+
+        def record_pfree(port):
+            released_ports.append(port)
+            return real_pfree(port)
+
+        monkeypatch.setattr(server, "palloc", lambda: allocated_port)
+        monkeypatch.setattr(server, "pfree", record_pfree)
+        injected = inject_wsaeacces_once(
+            monkeypatch,
+            operation="bind",
+            address=(server.host, allocated_port),
+        )
+
         assert target._request_resumes() == 1
 
         def got():
             return partial.stat().st_size == len(payload)
 
         assert wait_until(got, timeout=20), "the forwarded resume did not finish"
+        assert injected["raised"]
+        assert wait_until(lambda: allocated_port in released_ports, timeout=10)
+        bind_addresses = [call[1] for call in injected["calls"] if call[0] == "bind"]
+        fixed_index = bind_addresses.index((server.host, allocated_port))
+        assert (server.host, 0) in bind_addresses[fixed_index + 1:]
         assert partial.read_bytes() == payload
         assert wait_until(lambda: tfid not in target.file_recv_progress, timeout=10)
         assert wait_until(lambda: upload_key not in forwarder.file_upload_progress, timeout=10)
@@ -2176,6 +2204,81 @@ def test_client_connects_when_its_configured_port_is_taken(tmp_path):
         holder.close()
         if client is not None:
             client.close()
+        server.stop()
+
+
+@pytest.mark.parametrize("operation", ["bind", "connect"])
+def test_client_falls_back_when_fixed_port_returns_wsaeacces(
+    tmp_path, monkeypatch, operation
+):
+    server = _start_server(tmp_path)
+    client_port = free_port()
+    client = TCP_Client_Base(
+        host="127.0.0.1",
+        port=server.port,
+        client_host="127.0.0.1",
+        client_port=client_port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
+    _isolate(client, tmp_path, "client")
+    address = (
+        ("127.0.0.1", client_port)
+        if operation == "bind"
+        else ("127.0.0.1", server.port)
+    )
+    injected = inject_wsaeacces_once(
+        monkeypatch, operation=operation, address=address
+    )
+    try:
+        assert client.connect(), "the client did not connect after WSAEACCES"
+        assert injected["raised"]
+        assert client.client_socket.getsockname()[1] != client_port
+        assert wait_until(
+            lambda: server.clients.get(client.client_socket.getsockname()) is not None
+        ), "the server never saw the client"
+    finally:
+        client.close()
+        server.stop()
+
+
+@pytest.mark.parametrize("client_port", [None, 0], ids=["unbound", "os-assigned"])
+def test_client_does_not_fallback_on_wsaeacces_without_fixed_port(
+    tmp_path, monkeypatch, client_port
+):
+    server = _start_server(tmp_path)
+    client = TCP_Client_Base(
+        host="127.0.0.1",
+        port=server.port,
+        client_host="127.0.0.1",
+        client_port=client_port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+        is_wait_server=False,
+    )
+    _isolate(client, tmp_path, "client")
+    server_address = ("127.0.0.1", server.port)
+    injected = inject_wsaeacces_once(
+        monkeypatch, operation="connect", address=server_address
+    )
+    try:
+        assert client.connect() is False
+        assert injected["raised"]
+        attempts = [
+            call
+            for call in injected["calls"]
+            if call[:2] == ("connect", server_address)
+        ]
+        assert len(attempts) == 1
+        bind_attempts = [call for call in injected["calls"] if call[0] == "bind"]
+        if client_port is None:
+            assert not bind_attempts
+        else:
+            assert [call[1] for call in bind_attempts] == [("127.0.0.1", 0)]
+    finally:
+        client.close()
         server.stop()
 
 
