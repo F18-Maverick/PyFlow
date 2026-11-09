@@ -55,14 +55,14 @@ def inject_wsaeacces_once(monkeypatch, *, operation, address):
 
     class WsaeaccesSocket(real_socket):
         def bind(self, local_address):
-            state["calls"].append(("bind", local_address, self.getsockname()))
+            state["calls"].append(("bind", local_address))
             if operation == "bind" and local_address == address and not state["raised"]:
                 state["raised"] = True
                 raise access_denied()
             return super().bind(local_address)
 
         def connect(self, remote_address):
-            state["calls"].append(("connect", remote_address, self.getsockname()))
+            state["calls"].append(("connect", remote_address))
             if operation == "connect" and remote_address == address and not state["raised"]:
                 state["raised"] = True
                 raise access_denied()
