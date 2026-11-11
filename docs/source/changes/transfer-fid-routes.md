@@ -301,3 +301,19 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
 - Forwarded resume keeps its existing actual-address route scoping; no wire
   command, FID allocation, relay record or public signature changes.
 - NAT endpoints and a changed `client_port` remain unsupported identities.
+
+## Follow-up: reconnect sweep releases paused legs
+
+- `_drop_stale_transfers` now clears the pause switch of every upload leg it
+  sweeps (after closing the socket, outside the progress lock) and wakes the
+  pause condition. `_wait_transfer_paused` also takes the leg's own transfer
+  socket and exits once that socket is closed, because the sweep removes the
+  socket from `_active_transfer_sockets` before closing it.
+- A leg paused for relay backpressure or by `pause_trans` therefore ends when
+  its session is swept instead of waiting forever while holding the per-fid
+  send lock. A resume request already queued for that fid runs after the lock
+  is released; no manual `start_trans` is needed.
+- The send loop aborts as soon as the leg's socket is closed, so it does not
+  read the remaining file into failed writes. Wire commands, progress rows,
+  public signatures and the pause/start semantics of a live session are
+  unchanged.

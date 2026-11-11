@@ -78,6 +78,62 @@ wildcard  download_started: 1 row_cleared: True size: 8192 content_ok: True
 
 ---
 
-## Commit 2（R3）：待实现
+## Commit 2（R3）：清扫释放暂停 leg
 
-按计划实现后再补本文件对应章节；当前未开始，不报告任何结果。
+### 提交意图
+
+断线重连的清扫遇到已暂停的发送 leg 时，leg 必须在有限时间内结束并释放 per-fid 发送锁；排队中的 resume 不再需要人工 `start_trans`。
+
+### 改动内容
+
+| 文件 | 关键变更 |
+|---|---|
+| `PyFlow/network_api/connect_tcp.py` | `_drop_stale_transfers`（server/client）收集被清扫的上传 key，在关闭 socket 后于 `_transfer_pause_cond` 下 `pop` 并 `notify_all`；`_wait_transfer_paused` 增加 `leg_socket` 参数，leg 自己的 socket 已关闭即退出；两处 `file_transfer_mode` 传入 `client_file_socket`，并在暂停返回后若 socket 已关闭则立即 `close_socket()` 并返回 False，避免继续读取剩余文件 |
+| `test/integration/network_api/test_tcp_transfer_resume.py` | 新增 `test_paused_leg_is_released_by_stale_sweep`（server/client 两种发送端）；适配 `_watch_sign_capacity` 的 monkeypatch 签名 |
+| `docs/source/File_Transfer/File_Transfer.rst` | 说明清扫会解除暂停并让排队 resume 继续 |
+| `docs/source/changes/transfer-fid-routes.md` | 追加本次变更记录 |
+
+### 为什么这样改
+
+清扫只把 socket 从 `_active_transfer_sockets` 移除并关闭，不移除 `_transfer_pause`；暂停循环重新查登记表得到 `None`，`fileno()<0` 的退出条件不成立，而 server 的 `running` 仍为 True，于是 leg 永久阻塞并持有 `_sending_transfer` 的 per-fid 锁。同 fid 的 resume 已返回“已排队”，但 `run()` 永远拿不到锁。修复同时处理两侧：清扫解除暂停并唤醒；暂停等待以 leg 自己的 socket 关闭为准，即使 pause 被重新置位也能退出。
+
+### 局部验证
+
+```bash
+.venv/bin/python -m py_compile PyFlow/network_api/connect_tcp.py test/integration/network_api/test_tcp_transfer_resume.py
+# 通过；ruff --select F,E9 仍只有既有 console `response` F841
+
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_transfer_resume.py \
+  -k "paused_leg_is_released_by_stale_sweep" -q
+# 2 passed, 57 deselected in 3.49s
+
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_transfer_resume.py -q
+# 59 passed in 157.35s
+
+.venv/bin/python -m pytest test/unit/network_api -q
+# 261 passed in 18.14s
+
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_file_transfer.py -k "pause" -q
+# 1 passed, 33 deselected
+
+.venv/bin/python -m pytest test/unit/network_api \
+  test/integration/network_api/test_tcp_file_transfer.py \
+  test/integration/network_api/test_crypto_tcp.py \
+  test/integration/test_forward_extension.py \
+  test/integration/test_forward_msg_attribution.py -q
+# 339 passed in 173.37s
+```
+
+改前复现（`/tmp/pyflow_audit/repro_r3_server.py`）：清扫后 1.5s `pause=True, state_users=1, leg_alive=True`；queued resume 2s 内 `send_called=0`。改后同一测试路径：leg 在有限时间内结束，`pause` 键消失，queued resume 自动执行（无需 `start_trans`）。
+
+### 明确未覆盖
+
+- 暂停状态不持久化：进程重启后 pause 不恢复（既有约束）。
+- 转发回压暂停与普通 pause 共用同一路径，已由代码覆盖；未单独构造 relay 背压 + 断线时序。
+- 未改变 `pause_trans`/`start_trans` 在活会话中的语义。
+
+### 风险与待确认
+
+- 只清除“确实被清扫（有已注册 socket）”的上传 key，预启动但未注册 socket 的暂停开关不会被误清。
+- `notify_all` 在 `_transfer_progress_lock` 之外获取 `_transfer_pause_cond`，不引入新的锁嵌套。
+- `file_transfer_mode` 在 leg socket 已关闭时直接返回 False，进度行按既有 `keep=True` 规则保留，后续 resume 仍可继续。

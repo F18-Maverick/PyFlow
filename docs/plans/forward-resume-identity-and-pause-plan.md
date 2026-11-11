@@ -1,6 +1,6 @@
 # 文件转发/resume 身份与暂停清扫修复 — 需求卡、计划与报告
 
-状态：**计划待人类批准；尚未修改任何生产代码**。审计证据来自只读复核与 `/tmp/pyflow_audit/` 下的真实 socket 复现脚本。
+状态：**Commit 1（R1）与 Commit 2（R3）已实现，等待人类审查**。审计证据来自只读复核与 `/tmp/pyflow_audit/` 下的真实 socket 复现脚本；提交结果见 `docs/plans/forward-resume-identity-and-pause-report.md`。
 
 ---
 
@@ -366,4 +366,4 @@ ruff check --select F,E9 PyFlow/network_api/connect_tcp.py test/integration/netw
 - **client_port 变化**：地址变化后 server 无法把持久化行匹配到新 peer；既有约束。
 - **多网卡 + 通配绑定**：实际端点能匹配“本次连接使用的本地 IP”；若同一客户端跨会话换网卡，仍按新地址匹配，旧行可能无法续传。
 - **跨版本**：旧 server 仍通告配置地址时，新 client 的“实际或配置”判定在配置字符串一致时可兼容；不一致时不保证。
-- **未运行**：本轮未改代码、未跑新增测试；所有验收命令在实现后执行。
+- **已运行**：Commit 1/2 的定向回归与相关套件，结果见提交报告；本轮未额外做跨平台 CI 验证。

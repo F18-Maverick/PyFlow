@@ -2987,6 +2987,7 @@ class TCP_Server_Base:  # TCP server class
         int: Number of legs closed.
         """
         stale = []
+        paused = []
         for store in (self.file_upload_progress, self.file_recv_progress):
             for fid, entry in list(store.items()):
                 owner = fid[0] if store is self.file_upload_progress else entry[4]
@@ -2998,6 +2999,8 @@ class TCP_Server_Base:  # TCP server class
                         self._active_transfer_fids.discard(fid)
                 if sock is not None:
                     stale.append(sock)
+                    if store is self.file_upload_progress:
+                        paused.append(fid)
         for sock in stale:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
@@ -3007,6 +3010,14 @@ class TCP_Server_Base:  # TCP server class
                 sock.close()
             except OSError:
                 pass
+        if paused:
+            # The leg may be waiting on this fid's pause switch. Clearing it here
+            # (outside the progress lock) lets the swept leg exit and release the
+            # per-key send lock a queued resume is waiting for.
+            with self._transfer_pause_cond:
+                for key in paused:
+                    self._transfer_pause.pop(key, None)
+                self._transfer_pause_cond.notify_all()
         return len(stale)
 
     def pause_trans_remote(self, peer, fid):
@@ -3046,22 +3057,28 @@ class TCP_Server_Base:  # TCP server class
             return False
         return self.send_message(info["socket"], f"/start_trans {fid}")
 
-    def _wait_transfer_paused(self, fid):
+    def _wait_transfer_paused(self, fid, leg_socket=None):
         """Block a sending leg while its fid is marked paused.
 
         Runs before every chunk so ``/pause_trans`` stops the stream without
                 closing the transfer; the wait ends when the leg is resumed, when the
-                instance stops, or when the fid is not paused at all.
+                instance stops, when the leg socket is closed, or when the fid is not
+                paused at all. ``leg_socket`` is the connection this leg writes to:
+                a reconnect sweep removes it from the registry before closing it, so
+                the registry alone cannot report the close.
 
         Args:
             fid (int): Value used by the operation.
+            leg_socket (socket.socket | None): The leg's own transfer socket.
         """
         if fid is None:
             return
         with self._transfer_pause_cond:
             while self._transfer_pause.get(fid, False):
                 sock = self._active_transfer_sockets.get(fid)
-                if not self.running or (sock is not None and sock.fileno() < 0):
+                if (not self.running
+                        or (sock is not None and sock.fileno() < 0)
+                        or (leg_socket is not None and leg_socket.fileno() < 0)):
                     return
                 self._transfer_pause_cond.wait(timeout=0.5)
 
@@ -6266,7 +6283,10 @@ class TCP_Server_Base:  # TCP server class
                     f.seek(resume_offset)
                 while True:
                     transfer_signs.consume()
-                    self._wait_transfer_paused(transfer_key)
+                    self._wait_transfer_paused(transfer_key, client_file_socket)
+                    if client_file_socket.fileno() < 0:
+                        close_socket()  # a reconnect sweep closed this leg
+                        return False
                     file_data = f.read(self.file_transfer_chunk_len)
                     if not file_data:
                         break
@@ -8570,6 +8590,7 @@ class TCP_Client_Base:  # TCP client class
         int: Number of legs closed.
         """
         stale = []
+        paused = []
         for store in (self.file_upload_progress, self.file_recv_progress):
             for fid, entry in list(store.items()):
                 owner = fid[0] if store is self.file_upload_progress else entry[4]
@@ -8581,6 +8602,8 @@ class TCP_Client_Base:  # TCP client class
                         self._active_transfer_fids.discard(fid)
                 if sock is not None:
                     stale.append(sock)
+                    if store is self.file_upload_progress:
+                        paused.append(fid)
         for sock in stale:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
@@ -8590,24 +8613,38 @@ class TCP_Client_Base:  # TCP client class
                 sock.close()
             except OSError:
                 pass
+        if paused:
+            # The leg may be waiting on this fid's pause switch. Clearing it here
+            # (outside the progress lock) lets the swept leg exit and release the
+            # per-key send lock a queued resume is waiting for.
+            with self._transfer_pause_cond:
+                for key in paused:
+                    self._transfer_pause.pop(key, None)
+                self._transfer_pause_cond.notify_all()
         return len(stale)
 
-    def _wait_transfer_paused(self, fid):
+    def _wait_transfer_paused(self, fid, leg_socket=None):
         """Block a sending leg while its fid is marked paused.
 
         Runs before every chunk so ``/pause_trans`` stops the stream without
                 closing the transfer; the wait ends when the leg is resumed, when the
-                instance stops, or when the fid is not paused at all.
+                instance stops, when the leg socket is closed, or when the fid is not
+                paused at all. ``leg_socket`` is the connection this leg writes to:
+                a reconnect sweep removes it from the registry before closing it, so
+                the registry alone cannot report the close.
 
         Args:
             fid (int): Value used by the operation.
+            leg_socket (socket.socket | None): The leg's own transfer socket.
         """
         if fid is None:
             return
         with self._transfer_pause_cond:
             while self._transfer_pause.get(fid, False):
                 sock = self._active_transfer_sockets.get(fid)
-                if not self.running or (sock is not None and sock.fileno() < 0):
+                if (not self.running
+                        or (sock is not None and sock.fileno() < 0)
+                        or (leg_socket is not None and leg_socket.fileno() < 0)):
                     return
                 self._transfer_pause_cond.wait(timeout=0.5)
 
@@ -10581,7 +10618,10 @@ class TCP_Client_Base:  # TCP client class
                     f.seek(resume_offset)
                 while True:
                     transfer_signs.consume()
-                    self._wait_transfer_paused(transfer_key)
+                    self._wait_transfer_paused(transfer_key, client_file_socket)
+                    if client_file_socket.fileno() < 0:
+                        close_socket()  # a reconnect sweep closed this leg
+                        return False
                     file_data = f.read(self.file_transfer_chunk_len)
                     if not file_data:
                         break

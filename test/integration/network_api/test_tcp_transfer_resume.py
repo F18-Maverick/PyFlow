@@ -31,8 +31,11 @@ from PyFlow.network_api.connect_tcp import (
     TCP_Client_Base,
     TCP_Server_Base,
     _TransferSignBuffer,
+    _sending_transfer,
     _socket_local_endpoint,
     _socket_peer_endpoint,
+    _start_resume_send,
+    _transfer_handshake,
     format_resume_line,
 )
 
@@ -969,7 +972,7 @@ def _watch_sign_capacity(monkeypatch, sender, receiver, overflow, capacity_handl
                 pass  # the sender may already have rejected an overlong line
         return written
 
-    def hold_body(_key):
+    def hold_body(_key, leg_socket=None):
         body_held.set()
         assert capacity_handled.wait(timeout=10), "the buffer never reached or rejected its limit"
 
@@ -2900,3 +2903,90 @@ def test_closed_control_socket_falls_back_to_the_configured_endpoint(tmp_path):
         assert not server._is_control_local_endpoint(("127.0.0.1", 1), dead)
     finally:
         server.stop()
+
+
+@pytest.mark.parametrize("sender_side", ["server", "client"])
+def test_paused_leg_is_released_by_stale_sweep(tmp_path, monkeypatch, sender_side):
+    """A reconnect sweep releases a paused leg and unblocks its queued resume.
+
+    The sweep removes the leg's socket from the registry before closing it, so
+    the pause wait must also observe the leg's own socket; otherwise the leg
+    keeps the per-fid send lock and a resume request never runs.
+    """
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    try:
+        server_recv = tmp_path / "server_recv"
+        server_recv.mkdir()
+        server.file_transfer_dir = str(server_recv)
+        client_recv = tmp_path / "client_recv"
+        client_recv.mkdir()
+        client = _start_client(tmp_path, server, name="client", recv_dir=client_recv)
+        clients.append(client)
+        peer = client.client_socket.getsockname()
+        assert wait_until(lambda: peer in server.clients)
+
+        src = tmp_path / "paused.bin"
+        src.write_bytes(os.urandom(64 * 1024))
+        fid = 4322
+        if sender_side == "server":
+            sender, receiver = server, client
+            command = (
+                f"/file {shlex.quote(str(src))} {shlex.quote(repr(peer))} {fid}"
+            )
+            key = (peer, fid)
+            target = peer
+            assert sender.pause_trans(fid, peer) is False
+        else:
+            sender, receiver = client, server
+            command = f"/file {shlex.quote(str(src))} {fid}"
+            key = ((client.host, client.port), fid)
+            target = (client.host, client.port)
+            assert sender.pause_trans(fid) is False
+        port, stamp = request_transfer_listener(sender, receiver, command)
+        control = (
+            server.clients[peer]["socket"] if sender is server else client.client_socket
+        )
+        result = {}
+
+        def send_leg():
+            with _sending_transfer(sender, key), _transfer_handshake(
+                sender, control, fid
+            ):
+                return sender.file_transfer_mode(
+                    str(src),
+                    "127.0.0.1",
+                    port,
+                    0,
+                    control_socket=control,
+                    crypto=stamp,
+                    fid=fid,
+                    peer=target,
+                )
+
+        leg = threading.Thread(
+            target=lambda: result.setdefault("value", send_leg()), daemon=True
+        )
+        leg.start()
+        assert wait_until(
+            lambda: key in sender._active_transfer_sockets
+            and key in sender.file_upload_progress,
+            timeout=10,
+        ), "the paused leg never registered"
+        assert sender._transfer_pause.get(key) is True
+        swept = sender._drop_stale_transfers(peer=peer if sender is server else None)
+        assert swept == 1
+        assert wait_until(lambda: not leg.is_alive(), timeout=10), (
+            "the swept leg stayed paused"
+        )
+        assert result.get("value") is False
+        assert key not in sender._transfer_pause
+        assert key in sender.file_upload_progress
+
+        calls = []
+        assert _start_resume_send(sender, key, target, calls.append)
+        assert wait_until(lambda: calls, timeout=10), "the queued resume never ran"
+        assert calls[0] is sender.file_upload_progress[key]
+    finally:
+        _close_socket_workers(server, clients, workers)

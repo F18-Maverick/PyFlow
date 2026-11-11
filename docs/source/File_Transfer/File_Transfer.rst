@@ -840,6 +840,9 @@ The leg stops before its next chunk and stays open; a leg that is paused
 keeps its socket, so nothing is torn down. Every outbound transfer honours
 its own fid — a plain upload as much as the upload leg of a forwarded file —
 so the flow control the server uses on a relay works on any transfer.
+A paused leg that belongs to a session swept at reconnect is released by
+that sweep: its pause switch is cleared, its socket is closed, and the leg
+ends, so a resume request queued behind its per-fid send lock can run.
 
 The temporary connections of a transfer are resumed after a disconnect:
 
