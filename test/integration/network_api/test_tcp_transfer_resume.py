@@ -31,6 +31,8 @@ from PyFlow.network_api.connect_tcp import (
     TCP_Client_Base,
     TCP_Server_Base,
     _TransferSignBuffer,
+    _socket_local_endpoint,
+    _socket_peer_endpoint,
     format_resume_line,
 )
 
@@ -1934,9 +1936,11 @@ def test_forward_route_survives_a_refused_target_listener_and_reload(tmp_path, m
         handled = []
         real_resume_request = server._resume_request
 
-        def observe_resume(peer, requested_fid, offset, origin, target):
+        def observe_resume(client_socket, peer, requested_fid, offset, origin, target):
             try:
-                return real_resume_request(peer, requested_fid, offset, origin, target)
+                return real_resume_request(
+                    client_socket, peer, requested_fid, offset, origin, target
+                )
             finally:
                 handled.append((peer, requested_fid, offset))
 
@@ -2791,3 +2795,108 @@ def test_reconnected_handshake_rejects_reply_from_old_control_socket(tmp_path, m
         assert not sender._transfer_handshakes._pending
     finally:
         _close_socket_workers(server, clients, workers)
+
+
+@pytest.mark.parametrize(
+    "server_host,client_host",
+    [("127.0.0.1", "localhost"), ("0.0.0.0", "127.0.0.1")],
+    ids=["localhost-alias", "wildcard-bind"],
+)
+@pytest.mark.parametrize(
+    "recorded_peer", ["configured", "connected"], ids=["legacy-row", "new-row"]
+)
+def test_resume_identity_uses_the_connected_endpoint(
+    tmp_path, server_host, client_host, recorded_peer
+):
+    """Resume works when the configured host differs from the connected one.
+
+    The configured address can name a wildcard bind or a host alias; the
+    concrete endpoint the kernel selected for the control connection is what
+    both sides can compare. A legacy direct row still records the configured
+    server address and is migrated in memory, without touching the file format.
+    """
+    port = free_port()
+    server = TCP_Server_Base(
+        host=server_host,
+        port=port,
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
+    _isolate(server, tmp_path, f"server_{server_host}_{recorded_peer}")
+    server_recv = tmp_path / f"server_recv_{server_host}_{recorded_peer}"
+    server_recv.mkdir()
+    server.file_transfer_dir = str(server_recv)
+    threading.Thread(target=server.start_TCP_Server, daemon=True).start()
+    assert server_ready(server)
+
+    client = TCP_Client_Base(
+        host=client_host,
+        port=port,
+        client_host="127.0.0.1",
+        is_extend_command=True,
+        is_input_command_in_console=False,
+        is_enable_encrypto=False,
+    )
+    _isolate(client, tmp_path, f"client_{client_host}_{recorded_peer}")
+    client_recv = tmp_path / f"client_recv_{client_host}_{recorded_peer}"
+    client_recv.mkdir()
+    client.file_transfer_dir = str(client_recv)
+    try:
+        assert client.connect()
+        peer = client.client_socket.getsockname()
+        assert wait_until(lambda: peer in server.clients, timeout=10)
+        src = tmp_path / f"identity_{recorded_peer}.bin"
+        payload = os.urandom(64 * 1024)
+        src.write_bytes(payload)
+        half = len(payload) // 2
+        configured_peer = (client.host, client.port)
+        connected_peer = client.client_socket.getpeername()
+
+        # client -> server: the server asks the reconnected client to continue
+        partial = server_recv / src.name
+        partial.write_bytes(payload[:half])
+        upload_key = (configured_peer, 701)
+        client.file_upload_progress[upload_key] = [
+            half, len(payload), None, str(src), configured_peer,
+        ]
+        server.file_recv_progress[701] = [
+            half, len(payload), None, str(partial), peer,
+        ]
+        assert server._request_resumes(peer) == 1
+        assert wait_until(lambda: 701 not in server.file_recv_progress, timeout=20)
+        assert partial.read_bytes() == payload
+        assert wait_until(lambda: upload_key not in client.file_upload_progress, timeout=10)
+
+        # server -> client: the client asks the connected server to continue
+        partial2 = client_recv / src.name
+        partial2.write_bytes(payload[:half])
+        recorded = configured_peer if recorded_peer == "configured" else connected_peer
+        server.file_upload_progress[(peer, 702)] = [
+            half, len(payload), None, str(src), peer,
+        ]
+        client.file_recv_progress[702] = [
+            half, len(payload), None, str(partial2), recorded,
+        ]
+        assert client._request_resumes() == 1
+        assert wait_until(lambda: 702 not in client.file_recv_progress, timeout=20)
+        assert partial2.read_bytes() == payload
+        assert wait_until(lambda: (peer, 702) not in server.file_upload_progress, timeout=10)
+    finally:
+        client.close()
+        server.stop()
+
+
+def test_closed_control_socket_falls_back_to_the_configured_endpoint(tmp_path):
+    """A socket that is already gone falls back to the configured identity."""
+    server = _start_server(tmp_path)
+    dead = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    dead.close()
+    try:
+        assert _socket_local_endpoint(dead) is None
+        assert _socket_peer_endpoint(dead) is None
+        assert server._control_local_endpoint(dead) == (server.host, server.port)
+        assert server._is_control_local_endpoint((server.host, server.port), dead)
+        assert not server._is_control_local_endpoint(("127.0.0.1", 1), dead)
+    finally:
+        server.stop()

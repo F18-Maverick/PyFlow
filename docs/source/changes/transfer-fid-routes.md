@@ -285,3 +285,19 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
   evidence and limitations are in the O4 report; the supplemental O1–O4 overview
   is `docs/plans/ordinary-transfer-progress-inspection-report.md`.
 
+
+## Follow-up: resume identity uses the connected endpoint
+
+- `/resume_trans` keeps its five tokens and both fields remain `(ip, port)`
+  tuples. What changed is the value source: the server writes the concrete
+  local endpoint of the accepted control connection (`getsockname()`) as
+  `target`, and a client records the connected server endpoint
+  (`getpeername()`) as the peer it later sends as `origin`.
+- Both sides accept either the concrete endpoint or the configured
+  `(host, port)` as "this peer", so a wildcard bind (`0.0.0.0`) or a host alias
+  (`localhost` vs `127.0.0.1`) no longer breaks a reconnect. A legacy direct
+  row that recorded the configured server address is migrated in memory on
+  read; the progress JSON shape is unchanged.
+- Forwarded resume keeps its existing actual-address route scoping; no wire
+  command, FID allocation, relay record or public signature changes.
+- NAT endpoints and a changed `client_port` remain unsupported identities.

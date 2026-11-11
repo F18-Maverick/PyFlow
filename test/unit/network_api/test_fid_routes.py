@@ -8,6 +8,8 @@ import pytest
 from PyFlow.network_api.connect_tcp import TCP_Server_Base, parse_resume_command
 
 
+# The server's control side as the unit tests drive `_resume_request` by hand.
+SERVER_LOCAL = ("127.0.0.1", 65432)
 ORIGINATOR = ("127.0.0.1", 50001)
 TARGET_1 = ("127.0.0.1", 50002)
 TARGET_2 = ("127.0.0.1", 50003)
@@ -352,12 +354,12 @@ def test_resume_uses_scoped_route_not_id_lowbit_and_rejects_forged_endpoints(ser
         (TARGET_2, ORIGINATOR, TARGET_2, downstream),
         (TARGET_1, ORIGINATOR, TARGET_1, downstream + 2),
     ):
-        assert not server._resume_request(peer, fid, 7, origin, target)
+        assert not server._resume_request(SERVER_LOCAL, peer, fid, 7, origin, target)
         assert server._pending_originator_resumes == {}
         assert server._fid_routes[302] is route
     # Offline is not success, but a verified receiver's request is retained.
-    assert not server._resume_request(TARGET_1, downstream, 7, ORIGINATOR, TARGET_1)
-    assert not server._resume_request(TARGET_1, downstream, 19, ORIGINATOR, TARGET_1)
+    assert not server._resume_request(SERVER_LOCAL, TARGET_1, downstream, 7, ORIGINATOR, TARGET_1)
+    assert not server._resume_request(SERVER_LOCAL, TARGET_1, downstream, 19, ORIGINATOR, TARGET_1)
     assert server._pending_originator_resumes == {ORIGINATOR: {(302, TARGET_1): 19}}
     assert server._fid_route_index == {(TARGET_1, downstream): 302}
 
@@ -365,7 +367,7 @@ def test_resume_uses_scoped_route_not_id_lowbit_and_rejects_forged_endpoints(ser
 def test_pending_resume_survives_failed_send_and_prunes_completed_or_missing_routes(server):
     route = server._register_fid_route(302, ORIGINATOR, {TARGET_1: 304, TARGET_2: 306})
     for target, child in route["targets"].items():
-        assert not server._resume_request(target, child, 13, ORIGINATOR, target)
+        assert not server._resume_request(SERVER_LOCAL, target, child, 13, ORIGINATOR, target)
     broken, peer = socket.socketpair()
     peer.close()
     # A closed peer does not make the next write fail on every platform: Windows
@@ -392,7 +394,7 @@ def test_pending_resume_survives_failed_send_and_prunes_completed_or_missing_rou
             302, 13, ORIGINATOR, TARGET_2
         )
         assert server._pending_originator_resumes == {}
-        assert not server._resume_request(TARGET_1, 304, 0, ORIGINATOR, TARGET_1)
+        assert not server._resume_request(SERVER_LOCAL, TARGET_1, 304, 0, ORIGINATOR, TARGET_1)
         # An accepted request must not outlive its owning route.
         assert server._queue_resume_to_originator(302, route, TARGET_2, 29)
         reader.recv(4096)

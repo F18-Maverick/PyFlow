@@ -865,6 +865,16 @@ The temporary connections of a transfer are resumed after a disconnect:
   origin must match its authoritative route before translation to the upstream
   fid and forwarding of the same command to the source. A client sends only
   when origin matches its current control-connection identity.
+  Each side writes the concrete endpoint of that control connection
+  (``getsockname()`` locally, ``getpeername()`` for the peer) into
+  ``origin``/``target``; the configured ``(host, port)`` is accepted as an alias
+  for the same connected peer. A wildcard bind (``0.0.0.0``) or a host alias
+  (``localhost`` vs ``127.0.0.1``) therefore does not change the identity. A
+  direct row persisted before this rule, which recorded the configured server
+  address, is migrated in memory when read; the progress file format is
+  unchanged. Addresses behind NAT and a changed ``client_port`` remain
+  unsupported identities: the former is not comparable from the two sides, the
+  latter cannot be matched to the stored peer after reconnecting.
   Local uploads answer with ``/file <name> <fid>``. Forward replay sends
   ``/forward_item <kind> fid=<upstream fid> resume=<offset>`` with its fields.
   New transfers omit ``resume=``; retries include ``resume=<offset>``, even at

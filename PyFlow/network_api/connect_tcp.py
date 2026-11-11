@@ -1024,6 +1024,47 @@ def format_fid(fid):
     return f"e{low >> 1}.{fid >> FID_LOW_BITS}"
 
 
+def _socket_local_endpoint(sock):
+    """Return the concrete local ``(ip, port)`` of a connected socket, or None.
+
+    The kernel reports the address it actually chose for the connection, so a
+    wildcard bind (``0.0.0.0``) or a host alias (``localhost``) yields the
+    address the peer resolved and connected to. A socket that is already closed
+    or unbound yields None.
+
+    Args:
+        sock (socket.socket | None): Control socket to inspect.
+
+    Returns:
+        tuple | None: ``(ip, port)`` the resume identity should use.
+    """
+    if sock is None:
+        return None
+    try:
+        address = sock.getsockname()
+    except OSError:
+        return None
+    return (address[0], address[1]) if address else None
+
+
+def _socket_peer_endpoint(sock):
+    """Return the concrete remote ``(ip, port)`` of a connected socket, or None.
+
+    Args:
+        sock (socket.socket | None): Control socket to inspect.
+
+    Returns:
+        tuple | None: ``(ip, port)`` the peer is actually connected from.
+    """
+    if sock is None:
+        return None
+    try:
+        address = sock.getpeername()
+    except OSError:
+        return None
+    return (address[0], address[1]) if address else None
+
+
 class _FidAllocator:
     """Hand out transfer ids that never collide with a live one.
 
@@ -5054,7 +5095,7 @@ class TCP_Server_Base:  # TCP server class
             if parsed is not None:
                 threading.Thread(
                     target=self._resume_request,
-                    args=(client_address, *parsed),
+                    args=(client_socket, client_address, *parsed),
                     daemon=True,
                 ).start()
             return None
@@ -6323,6 +6364,7 @@ class TCP_Server_Base:  # TCP server class
             info = self.clients.get(peer)
         if info is None or not self._wait_control_secure(info["socket"]):
             return 0
+        target = self._control_local_endpoint(info["socket"])
         started = 0
         for fid, entry in list(self.file_recv_progress.items()):
             if entry[4] is None or tuple(entry[4]) != peer:
@@ -6333,7 +6375,6 @@ class TCP_Server_Base:  # TCP server class
                 if fid in self._active_transfer_fids:
                     continue  # a leg is already running for this fid
             entry[0] = _resume_offset_for(entry)
-            target = (self.host, self.port)
             if self.send_message(
                 info["socket"], format_resume_line(fid, entry[0], peer, target)
             ):
@@ -6392,12 +6433,55 @@ class TCP_Server_Base:  # TCP server class
         return _start_resume_send(self, key, peer_addr, send)
 
 
-    def _resume_request(self, client_address, fid, offset, origin, target):
-        """Validate requester, origin, target and scoped route before recovery."""
+    def _is_control_local_endpoint(self, endpoint, sock):
+        """Report whether ``endpoint`` names this control connection's local side.
+
+        The concrete address the kernel chose (a wildcard bind or a host alias
+        resolves to it) and the configured address both identify this instance;
+        either is accepted so a peer that learned the name from configuration and
+        one that learned it from the connection agree.
+
+        Args:
+            endpoint (tuple): ``(ip, port)`` sent on the wire.
+            sock (socket.socket | tuple | None): Control socket the line arrived
+                on, or the peer ``(ip, port)`` when it is not available.
+
+        Returns:
+            bool: True when the endpoint is this side of that connection.
+        """
+        endpoint = tuple(endpoint)
+        if endpoint == (self.host, self.port):
+            return True
+        if isinstance(sock, tuple):
+            return endpoint == tuple(sock)
+        return endpoint == _socket_local_endpoint(sock)
+
+    def _control_local_endpoint(self, sock):
+        """Return the endpoint this instance advertises on a control connection.
+
+        Args:
+            sock (socket.socket | tuple | None): Control socket of the
+                reconnected peer, or its ``(ip, port)``.
+
+        Returns:
+            tuple: The concrete local ``(ip, port)``, or the configured address
+                when the socket is already gone.
+        """
+        if isinstance(sock, tuple):
+            return tuple(sock)
+        return _socket_local_endpoint(sock) or (self.host, self.port)
+
+    def _resume_request(self, client_socket, client_address, fid, offset, origin, target):
+        """Validate requester, origin, target and scoped route before recovery.
+
+        ``client_socket`` is the requester's control socket (or its peer address
+        when a caller drives the method directly); it names the local side the
+        origin must match.
+        """
         client_address, origin, target = tuple(client_address), tuple(origin), tuple(target)
         if target != client_address:
             return False
-        if origin == (self.host, self.port):
+        if self._is_control_local_endpoint(origin, client_socket):
             return self.resume_trans(client_address, fid, offset)
         found = self._lookup_fid_route(client_address, fid)
         if found is not None:
@@ -10589,6 +10673,12 @@ class TCP_Client_Base:  # TCP client class
             return 0
         if not self._wait_control_secure(self.client_socket):
             return 0
+        # A direct row recorded before the identity change names the configured
+        # server address; the concrete peer of this connection is what the
+        # server recognises as itself, so migrate the row in memory (the
+        # progress file keeps its format).
+        configured_peer = (self.host, self.port)
+        connected_peer = _socket_peer_endpoint(self.client_socket)
         started = 0
         for fid, entry in list(self.file_recv_progress.items()):
             if entry[4] is None:
@@ -10596,6 +10686,8 @@ class TCP_Client_Base:  # TCP client class
             with self._transfer_progress_lock:
                 if fid in self._active_transfer_fids:
                     continue  # a leg is already running for this fid
+            if connected_peer is not None and tuple(entry[4]) == configured_peer:
+                entry[4] = connected_peer
             entry[0] = _resume_offset_for(entry)
             if self.send_message(
                 self.client_socket,
@@ -10623,14 +10715,25 @@ class TCP_Client_Base:  # TCP client class
             bool: True when the request was queued or joined in flight.
         """
         server_peer = (self.host, self.port)
-        target = tuple(peer_addr) if peer_addr is not None else server_peer
-        key = (server_peer, fid)
-        if not self.running or self.client_socket is None:
-            return False
         control_socket = self.client_socket
+        if not self.running or control_socket is None:
+            return False
+        # The server names itself with the concrete endpoint of this control
+        # connection; the configured address is accepted too so a peer using
+        # either convention is recognised. The upload row key keeps the
+        # configured namespace, so persisted rows are unchanged.
+        server_endpoints = {server_peer}
+        connected_endpoint = _socket_peer_endpoint(control_socket)
+        if connected_endpoint is not None:
+            server_endpoints.add(connected_endpoint)
+        target = tuple(peer_addr) if peer_addr is not None else (
+            connected_endpoint or server_peer
+        )
+        key = (server_peer, fid)
+        is_direct = target in server_endpoints
 
         def send(entry):
-            if target != server_peer:
+            if not is_direct:
                 self._forward_one(
                     "file", "", os.path.basename(str(entry[3])), entry[3], [target],
                     resume_offset=offset, upstream_fid=fid,
@@ -10981,8 +11084,10 @@ class TCP_Client_Base:  # TCP client class
 
         A file pushed by the server itself carries this client's own address,
                 which `parse_forward_originator` filters out: the sender is then the
-                server. A forwarded item carries the originating client's address —
-                the original peer a resume asks to continue the transfer.
+                server, identified by the concrete endpoint of the control connection
+                (a wildcard bind or a host alias resolves to it). A forwarded item
+                carries the originating client's address — the original peer a resume
+                asks to continue the transfer.
 
         Args:
             command (object): Value used by the operation.
@@ -10992,7 +11097,9 @@ class TCP_Client_Base:  # TCP client class
         """
         originator = parse_forward_originator(command, own_address=self._own_address_text())
         peer = _peer_from_text(originator) if originator else None
-        return peer if peer is not None else (self.host, self.port)
+        if peer is not None:
+            return peer
+        return _socket_peer_endpoint(self.client_socket) or (self.host, self.port)
 
     def file_transfer_mode_recv(
         self,
