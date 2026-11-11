@@ -78,7 +78,11 @@ The parameters of the ``__init__`` method are as follows:
   list. Downloads use integer fid keys; uploads use ``((host, port), fid)``
   keys, scoped to the connected server even for forwarded uploads.
   The value's ``peer`` remains the original sender (downloads) or logical
-  receiver (uploads), not the relay. Successful direct transfers remove their
+  receiver (uploads), not the relay. For a direct download it is the connected
+  server's concrete endpoint (``getpeername()``); rows persisted before this
+  rule recorded the configured address and are normalized in memory on the next
+  resume. The configured address remains accepted as an alias; NAT and a changed
+  client port are not supported. Successful direct transfers remove their
   entries; interrupted ones keep their partial files for reconnect. Forwarded
   uploads retain their existing five-item upload row until the final data ACK
   is observed; bytes sent alone are not completion. No client recovery table

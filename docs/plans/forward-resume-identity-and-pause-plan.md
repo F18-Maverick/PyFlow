@@ -1,6 +1,6 @@
 # 文件转发/resume 身份与暂停清扫修复 — 需求卡、计划与报告
 
-状态：**Commit 1（R1）与 Commit 2（R3）已实现，等待人类审查**。审计证据来自只读复核与 `/tmp/pyflow_audit/` 下的真实 socket 复现脚本；提交结果见 `docs/plans/forward-resume-identity-and-pause-report.md`。
+状态：**Commit 1（R1）、Commit 2（R3）与 Commit 3（文档收尾）已实现，等待人类审查**。审计证据来自只读复核与 `/tmp/pyflow_audit/` 下的真实 socket 复现脚本；提交结果见 `docs/plans/forward-resume-identity-and-pause-report.md`。
 
 ---
 

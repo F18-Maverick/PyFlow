@@ -83,7 +83,10 @@ The parameters of the ``__init__`` method are as follows:
   list. Downloads use integer fid keys; uploads use ``(receiver, fid)`` keys,
   where receiver is the actual control-channel peer's ``(ip, port)``.
   The value's ``peer`` remains the original sender (downloads) or logical
-  receiver (uploads), not a forwarding relay. The entry is removed once the transfer ends;
+  receiver (uploads), not a forwarding relay. It is the concrete endpoint of
+  the control connection each leg used; resume identity compares that endpoint
+  and accepts the configured address as an alias, so a wildcard bind or a host
+  alias does not change it. The entry is removed once the transfer ends;
   an interrupted one keeps its entry (and its partial file) so the reconnect
   logic can resume it.
   ``file_trans_progress_file`` names the file under the protocol's ``.Flow``
