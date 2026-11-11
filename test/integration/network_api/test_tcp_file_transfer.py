@@ -864,12 +864,18 @@ def test_multiple_file_multiple_client_console_command(pair, tmp_path):
     addr2 = client2.client_socket.getsockname()
     dest = tmp_path / "dest"
     dest.mkdir()
+    received = set()
+    client.add_file_listener(lambda *_: received.add("client1"))
+    client2.add_file_listener(lambda *_: received.add("client2"))
     cmd = '/multiple_file_multiple_client "{}" "({}, {})" "({}, {})" "{}"'.format(
         src, repr(addr1[0]), addr1[1], repr(addr2[0]), addr2[1], dest
     )
     server.multiple_file_multiple_client_transfer_server_recv_client_start(cmd)
-    assert wait_until(lambda: (dest / "broadcast.bin").exists(), timeout=10), (
-        "client 1 did not receive the broadcast file at the destination"
+    # Both legs write the same destination path and a fresh leg truncates it.
+    # `exists()` therefore says nothing about the bytes: wait until both
+    # receivers have reported the fully written file before reading it.
+    assert wait_until(lambda: received == {"client1", "client2"}, timeout=10), (
+        "not every client received the broadcast file at the destination"
     )
     assert not any(recv_dir.iterdir()), "default directory must stay empty on client 1"
     assert not any(recv2.iterdir()), "default directory must stay empty on client 2"

@@ -313,7 +313,8 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
   its session is swept instead of waiting forever while holding the per-fid
   send lock. A resume request already queued for that fid runs after the lock
   is released; no manual `start_trans` is needed.
-- The send loop aborts as soon as the leg's socket is closed, so it does not
-  read the remaining file into failed writes. Wire commands, progress rows,
+- The send loop stops on the first failed write, so it does not keep reading
+  the rest of the file after the peer is gone. A final ACK already in flight is
+  still consumed by the existing ACK wait. Wire commands, progress rows,
   public signatures and the pause/start semantics of a live session are
   unchanged.

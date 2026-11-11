@@ -6284,13 +6284,19 @@ class TCP_Server_Base:  # TCP server class
                 while True:
                     transfer_signs.consume()
                     self._wait_transfer_paused(transfer_key, client_file_socket)
-                    if client_file_socket.fileno() < 0:
-                        close_socket()  # a reconnect sweep closed this leg
-                        return False
                     file_data = f.read(self.file_transfer_chunk_len)
                     if not file_data:
                         break
-                    self.send_message(client_file_socket, file_data)
+                    try:
+                        written = self.send_message(client_file_socket, file_data)
+                    except OSError as e:
+                        self._log(f"send error: {e}")
+                        close_socket()  # the peer is gone; stop instead of reading the rest
+                        return False
+                    if not written:
+                        self._log("send error: the transfer connection is closed")
+                        close_socket()
+                        return False
                     self._file_progress_update(progress, len(file_data), is_upload=True)
             extra_time = (file_size // (100 * 1024 * 1024)) * 10
             timeout = int(30 + extra_time)
@@ -10619,13 +10625,19 @@ class TCP_Client_Base:  # TCP client class
                 while True:
                     transfer_signs.consume()
                     self._wait_transfer_paused(transfer_key, client_file_socket)
-                    if client_file_socket.fileno() < 0:
-                        close_socket()  # a reconnect sweep closed this leg
-                        return False
                     file_data = f.read(self.file_transfer_chunk_len)
                     if not file_data:
                         break
-                    self.send_message(client_file_socket, file_data)
+                    try:
+                        written = self.send_message(client_file_socket, file_data)
+                    except OSError as e:
+                        self._log(f"send error: {e}")
+                        close_socket()  # the peer is gone; stop instead of reading the rest
+                        return False
+                    if not written:
+                        self._log("send error: the transfer connection is closed")
+                        close_socket()
+                        return False
                     self._file_progress_update(progress, len(file_data), is_upload=True)
             extra_time = (file_size // (100 * 1024 * 1024)) * 10
             timeout = int(30 + extra_time)

@@ -88,7 +88,7 @@ wildcard  download_started: 1 row_cleared: True size: 8192 content_ok: True
 
 | 文件 | 关键变更 |
 |---|---|
-| `PyFlow/network_api/connect_tcp.py` | `_drop_stale_transfers`（server/client）收集被清扫的上传 key，在关闭 socket 后于 `_transfer_pause_cond` 下 `pop` 并 `notify_all`；`_wait_transfer_paused` 增加 `leg_socket` 参数，leg 自己的 socket 已关闭即退出；两处 `file_transfer_mode` 传入 `client_file_socket`，并在暂停返回后若 socket 已关闭则立即 `close_socket()` 并返回 False，避免继续读取剩余文件 |
+| `PyFlow/network_api/connect_tcp.py` | `_drop_stale_transfers`（server/client）收集被清扫的上传 key，在关闭 socket 后于 `_transfer_pause_cond` 下 `pop` 并 `notify_all`；`_wait_transfer_paused` 增加 `leg_socket` 参数，leg 自己的 socket 已关闭即退出；两处 `file_transfer_mode` 传入 `client_file_socket`，并在某次 chunk 发送失败（`send_message` 返回 False 或抛 `OSError`）时立即 `close_socket()` 并返回 False，避免 peer 消失后继续读取剩余文件 |
 | `test/integration/network_api/test_tcp_transfer_resume.py` | 新增 `test_paused_leg_is_released_by_stale_sweep`（server/client 两种发送端）；适配 `_watch_sign_capacity` 的 monkeypatch 签名 |
 | `docs/source/File_Transfer/File_Transfer.rst` | 说明清扫会解除暂停并让排队 resume 继续 |
 | `docs/source/changes/transfer-fid-routes.md` | 追加本次变更记录 |
@@ -137,3 +137,56 @@ wildcard  download_started: 1 row_cleared: True size: 8192 content_ok: True
 - 只清除“确实被清扫（有已注册 socket）”的上传 key，预启动但未注册 socket 的暂停开关不会被误清。
 - `notify_all` 在 `_transfer_progress_lock` 之外获取 `_transfer_pause_cond`，不引入新的锁嵌套。
 - `file_transfer_mode` 在 leg socket 已关闭时直接返回 False，进度行按既有 `keep=True` 规则保留，后续 resume 仍可继续。
+
+---
+
+## CI 修复（Linux Python 3.10）：广播测试的共享目的路径竞态
+
+### 现象
+
+`test_multiple_file_multiple_client_console_command` 在 Linux 3.10 上读到
+`dest/broadcast.bin` 为空（`b''`），断言在 `wait_until(exists())` 之后立即执行。
+
+### 根因
+
+接收 leg 在开始时就会以 `wb` 创建并截断目标文件；该测试把同一个绝对目的路径
+交给两个客户端，两个 leg 又都写这个文件。`exists()` 只证明某个 leg 已经打开文件，
+后续 leg 的截断/写入窗口会让紧随其后的读取看到空文件。这是测试等待条件不足，
+不是传输内容错误；本地同一 Python 3.10 连续 30 次未复现，CI 调度暴露了窗口。
+
+### 修复
+
+在两个客户端上注册 `add_file_listener`，等两个接收方都报告“完整写入”后再读文件；
+断言仍校验完整 payload，并额外要求两个 client 都收到，强度高于原来的 `exists()`。
+修复后本地连续 50 次通过。
+
+### 附带的产品修正
+
+Commit 2 最初在暂停等待返回后检查 `client_file_socket.fileno() < 0` 并立即中止。
+接收方发完最终 ACK 后会关闭自己的连接，发送端的接收线程可能先看到 EOF 并关闭
+本端 socket；此时 ACK 已在 sign buffer 中，但该检查会把一次已完成的传输误判为失败。
+现改为只在 **某次 chunk 发送失败**（`send_message` 返回 False 或抛 `OSError`）时中止：
+被清扫的暂停 leg 会在首个失败 chunk 立刻停止，已完成传输的最终 ACK 仍由原 ACK
+等待路径消费。
+
+### 验证
+
+```bash
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_file_transfer.py::test_multiple_file_multiple_client_console_command -q
+# 连续 50 次通过（修复后）；修复前 CI Linux 3.10 失败
+
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_transfer_resume.py \
+  -k "paused_leg_is_released_by_stale_sweep or sign_capacity" -q
+# 6 passed
+
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_transfer_resume.py \
+  test/integration/network_api/test_tcp_file_transfer.py -q
+# 93 passed in 216.71s（59 resume + 34 file transfer）
+
+.venv/bin/python -m pytest test/unit/network_api \
+  test/integration/network_api/test_tcp_file_transfer.py \
+  test/integration/network_api/test_crypto_tcp.py \
+  test/integration/test_forward_extension.py \
+  test/integration/test_forward_msg_attribution.py -q
+# 339 passed in 184.80s
+```
