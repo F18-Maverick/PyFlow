@@ -2427,6 +2427,8 @@ class TCP_Server_Base:  # TCP server class
         self._message_listeners = []
         self._file_listeners = []
         self._send_message_listeners = []
+        # Set by stop(); a stopped instance never invokes a listener again.
+        self._listeners_stopped = False
         # Sockets carrying the control protocol; only these are recorded.
         self._control_sockets = set()
         self._event_listeners_lock = threading.Lock()
@@ -3519,6 +3521,19 @@ class TCP_Server_Base:  # TCP server class
             except ValueError:
                 pass
 
+    def _stop_listeners(self):
+        """Stop delivering listener events and release the callback lists."""
+        with self._event_listeners_lock:
+            self._listeners_stopped = True
+            self._message_listeners.clear()
+            self._file_listeners.clear()
+            self._send_message_listeners.clear()
+
+    def _listeners_are_stopped(self):
+        """Return True once stop() has disabled listener delivery."""
+        with self._event_listeners_lock:
+            return self._listeners_stopped
+
     def _notify_message_received(self, client_id, message):
         """Handle the operation.
 
@@ -3527,8 +3542,12 @@ class TCP_Server_Base:  # TCP server class
             message (object): Value used by the operation.
         """
         with self._event_listeners_lock:
+            if self._listeners_stopped:
+                return
             listeners = list(self._message_listeners)
         for listener in listeners:
+            if self._listeners_are_stopped():
+                return
             try:
                 listener(client_id, message)
             except Exception as e:
@@ -3545,8 +3564,12 @@ class TCP_Server_Base:  # TCP server class
         if not data or client_socket in self._control_sockets:
             return
         with self._event_listeners_lock:
+            if self._listeners_stopped:
+                return
             listeners = list(self._message_listeners)
         for listener in listeners:
+            if self._listeners_are_stopped():
+                return
             try:
                 listener(self._socket_key(client_socket), data)
             except Exception as e:
@@ -3556,11 +3579,15 @@ class TCP_Server_Base:  # TCP server class
     def _notify_message_sent(self, client_socket, message):
         """Report one written payload to the send listeners."""
         with self._event_listeners_lock:
+            if self._listeners_stopped:
+                return
             listeners = list(self._send_message_listeners)
         if not listeners:
             return
         target_id = self._socket_key(client_socket)
         for listener in listeners:
+            if self._listeners_are_stopped():
+                return
             try:
                 listener(target_id, message)
             except Exception as e:
@@ -3578,8 +3605,12 @@ class TCP_Server_Base:  # TCP server class
             command (object): Value used by the operation.
         """
         with self._event_listeners_lock:
+            if self._listeners_stopped:
+                return
             listeners = list(self._file_listeners)
         for listener in listeners:
+            if self._listeners_are_stopped():
+                return
             try:
                 listener(client_id, full_path, name, size, command)
             except Exception as e:
@@ -7372,6 +7403,7 @@ class TCP_Server_Base:  # TCP server class
         """
         self.running = False
         self._stopped = True  # also cancels a start_TCP_Server() still binding
+        self._stop_listeners()
         self.free_port()
         self._flush_record_stores()
         # in-flight transfers die with the server: persist them for the next run
@@ -7658,6 +7690,8 @@ class TCP_Client_Base:  # TCP client class
         self._message_listeners = []
         self._file_listeners = []
         self._send_message_listeners = []
+        # Set by close(); a closed instance never invokes a listener again.
+        self._listeners_stopped = False
         self._control_sockets = set()  # the control link to the server; only it is recorded
         self._event_listeners_lock = threading.Lock()
         # Message/event stores: external code reads these instead of registering
@@ -7868,6 +7902,19 @@ class TCP_Client_Base:  # TCP client class
             except ValueError:
                 pass
 
+    def _stop_listeners(self):
+        """Stop delivering listener events and release the callback lists."""
+        with self._event_listeners_lock:
+            self._listeners_stopped = True
+            self._message_listeners.clear()
+            self._file_listeners.clear()
+            self._send_message_listeners.clear()
+
+    def _listeners_are_stopped(self):
+        """Return True once close() has disabled listener delivery."""
+        with self._event_listeners_lock:
+            return self._listeners_stopped
+
     def _notify_message_received(self, sender, message):
         """Handle the operation.
 
@@ -7876,8 +7923,12 @@ class TCP_Client_Base:  # TCP client class
             message (object): Value used by the operation.
         """
         with self._event_listeners_lock:
+            if self._listeners_stopped:
+                return
             listeners = list(self._message_listeners)
         for listener in listeners:
+            if self._listeners_are_stopped():
+                return
             try:
                 listener(sender, message)
             except Exception as e:
@@ -7894,8 +7945,12 @@ class TCP_Client_Base:  # TCP client class
         if not data or client_socket in self._control_sockets:
             return
         with self._event_listeners_lock:
+            if self._listeners_stopped:
+                return
             listeners = list(self._message_listeners)
         for listener in listeners:
+            if self._listeners_are_stopped():
+                return
             try:
                 listener(self._socket_key(client_socket), data)
             except Exception as e:
@@ -7905,11 +7960,15 @@ class TCP_Client_Base:  # TCP client class
     def _notify_message_sent(self, client_socket, message):
         """Report one written payload to the send listeners."""
         with self._event_listeners_lock:
+            if self._listeners_stopped:
+                return
             listeners = list(self._send_message_listeners)
         if not listeners:
             return
         target_id = self._socket_key(client_socket)
         for listener in listeners:
+            if self._listeners_are_stopped():
+                return
             try:
                 listener(target_id, message)
             except Exception as e:
@@ -7926,8 +7985,12 @@ class TCP_Client_Base:  # TCP client class
             command (object): Value used by the operation.
         """
         with self._event_listeners_lock:
+            if self._listeners_stopped:
+                return
             listeners = list(self._file_listeners)
         for listener in listeners:
+            if self._listeners_are_stopped():
+                return
             try:
                 listener(full_path, name, size, command)
             except Exception as e:
@@ -11482,6 +11545,25 @@ class TCP_Client_Base:  # TCP client class
         """
         self.running = False
         self._stopped = True  # also cancels a connect() still in flight
+        self._stop_listeners()
+        if self.client_socket:
+            self._transfer_handshakes.cancel_socket(self.client_socket)
+            try:
+                # the receive thread may be blocked in recv() on this socket:
+                # close() alone sends no FIN and leaves that read waiting for its
+                # timeout, so the server would not see the disconnect
+                self.client_socket.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # peer already gone
+        receive_thread = self.receive_thread
+        if (
+            receive_thread is not None
+            and receive_thread is not threading.current_thread()
+            and receive_thread.ident is not None
+        ):
+            # close() returns only after the receive loop has stopped: no
+            # in-flight chunk may reach a listener after this point
+            receive_thread.join()
         self.free_port()
         self._flush_record_stores()
         # transfers still in flight are kept on disk for the next connect
@@ -11493,14 +11575,6 @@ class TCP_Client_Base:  # TCP client class
                 self._control_sockets.discard(self.client_socket)
             self._crypto_session = None
         if self.client_socket:
-            self._transfer_handshakes.cancel_socket(self.client_socket)
-            try:
-                # the receive thread may be blocked in recv() on this socket:
-                # close() alone sends no FIN and leaves that read waiting for its
-                # timeout, so the server would not see the disconnect
-                self.client_socket.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass  # peer already gone
             self.client_socket.close()
         self._log("connection closed")
 
