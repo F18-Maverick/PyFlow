@@ -208,5 +208,5 @@ Rebuild the translations (extract gettext, machine-translate new strings, compil
 
 ## License
 
-[GPL-3.0](LICENSE)
+[Apache-2.0](LICENSE)
 
