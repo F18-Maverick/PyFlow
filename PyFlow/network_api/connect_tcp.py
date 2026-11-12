@@ -3938,19 +3938,26 @@ class TCP_Server_Base:  # TCP server class
                 the client the message came from.
         """
         with self.client_lock:
-            disconnected_clients = []
-            for addr, client_info in self.clients.items():
-                if exclude_client and addr == exclude_client:
-                    continue
-                try:
-                    self.send_message(client_info["socket"], message)
-                except:
-                    disconnected_clients.append(addr)
-                    self._log_exc()
-            for addr in disconnected_clients:  # del disconnected clients
-                if addr in self.clients:
+            targets = [
+                (addr, client_info["socket"])
+                for addr, client_info in self.clients.items()
+                if not (exclude_client and addr == exclude_client)
+            ]
+        disconnected_clients = []
+        for addr, client_socket in targets:
+            try:
+                self.send_message(client_socket, message)
+            except:
+                disconnected_clients.append((addr, client_socket))
+                self._log_exc()
+        if disconnected_clients:
+            with self.client_lock:
+                for addr, client_socket in disconnected_clients:
+                    client_info = self.clients.get(addr)
+                    if client_info is None or client_info.get("socket") is not client_socket:
+                        continue
                     self._debug(f"deleting the disconnected client: {addr}")
-                    self.clients[addr]["socket"].close()
+                    client_socket.close()
                     del self.clients[addr]
 
     def send_msg_to_specific_client(

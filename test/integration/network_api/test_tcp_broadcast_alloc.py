@@ -79,6 +79,34 @@ def test_broadcast_removes_disconnected_clients(server):
     dead.close.assert_called_once()
 
 
+def test_broadcast_listener_can_rebroadcast_without_holding_client_lock():
+    """A send listener may call broadcast(); the client lock must be released."""
+    server = _server()
+    client_socket = MagicMock()
+    client_socket.getpeername.return_value = ("127.0.0.1", 1)
+    server.running = True
+    server.clients = {
+        ("127.0.0.1", 1): {"socket": client_socket, "address": ("127.0.0.1", 1)}
+    }
+    lock_states = []
+
+    def listener(target, message):
+        lock_states.append(server.client_lock.locked())
+        if message == "trigger":
+            server.broadcast("reply")  # would deadlock if the lock were held
+
+    server.add_send_message_listener(listener)
+    worker = threading.Thread(target=lambda: server.broadcast("trigger"), daemon=True)
+    worker.start()
+    worker.join(2.0)
+    try:
+        assert not worker.is_alive(), "broadcast deadlocked while a listener rebroadcast"
+        assert lock_states and not any(lock_states)
+    finally:
+        if not worker.is_alive():
+            server.stop()
+
+
 # ---- send_msg_to_specific_client --------------------------------------------
 
 
