@@ -62,24 +62,6 @@ msgid ""
 "on the same socket and share its command namespace;"
 msgstr ""
 
-#: 3488995e2a8349a58393d9f2d1155b99 PyFlow.network_api.connect_tcp:18 of
-msgid ""
-"an interrupted transfer is resumed after a disconnect: both sides persist"
-" their transfer stores under the protocol's ``.Flow`` directory and the "
-"receiver asks the sender to continue the file from the bytes already on "
-"disk (``resume_transfers``; the wire lines are ``/resume_trans`` and "
-"``/forward_resume``)."
-msgstr ""
-
-#: 4cc5743bdfe54148ad38f54f10e688c9 PyFlow.network_api.connect_tcp:24 of
-msgid ""
-"The forwarding extensions use the module-level parsers "
-"`parse_forwarded_message`, `parse_forward_items_and_addrs`, "
-"`parse_forward_originator` and `forward_skip_message`; the reconnect "
-"logic uses `parse_resume_command`, `parse_forward_resume_command` and "
-"`_resume_offset_for`."
-msgstr ""
-
 #: 49796529cb7f49ee8131b257212b5420 PyFlow.network_api.connect_tcp:30 of
 msgid ""
 "Concepts live in ``docs/source/Network_APIs/TCP_Server_APIs.rst`` and "
@@ -87,10 +69,6 @@ msgid ""
 " the docstrings below."
 msgstr ""
 
-#: 39274682c4bd46489ed6fe535b50ede5
-#: PyFlow.network_api.connect_tcp.parse_resume_command:1 of
-msgid "Split a ``/resume_trans <fid> <offset>`` line."
-msgstr ""
 
 #: ../../source/api/PyFlow.network_api.connect_tcp.rst
 #: 14dcda8b059b480982e3fb03399e665b 99035a24f6e94207b84545f8c71a451e
@@ -98,35 +76,14 @@ msgstr ""
 msgid "Returns"
 msgstr ""
 
-#: 09b385f0a98640c981d8563427e44d7e
-#: PyFlow.network_api.connect_tcp.parse_resume_command:3 of
-msgid "``(fid, offset)``, or None when the line is malformed."
-msgstr ""
 
 #: ../../source/api/PyFlow.network_api.connect_tcp.rst
 #: 19eb6fca79324b0791f8ec7488a5246c
 msgid "Return type"
 msgstr ""
 
-#: 39274682c4bd46489ed6fe535b50ede5
-#: PyFlow.network_api.connect_tcp.parse_forward_resume_command:1 of
-msgid "Split a ``/forward_resume <addr> <fid> <offset>`` line."
-msgstr ""
 
-#: 09b385f0a98640c981d8563427e44d7e
-#: PyFlow.network_api.connect_tcp.parse_forward_resume_command:3 of
-msgid "``(target, fid, offset)``, or None when the line is     malformed."
-msgstr ""
 
-#: 04a0882a3a5e4099a114728b4d1c79c0
-#: PyFlow.network_api.connect_tcp.parse_forward_resume_command:5 of
-msgid "``(target, fid, offset)``, or None when the line is"
-msgstr ""
-
-#: 4ead8d8f93644adeb812150e760f7792
-#: PyFlow.network_api.connect_tcp.parse_forward_resume_command:6 of
-msgid "malformed."
-msgstr ""
 
 #: 39274682c4bd46489ed6fe535b50ede5
 #: PyFlow.network_api.connect_tcp.parse_forwarded_message:1 of
@@ -415,14 +372,6 @@ msgid ""
 "current speed, file path, peer]``, with ``peer`` the receiver's ``(ip, "
 "port)``. A forwarded transfer stores the original peer on both sides, "
 "never the relay."
-msgstr ""
-
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base:96
-#: f9528e6c490d4807b949f6730c6ece8e of
-msgid ""
-"Path under the protocol's ``.Flow`` directory where the two stores are "
-"written when a connection drops and read back on the next reconnect "
-"(``resume_transfers``)."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base:110
@@ -1600,49 +1549,10 @@ msgid ""
 "byte."
 msgstr ""
 
-#: 1634dbe84a95421a92a660f7c6fdd10e
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_transfers:1
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_transfers:1 of
-msgid "Continue the interrupted transfers of a peer that is back."
-msgstr ""
-
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_transfers:3
-#: eb46142fa4e44147ad3ad8c680d5bee0 of
-msgid ""
-"Reads the persisted stores back (`_load_transfer_progress`) and, for "
-"every download this instance was receiving from ``peer``, opens a fresh "
-"transfer listener and asks the sender to continue the file from the bytes"
-" already on disk. Restored uploads need no action here: the peer drives "
-"their resume from its own side."
-msgstr ""
-
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_transfers:9
-#: b7d54977ca494a8b9968365dffd9bd3d of
-msgid ""
-"Peer ``(ip, port)`` that just connected; None resumes every peer that is "
-"connected right now."
-msgstr ""
-
-#: 15c0118df8da4454a7fea8d529989237
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_transfers:13 of
-msgid "Number of resumed receive legs started."
-msgstr ""
-
 #: 52cb873f015542b6a94506cebfe735a1 737ed182911443bc8cfff3c4d094b9a9
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_trans:1
 #: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_trans:1 of
 msgid "Continue one interrupted transfer this instance was sending."
-msgstr ""
-
-#: 50f292ac853841c9b082eb3c3ff4d6f4 6c968a5b77b342ed891883336cfcc255
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_trans:3
-#: PyFlow.network_api.connect_tcp.TCP_Server_Base.resume_trans:3 of
-msgid ""
-"Runs when a receiver asks to continue a transfer (``/resume_trans``, see "
-"`resume_transfers` on the receiving side): the leg is re-established "
-"against the receiver's fresh listener and the source file is read from "
-"the byte offset the receiver already holds. Also the public API for "
-"resuming one transfer on demand."
 msgstr ""
 
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_trans:9
@@ -1773,14 +1683,6 @@ msgid ""
 "resumes the interrupted transfers)."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base:102
-#: c194bbee7cf14d268c330e06f94ae973 of
-msgid ""
-"Path under the protocol's ``.Flow`` directory where the two stores are "
-"written when the connection drops and read back on the next reconnect "
-"(`resume_transfers`)."
-msgstr ""
-
 #: 40f2a9e1b730422db3dd58bc2a6046e3
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:1 of
 msgid "Create the client and, unless extended, connect and start reading."
@@ -1845,16 +1747,6 @@ msgstr ""
 msgid ""
 "Buffer ceiling in MiB, kept for parity with the server class; the "
 "client's forward path does not read it today. Defaults to 2048."
-msgstr ""
-
-#: 14c4889553fb42f7b0393a4a7ab46b4a
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.__init__:72 of
-msgid ""
-"Reconnect (and resume the interrupted transfers, see `resume_transfers`) "
-"when the connection drops while `start_TCP_client` runs. The transfers "
-"that died with the connection are persisted to the protocol's ``.Flow`` "
-"directory and read back on the next connect. Defaults to False: a dropped"
-" connection ends the client."
 msgstr ""
 
 #: 0f06ff3b6db940da96ec09bee3dba526
@@ -2225,18 +2117,6 @@ msgstr ""
 msgid "Dispatch one command line pushed by the server."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.handle_server_command:3
-#: a7e781fde939475cb081204adac16ded of
-msgid ""
-"Handles the protocol's own lines: ``/crypto_mode`` (a mismatch closes the"
-" connection), ``/client_alloc_port_range``, the ``/crypto_*`` exchange "
-"lines, and the transfer lines ``/file``, ``/file_folder``, "
-"``/server_file_transfer_port``, ``/forward_upload``, ``/pause_trans``, "
-"``/start_trans``, ``/resume_trans``, ``/forward_resume`` and "
-"``/forward_error``. Any other name goes to the handlers registered for "
-"the \"server\" side via `register_command`; an unknown command is only "
-"reported on the console."
-msgstr ""
 
 #: 91942d88960c4793b5eab8c3654c1400
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_messages:1 of
@@ -2304,25 +2184,6 @@ msgid ""
 "there instead of its first byte."
 msgstr ""
 
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_transfers:3
-#: a3c59554b8de41b280df7536b307bed0 of
-msgid ""
-"Reads the persisted stores back (`_load_transfer_progress`) and drives "
-"every download that can be continued: a file the server was sending is"
-msgstr ""
-
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_transfers:6
-#: fae378e888be4821a14ed2483cfde1e0 of
-msgid ""
-"Peer ``(ip, port)`` that just connected; None resumes every peer the "
-"client can reach."
-msgstr ""
-
-#: 48061103ed9d4bcaae8a8a837b363557
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.resume_transfers:10 of
-msgid "Number of resumed transfers started or requested."
-msgstr ""
-
 #: 6dbae803a56c442588b28af664b7a0e9
 #: PyFlow.network_api.connect_tcp.TCP_Client_Base.forward_file_console:1 of
 msgid ""
@@ -2372,15 +2233,6 @@ msgid ""
 "process with status 1 when the connection cannot be established; Ctrl-C "
 "and the end of the connection both run `close`. A client that was closed "
 "while still connecting returns quietly, because that stop was asked for."
-msgstr ""
-
-#: PyFlow.network_api.connect_tcp.TCP_Client_Base.start_TCP_client:9
-#: eec663f58484446ebce460e6402d7b5f of
-msgid ""
-"With ``is_auto_reconnect`` True a dropped connection does not end the "
-"client: it reconnects (waiting for the server when ``is_wait_server`` is "
-"set) and every session carries the interrupted transfers of the previous "
-"one (`resume_transfers`). A close or ``/quit`` still stops the client."
 msgstr ""
 
 #~ msgid ""
@@ -2571,19 +2423,6 @@ msgstr ""
 #~ " and releases the port range."
 #~ msgstr ""
 
-#~ msgid ""
-#~ "Handles the protocol's own lines: "
-#~ "``/crypto_mode`` (a mismatch closes the "
-#~ "connection), ``/client_alloc_port_range``, the "
-#~ "``/crypto_*`` exchange lines, and the "
-#~ "transfer lines ``/file``, ``/file_folder``, "
-#~ "``/forward_upload``, ``/pause_trans``, ``/start_trans``,"
-#~ " ``/forward_error``. Any other name goes"
-#~ " to the handlers registered for the"
-#~ " \"server\" side via `register_command`; an"
-#~ " unknown command is only reported on"
-#~ " the console."
-#~ msgstr ""
 
 #~ msgid ""
 #~ "Stops the receive loop, releases the "

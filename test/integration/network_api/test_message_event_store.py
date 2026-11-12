@@ -210,7 +210,7 @@ def test_flush_keeps_sender_key_after_connection_closed(pair):
     assert any(e[0] == "persist me" for e in data.get(key, [])), (
         f"no entry under {key}; log keys: {list(data)}"
     )
-    server._flush_events_dict()  # nothing buffered under the socket any more
+    server._flush_record_stores()  # the outbound stores also buffer this socket
     assert server_sock not in server._socket_keys
 
 

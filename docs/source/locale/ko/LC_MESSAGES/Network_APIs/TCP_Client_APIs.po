@@ -632,12 +632,6 @@ msgid ""
 "allocation range from the line the server sends it on connect."
 msgstr "``/client_alloc_port_range``: 서버 브로드캐스트를 기반으로 클라이언트 수동 포트 할당 범위를 구성합니다."
 
-#: ../../source/Network_APIs/TCP_Client_APIs.rst:275
-#: f84404f7844d4779af2e6030e795b5d0
-msgid ""
-"``/server_file_transfer_port``: receives the file transfer port assigned "
-"by the server for an ongoing file operation."
-msgstr "``/server_file_transfer_port``: 진행 중인 파일 작업을 위해 서버에서 할당한 파일 전송 포트를 받습니다."
 
 #: ../../source/Network_APIs/TCP_Client_APIs.rst:277
 #: 4eb4fe22d5db4b56b622dfd29459c3b7
@@ -655,12 +649,6 @@ msgid ""
 "the connection."
 msgstr ""
 
-#: ../../source/Network_APIs/TCP_Client_APIs.rst:283
-#: 31a62335177b49a19f708aee2aa5b0b1
-msgid ""
-"``/forward_upload``, ``/pause_trans``, ``/start_trans``, "
-"``/forward_error``: forwarding and transfer-control messages."
-msgstr ""
 
 #: ../../source/Network_APIs/TCP_Client_APIs.rst:286
 #: b4c3c6ea61f344b8a3d3baf6b659d9c7
@@ -982,21 +970,6 @@ msgstr ""
 msgid "Encrypted transfer connections"
 msgstr ""
 
-#: ../../source/Network_APIs/TCP_Client_APIs.rst:471
-#: a47f9db0c3674a12ab6d3ab5d056a8c4
-msgid ""
-"File and folder transfers, forwarded items and the forward relay run on "
-"temporary TCP connections. The listening side stamps each leg with its "
-"mode and a fresh nonce in the port advertisement "
-"(``/server_file_transfer_port``, ``/forward_upload``); with "
-"``is_enable_encrypto`` enabled both sides then frame that connection "
-"exactly like the control channel, with the same session key material, so "
-"file contents, names and sizes no longer cross the wire in the clear. The"
-" public-key pushes themselves stay plaintext by construction: they carry "
-"the keys the session is built on. A leg whose stamp promises encryption "
-"is aborted when the session key material is not ready rather than "
-"silently downgraded."
-msgstr ""
 
 #: ../../source/Network_APIs/TCP_Client_APIs.rst:483
 #: 6740137a28b84e5dbb3f85e8d58d32b5
@@ -1815,11 +1788,6 @@ msgstr ""
 #: ../../source/Network_APIs/TCP_Client_APIs.rst:871
 #: e340c2c825324df7b3aee14da0f9d919
 msgid "`pause_trans_remote` / `start_trans_remote`"
-msgstr ""
-
-#: ../../source/Network_APIs/TCP_Client_APIs.rst:872
-#: 0f3b14e3c193426191323ee76959278e
-msgid "`resume_transfers` / `resume_trans`"
 msgstr ""
 
 #: ../../source/Network_APIs/TCP_Client_APIs.rst:874

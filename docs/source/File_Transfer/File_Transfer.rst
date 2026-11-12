@@ -69,13 +69,73 @@ attributes used by the transfer loop are:
   occurs, causing the
   transfer socket to be closed.
 
+Transfer signs are newline-terminated protocol lines, including the relay's
+upstream final ACK. A socket read is not a message boundary: both senders
+consume complete signs and buffer an unterminated tail for the next read.
+Thus a header sign and final ACK sharing a read, or a sign split across reads,
+have the same meaning as separately received lines. EOF does not discard an
+already parsed ACK, and an unterminated sign is not a completion ACK. This
+applies to plaintext and decrypted transfer bytes without changing ACK timing,
+timeouts or the receiver's close behavior.
+
+Each direct sender caps the combined **unscanned wire-byte quota** (queued
+line lengths before stripping/decoding, plus the partial tail) at 64 KiB.
+Every complete line is checked on receipt. When the quota reaches the limit,
+all complete queued lines are scanned, recognized start/ACK/error results are
+latched under the queue lock, and the scanned prefix is deleted as one batch;
+parsing then continues. Reaching the aggregate quota is not itself a transfer
+error, even when one read contains many batches of short lines. If adding one
+complete line would cross the limit, the current complete batch is scanned
+first. A single line, including its terminating newline, must fit within 64
+KiB; an unterminated line that reaches the limit is rejected because its
+boundary cannot yet be recovered. Unknown and header lines leave no permanent
+history. The sender scans pending records before deciding that a closed data
+connection failed. File payload bytes do not use this parser and are not
+limited to 64 KiB. Python object overhead, socket receive data and encrypted-
+frame buffers are separate from this wire-byte quota.
+
+Relay target start/ACK waits retain their existing byte-marker matching and
+deadline. They scan at most 64 KiB per window, then retain only the suffix
+needed to match a marker split across reads: 36 bytes for the default start
+marker, 24 for the default final ACK. An error marker still takes precedence
+over a target marker in the same read; scanning windows does not restart the
+timeout. The upstream final ACK remains a newline-terminated protocol line.
+
 The remaining keys of the table cover the other three
-direction/phase combinations. Protocol control lines that are
-not part of this table (``/server_file_transfer_port``,
-``/client_alloc_port_range``, ``/pause_trans``,
-``/start_trans``, ``/forward_item``, ``/forward_upload``,
-``/forward_error``, ``/crypto_*``) are hardcoded in
-``connect_tcp.py``.
+direction/phase combinations. Protocol control lines not
+listed here (``/server_file_transfer_port <port> <fid> <stamp>``,
+``/client_alloc_port_range``, ``/pause_trans``, ``/start_trans``,
+``/forward_item``, FID-scoped ``/forward_error`` and ``/crypto_*``)
+are hardcoded in ``connect_tcp.py``.
+
+Temporary Listener Correlation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+All ordinary file/folder, public-key, relay-target and relay-upload listeners
+use one handshake. The sender registers the actual control socket and sender-owned
+FID before sending the command. ``/file`` and ``/file_folder`` retain their
+fields and trailing FID; public-key requests use ``/crypto_pub_key <fid>``.
+The listener replies with exactly four tokens:
+``/server_file_transfer_port <port> <fid> <stamp>``.
+
+Dispatch matches the actual control socket and FID, not an address alone. Each
+relay target has an independent registration. The relay source allocates its
+upstream FID and sends ``/forward_item <kind> fid=<upstream_fid> [resume=<offset>]
+<fields>``; the Server preserves it and allocates a separate child FID per target.
+Every retry includes ``resume=<offset>``, including ``resume=0``, and reuses the
+route and child IDs. An upstream collision with an existing route, receive
+record or target-scoped live transfer/pause identity is rejected without
+replacing existing state. Forward failures use ``/forward_error <fid> <reason>``.
+
+Each negotiation has one terminal control reply, either a port and stamp or an
+error. Late, duplicate and mismatched replies are discarded, not cached. If a
+sent request times out or is cancelled without a terminal reply, its FID remains
+unresolved and cannot be retried on that control session; other FIDs and commands
+continue. Natural disconnect clears that session's waiters, unresolved marks,
+pending listeners and data sockets; reconnect can resume using the same stable
+FID. Data or ACK failure does not disconnect a healthy control connection. There
+is no forwarding-upload FIFO or shared error slot. Data framing, public-key
+plaintext bytes, ACKs and five-item progress rows are unchanged.
 
 ### Metadata Exchange
 
@@ -160,23 +220,15 @@ Its logic is as follows:
 
 1. Allocate a unique client ID using the lock
    ``file_client_id_lock``.
-2. Extend the original command string with the client
-   ID (e.g.,
-   ``/file mydoc.txt`` becomes ``/file mydoc.txt 42``)
-   and send it to the server
-   over the main control connection using
+2. Register the actual server control socket and expected FID, then send the
+   command with its trailing ID (for example, ``/file mydoc.txt 42``) using
    ``send_message()``.
 3. Obtain a local port for the outgoing file transfer
    socket by calling
    ``palloc()``.
-4. Wait (up to 20 seconds) for the server to reply with
-   a port number. The
-   server's reply (``/server_file_transfer_port <port>
-   <client_id>``) is
-   received by the main connection and stored in
-   ``file_server_port_list``.
-   When a matching entry is found, the port is
-   extracted.
+4. Wait (up to 20 seconds) for
+   ``/server_file_transfer_port <port> <fid> <stamp>``. Only the matching
+   control socket and FID can deliver the port and stamp; there is no port cache.
 5. Call the low-level send function
    ``file_transfer_mode(filename, server_host,
    server_port, client_port)``.
@@ -184,11 +236,10 @@ Its logic is as follows:
 For folder transfers, the worker function
 ``folder_file_transfer_client_recv_client_start(message)``
 walks the
-directory tree on the console thread. It first sends a
-``/file_folder <relative_path>`` command for the top-level folder itself
-to create the
-corresponding directory on the server, then sends the same command for
-every subdirectory it walks into. For each file, it starts a daemon
+directory tree on the console thread. Only directories that hold a file,
+directly or below them, are announced to the receiver with a
+``/file_folder <relative_path>`` command; a directory with no file in its
+subtree is never created on the far side. For each file, it starts a daemon
 thread that holds
 ``file_semaphore`` around the actual transfer, with a
 command of the form
@@ -203,8 +254,8 @@ around its own transfer, so the concurrent transfers are capped by
 
 ### Server-Side Handler (Receiving)
 
-When the server receives an extended command like ``/file
-mydoc.txt 42`` on the
+When the server receives an extended command like
+``/file mydoc.txt 42`` on the
 main control connection, ``handle_command`` detects it and
 calls:
 
@@ -224,7 +275,7 @@ The server then:
 4. This low-level receive function sets up a listening
    socket on the allocated
    port, sends the port number back to the client (as
-   ``/server_file_transfer_port <port> <client_id>``),
+   ``/server_file_transfer_port <port> <fid> <stamp>``),
    accepts the client's
    connection, and performs the protocol steps
    described in
@@ -271,16 +322,11 @@ performs the following steps:
    ``(127.0.0.1,54321)``) using ``ast.literal_eval()``.
    Obtain the client's
    socket from ``self.clients``.
-2. Allocate a unique client ID and extend the command
-   with it, then send the
-   extended command to the client over the main
-   connection.
+2. Allocate a unique FID, register it against the actual client control socket,
+   then send the extended command with the trailing FID.
 3. Allocate a local port with ``palloc()``.
-4. Wait for the client to reply with its own port
-   number (via
-   ``/server_file_transfer_port``), which is stored in
-   ``file_server_port_list``
-   by the main connection's message handler.
+4. Wait for ``/server_file_transfer_port <port> <fid> <stamp>``. The message
+   handler matches the actual control socket and FID without caching unmatched replies.
 5. Call ``file_transfer_mode(filename, client_host,
    client_port, local_port)``
    to send the file.
@@ -294,7 +340,7 @@ This starts a receiver thread analogous to the server's
 receiver for
 client-initiated transfers: it allocates a port, replies
 with
-``/server_file_transfer_port``, and calls
+``/server_file_transfer_port <port> <fid> <stamp>``, and calls
 ``file_transfer_mode_recv`` to receive
 and save the file.
 
@@ -324,7 +370,11 @@ or
 creates the
 corresponding directory under the base receive directory
 (``received_files/`` for the server, the same directory
-for the client). The
+for the client). A command with no client id carries no data: the directory
+is created on the control line itself and no transfer leg is opened. The
+optional destination directory (``/file_folder <relative_path> <dest>``)
+is resolved by the same ``_receive_dir_for`` used by the file legs, so a
+created directory and the files landing under it always agree. The
 relative path uses forward slashes to be
 platform-independent.
 
@@ -644,10 +694,13 @@ Both classes record every running file transfer:
 - ``file_recv_progress`` — the files being received (downloads);
 - ``file_upload_progress`` — the files being sent (uploads).
 
-The keys are the transfers' fids: the transfer id the sender stamps on the
-transfer command (``/file <path> <id>``), which also identifies the relay leg
-of a forwarded file. The protocol-internal public-key push is not tracked.
-Each value is a five-item list:
+Downloads use integer fid keys. Uploads use ``(receiver, fid)`` keys, where
+receiver is the actual next-hop control endpoint, not the logical target of a
+forward. Client uploads always use ``((host, port), fid)``; server uploads use
+the receiving client's control address. Equal numeric fids from different
+receivers do not share progress, pauses, sockets or port announcements.
+The protocol-internal public-key push is not tracked. Each value remains a
+five-item list:
 
 - ``[0]``: bytes transferred so far;
 - ``[1]``: total size of the file, in bytes;
@@ -660,12 +713,29 @@ Each value is a five-item list:
   a download's entry, the receiver in an upload's. A forwarded transfer
   stores the original peer on both sides, never the relaying server.
 
-An entry appears when a transfer starts and is removed when it ends, so the
-stores hold exactly the transfers that are in flight at that moment (iterate
-over a copy while transfers are running). With
-``is_enable_file_transfer_progress_bar`` set to ``False`` no entry is ever
-recorded — and, since the stores are the state a reconnect resumes from, no
-transfer can be resumed either.
+An entry appears when a transfer starts. Successful direct transfers remove
+their entry; interrupted transfers and forwarded uploads awaiting final target
+completion retain it (iterate over a copy while transfers are running). A
+forwarded upload can therefore show all bytes sent while still pending. With
+``is_enable_file_transfer_progress_bar`` set to ``False`` no progress entry is
+recorded, and automatic partial-file recovery remains unsupported.
+
+Direct senders return ``True`` only after the receiver's final data ACK.
+An error sign at startup returns ``False`` before sending file metadata;
+an error sign after the body also returns ``False``, even when every byte
+has been sent. A tracked upload with a peer retains and persists its
+``(receiver, fid)`` row after failure. Startup rejection creates no new row
+and leaves an existing interrupted row intact. The server and client share
+this rule for files, folder items and resumed legs. ACK wait limits and the
+uncertainty of an ACK lost after a successful TCP write are unchanged.
+
+Both receivers also retain and persist a tracked receive row with a peer
+when writing the final ACK returns ``False`` or raises, even if the complete
+file is already on disk. The original fid, full path, source and total remain
+available for EOF confirmation; a failed confirmation keeps the row again,
+and a successful ACK write removes it. Local receive notifications, events
+and public-key TOFU registration still precede that ACK. Key pushes remain
+untracked, and disabling progress recording does not create recovery rows.
 
 ``is_enable_real_time_network_speed`` (``True`` by default) measures the
 protocol's current traffic — the control layer and every temporary
@@ -679,19 +749,100 @@ The web tool (``transfer_web``) reads these stores: both backends serve
 frontend renders the live speed readout in the topbar and one progress bar per
 running transfer.
 
+Local progress inspection
+-------------------------
+
+Both ``TCP_Server_Base`` and ``TCP_Client_Base`` expose the same read-only
+method:
+
+.. code-block:: python
+
+    get_transfer_progress(*, include_persisted=True) -> dict
+
+The result contains ``progress_enabled`` and ``speed_enabled`` flags, a
+``memory`` section, and a separate ``persisted`` section. Memory rows include
+the integer ``fid``, the complete upload ``receiver`` scope when applicable,
+the logical ``peer``, path/name, byte counts, speed, local ``active`` and
+``socket_registered`` observations, and upload ``paused`` state. Uploads with
+the same numeric fid but different receivers remain separate. Server relay
+rows show ``originator``, all accepted ``targets`` and ``completed`` targets.
+Clients expose forwarded uploads through their existing upload rows; their
+``relays`` section is empty, with no second recovery-metadata table.
+
+By default, ``persisted`` reads the instance's existing progress JSON without
+loading it into memory or changing it. Its ``status`` is ``ok``, ``missing``,
+``error`` or ``not_requested``; disk rows set runtime-only fields to ``None``.
+``include_persisted=False`` skips file I/O. The method never starts a
+connection, resumes a transfer, writes state, reads file contents or infers a
+zombie/completion status. A local interactive console can print the same
+snapshot with ``/transfers``; unsupported arguments print usage locally.
+
+The server and client console commands are local-only. The existing Web
+``/api/transfers`` response remains the smaller live-progress contract and is
+not replaced by this diagnostic snapshot.
+
+Explicit local state deletion
+------------------------------
+
+Both classes expose ``delete_config(config_name=None, *, is_list_config=False)``.
+List mode takes precedence over the name and returns a sorted ``list[str]``
+of existing regular files in this instance's allowlist, without changing state.
+It is allowed while running. With the default ``False``, pass one basename:
+deletion returns ``True`` or ``False`` when the allowed file is already absent.
+
+The allowlist contains the instance's ``file_trans_progress_file`` and its four
+message/event logs. Default progress names are
+``server_file_trans_progress.json`` and ``client_file_trans_progress.json``;
+log names are ``messages_log.json``, ``events_log.json``,
+``sent_messages_log.json`` and ``sent_events_log.json``. Redirected path
+attributes retain their configured locations; use their current basenames.
+Paths, globs, ambiguous names, directories and symlinks are refused. Keys,
+TOFU registries, protocol tables, port locks, launcher/Web settings and file
+contents are outside the allowlist. Invalid names raise ``ValueError``;
+non-string deletion names raise ``TypeError``; filesystem errors propagate.
+
+Deletion requires an unstarted instance or a successful explicit shutdown,
+with no startup/shutdown operation, active transfer or relay remaining.
+An unexpected disconnect is not shutdown. Pending log buffers must be flushed
+before deleting their file. Otherwise ``RuntimeError`` is raised; the API does
+not stop workers or flush files implicitly.
+
+.. code-block:: python
+
+    names = server.delete_config(is_list_config=True)
+    server.stop()  # wait for startup/control/transfer workers to finish too
+    server.delete_config("server_file_trans_progress.json")
+    client.close()
+    client.delete_config("client_file_trans_progress.json")
+
+Deleting progress abandons the entire upload/download/relay snapshot, including
+any legitimate interrupted tasks. Missing progress is also an explicit discard.
+The old object cannot reload, republish or restart; use a new instance for the
+next run. Source and received files remain untouched. Logs have no permanent
+disable flag. Default shutdown without deletion still persists normally.
+Stop every writer sharing the selected path first: no cross-process ownership
+or isolation is provided. This is a local Python API, not a console/HTTP command.
+
+
 .. _transfer-pause-and-reconnect:
 
 Pausing, Reconnecting and Resuming Transfers
 --------------------------------------------
 
-An outbound transfer can be held and released at any time with the
-``pause_trans(fid)`` and ``start_trans(fid)`` methods (both classes), or from
-the peer with the ``/pause_trans <fid>`` and ``/start_trans <fid>`` lines:
-``pause_trans_remote(peer, fid)``/``start_trans_remote(peer, fid)`` send them.
+An outbound transfer can be held and released with the server methods
+``pause_trans(fid, peer)`` / ``start_trans(fid, peer)``; the receiving peer is
+required, including when arming a transfer that has not started. The client
+methods default to its connected server and reject a different explicit peer.
+Remote ``/pause_trans <fid>`` / ``/start_trans <fid>`` lines use their requesting
+control peer as the scope; ``pause_trans_remote(peer, fid)`` /
+``start_trans_remote(peer, fid)`` send them. Their wire format is unchanged.
 The leg stops before its next chunk and stays open; a leg that is paused
 keeps its socket, so nothing is torn down. Every outbound transfer honours
 its own fid — a plain upload as much as the upload leg of a forwarded file —
 so the flow control the server uses on a relay works on any transfer.
+A paused leg that belongs to a session swept at reconnect is released by
+that sweep: its pause switch is cleared, its socket is closed, and the leg
+ends, so a resume request queued behind its per-fid send lock can run.
 
 The temporary connections of a transfer are resumed after a disconnect:
 
@@ -700,22 +851,98 @@ The temporary connections of a transfer are resumed after a disconnect:
   ``.Flow/client_file_trans_progress.json`` (the ``file_trans_progress_file``
   attribute) — every upload, every download and, on the server, the relay
   records a disconnected forward is re-driven from;
+- upload entries use compact JSON strings containing ``[receiver, fid]`` as
+  keys, while download keys remain decimal fid strings. Values remain five
+  items. A snapshot with unsupported bare upload-id keys is logged and left
+  untouched, including during shutdown; archive it before enabling persistence
+  of new transfers. Automatic migration is not provided;
 - an interrupted transfer keeps its progress entry and its partial file
   instead of dropping them, so the file on disk is exactly the state to
   continue from;
-- after a reconnect the receiver drives the resume (`resume_transfers`): it
-  opens a fresh transfer listener, announces it and sends
-  ``/resume_trans <fid> <offset>`` with the byte offset its partial file
-  holds. The sender re-establishes the leg, reads its source from that offset
-  and only the remainder of the file travels. A forwarded transfer is asked
-  for through the server, which routes ``/forward_resume`` to the originating
-  client so it re-forwards just the missing part.
+- after a reconnect each receiver sends ``/resume_trans <fid> <offset>
+  <origin> <target>`` for its interrupted downloads (``_request_resumes``).
+  Both addresses are shell-quoted tuple literals. ``origin`` is the original
+  sender, ``target`` the requesting receiver, and ``offset`` the bytes on disk.
+  The server requires target to equal the actual control requester. A server
+  origin selects its scoped local upload; otherwise the downstream fid and
+  origin must match its authoritative route before translation to the upstream
+  fid and forwarding of the same command to the source. A client sends only
+  when origin matches its current control-connection identity.
+  Each side writes the concrete endpoint of that control connection
+  (``getsockname()`` locally, ``getpeername()`` for the peer) into
+  ``origin``/``target``; the configured ``(host, port)`` is accepted as an alias
+  for the same connected peer. A wildcard bind (``0.0.0.0``) or a host alias
+  (``localhost`` vs ``127.0.0.1``) therefore does not change the identity. A
+  direct row persisted before this rule, which recorded the configured server
+  address, is migrated in memory when read; the progress file format is
+  unchanged. Addresses behind NAT and a changed ``client_port`` remain
+  unsupported identities: the former is not comparable from the two sides, the
+  latter cannot be matched to the stored peer after reconnecting.
+  Local uploads answer with ``/file <name> <fid>``. Forward replay sends
+  ``/forward_item <kind> fid=<upstream fid> resume=<offset>`` with its fields.
+  New transfers omit ``resume=``; retries include ``resume=<offset>``, even at
+  zero. The source owns the upstream FID and the Server allocates one child FID
+  per target. Every listener replies through the same four-token
+  ``/server_file_transfer_port <port> <fid> <stamp>`` line; the server validates
+  the sender and unresolved target and reuses the upstream and child FIDs. Stale
+  or mismatched responses cannot satisfy another request. The receiver matches
+  fid, original sender, basename
+  and total size, then writes its retained full path, including nested folder
+  items. A size mismatch preserves the partial file. No new-ID/path alias or old
+  resume command is used.
 
-The server resumes a peer's transfers when it reconnects, and a client with
-``is_auto_reconnect=True`` reconnects on its own and resumes every transfer it
-can reach; `resume_transfers` is public, so an application can also drive the
-resume itself. Legs the previous session left behind are closed before the
-resume runs, so two legs never write the same transfer.
+On the server, each upstream fid has one authoritative route containing its
+original sender, full accepted ``receiver -> downstream fid`` mapping, and
+``completed`` set. Only a target's final data ACK adds it to that set. The
+derived ``(receiver, downstream fid) -> upstream fid`` index contains unresolved
+targets only. No file paths, progress values or directory metadata are copied;
+live relay buffers and pause conditions remain separate runtime state.
+
+The server's ``relays`` snapshot writes one row per upstream fid, containing
+``originator``, ``targets: [[receiver, fid], ...]`` and
+``completed: [receiver, ...]``. Loading preserves completion and rebuilds only
+unresolved indexes without replacing live owners. A canonical route snapshot
+without ``completed`` means no target has acknowledged yet. Unsupported older
+server relay schemas or invalid completion sets are rejected and preserved on
+write and shutdown; archive them before persisting new routes. Client snapshots
+keep ``relays`` empty; nonempty older client relay metadata is rejected and its
+file preserved, including on shutdown. Five-item upload/download values remain
+unchanged. The source recovers a forwarded file from its upload path alone;
+directory/destination metadata is not duplicated because the target retains
+its full receive path. Per-upload locks and in-flight target sets are transient
+and released after use, not persisted.
+
+Targets accepted after reachability filtering remain in the mapping even if
+their listener or start handshake fails. A successful target loses its reverse
+index immediately, but the accepted mapping remains until the current input
+stream is fully read and every accepted target has acknowledged. The server
+then forwards the existing final data-ACK marker upstream using the normal
+per-hop send path (encrypted when enabled). It drops the route only after that
+ACK write succeeds; an unsuccessful write leaves the completed route available
+for recovery. The source's original final-ACK wait is 30 seconds plus 10 seconds
+per 100 MiB. A long pause or slow downstream delivery can outlast that wait;
+timeout or a lost ACK conservatively retains the source upload progress,
+even if the server completed delivery. No separate receipt or retry
+protocol is used. If a target cannot send its final ACK, its receive entry
+survives even when the disk file is complete; an EOF replay with the same fid
+can confirm it without retransmitting the body. Retries for different targets
+of one upstream fid are serialized at the source, concurrent duplicate requests
+for the same target are coalesced, and completed targets are not replayed.
+Ordinary resumes share the same in-flight coalescing. Offline-source requests
+are kept on the server per upstream fid/target, retaining the latest offset.
+Reconnect sends through the same secure control path; a failed send keeps the
+request, and completed or missing routes are never replayed.
+Fids no longer encode a plain/relay kind: the reserved low bit is always zero,
+and diagnostics use ``e<epoch>.<counter>``. Ordinary senders own their FIDs;
+the relay source owns the upstream FID and the Server allocates one child FID
+per target. Resumes reuse the existing upstream and child FIDs.
+Public-key pushes remain untracked and TOFU verification still precedes their
+ACK.
+
+The server requests a peer's interrupted downloads when that peer reconnects,
+and a client with ``is_auto_reconnect=True`` does the same after every connect,
+so no separate call is needed. Legs the previous session left behind are closed
+before the resume runs, so two legs never write the same transfer.
 
 .. _related-apis:
 
@@ -802,10 +1029,10 @@ file to disk.
         control_socket=None, crypto=None, fid=None, peer=None, resume_offset=0)
 
 Low-level send function that connects to the receiver and transmits the file.
-``fid`` keys the leg in ``file_upload_progress`` and is what
-``/pause_trans`` / ``/start_trans`` addresses; ``peer`` is the transfer's
-original receiver and ``resume_offset`` continues an interrupted file from
-the byte the receiver already holds.
+``(receiver, fid)`` keys the upload, with receiver taken from ``peer`` or,
+for an untracked logical peer, the control endpoint (transfer listener when
+no control socket exists). Pause/start use this same receiver scope;
+``resume_offset`` continues from the byte the receiver already holds.
 
 ### Client-Side File Transfer APIs
 
@@ -895,7 +1122,7 @@ reference.
 - ``file_folder_transfer_server_recv_server_start_thread`` (folder receiving)
 - ``pause_trans`` / ``start_trans`` (hold and release an outbound transfer)
 - ``pause_trans_remote`` / ``start_trans_remote`` (ask a client to do it)
-- ``resume_transfers`` / ``resume_trans`` (continue interrupted transfers)
+- ``resume_trans`` (continue one interrupted transfer, sender side)
 
 (The low-level helpers
 ``file_transfer_server_recv_server_start``,
@@ -915,7 +1142,7 @@ public but are documented for completeness.)
 - ``file_folder_transfer_client_recv_server_start_thread``
 - ``pause_trans`` / ``start_trans`` (hold and release an outbound transfer)
 - ``pause_trans_remote`` / ``start_trans_remote`` (ask the server to do it)
-- ``resume_transfers`` / ``resume_trans`` (continue interrupted transfers)
+- ``resume_trans`` (continue one interrupted transfer, sender side)
 
 (The low-level helpers are documented but not part of the
 public API.)

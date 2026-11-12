@@ -1,6 +1,7 @@
 """Shared helpers for the integration tests."""
 
 import collections
+import errno
 import socket
 import time
 
@@ -42,6 +43,67 @@ def free_port():
     raise RuntimeError("the OS kept handing out recently used ports")
 
 
+def inject_wsaeacces_once(monkeypatch, *, operation, address):
+    """Inject one Windows access-denied socket error on a matching operation."""
+    state = {"raised": False, "calls": []}
+    real_socket = socket.socket
+
+    def access_denied():
+        error = OSError(errno.EACCES, "simulated WSAEACCES")
+        error.winerror = 10013
+        return error
+
+    class WsaeaccesSocket(real_socket):
+        def bind(self, local_address):
+            state["calls"].append(("bind", local_address))
+            if operation == "bind" and local_address == address and not state["raised"]:
+                state["raised"] = True
+                raise access_denied()
+            return super().bind(local_address)
+
+        def connect(self, remote_address):
+            state["calls"].append(("connect", remote_address))
+            if operation == "connect" and remote_address == address and not state["raised"]:
+                state["raised"] = True
+                raise access_denied()
+            return super().connect(remote_address)
+
+    monkeypatch.setattr(socket, "socket", WsaeaccesSocket)
+    return state
+
+
+def read_text_or_none(path):
+    """Return a file's text, or None while it is missing or unreadable.
+
+    A receiving leg opens its target as soon as the transfer starts (truncated
+    for a fresh transfer), so ``exists()`` turning true says nothing about the
+    bytes having arrived. Polling the content must tolerate the moment between
+    the open and the first chunk.
+    """
+    try:
+        return path.read_text()
+    except OSError:
+        return None
+
+
+def wait_for_text(path, expected, timeout=10.0):
+    """Poll a file until its text equals ``expected``.
+
+    Waiting for the content, not for ``exists()``, is what makes a receive
+    assertion race-free: the receiver creates (and truncates) the target when
+    the leg starts, before any byte is written.
+
+    Args:
+        path (Path): File the transfer writes.
+        expected (str): Text the finished file must hold.
+        timeout (float): Seconds to wait.
+
+    Returns:
+        bool: True once the content matched.
+    """
+    return wait_until(lambda: read_text_or_none(path) == expected, timeout=timeout)
+
+
 def isolate_instance_files(instance, tmp_path, name):
     """Point one instance's logs and transfer progress file at a temp directory.
 
@@ -53,3 +115,32 @@ def isolate_instance_files(instance, tmp_path, name):
     instance.messages_log_file = str(tmp_path / f"{name}_messages_log.json")
     instance.events_log_file = str(tmp_path / f"{name}_events_log.json")
     instance.file_trans_progress_file = str(tmp_path / f"{name}_file_trans_progress.json")
+
+
+def request_transfer_listener(sender, receiver, command, *, timeout=10.0):
+    """Request a real listener over the control channel before low-level I/O.
+
+    ``command`` contains its existing trailing FID; this helper registers that
+    socket/FID pair before sending the unchanged command.
+    """
+    from PyFlow.network_api.connect_tcp import (
+        TCP_Server_Base,
+        _send_transfer_request,
+        _transfer_handshake,
+    )
+
+    if isinstance(sender, TCP_Server_Base):
+        peer = receiver.client_socket.getsockname()
+        assert wait_until(lambda: peer in sender.clients), "receiver not registered"
+        control = sender.clients[peer]["socket"]
+    else:
+        control = sender.client_socket
+    command = command.strip()
+    fid = int(command.rsplit(" ", 1)[1])
+    with _transfer_handshake(sender, control, fid) as record:
+        sent = _send_transfer_request(sender, record, command)
+        assert sent, ("listener request was not sent", command)
+        result = sender._transfer_handshakes.wait(record, timeout)
+    assert result is not None and result[0] == "port", ("listener did not reply", result)
+    assert result[1] == fid, ("listener changed the FID", result)
+    return result[2], result[3]

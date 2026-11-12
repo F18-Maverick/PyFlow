@@ -2,14 +2,21 @@
 
 import os
 import threading
-import time
 import shlex
 from pathlib import Path
 
 import pytest
 
 
-from helpers import free_port, isolate_instance_files, server_ready, wait_until
+from helpers import (
+    free_port,
+    inject_wsaeacces_once,
+    isolate_instance_files,
+    request_transfer_listener,
+    server_ready,
+    wait_for_text,
+    wait_until,
+)
 
 from PyFlow.network_api.connect_tcp import (
     TCP_Client_Base,
@@ -61,31 +68,13 @@ def pair(tmp_path):
     server.stop()
 
 
-def _wait_port(client, timeout=5.0):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        with client.file_transfer_server_port_lock:
-            ports = list(client.file_server_port_list)
-        if ports:
-            return ports[0][0]
-        time.sleep(0.05)
-    return None
-
-
 def test_client_receives_file_from_server(pair, tmp_path):
     server, client, recv_dir = pair
     src = tmp_path / "payload.bin"
     payload = os.urandom(2048)
     src.write_bytes(payload)
 
-    # the client side of the transfer: it believes the server sent a
-    # "/file" command, so it opens a temporary server and advertises the
-    # port to the server over the control channel
-    client.file_transfer_client_recv_server_start_thread(
-        "cid", client.client_socket, f"/file {src} 0"
-    )
-    server_port = _wait_port(server)
-    assert server_port is not None
+    server_port, _stamp = request_transfer_listener(server, client, f"/file {src} 0")
 
     server.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
 
@@ -100,12 +89,7 @@ def test_client_receives_large_file_from_server(pair, tmp_path):
     src = tmp_path / "big.bin"
     payload = os.urandom(300 * 1024)  # ~300 KB, many chunks
     src.write_bytes(payload)
-
-    client.file_transfer_client_recv_server_start_thread(
-        "cid", client.client_socket, f"/file {src} 1"
-    )
-    server_port = _wait_port(server)
-    assert server_port is not None
+    server_port, _stamp = request_transfer_listener(server, client, f"/file {src} 1")
 
     server.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
 
@@ -124,12 +108,7 @@ def test_server_receives_file_from_client(pair, tmp_path):
     payload = os.urandom(8192)
     src.write_bytes(payload)
 
-    # the server believes the client sent a "/file" command: it opens a
-    # temporary server and advertises the port back to the client
-    server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-    server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
-    server_port = _wait_port(client)
-    assert server_port is not None
+    server_port, _stamp = request_transfer_listener(client, server, f"/file {src} 0")
 
     client.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
 
@@ -138,6 +117,92 @@ def test_server_receives_file_from_client(pair, tmp_path):
     )
     files = list(server_recv.iterdir())
     assert files[0].read_bytes() == payload
+
+
+@pytest.mark.parametrize(
+    "sender_role", ["server", "client"], ids=["server-sender", "client-sender"]
+)
+@pytest.mark.parametrize("operation", ["bind", "connect"])
+def test_sender_falls_back_when_fixed_source_port_returns_wsaeacces(
+    pair, tmp_path, monkeypatch, sender_role, operation
+):
+    server, client, client_recv = pair
+    source = tmp_path / "wsaeacces.bin"
+    payload = os.urandom(8192)
+    source.write_bytes(payload)
+    fixed_port = free_port()
+
+    if sender_role == "server":
+        sender, receiver = server, client
+        destination = client_recv / source.name
+    else:
+        sender, receiver = client, server
+        destination_dir = tmp_path / "server_recv"
+        destination_dir.mkdir()
+        server.file_transfer_dir = str(destination_dir)
+        destination = destination_dir / source.name
+
+    transfer_port, _stamp = request_transfer_listener(
+        sender, receiver, f"/file {shlex.quote(str(source))} 0"
+    )
+    address = (
+        ("127.0.0.1", fixed_port)
+        if operation == "bind"
+        else ("127.0.0.1", transfer_port)
+    )
+    injected = inject_wsaeacces_once(
+        monkeypatch, operation=operation, address=address
+    )
+    assert sender.file_transfer_mode(
+        str(source), "127.0.0.1", transfer_port, fixed_port
+    ) is True
+    assert injected["raised"]
+    binds = [call[1] for call in injected["calls"] if call[0] == "bind"]
+    assert binds[:2] == [("127.0.0.1", fixed_port), ("127.0.0.1", 0)]
+    assert wait_until(destination.exists, timeout=10), "the receiver did not create the file"
+    assert destination.read_bytes() == payload
+
+
+@pytest.mark.parametrize(
+    "receiver_role", ["server", "client"], ids=["server-listener", "client-listener"]
+)
+def test_receiver_listener_falls_back_when_fixed_port_returns_wsaeacces(
+    pair, tmp_path, monkeypatch, receiver_role
+):
+    server, client, client_recv = pair
+    source = tmp_path / "listener-wsaeacces.bin"
+    payload = os.urandom(4096)
+    source.write_bytes(payload)
+    fixed_port = free_port()
+
+    if receiver_role == "server":
+        sender, receiver = client, server
+        destination_dir = tmp_path / "server_recv"
+        destination_dir.mkdir()
+        server.file_transfer_dir = str(destination_dir)
+        listener_address = (server.host, fixed_port)
+    else:
+        sender, receiver = server, client
+        destination_dir = client_recv
+        listener_address = (client.client_host, fixed_port)
+    monkeypatch.setattr(receiver, "palloc", lambda: fixed_port)
+    injected = inject_wsaeacces_once(
+        monkeypatch, operation="bind", address=listener_address
+    )
+
+    transfer_port, _stamp = request_transfer_listener(
+        sender, receiver, f"/file {shlex.quote(str(source))} 0"
+    )
+    assert injected["raised"]
+    assert transfer_port != fixed_port
+    binds = [call[1] for call in injected["calls"] if call[0] == "bind"]
+    assert binds[:2] == [listener_address, (listener_address[0], 0)]
+    assert sender.file_transfer_mode(
+        str(source), "127.0.0.1", transfer_port, 0
+    ) is True
+    destination = destination_dir / source.name
+    assert wait_until(destination.exists, timeout=10), "the receiver did not create the file"
+    assert destination.read_bytes() == payload
 
 
 def test_transfer_thread_survives_a_stop_before_the_start_sign(pair, tmp_path):
@@ -167,22 +232,19 @@ def test_transfer_thread_survives_a_stop_before_the_start_sign(pair, tmp_path):
     stopped_first = threading.Event()
     transfer_thread = []
 
-    def stop_then_send(client_socket, message):
+    def stop_then_send(client_socket, message, is_send_raw=False):
         if message is server.server_start_file_transfer_sign and not stopped_first.is_set():
             # the race under test: the stop lands after the accept and before
             # the transfer thread's start sign
             transfer_thread.append(threading.current_thread())
             stopped_first.set()
             server.stop()
-        return real_send(client_socket, message)
+        return real_send(client_socket, message, is_send_raw=is_send_raw)
 
     server.send_message = stop_then_send
     threading.excepthook = hook
     try:
-        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-        server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
-        server_port = _wait_port(client)
-        assert server_port is not None
+        server_port, _stamp = request_transfer_listener(client, server, f"/file {src} 0")
         client.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
         assert wait_until(stopped_first.is_set, timeout=10), (
             "the server-side transfer never reached its start sign"
@@ -195,7 +257,6 @@ def test_transfer_thread_survives_a_stop_before_the_start_sign(pair, tmp_path):
         threading.excepthook = previous_hook
         client.close()
         server.stop()
-
     thread = transfer_thread[0]
     assert not thread.is_alive(), "the transfer thread did not end"
     failures = [args for args in escaped if args.thread is thread]
@@ -241,12 +302,7 @@ def test_custom_file_transfer_chunk_len_is_honored_in_both_directions(tmp_path):
         payload = os.urandom(64 * 1024 + 123)  # 64 chunks of 1 KiB, plus a tail
         src.write_bytes(payload)
 
-        # server -> client (server sends, client writes to disk)
-        client.file_transfer_client_recv_server_start_thread(
-            "cid", client.client_socket, f"/file {src} 0"
-        )
-        server_port = _wait_port(server)
-        assert server_port is not None
+        server_port, _stamp = request_transfer_listener(server, client, f"/file {src} 0")
         server.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
         assert wait_until(lambda: any(recv_dir.iterdir()), timeout=15), (
             "client did not receive the file"
@@ -257,10 +313,7 @@ def test_custom_file_transfer_chunk_len_is_honored_in_both_directions(tmp_path):
         server_recv = tmp_path / "server_recv"
         server_recv.mkdir()
         server.file_transfer_dir = str(server_recv)
-        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-        server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
-        client_port = _wait_port(client)
-        assert client_port is not None
+        client_port, _stamp = request_transfer_listener(client, server, f"/file {src} 0")
         client.file_transfer_mode(str(src), "127.0.0.1", client_port, 0)
         assert wait_until(lambda: any(server_recv.iterdir()), timeout=15), (
             "server did not receive the file"
@@ -306,13 +359,9 @@ def test_server_receives_file_at_destination(pair, tmp_path):
     dest.mkdir()
 
     # paths must be quoted: shlex treats an unquoted backslash as an escape,
-    # which mangles Windows paths like C:\Users\...
-    server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-    server.file_transfer_server_recv_server_start_thread(
-        "cid", server_sock, f'/file "{src}" "{dest}" 0'
+    server_port, _stamp = request_transfer_listener(
+        client, server, f'/file "{src}" "{dest}" 0'
     )
-    server_port = _wait_port(client)
-    assert server_port is not None
 
     client.file_transfer_mode(str(src), "127.0.0.1", server_port, 0)
 
@@ -363,15 +412,56 @@ def test_client_uploads_folder_to_destination(pair, tmp_path):
 
     # the folder keeps its own name under the destination (same structure as
     # the default receive directory, with the destination as its root)
-    assert wait_until(lambda: (dest / "data" / "a.txt").exists(), timeout=10), (
-        "a.txt not at destination"
-    )
-    assert wait_until(lambda: (dest / "data" / "sub" / "b.txt").exists(), timeout=10), (
-        "b.txt not at destination"
-    )
-    assert (dest / "data" / "a.txt").read_text() == "hello"
-    assert (dest / "data" / "sub" / "b.txt").read_text() == "world"
+    assert wait_for_text(dest / "data" / "a.txt", "hello"), "a.txt not at destination"
+    assert wait_for_text(dest / "data" / "sub" / "b.txt", "world"), "b.txt not at destination"
     assert not any(server_recv.iterdir()), "folder must not land in the default directory"
+
+
+def test_client_uploads_folder_skips_empty_directories(pair, tmp_path):
+    """A directory with no file in its subtree is never created at the peer.
+
+    Only a directory that receives a file (directly or deeper) needs to exist;
+    announcing an empty one would leave an empty directory on the far side.
+    """
+    server, client, _ = pair
+    server_recv = tmp_path / "server_recv"
+    server_recv.mkdir()
+    server.file_transfer_dir = str(server_recv)
+    folder = tmp_path / "data"
+    (folder / "sub" / "deep").mkdir(parents=True)
+    (folder / "empty").mkdir()
+    (folder / "a.txt").write_text("hello")
+    (folder / "sub" / "b.txt").write_text("world")
+
+    client.folder_file_transfer_client_recv_client_start(f'/file_folder "{folder}"')
+
+    assert wait_for_text(server_recv / "data" / "a.txt", "hello"), "a.txt not received"
+    assert wait_for_text(server_recv / "data" / "sub" / "b.txt", "world"), "b.txt not received"
+    assert not (server_recv / "data" / "empty").exists(), "an empty directory was created"
+    assert not (server_recv / "data" / "sub" / "deep").exists(), (
+        "a directory holding no file was created"
+    )
+
+
+def test_folder_creation_command_creates_directory_without_a_transfer(pair, tmp_path):
+    """``/file_folder <rel> [<dest>]`` creates the directory on the control line.
+
+    The command carries no client id, so it opens no transfer leg: the
+    directory must exist as soon as the line is processed, with no listener
+    or port involved.
+    """
+    server, client, _ = pair
+    server_recv = tmp_path / "server_recv"
+    server_recv.mkdir()
+    server.file_transfer_dir = str(server_recv)
+    dest = tmp_path / "dest"
+    dest.mkdir()
+
+    client.send_message(client.client_socket, "/file_folder /made/by/command")
+    client.send_message(client.client_socket, f'/file_folder /made/with/dest "{dest}"')
+
+    assert wait_until(lambda: (server_recv / "made" / "by" / "command").is_dir(), timeout=10)
+    assert wait_until(lambda: (dest / "made" / "with" / "dest").is_dir(), timeout=10)
 
 
 def test_server_pushes_folder_to_destination(pair, tmp_path):
@@ -391,14 +481,8 @@ def test_server_pushes_folder_to_destination(pair, tmp_path):
     )
     server.folder_file_transfer_server_recv_client_start(cmd)
 
-    assert wait_until(lambda: (dest / "data" / "a.txt").exists(), timeout=10), (
-        "a.txt not at destination"
-    )
-    assert wait_until(lambda: (dest / "data" / "sub" / "b.txt").exists(), timeout=10), (
-        "b.txt not at destination"
-    )
-    assert (dest / "data" / "a.txt").read_text() == "hello"
-    assert (dest / "data" / "sub" / "b.txt").read_text() == "world"
+    assert wait_for_text(dest / "data" / "a.txt", "hello"), "a.txt not at destination"
+    assert wait_for_text(dest / "data" / "sub" / "b.txt", "world"), "b.txt not at destination"
 
 
 def test_client_uploads_multiple_files_to_destination(pair, tmp_path):
@@ -417,8 +501,8 @@ def test_client_uploads_multiple_files_to_destination(pair, tmp_path):
 
     client.multiple_file_transfer_client_recv_client_start(f'/multiple_file "{f1}" "{f2}" "{dest}"')
 
-    assert wait_until(lambda: (dest / "one.bin").exists(), timeout=10), "one.bin not at destination"
-    assert wait_until(lambda: (dest / "two.bin").exists(), timeout=10), "two.bin not at destination"
+    assert wait_for_text(dest / "one.bin", "one", timeout=10), "one.bin incomplete at destination"
+    assert wait_for_text(dest / "two.bin", "two", timeout=10), "two.bin incomplete at destination"
     assert (dest / "one.bin").read_bytes() == b"one"
     assert (dest / "two.bin").read_bytes() == b"two"
 
@@ -444,14 +528,8 @@ def test_client_uploads_multiple_folders_to_destination(pair, tmp_path):
         f'/multiple_file_folder "{folder_a}" "{folder_b}" "{dest}"'
     )
 
-    assert wait_until(lambda: (dest / "data_a" / "a.txt").exists(), timeout=10), (
-        "a.txt not at destination"
-    )
-    assert wait_until(lambda: (dest / "data_b" / "b.txt").exists(), timeout=10), (
-        "b.txt not at destination"
-    )
-    assert (dest / "data_a" / "a.txt").read_text() == "hello"
-    assert (dest / "data_b" / "b.txt").read_text() == "world"
+    assert wait_for_text(dest / "data_a" / "a.txt", "hello"), "a.txt not at destination"
+    assert wait_for_text(dest / "data_b" / "b.txt", "world"), "b.txt not at destination"
 
 
 def test_windows_paths_need_quoting_through_shlex():
@@ -527,7 +605,6 @@ def _forward_client(server, recv_dir):
 def test_parse_forward_originator():
     """The originator tuple in a pushed /file or /file_folder command is
     recovered; a direct send (the receiver's own address) is filtered out."""
-    # the wire form produced by forward_target_command (tuple shlex-quoted)
     cmd = lambda *a: TCP_Server_Base.forward_target_command(None, *a)
     assert parse_forward_originator(cmd("file", "", "a.txt", ("127.0.0.1", 3000), 7)) == (
         "127.0.0.1:3000"
@@ -631,14 +708,12 @@ def test_forward_folder_to_client(pair, tmp_path):
     cmd = '/forward_folder "{}" "({}, {})"'.format(folder, repr(a[0]), a[1])
     forwarder.forward_folder_console(cmd)
 
-    assert wait_until(lambda: (recv_dir / "data" / "a.txt").exists(), timeout=15), (
+    assert wait_for_text(recv_dir / "data" / "a.txt", "hello", timeout=15), (
         "a.txt not forwarded"
     )
-    assert wait_until(lambda: (recv_dir / "data" / "sub" / "b.txt").exists(), timeout=15), (
+    assert wait_for_text(recv_dir / "data" / "sub" / "b.txt", "world", timeout=15), (
         "sub/b.txt not forwarded"
     )
-    assert (recv_dir / "data" / "a.txt").read_text() == "hello"
-    assert (recv_dir / "data" / "sub" / "b.txt").read_text() == "world"
     forwarder.close()
 
 
@@ -693,9 +768,9 @@ def test_forward_flow_control_pauses_uploader(pair, tmp_path, monkeypatch):
     sent = []
     real_send = server.send_message
 
-    def spy(sock, message):
+    def spy(sock, message, is_send_raw=False):
         sent.append(message if isinstance(message, str) else "")
-        return real_send(sock, message)
+        return real_send(sock, message, is_send_raw=is_send_raw)
 
     monkeypatch.setattr(server, "send_message", spy)
     a = target.client_socket.getsockname()
@@ -754,14 +829,12 @@ def test_forward_folder_with_destination(pair, tmp_path):
     cmd = '/forward_folder "{}" "({}, {})" "{}"'.format(folder, repr(a[0]), a[1], dest)
     forwarder.forward_folder_console(cmd)
 
-    assert wait_until(lambda: (dest / "data" / "a.txt").exists(), timeout=15), (
+    assert wait_for_text(dest / "data" / "a.txt", "hello", timeout=15), (
         "a.txt not at the destination"
     )
-    assert wait_until(lambda: (dest / "data" / "sub" / "b.txt").exists(), timeout=15), (
+    assert wait_for_text(dest / "data" / "sub" / "b.txt", "world", timeout=15), (
         "sub/b.txt not at the destination"
     )
-    assert (dest / "data" / "a.txt").read_text() == "hello"
-    assert (dest / "data" / "sub" / "b.txt").read_text() == "world"
     assert not any(recv_dir.iterdir()), "default directory must stay empty"
     forwarder.close()
 
@@ -791,12 +864,18 @@ def test_multiple_file_multiple_client_console_command(pair, tmp_path):
     addr2 = client2.client_socket.getsockname()
     dest = tmp_path / "dest"
     dest.mkdir()
+    received = set()
+    client.add_file_listener(lambda *_: received.add("client1"))
+    client2.add_file_listener(lambda *_: received.add("client2"))
     cmd = '/multiple_file_multiple_client "{}" "({}, {})" "({}, {})" "{}"'.format(
         src, repr(addr1[0]), addr1[1], repr(addr2[0]), addr2[1], dest
     )
     server.multiple_file_multiple_client_transfer_server_recv_client_start(cmd)
-    assert wait_until(lambda: (dest / "broadcast.bin").exists(), timeout=10), (
-        "client 1 did not receive the broadcast file at the destination"
+    # Both legs write the same destination path and a fresh leg truncates it.
+    # `exists()` therefore says nothing about the bytes: wait until both
+    # receivers have reported the fully written file before reading it.
+    assert wait_until(lambda: received == {"client1", "client2"}, timeout=10), (
+        "not every client received the broadcast file at the destination"
     )
     assert not any(recv_dir.iterdir()), "default directory must stay empty on client 1"
     assert not any(recv2.iterdir()), "default directory must stay empty on client 2"
@@ -821,14 +900,9 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
     payload = os.urandom(300 * 1024)
     src.write_bytes(payload)
     fid = 4242
+    upload_key = ((client.host, client.port), fid)
 
-    server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-    client_id = "%s:%s" % client.client_socket.getsockname()
-    server.file_transfer_server_recv_server_start_thread(
-        client_id, server_sock, f"/file {src} {fid}"
-    )
-    server_port = _wait_port(client)
-    assert server_port is not None
+    server_port, _stamp = request_transfer_listener(client, server, f"/file {src} {fid}")
 
     assert client.pause_trans(fid) is False  # armed before the leg exists
     sender = threading.Thread(
@@ -842,11 +916,11 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
         assert wait_until(lambda: server.file_recv_progress.get(fid), timeout=10), (
             "the receive side did not register its progress"
         )
-        assert wait_until(lambda: client.file_upload_progress.get(fid), timeout=10), (
+        assert wait_until(lambda: client.file_upload_progress.get(upload_key), timeout=10), (
             "the upload side did not register its progress"
         )
         recv_entry = server.file_recv_progress[fid]
-        upload_entry = client.file_upload_progress[fid]
+        upload_entry = client.file_upload_progress[upload_key]
         assert recv_entry[:2] == [0, len(payload)]
         assert upload_entry[:2] == [0, len(payload)]
         # the local path of each side, and the transfer's original peer
@@ -870,7 +944,7 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
     assert recv_entry[2] > 0 and upload_entry[2] > 0
     # ... and were dropped when the transfer ended
     assert fid not in server.file_recv_progress
-    assert fid not in client.file_upload_progress
+    assert upload_key not in client.file_upload_progress
     # the protocol-wide measurement covers the control layer as well
     assert server.recv_network_speed > 0
     assert client.upload_network_speed > 0
@@ -879,29 +953,24 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
     """The reverse direction is tracked too: the server uploads, the client
     downloads, and both progress stores follow the same fid.
 
-    The server-side pause uses the same public API as the client's: any
-    outbound transfer is held by the fid it runs under.
+    The server-side pause uses the same public API as the client's, with an
+    explicit receiver peer to identify the outbound transfer's namespace.
     """
     server, client, recv_dir = pair
     src = tmp_path / "download.bin"
     payload = os.urandom(300 * 1024)
     src.write_bytes(payload)
     fid = 5150
+    receiver = client.client_socket.getsockname()
+    upload_key = (receiver, fid)
 
-    # the client side of the transfer: it believes the server sent a
-    # "/file" command, so it opens a temporary server and advertises the
-    # port to the server over the control channel
-    client.file_transfer_client_recv_server_start_thread(
-        "cid", client.client_socket, f"/file {src} {fid}"
-    )
-    server_port = _wait_port(server)
-    assert server_port is not None
+    server_port, _stamp = request_transfer_listener(server, client, f"/file {src} {fid}")
 
-    assert server.pause_trans(fid) is False  # armed before the leg exists
+    assert server.pause_trans(fid, receiver) is False  # armed before the leg exists
     sender = threading.Thread(
         target=server.file_transfer_mode,
         args=(str(src), "127.0.0.1", server_port, 0),
-        kwargs={"fid": fid, "peer": client.client_socket.getsockname()},
+        kwargs={"fid": fid, "peer": receiver},
         daemon=True,
     )
     sender.start()
@@ -909,11 +978,11 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
         assert wait_until(lambda: client.file_recv_progress.get(fid), timeout=10), (
             "the client did not register its download progress"
         )
-        assert wait_until(lambda: server.file_upload_progress.get(fid), timeout=10), (
+        assert wait_until(lambda: server.file_upload_progress.get(upload_key), timeout=10), (
             "the server did not register its upload progress"
         )
         recv_entry = client.file_recv_progress[fid]
-        upload_entry = server.file_upload_progress[fid]
+        upload_entry = server.file_upload_progress[upload_key]
         assert recv_entry[:2] == [0, len(payload)]
         assert upload_entry[:2] == [0, len(payload)]
         assert recv_entry[3] == str(recv_dir / "download.bin")
@@ -921,7 +990,7 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
         assert recv_entry[4] == (server.host, server.port)
         assert upload_entry[4] == client.client_socket.getsockname()
     finally:
-        server.start_trans(fid)
+        server.start_trans(fid, receiver)
         sender.join(timeout=15)
     assert not sender.is_alive(), "the download did not finish"
 
@@ -934,7 +1003,7 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
     assert recv_entry[0] == len(payload) and upload_entry[0] == len(payload)
     assert recv_entry[2] > 0 and upload_entry[2] > 0
     assert fid not in client.file_recv_progress
-    assert fid not in server.file_upload_progress
+    assert upload_key not in server.file_upload_progress
     assert client.recv_network_speed > 0
     assert server.upload_network_speed > 0
 
@@ -976,12 +1045,7 @@ def test_file_progress_and_speed_can_be_disabled(tmp_path):
         src.write_bytes(payload)
         fid = 7
 
-        server_sock = server.clients[client.client_socket.getsockname()]["socket"]
-        server.file_transfer_server_recv_server_start_thread(
-            "cid", server_sock, f"/file {src} {fid}"
-        )
-        server_port = _wait_port(client)
-        assert server_port is not None
+        server_port, _stamp = request_transfer_listener(client, server, f"/file {src} {fid}")
 
         client.pause_trans(fid)  # the pause works with tracking off too
         sender = threading.Thread(

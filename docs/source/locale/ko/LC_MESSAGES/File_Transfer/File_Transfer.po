@@ -140,16 +140,6 @@ msgid ""
 "closed."
 msgstr "``error_sign`` - 오류가 발생하면 양쪽에서 전송되어 전송 소켓이 닫힙니다."
 
-#: ../../source/File_Transfer/File_Transfer.rst:72
-#: 41f6d3d6e0e848bc8f6aecb995223622
-msgid ""
-"The remaining keys of the table cover the other three direction/phase "
-"combinations. Protocol control lines that are not part of this table "
-"(``/server_file_transfer_port``, ``/client_alloc_port_range``, "
-"``/pause_trans``, ``/start_trans``, ``/forward_item``, "
-"``/forward_upload``, ``/forward_error``, ``/crypto_*``) are hardcoded in "
-"``connect_tcp.py``."
-msgstr ""
 
 #: ../../source/File_Transfer/File_Transfer.rst:80
 #: 45a36aa9239d4caba8752e4dc4fd551b
@@ -359,17 +349,6 @@ msgid ""
 "``palloc()``."
 msgstr "``palloc()``을 호출하여 나가는 파일 전송 소켓에 대한 로컬 포트를 얻습니다."
 
-#: ../../source/File_Transfer/File_Transfer.rst:172
-#: 37226a4f2e1e4a878ba325fca05df9bf
-msgid ""
-"Wait (up to 20 seconds) for the server to reply with a port number. The "
-"server's reply (``/server_file_transfer_port <port> <client_id>``) is "
-"received by the main connection and stored in ``file_server_port_list``. "
-"When a matching entry is found, the port is extracted."
-msgstr ""
-"서버가 포트 번호로 응답할 때까지 기다립니다(최대 20초). 서버의 응답(``/server_file_transfer_port "
-"<port> <client_id>``)은 기본 연결에서 수신되어 ``file_server_port_list``에 저장됩니다. "
-"일치하는 항목이 발견되면 포트가 추출됩니다."
 
 #: ../../source/File_Transfer/File_Transfer.rst:180
 #: e9cd68239fe3498597f07ccfa774ae22
@@ -463,20 +442,6 @@ msgstr ""
 "``file_transfer_mode_recv(host, port, client_socket, client_id, "
 "new_save_path, file_name, command)``를 호출합니다."
 
-#: ../../source/File_Transfer/File_Transfer.rst:224
-#: 2f6675b7698c41938542b09cbfb482e8
-msgid ""
-"This low-level receive function sets up a listening socket on the "
-"allocated port, sends the port number back to the client (as "
-"``/server_file_transfer_port <port> <client_id>``), accepts the client's "
-"connection, and performs the protocol steps described in :ref:`file-"
-"transfer-protocol`. The received file is saved under ``received_files/`` "
-"(or a subdirectory if a folder transfer was requested)."
-msgstr ""
-"이 저수준 수신 함수는 할당된 포트에 청취 소켓을 설정하고, 포트 번호를 클라이언트에 다시 "
-"보내고(``/server_file_transfer_port <port> <client_id>``로) 클라이언트의 연결을 수락하고 "
-":ref:`file-transfer-protocol`에 설명된 프로토콜 단계를 수행합니다. 수신된 파일은 "
-"``received_files/``(또는 폴더 전송이 요청된 경우 하위 디렉터리)에 저장됩니다."
 
 #: ../../source/File_Transfer/File_Transfer.rst:234
 #: 9fe861572b8746aeaa8266d8d30f963f
@@ -569,15 +534,6 @@ msgstr "고유한 클라이언트 ID를 할당하고 이를 사용하여 명령�
 msgid "Allocate a local port with ``palloc()``."
 msgstr "``palloc()``을 사용하여 로컬 포트를 할당합니다."
 
-#: ../../source/File_Transfer/File_Transfer.rst:279
-#: 723a05b6c3974b65a539af723f1e0872
-msgid ""
-"Wait for the client to reply with its own port number (via "
-"``/server_file_transfer_port``), which is stored in "
-"``file_server_port_list`` by the main connection's message handler."
-msgstr ""
-"클라이언트가 기본 연결의 메시지 핸들러에 의해 ``file_server_port_list``에 저장된 자체 포트 "
-"번호(``/server_file_transfer_port``를 통해)로 응답할 때까지 기다립니다."
 
 #: ../../source/File_Transfer/File_Transfer.rst:284
 #: 878572ca3d2948a9acbb6741f00ddd62
@@ -1326,28 +1282,6 @@ msgid ""
 "continue from;"
 msgstr ""
 
-#: ../../source/File_Transfer/File_Transfer.rst:706
-#: c7017b370d4147128e54a94458a7b536
-msgid ""
-"after a reconnect the receiver drives the resume (`resume_transfers`): it"
-" opens a fresh transfer listener, announces it and sends ``/resume_trans "
-"<fid> <offset>`` with the byte offset its partial file holds. The sender "
-"re-establishes the leg, reads its source from that offset and only the "
-"remainder of the file travels. A forwarded transfer is asked for through "
-"the server, which routes ``/forward_resume`` to the originating client so"
-" it re-forwards just the missing part."
-msgstr ""
-
-#: ../../source/File_Transfer/File_Transfer.rst:714
-#: ee858a76e93f44d5934cb2d89f6709a5
-msgid ""
-"The server resumes a peer's transfers when it reconnects, and a client "
-"with ``is_auto_reconnect=True`` reconnects on its own and resumes every "
-"transfer it can reach; `resume_transfers` is public, so an application "
-"can also drive the resume itself. Legs the previous session left behind "
-"are closed before the resume runs, so two legs never write the same "
-"transfer."
-msgstr ""
 
 #: ../../source/File_Transfer/File_Transfer.rst:723
 #: fe9377db9cf04b9da0dbe4d07c730adf
@@ -1564,12 +1498,6 @@ msgstr ""
 #: ../../source/File_Transfer/File_Transfer.rst:897
 #: 7641e3ece9314197863d872836635218
 msgid "``pause_trans_remote`` / ``start_trans_remote`` (ask a client to do it)"
-msgstr ""
-
-#: ../../source/File_Transfer/File_Transfer.rst:898
-#: ../../source/File_Transfer/File_Transfer.rst:918
-#: 9c62709c2c06456dbfddee1f1ce6871e de496a0be32c490585ae0cbafc931a71
-msgid "``resume_transfers`` / ``resume_trans`` (continue interrupted transfers)"
 msgstr ""
 
 #: ../../source/File_Transfer/File_Transfer.rst:900

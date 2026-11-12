@@ -80,13 +80,24 @@ The parameters of the ``__init__`` method are as follows:
   running file transfer is tracked in ``file_recv_progress`` (downloads) and
   ``file_upload_progress`` (uploads). Each entry is a
   ``[transferred bytes, total bytes, current speed, local file path, peer]``
-  list keyed by the transfer's fid — ``peer`` is the ``(ip, port)`` of the
-  transfer's original sender (downloads) or receiver (uploads), never the
-  relay of a forwarded transfer. The entry is removed once the transfer ends;
+  list. Downloads use integer fid keys; uploads use ``(receiver, fid)`` keys,
+  where receiver is the actual control-channel peer's ``(ip, port)``.
+  The value's ``peer`` remains the original sender (downloads) or logical
+  receiver (uploads), not a forwarding relay. It is the concrete endpoint of
+  the control connection each leg used; resume identity compares that endpoint
+  and accepts the configured address as an alias, so a wildcard bind or a host
+  alias does not change it. The entry is removed once the transfer ends;
   an interrupted one keeps its entry (and its partial file) so the reconnect
   logic can resume it.
   ``file_trans_progress_file`` names the file under the protocol's ``.Flow``
   directory these stores are written to when a connection drops.
+  Upload JSON keys encode ``[receiver, fid]`` as compact JSON strings.
+  Older bare upload-id snapshots are rejected and preserved, not migrated.
+  Forward routes are persisted once per upstream fid in ``relays``, with an
+  original sender, the full receiver/fid target mapping and ``completed`` peers.
+  Only unresolved targets have receiver-scoped reverse indexes after load;
+  loading never replaces live owners. Unsupported older server relay schemas
+  and invalid completion sets are rejected and preserved, not auto-migrated.
 - ``is_enable_real_time_network_speed``: A flag indicating whether the
   protocol's real-time network speed is measured. With ``True`` (the default)
   every send and receive — the control layer and every temporary connection,
@@ -327,7 +338,8 @@ caller.
     def send_message(
         self: Self,
         client_socket: Any,
-        message: Any) -> True|False:
+        message: Any,
+        is_send_raw: bool = False) -> True|False:
         ...
 
 `send_message` sends data back to a specific connected client.
@@ -335,17 +347,22 @@ It verifies the server is running and the socket is valid, then:
 
 - accepts both ``str`` and ``bytes`` message payloads
 - trims string payloads and appends a newline if missing
-- when the socket is in encrypted mode (the public-key exchange has
-  completed), the plaintext is signed with the ``_VALID`` marker,
-  RSA-OAEP encrypted with the peer's public key, base64 encoded and
-  newline-terminated instead of being sent in cleartext
-- encodes string payloads as UTF-8
+- when the channel is encrypted, writes the payload as frames through the
+  secure channel (see the framing description in the ``connect_tcp`` module
+  docstring) instead of as plaintext
+- with ``is_send_raw=True`` writes a plaintext line even on an encrypted
+  channel; this is reserved for the crypto handshake and transfer
+  coordination lines
 - sends the message with ``client_socket.sendall(data)`` when the server
   serves clients with one thread each, or through a non-blocking
   ``send()`` loop when ``is_asynic_clients_io`` is ``True``
 - returns ``True`` on success; it returns ``False`` for an unsupported
   payload type, and an invalid/closed connection raises ``RuntimeError``
   (other socket failures are logged and re-raised)
+- after a successful write, reports the payload to the send listeners; a
+  write to a control socket is also recorded in the sent stores, while a
+  transfer socket is only reported. ``is_send_raw`` lines are neither
+  reported nor recorded, and ``bytes`` payloads are reported but not recorded
 
 And there are also some other functions which are 
 used to send message in bulk to the clients, such 
@@ -456,14 +473,14 @@ Encrypted transfer connections
 
 File and folder transfers, forwarded items and the forward relay run on
 temporary TCP connections. The listening side stamps each leg with its mode
-and a fresh nonce in the port advertisement (``/server_file_transfer_port``,
-``/forward_upload``); with ``is_enable_encrypto`` enabled both sides then
-frame that connection exactly like the control channel, with the same
-session key material, so file contents, names and sizes no longer cross the
-wire in the clear. The public-key pushes themselves stay plaintext by
-construction: they carry the keys the session is built on. A leg whose
-stamp promises encryption is aborted when the session key material is not
-ready rather than silently downgraded.
+and a fresh nonce in the common port advertisement
+(``/server_file_transfer_port <port> <fid> <stamp>``). With
+``is_enable_encrypto`` enabled, both sides then frame that connection exactly
+like the control channel, with the same session key material, so file contents,
+names and sizes no longer cross the wire in the clear. Public-key pushes stay
+plaintext because they carry the keys the session is built on. A leg whose
+stamp promises encryption is aborted when key material is not ready rather than
+silently downgraded.
 
 Decode verification and key rotation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -524,8 +541,8 @@ TCP clients.
 
 .. _tcp-server-event-listener-api:
 
-TCP Server inbound event listener API
--------------------------------------
+TCP Server event listener API
+-----------------------------
 
 External code can observe traffic without replacing the
 protocol loop:
@@ -534,27 +551,88 @@ protocol loop:
 
     def add_message_listener(self, listener)
     def remove_message_listener(self, listener)
+    def add_send_message_listener(self, listener)
+    def remove_send_message_listener(self, listener)
     def add_file_listener(self, listener)
     def remove_file_listener(self, listener)
 
-``add_message_listener`` registers ``listener(client_id, message)``
-for every inbound line, commands included (``/help``, ``/file ...``,
-the crypto handshake lines, ...), so a listener observes all inbound
-traffic; line dispatch is unaffected, a command still goes to the
-command handlers. ``add_file_listener``
-registers ``listener(client_id, full_path, name, size, command)`` and
-fires after a file uploaded by a client has been fully written to the
-transfer directory (``command`` is the wire command that triggered it,
-so protocol pushes such as ``/crypto_pub_key`` can be recognised).
-Both listeners run on a protocol thread, so they must not block, and an
-exception inside a listener is logged and swallowed. The ``remove_*``
-counterparts unregister a listener and ignore unknown ones.
+``add_message_listener`` registers ``listener(client_id, message)`` for
+every complete inbound control line. Lines are newline-delimited, stripped,
+and empty lines are skipped; commands (``/help``, ``/file ...``) and the
+crypto handshake lines are included, so the listener observes all inbound
+traffic while line dispatch continues unchanged. Raw chunks read from a
+non-control socket (file/folder transfers, forwards, temporary connections)
+are reported to the same listeners as ``bytes``: one callback per read or
+decrypted chunk, with no line or frame alignment, containing transfer
+headers, file data and ``sign`` tokens alike. ``client_id`` is the peer
+endpoint of the socket that produced the event; for a side-channel event
+this is that temporary TCP connection's ``"ip:port"``, not the control
+connection's client id. Control lines are ``str``; side-channel chunks are
+``bytes``.
 
-In addition, received messages and events are stored per sender socket
-in ``messages_dict`` / ``events_dict`` (each entry a ``[content,
-timestamp]`` pair). When a store reaches ``max_dict_size`` (64 KiB) it
-is flushed to ``messages_log.json`` / ``events_log.json`` under
-``network_api/.Flow`` and cleared; ``stop`` flushes both stores.
+Threading: on the synchronous server path, control-line callbacks run on
+the per-client receive thread; on the asynchronous path
+(``is_asynic_clients_io=True``) they run on the worker thread used by
+``asyncio.to_thread``. Raw side-channel chunks and file callbacks run on the
+thread that reads or transfers that socket, never on the event loop. Send
+callbacks run on the thread that calls `send_message`. Listeners can
+therefore run concurrently for different clients/sockets, and send callbacks
+for concurrent sends on the same socket may also overlap; they must be
+thread-safe. Per-socket inbound order is preserved, cross-socket order is
+not.
+
+``add_send_message_listener`` registers ``listener(target_id, message)``
+and calls it synchronously on the sending thread after every payload that
+`send_message` writes successfully, for ``str`` and ``bytes`` alike.
+``str`` payloads are reported stripped of leading/trailing whitespace;
+``bytes`` are reported unchanged. ``target_id`` is the peer endpoint of the
+socket that performed the write: the client's ``"ip:port"`` for a control
+socket, or the temporary TCP connection's ``"ip:port"`` for a file/forward
+side channel. Lines written with ``is_send_raw=True`` and internal protocol
+frames such as the ECDH public-key publication are never reported.
+
+When several threads call `send_message` on the same socket, the socket
+writes remain serialized, but the send-listener callbacks are not guaranteed
+to run in the same order as the wire writes. This affects observation order
+only: it does not change socket write order, receive order, or file data
+integrity. Callers that need a strict observation order must serialize their
+own `send_message` calls.
+
+``add_file_listener`` registers
+``listener(client_id, full_path, name, size, command)`` and fires once after
+a file uploaded by a client (a direct send, or a forwarded item staged on
+the server) has been fully written to its destination. ``client_id`` is the
+uploader's control-connection ``"ip:port"``; ``command`` is the wire command
+that triggered the transfer, so protocol pushes such as
+``/crypto_pub_key`` can be recognised. The callback runs on the transfer
+thread and fires before the completion sign is sent; it does not wait for
+the peer's ACK. Per-chunk progress is reported to the message listeners as
+``bytes``, not by this callback. For ``/crypto_pub_key`` the callback runs
+before the key is registered; a listener must not move or delete the file.
+
+Listeners must not block, and an exception inside one is logged and
+swallowed. The ``remove_*`` counterparts unregister a listener and ignore
+unknown ones; add/remove take effect for subsequent notifications, while a
+notification already in progress may still run. ``stop()`` stops new
+delivery, clears the listener lists and suppresses the remaining callbacks
+of an in-flight dispatch; a callback already past that check on another
+thread may still finish. Listener lists are per instance and are not
+replayed; after ``stop()`` create a new instance to register listeners
+again.
+
+Control traffic is also kept per peer socket in four stores, each value a
+list of ``[content, timestamp]`` pairs:
+
+- ``messages_dict``: inbound plain-text lines (lines not starting with ``/``)
+- ``events_dict``: inbound ``/`` commands
+- ``sent_messages_dict`` / ``sent_events_dict``: the same split for payloads
+  written to a control socket
+
+Only control sockets are recorded. Transfer chunks, transfer sign tokens and
+``bytes`` payloads are never recorded. When a store reaches ``max_dict_size``
+(64 KiB) it is flushed to ``messages_log.json``, ``events_log.json``,
+``sent_messages_log.json`` or ``sent_events_log.json`` under
+``network_api/.Flow`` and cleared; ``stop`` flushes all four stores.
 
 .. _tcp-server-command-api:
 
@@ -588,21 +666,45 @@ Built-in client commands include:
   down, so a client that stays after sending ``/quit`` is disconnected by the
   server.
 - ``/file <file_path> [destination_file_path]``: starts a file transfer from
-  the client to the server. The trailing token of the wire line is the
-  sender's own transfer id, appended by the sending client.
+  the client to the server. The wire command ends with the sender's transfer ID.
 - ``/file_folder <folder_path> [destination_file_path]``: starts a folder
   transfer from the client to the server (same trailing id).
 - ``/crypto_mode <0|1>``, ``/crypto_pub_key``, ``/crypto_pub_key_request``:
   internal handshake messages of the encrypted channel.
 - ``/forward_item``, ``/forward_send_msg``, ``/pause_trans``, ``/start_trans``:
   internal forwarding/transfer-control messages. ``/pause_trans <fid>`` and
-  ``/start_trans <fid>`` hold and release the outbound transfer with that fid
-  (`pause_trans`/`start_trans` are the same switch as a public API).
-- ``/resume_trans <fid> <offset>`` and ``/forward_resume <addr> <fid> <offset>``:
-  internal transfer-reconnect messages: the receiver asks the sender (or, for
-  a forwarded transfer, the originator) to continue the file from the bytes
-  already on disk. See `resume_transfers`.
-- ``/server_file_transfer_port <port> <client_id>``: internal protocol message used to coordinate file transfer ports.
+  ``/start_trans <fid>`` hold and release the outbound transfer to the requesting
+  peer. Local calls require ``pause_trans(fid, peer)`` / ``start_trans(fid, peer)``;
+  the receiver scope is required even when arming a future transfer.
+  Forwarded requests carry a source-allocated ``fid=<upstream fid>``. A new
+  upload omits ``resume=``; replay includes ``resume=<offset>``, including zero,
+  and must match an existing route before the Server reuses its upstream and
+  child FIDs. The Server rejects a colliding upstream FID without replacing an
+  existing route, receive record or target-scoped live transfer state.
+- ``/resume_trans <fid> <offset> <origin> <target>``: the only internal
+  transfer-reconnect command. Addresses are shell-quoted tuple literals; target
+  must match the actual requesting peer. A server origin selects its scoped
+  local upload; otherwise the server validates the downstream route and original
+  sender, translates to the stable upstream fid, and forwards the same command.
+  Unknown or mismatched identities never fall back to another route
+  (see :ref:`transfer-pause-and-reconnect`). No fid kind selects this branch.
+- Forwarded transfers return the existing final data-ACK marker upstream only
+  after the current input stream is complete and every accepted target has
+  acknowledged. The normal send path reframes the marker for the upstream hop;
+  the route is dropped only after the ACK write succeeds. A failed write keeps
+  the completed route for recovery. This does not change ordinary sender or
+  server receive-ACK behavior.
+- ``/server_file_transfer_port <port> <fid> <stamp>``: the four-token listener
+  reply for ordinary, public-key and relay legs. Replies match the actual control
+  socket and FID (the source-provided upstream FID for relay upload). Each
+  negotiation produces one terminal port or error reply; unmatched, duplicate or
+  late replies are discarded without a cache. Forward failures use
+  ``/forward_error <fid> <reason>``. There is no forwarding-upload FIFO.
+  If a sent request times out or is cancelled without a terminal result, that
+  FID is blocked for the session while unrelated FIDs and commands continue.
+  Natural disconnect clears its waiters, unresolved marks, pending listeners and
+  data sockets; reconnect can resume the same stable FID. Data or ACK failure
+  does not disconnect a healthy control connection.
 
 In `handle_command`, the server will first 
 check if the command matches any built-in commands. 
@@ -789,6 +891,8 @@ Supported console commands include:
 - ``/file_folder <folder_path> <(ip, port)> [destination_file_path]``: sends a folder from the server to a specific client.
 - ``/multiple_file_multiple_client <file1> <file2> ... <(ip, port)1> <(ip, port)2> ...``: sends multiple files to multiple clients. Tokens are classified as targets when they are wrapped in parentheses and as files otherwise, so files and targets may be interleaved.
 - ``/diff_multiple_file_diff_multiple_client <file1> <file2> ... <(ip, port)1> <(ip, port)2> ...``: sends the files that precede a group of targets to that group. A new group starts whenever a file token follows one or more target tuples; an optional trailing destination path (a token that is not a tuple) is accepted and passed on.
+- ``/transfers``: prints the local memory rows and the separate persisted
+  transfer snapshot as JSON; it does not send a network command or change state.
 - ``/help``: prints a help summary of console commands.
 
 The forward commands (``/forward_send_msg``, ``/forward_file``,
@@ -888,17 +992,25 @@ and server-initiated transfers. They handle the coordination
 of transfer ports, client connections, and the actual file 
 data transfer operations.*
 
+For built-in file transfers, a nonzero port returned by ``palloc`` is
+best-effort. If a sender's local ``bind`` or ``connect`` reports a port
+conflict, it retries with an OS-assigned source port. If a receive or relay
+listener's ``bind`` conflicts, it binds port ``0`` and advertises the actual
+port returned by ``getsockname()``. An allocated listener port remains reserved
+until cleanup releases the original ``palloc`` value.
+
 Client-to-server transfer flow:
 
-1. The client sends ``/file`` or ``/file_folder`` to 
-   request a transfer.
+1. The client registers the sender FID on its actual control socket and sends
+   ``/file`` or ``/file_folder`` with that trailing FID. Public-key requests use
+   ``/crypto_pub_key <fid>``; relay targets register independently.
 2. ``handle_command`` starts a dedicated file-server 
    thread: ``file_transfer_server_recv_server_start_thread`` for ``/file``
    and ``file_folder_transfer_server_recv_server_start_thread`` for
    ``/file_folder``.
 3. The server allocates an ephemeral transfer port 
    with ``palloc`` and sends 
-   ``/server_file_transfer_port <port> <client_id>`` 
+   ``/server_file_transfer_port <port> <fid> <stamp>``
    back to the client.
 4. The client connects to that transfer port and sends 
    file metadata, including length-prefixed filename 
@@ -1030,8 +1142,9 @@ are as follows:
 
 2.1. The inbound event listener APIs (see :ref:`tcp-server-event-listener-api`):
     - `add_message_listener` / `remove_message_listener`
+    - `add_send_message_listener` / `remove_send_message_listener`
     - `add_file_listener` / `remove_file_listener`
-    - `messages_dict` / `events_dict` stores
+    - `messages_dict` / `events_dict` / `sent_messages_dict` / `sent_events_dict` stores
 
 3. The server encrypted channel APIs (see :ref:`tcp-server-encrypted-channel-api`):
     - `_crypto_on_client_hello`
@@ -1054,13 +1167,17 @@ are as follows:
     - `multiple_file_multiple_client_transfer_server_recv_client_start`
     - `diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start`
     - `file_transfer_mode` / `file_transfer_mode_recv`: one transfer leg
+    - `get_transfer_progress`
+    - `delete_config`: local allowlisted state-file deletion after shutdown;
+      ``is_list_config=True`` returns names without deleting. See the file
+      transfer documentation for whole-snapshot discard and lifetime rules.
     - `forward_item_to` / `forward_message_to`: single forward destinations
 
 5.1. The transfer pause and reconnect APIs (see
   :ref:`transfer-pause-and-reconnect`):
     - `pause_trans` / `start_trans`
     - `pause_trans_remote` / `start_trans_remote`
-    - `resume_transfers` / `resume_trans`
+    - `resume_trans`
 
 6. The server console commands:
     - `/stop`
@@ -1071,6 +1188,7 @@ are as follows:
     - `/file_folder`
     - `/multiple_file_multiple_client`
     - `/diff_multiple_file_diff_multiple_client`
+    - `/transfers`
     - `/help`
 
 See Also

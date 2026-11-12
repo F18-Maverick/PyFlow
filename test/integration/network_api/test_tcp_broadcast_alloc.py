@@ -79,6 +79,34 @@ def test_broadcast_removes_disconnected_clients(server):
     dead.close.assert_called_once()
 
 
+def test_broadcast_listener_can_rebroadcast_without_holding_client_lock():
+    """A send listener may call broadcast(); the client lock must be released."""
+    server = _server()
+    client_socket = MagicMock()
+    client_socket.getpeername.return_value = ("127.0.0.1", 1)
+    server.running = True
+    server.clients = {
+        ("127.0.0.1", 1): {"socket": client_socket, "address": ("127.0.0.1", 1)}
+    }
+    lock_states = []
+
+    def listener(target, message):
+        lock_states.append(server.client_lock.locked())
+        if message == "trigger":
+            server.broadcast("reply")  # would deadlock if the lock were held
+
+    server.add_send_message_listener(listener)
+    worker = threading.Thread(target=lambda: server.broadcast("trigger"), daemon=True)
+    worker.start()
+    worker.join(2.0)
+    try:
+        assert not worker.is_alive(), "broadcast deadlocked while a listener rebroadcast"
+        assert lock_states and not any(lock_states)
+    finally:
+        if not worker.is_alive():
+            server.stop()
+
+
 # ---- send_msg_to_specific_client --------------------------------------------
 
 
@@ -229,6 +257,30 @@ def test_console_input_status_clients_stop(server, monkeypatch, capsys):
     assert "127.0.0.1:1" in out
     assert "shutting down" in out
     server.stop.assert_called_once()
+
+
+def test_transfers_console_prints_local_progress_without_logging(server, monkeypatch, capsys):
+    import json
+
+    server.is_print_log = False
+    server.file_recv_progress[22] = [9, 9, None, "/recv/完整.bin", ("127.0.0.1", 50001)]
+    server.running = True
+    lines = iter(["/TrAnSfErS", "/transfers --unknown"])
+
+    def input_line():
+        try:
+            return next(lines)
+        except StopIteration:
+            server.running = False
+            return ""
+
+    monkeypatch.setattr("builtins.input", input_line)
+    server.console_input()
+    output = capsys.readouterr().out
+    view, end = json.JSONDecoder().raw_decode(output)
+    row, = view["memory"]["downloading"]
+    assert row["path"] == "/recv/完整.bin" and row["transferred"] == row["total"] == 9
+    assert "/transfers" in output[end:]
 
 
 def test_console_input_help_and_unknown(server, monkeypatch, capsys):

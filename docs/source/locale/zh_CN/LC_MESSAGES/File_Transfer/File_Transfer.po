@@ -130,16 +130,6 @@ msgid ""
 "closed."
 msgstr "``error_sign`` - 当发生错误时由任何一方发送，导致传输套接字关闭。"
 
-#: ../../source/File_Transfer/File_Transfer.rst:72
-#: 41f6d3d6e0e848bc8f6aecb995223622
-msgid ""
-"The remaining keys of the table cover the other three direction/phase "
-"combinations. Protocol control lines that are not part of this table "
-"(``/server_file_transfer_port``, ``/client_alloc_port_range``, "
-"``/pause_trans``, ``/start_trans``, ``/forward_item``, "
-"``/forward_upload``, ``/forward_error``, ``/crypto_*``) are hardcoded in "
-"``connect_tcp.py``."
-msgstr ""
 
 #: ../../source/File_Transfer/File_Transfer.rst:80
 #: 45a36aa9239d4caba8752e4dc4fd551b
@@ -343,16 +333,6 @@ msgid ""
 "``palloc()``."
 msgstr "通过调用“palloc()”获取传出文件传输套接字的本地端口。"
 
-#: ../../source/File_Transfer/File_Transfer.rst:172
-#: 37226a4f2e1e4a878ba325fca05df9bf
-msgid ""
-"Wait (up to 20 seconds) for the server to reply with a port number. The "
-"server's reply (``/server_file_transfer_port <port> <client_id>``) is "
-"received by the main connection and stored in ``file_server_port_list``. "
-"When a matching entry is found, the port is extracted."
-msgstr ""
-"等待（最多 20 秒）服务器回复端口号。服务器的回复（``/server_file_transfer_port <port> "
-"<client_id>``）由主连接接收并存储在``file_server_port_list``中。当找到匹配的条目时，将提取端口。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:180
 #: e9cd68239fe3498597f07ccfa774ae22
@@ -436,18 +416,6 @@ msgid ""
 "new_save_path, file_name, command)``."
 msgstr "调用“file_transfer_mode_recv(主机、端口、client_socket、client_id、new_save_path、file_name、command)”。"
 
-#: ../../source/File_Transfer/File_Transfer.rst:224
-#: 2f6675b7698c41938542b09cbfb482e8
-msgid ""
-"This low-level receive function sets up a listening socket on the "
-"allocated port, sends the port number back to the client (as "
-"``/server_file_transfer_port <port> <client_id>``), accepts the client's "
-"connection, and performs the protocol steps described in :ref:`file-"
-"transfer-protocol`. The received file is saved under ``received_files/`` "
-"(or a subdirectory if a folder transfer was requested)."
-msgstr ""
-"这个低级接收函数在分配的端口上设置一个监听套接字，将端口号发送回客户端（如“/server_file_transfer_port <port> "
-"<client_id>”），接受客户端的连接，并执行文件传输协议中描述的协议步骤。接收到的文件保存在“received_files/”下（如果请求文件夹传输，则保存在子目录下）。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:234
 #: 9fe861572b8746aeaa8266d8d30f963f
@@ -538,13 +506,6 @@ msgstr "分配唯一的客户端 ID 并用它扩展命令，然后通过主连�
 msgid "Allocate a local port with ``palloc()``."
 msgstr "使用 palloc() 分配本地端口。"
 
-#: ../../source/File_Transfer/File_Transfer.rst:279
-#: 723a05b6c3974b65a539af723f1e0872
-msgid ""
-"Wait for the client to reply with its own port number (via "
-"``/server_file_transfer_port``), which is stored in "
-"``file_server_port_list`` by the main connection's message handler."
-msgstr "等待客户端回复其自己的端口号（通过“/server_file_transfer_port”），该端口号由主连接的消息处理程序存储在“file_server_port_list”中。"
 
 #: ../../source/File_Transfer/File_Transfer.rst:284
 #: 878572ca3d2948a9acbb6741f00ddd62
@@ -1235,28 +1196,6 @@ msgid ""
 "continue from;"
 msgstr ""
 
-#: ../../source/File_Transfer/File_Transfer.rst:706
-#: c7017b370d4147128e54a94458a7b536
-msgid ""
-"after a reconnect the receiver drives the resume (`resume_transfers`): it"
-" opens a fresh transfer listener, announces it and sends ``/resume_trans "
-"<fid> <offset>`` with the byte offset its partial file holds. The sender "
-"re-establishes the leg, reads its source from that offset and only the "
-"remainder of the file travels. A forwarded transfer is asked for through "
-"the server, which routes ``/forward_resume`` to the originating client so"
-" it re-forwards just the missing part."
-msgstr ""
-
-#: ../../source/File_Transfer/File_Transfer.rst:714
-#: ee858a76e93f44d5934cb2d89f6709a5
-msgid ""
-"The server resumes a peer's transfers when it reconnects, and a client "
-"with ``is_auto_reconnect=True`` reconnects on its own and resumes every "
-"transfer it can reach; `resume_transfers` is public, so an application "
-"can also drive the resume itself. Legs the previous session left behind "
-"are closed before the resume runs, so two legs never write the same "
-"transfer."
-msgstr ""
 
 #: ../../source/File_Transfer/File_Transfer.rst:723
 #: fe9377db9cf04b9da0dbe4d07c730adf
@@ -1470,12 +1409,6 @@ msgstr ""
 #: ../../source/File_Transfer/File_Transfer.rst:897
 #: 7641e3ece9314197863d872836635218
 msgid "``pause_trans_remote`` / ``start_trans_remote`` (ask a client to do it)"
-msgstr ""
-
-#: ../../source/File_Transfer/File_Transfer.rst:898
-#: ../../source/File_Transfer/File_Transfer.rst:918
-#: 9c62709c2c06456dbfddee1f1ce6871e de496a0be32c490585ae0cbafc931a71
-msgid "``resume_transfers`` / ``resume_trans`` (continue interrupted transfers)"
 msgstr ""
 
 #: ../../source/File_Transfer/File_Transfer.rst:900

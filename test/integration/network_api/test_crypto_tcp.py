@@ -15,7 +15,7 @@ import time
 import pytest
 
 
-from helpers import free_port, server_ready, wait_until
+from helpers import free_port, request_transfer_listener, server_ready, wait_until
 
 from PyFlow.network_api import rsa_crypto
 from PyFlow.network_api.connect_tcp import (
@@ -128,18 +128,48 @@ def _server_sock(server, client):
 
 
 def _wait_server_reexchanged(server, client, timeout=20):
-    """Wait until the server dropped the socket (decode failure) and
-    re-flipped it (re-exchange complete), or the client died."""
+    """Wait until the server counted a decode failure and framed the socket again.
+
+    Both observations are monotonic, so neither can be missed between polls:
+    ``decode_failures`` survives a re-exchange (only genuine peer traffic
+    resets it) and framing is a settled state, not a transient one. Waiting on
+    the socket leaving ``_encrypted_sockets`` raced the poll interval — a
+    re-exchange on loopback can finish inside one 50 ms tick.
+    """
     sock = _server_sock(server, client)
-    if not wait_until(lambda: sock not in server._encrypted_sockets, timeout=timeout):
+
+    def counted():
+        with server._crypto_lock:
+            state = server._crypto_state.get(server._crypto_sock_addr.get(sock))
+            return bool(state is not None and state.get("decode_failures"))
+
+    def framed():
+        channel = server._channels.get(sock)
+        return bool(channel is not None and channel.secure)
+
+    if not wait_until(counted, timeout=timeout):
         return False
     if not client.running:
         return False
+    return wait_until(lambda: framed() and client.running, timeout=timeout)
 
-    return wait_until(
-        lambda: sock in server._encrypted_sockets and client.running,
-        timeout=timeout,
-    )
+def _server_streak(server, sock):
+    """Read the server's consecutive decode-failure count for one control socket.
+
+    This is the quantity the breaker acts on, and unlike ``channel.secure`` or
+    ``_encrypted_sockets`` it is monotonic across a re-exchange: only genuine
+    peer traffic resets it (protocol lines such as the re-exchange do not). A
+    test that samples transient state can miss the window entirely on loopback.
+    """
+    with server._crypto_lock:
+        state = server._crypto_state.get(server._crypto_sock_addr.get(sock))
+        return 0 if state is None else state.get("decode_failures", 0)
+
+
+def _server_framed(server, sock):
+    """Return whether the server's channel for ``sock`` currently speaks frames."""
+    channel = server._channels.get(sock)
+    return bool(channel is not None and channel.secure)
 
 
 def _roundtrip(client, message, timeout=2.0):
@@ -224,38 +254,51 @@ def test_concurrent_encrypted_sends_not_dropped(tcp_pair):
 def test_slow_sender_does_not_reorder_frames(tcp_pair):
     """A thread preempted between seq allocation and the wire write must
     not let a later sender overtake it (the peer would drop the earlier
-    frame as out-of-order). Deterministic: the first sender's write is
-    delayed under the per-connection send lock."""
+    frame as out-of-order). Deterministic: the first sender's framed write
+    is held under the per-connection send lock. Only that thread's framed
+    write is stalled; the handshake's control lines and the ECDH publish
+    are written by other threads and pass straight through."""
     server, client, _ = tcp_pair
     assert _wait_flip(client)
+    channel = client._channels[client.client_socket]
+    assert wait_until(lambda: channel.frames_allowed.is_set(), timeout=5)
+    assert wait_until(
+        lambda: channel.frames_allowed.is_set()
+        and server._channels[_server_sock(server, client)].frames_allowed.is_set(),
+        timeout=5,
+    )
     gate = threading.Event()
-    stalled = [0]
+    stalled = threading.Event()
+    first_sender = []  # the thread that issues "first"; only its framed write stalls
+    real_sendall = channel._sendall
 
-    class _StallingSocket(socket.socket):
-        __slots__ = ()  # keep the exact socket layout so __class__ assignment works
+    def stalling_sendall(data):
+        if threading.current_thread() is first_sender[0] and not stalled.is_set():
+            stalled.set()  # the first sender holds seq 0 and is inside the send lock
+            gate.wait()
+        real_sendall(data)
 
-        def sendall(self, data):
-            if stalled[0] == 0:
-                stalled[0] = 1  # stall exactly one (the first) sender after seq allocation
-                gate.wait()
-            super().sendall(data)
-
-    client.client_socket.__class__ = _StallingSocket
+    channel._sendall = stalling_sendall
     buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
-        t1 = threading.Thread(target=client.send_message, args=(client.client_socket, "first"))
-        t1.start()
-        time.sleep(0.05)  # t1 allocates seq 0 and stalls inside sendall
-        t2 = threading.Thread(target=client.send_message, args=(client.client_socket, "second"))
-        t2.start()
-        time.sleep(0.1)  # t2 attempts its send while t1 is still stalled
+    try:
+        with contextlib.redirect_stdout(buf):
+            t1 = threading.Thread(target=client.send_message, args=(client.client_socket, "first"))
+            first_sender.append(t1)
+            t1.start()
+            assert stalled.wait(timeout=5), "first sender never reached the framed write"
+            t2 = threading.Thread(target=client.send_message, args=(client.client_socket, "second"))
+            t2.start()
+            time.sleep(0.1)  # t2 attempts its send while t1 is still stalled
+            gate.set()
+            t1.join()
+            t2.join()
+            echoed = wait_until(
+                lambda: "msg send: first" in buf.getvalue() and "msg send: second" in buf.getvalue(),
+                timeout=10,
+            )
+    finally:
         gate.set()
-        t1.join()
-        t2.join()
-        echoed = wait_until(
-            lambda: "msg send: first" in buf.getvalue() and "msg send: second" in buf.getvalue(),
-            timeout=10,
-        )
+        channel._sendall = real_sendall
     assert echoed, f"frame reordering dropped a message; echoes: {buf.getvalue()!r}"
 
 
@@ -494,25 +537,25 @@ def test_decode_failure_burst_closes_connection(tcp_pair):
     forever.
 
     Only a frame the server still parses as framed is counted: one that
-    lands after it dropped framing again (mid re-exchange) is stale and is
-    deliberately ignored — and the framed state is the channel's ``secure``
-    flag, which is set after the socket rejoins ``_encrypted_sockets``.
-    Waiting on that flag keeps every injection counted.
+    lands while it has dropped framing again (mid re-exchange) is stale and is
+    deliberately ignored, so each injection waits for framing first. The
+    observation after the injection is the breaker's own counter, not the
+    framed flag: on loopback the re-exchange can finish inside one poll tick,
+    which makes "the flag is currently down" unobservable even though the
+    failure was counted.
     """
     server, client, _ = tcp_pair
     assert _wait_flip(client)
     sock = _server_sock(server, client)
 
-    def server_framed():
-        channel = server._channels.get(sock)
-        return bool(channel is not None and channel.secure)
-
-    for _ in range(MAX_DECODE_FAILURES):
-        assert wait_until(server_framed, timeout=30), "the server never framed the channel again"
-        client.client_socket.sendall(_frame(FRAME_TYPE_RSA, b"garbage"))
-        # the frame was parsed, counted, and framing dropped again
+    for expected in range(1, MAX_DECODE_FAILURES + 1):
         assert wait_until(
-            lambda: not server_framed() or not client.running, timeout=30
+            lambda: _server_framed(server, sock), timeout=30
+        ), "the server never framed the channel again"
+        client.client_socket.sendall(_frame(FRAME_TYPE_RSA, b"garbage"))
+        assert wait_until(
+            lambda: _server_streak(server, sock) >= expected or not client.running,
+            timeout=30,
         ), "the malformed frame was not counted by the breaker"
     assert _wait_disconnected(client)
 
@@ -525,44 +568,56 @@ def test_stale_frame_coalesced_behind_a_plaintext_line_is_consumed(tcp_pair):
     frame behind it into one read; serving those frame bytes as a line echoes
     them as a message and resets the decode-failure streak, so the breaker
     never trips (that leak made the burst test above fail on Windows CI).
+
+    The re-exchange is held from the start: on loopback it can finish before a
+    poll ever observes the unframed window, and then the injected "stale"
+    frame would be framed and counted a second time.
     """
     server, client, _ = tcp_pair
     assert _wait_flip(client)
     sock = _server_sock(server, client)
-
-    def server_framed():
-        channel = server._channels.get(sock)
-        return bool(channel is not None and channel.secure)
-
-    # one counted failure drops the server's framing and re-exchanges
-    assert wait_until(server_framed, timeout=30)
-    client.client_socket.sendall(_frame(FRAME_TYPE_RSA, b"garbage"))
-    assert wait_until(lambda: not server_framed(), timeout=30)
-
-    # hold the server in the re-exchange window: what lands next is stale
-    real_try_flip = server._crypto_try_server_flip
-    server._crypto_try_server_flip = lambda *args, **kwargs: None
-
-    def streak():
-        with server._crypto_lock:
-            state = server._crypto_state.get(server._crypto_sock_addr.get(sock))
-            return None if state is None else state.get("decode_failures")
+    assert wait_until(lambda: _server_framed(server, sock), timeout=30)
 
     dropped = []  # the channel's own stale-frame notice
-    server._channels[sock]._debug = dropped.append
-    client.client_socket.sendall(
-        CRYPTO_FRAMES_START.encode("utf-8") + b"\n" + _frame(FRAME_TYPE_RSA, b"garbage")
+    channel = server._channels[sock]
+    real_channel_debug = channel._debug
+    channel._debug = dropped.append
+    real_try_flip = server._crypto_try_server_flip
+    gate = threading.Event()
+
+    def held_flip(*args, **kwargs):
+        # runs on the handshake worker: a raise here would surface as an
+        # unhandled thread exception, so the gate only delays the flip
+        gate.wait(timeout=30)
+        return real_try_flip(*args, **kwargs)
+
+    server._crypto_try_server_flip = held_flip
+    try:
+        # one counted failure drops the server's framing ...
+        client.client_socket.sendall(_frame(FRAME_TYPE_RSA, b"garbage"))
+        assert wait_until(
+            lambda: _server_streak(server, sock) == 1, timeout=30
+        ), "the first malformed frame was not counted"
+
+        # ... and the re-exchange is held, so what lands next is stale
+        client.client_socket.sendall(
+            CRYPTO_FRAMES_START.encode("utf-8") + b"\n" + _frame(FRAME_TYPE_RSA, b"garbage")
+        )
+        assert wait_until(
+            lambda: any("dropped a stale frame" in entry for entry in dropped), timeout=5
+        ), "the stale frame behind the line was not consumed as a frame"
+        assert _server_streak(server, sock) == 1, (
+            "frame bytes echoed as a line reset the decode-failure streak"
+        )
+    finally:
+        # let the re-exchange settle before the fixture tears down: an in-flight
+        # key push would race the stop (its thread reports an unhandled exception)
+        server._crypto_try_server_flip = real_try_flip
+        gate.set()  # let a flip that already reached the gate run now
+        channel._debug = real_channel_debug
+    assert wait_until(lambda: _server_framed(server, sock), timeout=30), (
+        "the re-exchange never settled"
     )
-
-    assert wait_until(
-        lambda: any("dropped a stale frame" in entry for entry in dropped), timeout=5
-    ), "the stale frame behind the line was not consumed as a frame"
-    assert streak() == 1, "frame bytes echoed as a line reset the decode-failure streak"
-
-    # let the re-exchange settle before the fixture tears down: an in-flight
-    # key push would race the stop (its thread reports an unhandled exception)
-    server._crypto_try_server_flip = real_try_flip
-    assert wait_until(server_framed, timeout=30), "the re-exchange never settled"
 
 
 def test_mode_negotiation_survives_server_announcement_race(tmp_path):
@@ -613,10 +668,10 @@ def test_flip_completes_even_if_push_ack_is_lost(tcp_pair, monkeypatch):
     server, client, _ = tcp_pair
     orig_send = server.send_message
 
-    def flaky_ack(client_socket, message):
+    def flaky_ack(client_socket, message, is_send_raw=False):
         if message == server.server_received_file_data_sign:
             raise OSError(9, "Bad file descriptor")  # the flaky ack send
-        return orig_send(client_socket, message)
+        return orig_send(client_socket, message, is_send_raw=is_send_raw)
 
     monkeypatch.setattr(server, "send_message", flaky_ack)
     assert _wait_flip(client)
@@ -811,11 +866,7 @@ def test_encrypted_file_transfer_client_to_server(tcp_pair, tmp_path, monkeypatc
     src = tmp_path / "payload.bin"
     src.write_bytes(payload)
 
-    server_sock = _server_sock(server, client)
-    server.file_transfer_server_recv_server_start_thread("cid", server_sock, f"/file {src} 0")
-    assert wait_until(lambda: list(client.file_server_port_list), timeout=10)
-    with client.file_transfer_server_port_lock:
-        port, _cid, stamp = client.file_server_port_list[0]
+    port, stamp = request_transfer_listener(client, server, f"/file {src} 0")
     assert stamp.startswith("enc:"), f"listener stamped {stamp!r}"
     assert client.file_transfer_mode(
         str(src), "127.0.0.1", port, 0, control_socket=client.client_socket, crypto=stamp
@@ -844,12 +895,7 @@ def test_encrypted_file_transfer_server_to_client(tcp_pair, tmp_path, monkeypatc
     src = tmp_path / "big.bin"
     src.write_bytes(payload)
 
-    client.file_transfer_client_recv_server_start_thread(
-        "cid", client.client_socket, f"/file {src} 0"
-    )
-    assert wait_until(lambda: list(server.file_server_port_list), timeout=10)
-    with server.file_transfer_server_port_lock:
-        port, _cid, stamp = server.file_server_port_list[0]
+    port, stamp = request_transfer_listener(server, client, f"/file {src} 0")
     assert stamp.startswith("enc:"), f"listener stamped {stamp!r}"
     assert server.file_transfer_mode(
         str(src),
@@ -911,7 +957,7 @@ def test_encrypted_forward_between_clients(tmp_path, monkeypatch):
         src = tmp_path / "fwd.bin"
         src.write_bytes(payload)
         dest = receiver.client_socket.getsockname()
-        sender._forward_one("file", "", "fwd.bin", str(src), [dest])
+        assert sender._forward_one("file", "", "fwd.bin", str(src), [dest]) is True
 
         received = recv_dir / "fwd.bin"
         assert wait_until(
@@ -920,6 +966,9 @@ def test_encrypted_forward_between_clients(tmp_path, monkeypatch):
         assert received.read_bytes() == payload
         assert stamps and stamps[0].startswith("enc:"), "the target leg was not encrypted"
         assert raw and payload not in raw, "the payload appeared in the clear on the wire"
+        assert sender._transfer_progress_snapshot()["relays"] == {}
+        assert sender.file_upload_progress == {}
+        assert wait_until(lambda: not server._fid_routes and not server._fid_route_index)
     finally:
         for c in clients:
             c.close()
