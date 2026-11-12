@@ -208,5 +208,5 @@ uv run python -m sphinx -b html docs/source build/sphinx_doc   # equivalent, exp
 
 ## Лицензия
 
-[GPL-3.0](LICENSE)
+[Apache-2.0](LICENSE)
 

@@ -12,8 +12,8 @@ authors = [
   { name="F18-Maverick", email="rayxu2333@outlook.com" },
 ]
 readme = "README.md"
-license = "GPL-3.0-or-later"
-license-files = ["LICEN[CS]E*"]
+license = "Apache-2.0"
+license-files = ["LICEN[CS]E*", "NOTICE*"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
