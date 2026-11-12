@@ -2421,9 +2421,10 @@ class TCP_Server_Base:  # TCP server class
         self._custom_handler_threaded = [{}, {}]
         self._custom_executor = ThreadPoolExecutor(max_workers=max_custom_workers)
         self._task_semaphore = threading.Semaphore(max_custom_workers)
-        # Inbound-event listeners (see add_message_listener/add_file_listener).
-        # They run on the receive thread, so a listener must not block and must
-        # never raise (exceptions are swallowed by the notify helpers).
+        # Inbound/outbound event listeners (see add_message_listener and
+        # add_file_listener). They run on the thread performing the relevant
+        # I/O; a listener must not block and its exceptions are swallowed by
+        # the notify helpers.
         self._message_listeners = []
         self._file_listeners = []
         self._send_message_listeners = []
@@ -3435,18 +3436,23 @@ class TCP_Server_Base:  # TCP server class
         return handler(None, None, command)
 
     def add_message_listener(self, listener):
-        """Register ``listener(client_id, message)`` for every inbound line.
+        """Register ``listener(client_id, message)`` for inbound events.
 
-        Every line received from a client is reported, commands included
-        (``/help``, ``/file ...``, the crypto handshake lines, ...), so the
-        listener observes all inbound traffic; dispatch is unaffected, a
-        command still goes through the command handlers.
+        Complete control lines are reported as ``str`` (commands and crypto
+        handshake lines included); raw chunks from a non-control socket
+        (file/folder transfer, forwarding, temporary connection) are reported
+        as ``bytes`` without line or frame alignment. ``client_id`` is the peer
+        endpoint of the socket that produced the event, so a side-channel event
+        names that temporary TCP connection, not the control client.
+
+        Control-line callbacks run on the receive thread (synchronous server)
+        or the ``asyncio.to_thread`` worker (asynchronous server); raw chunks
+        run on the thread reading that socket. Callbacks may run concurrently
+        and must be thread-safe, must not block, and exceptions raised inside
+        them are swallowed. ``stop()`` stops new delivery and clears the list.
 
         Args:
-            listener (callable): ``listener(client_id, message)`` where
-                ``client_id`` is the sender's ``"ip:port"``. It runs on the receive
-                thread, so it must not block, and exceptions raised inside it are
-                swallowed.
+            listener (callable): ``listener(client_id, message)``.
         """
         with self._event_listeners_lock:
             if listener not in self._message_listeners:
@@ -3465,12 +3471,21 @@ class TCP_Server_Base:  # TCP server class
                 pass
 
     def add_send_message_listener(self, listener):
-        """Register ``listener(target_id, message)`` for every payload written by `send_message`.
+        """Register ``listener(target_id, message)`` for successful sends.
 
-        Fired after a successful write, for text and bytes alike (so a byte stream
-        reaches it), never for ``is_send_raw`` protocol lines. ``target_id`` is the
-        receiving client's ``"ip:port"``. It runs on the sending thread, so it must
-        not block, and exceptions raised inside it are swallowed.
+        Called synchronously on the sending thread after every payload that
+        `send_message` writes successfully, for ``str`` and ``bytes`` alike.
+        ``str`` payloads are stripped; ``bytes`` are reported unchanged.
+        ``target_id`` is the peer endpoint of the socket that wrote the
+        payload: the client's ``"ip:port"`` for a control socket, or the
+        temporary TCP connection's ``"ip:port"`` for a side channel.
+
+        ``is_send_raw=True`` lines and internal protocol frames such as the
+        ECDH public-key publication are not reported. When several threads
+        send on one socket the writes stay serialized, but callback order is
+        not guaranteed to match wire order; this affects observation only.
+        The listener must not block, may run concurrently, and its exceptions
+        are swallowed. ``stop()`` stops new delivery.
 
         Args:
             listener (callable): ``listener(target_id, message)``.
@@ -3494,16 +3509,20 @@ class TCP_Server_Base:  # TCP server class
     def add_file_listener(self, listener):
         """Register ``listener(client_id, full_path, name, size, command)`` per saved file.
 
-        Fired after a file uploaded by a client (a direct send, or a forwarded
-        file/folder item staged on the server) has been fully written to
-        ``file_transfer_dir``.
+        Fired once after a file uploaded by a client (a direct send or a
+        forwarded item staged on the server) is fully written to its
+        destination. ``client_id`` is the uploader's control-connection
+        ``"ip:port"``; ``command`` is the wire command that triggered the
+        transfer, so pushes such as ``/crypto_pub_key`` can be recognised. The
+        callback runs on the transfer thread before the completion sign is sent
+        (it does not wait for an ACK); per-chunk data goes to the message
+        listeners as ``bytes`` instead. For ``/crypto_pub_key`` the key is not
+        registered yet, so the listener must not move or delete the file. It
+        must not block; exceptions are swallowed. ``stop()`` stops new delivery.
 
         Args:
             listener (callable): ``listener(client_id, full_path, name, size,
-                command)``; ``client_id`` is the uploader's ``"ip:port"`` and
-                ``command`` the wire command that triggered the transfer, so a
-                listener can recognise protocol pushes such as ``/crypto_pub_key``.
-                It runs on the transfer thread, so it must not block.
+                command)``.
         """
         with self._event_listeners_lock:
             if listener not in self._file_listeners:
@@ -7684,9 +7703,10 @@ class TCP_Client_Base:  # TCP client class
         self._custom_handler_threaded = [{}, {}]
         self._custom_executor = ThreadPoolExecutor(max_workers=max_custom_workers)
         self._task_semaphore = threading.Semaphore(max_custom_workers)
-        # Inbound-event listeners (see add_message_listener/add_file_listener).
-        # They run on the receive thread, so a listener must not block and must
-        # never raise (exceptions are swallowed by the notify helpers).
+        # Inbound/outbound event listeners (see add_message_listener and
+        # add_file_listener). They run on the thread performing the relevant
+        # I/O; a listener must not block and its exceptions are swallowed by
+        # the notify helpers.
         self._message_listeners = []
         self._file_listeners = []
         self._send_message_listeners = []
@@ -7816,20 +7836,23 @@ class TCP_Client_Base:  # TCP client class
         return handler(self.client_socket, client_id, command)
 
     def add_message_listener(self, listener):
-        """Register ``listener(sender_id, message)`` for every inbound line.
+        """Register ``listener(sender_id, message)`` for inbound events.
 
-        Every line received from the server is reported, commands included, so
-        the listener observes all inbound traffic; a message another client
-        forwarded here is reported as its payload, attributed to the forwarder.
+        Complete control lines are reported as ``str`` (commands included); a
+        message forwarded through ``/send_msg_from`` is reported as its
+        payload. Raw chunks from a non-control socket (file transfer,
+        forwarding, temporary connection) are reported as ``bytes`` without
+        line or frame alignment. ``sender_id`` is the forwarding/origin
+        client's ``"ip:port"``, ``None`` for a direct server push, or the
+        temporary TCP peer endpoint for a side-channel chunk.
+
+        Control-line callbacks run on the client receive thread; raw chunks run
+        on the thread reading that socket. Callbacks may run concurrently and
+        must be thread-safe, must not block, and exceptions raised inside them
+        are swallowed. ``close()`` stops new delivery and clears the list.
 
         Args:
-            listener (callable): ``listener(sender_id, message)``; ``sender_id`` is
-                the author's ``"ip:port"`` — the forwarding client for a message
-                another client forwarded here (``/send_msg_from`` envelope), or None
-                for a direct push from the server, which names no client author. It
-                runs on the receive thread, so it must not block, and exceptions
-                raised inside it are swallowed.
-
+            listener (callable): ``listener(sender_id, message)``.
         """
         with self._event_listeners_lock:
             if listener not in self._message_listeners:
@@ -7848,12 +7871,21 @@ class TCP_Client_Base:  # TCP client class
                 pass
 
     def add_send_message_listener(self, listener):
-        """Register ``listener(target_id, message)`` for every payload written by `send_message`.
+        """Register ``listener(target_id, message)`` for successful sends.
 
-        Fired after a successful write, for text and bytes alike (so a byte stream
-        reaches it), never for ``is_send_raw`` protocol lines. ``target_id`` is the
-        server's ``"ip:port"``. It runs on the sending thread, so it must not block,
-        and exceptions raised inside it are swallowed.
+        Called synchronously on the sending thread after every payload that
+        `send_message` writes successfully, for ``str`` and ``bytes`` alike.
+        ``str`` payloads are stripped; ``bytes`` are reported unchanged.
+        ``target_id`` is the peer endpoint of the socket that wrote the
+        payload: the server's ``"ip:port"`` for the control socket, or the
+        temporary TCP connection's ``"ip:port"`` for a side channel.
+
+        ``is_send_raw=True`` lines and internal protocol frames such as the
+        ECDH public-key publication are not reported. When several threads
+        send on one socket the writes stay serialized, but callback order is
+        not guaranteed to match wire order; this affects observation only.
+        The listener must not block, may run concurrently, and its exceptions
+        are swallowed. ``close()`` stops new delivery.
 
         Args:
             listener (callable): ``listener(target_id, message)``.
@@ -7877,14 +7909,18 @@ class TCP_Client_Base:  # TCP client class
     def add_file_listener(self, listener):
         """Register ``listener(full_path, name, size, command)`` per saved inbound file.
 
-        Fired after a file pushed by the server (a direct send, or a forwarded
-        file/folder item) has been fully written to ``file_transfer_dir``.
+        Fired once after a file pushed by the server (a direct send or a
+        forwarded item) is fully written to disk. ``command`` is the wire
+        command that triggered the transfer, so pushes such as
+        ``/crypto_pub_key`` can be recognised. The callback runs on the transfer
+        thread before the completion sign is sent (it does not wait for an
+        ACK); per-chunk data goes to the message listeners as ``bytes``
+        instead. For ``/crypto_pub_key`` the server key is not registered yet,
+        so the listener must not move or delete the file. It must not block;
+        exceptions are swallowed. ``close()`` stops new delivery.
 
         Args:
-            listener (callable): ``listener(full_path, name, size, command)``;
-                ``command`` is the wire command that triggered the transfer, so a
-                listener can recognise protocol pushes such as ``/crypto_pub_key``.
-                It runs on the transfer thread, so it must not block.
+            listener (callable): ``listener(full_path, name, size, command)``.
         """
         with self._event_listeners_lock:
             if listener not in self._file_listeners:

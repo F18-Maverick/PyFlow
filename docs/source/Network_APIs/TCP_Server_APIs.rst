@@ -541,8 +541,8 @@ TCP clients.
 
 .. _tcp-server-event-listener-api:
 
-TCP Server inbound event listener API
--------------------------------------
+TCP Server event listener API
+-----------------------------
 
 External code can observe traffic without replacing the
 protocol loop:
@@ -557,28 +557,68 @@ protocol loop:
     def remove_file_listener(self, listener)
 
 ``add_message_listener`` registers ``listener(client_id, message)`` for
-every inbound control line, commands included (``/help``, ``/file ...``,
-the crypto handshake lines, ...), so a listener observes all inbound
-traffic; line dispatch is unaffected, a command still goes to the command
-handlers. Raw chunks read from a transfer socket are reported to the same
-listeners as ``bytes``, with the client's ``"ip:port"`` as ``client_id``.
+every complete inbound control line. Lines are newline-delimited, stripped,
+and empty lines are skipped; commands (``/help``, ``/file ...``) and the
+crypto handshake lines are included, so the listener observes all inbound
+traffic while line dispatch continues unchanged. Raw chunks read from a
+non-control socket (file/folder transfers, forwards, temporary connections)
+are reported to the same listeners as ``bytes``: one callback per read or
+decrypted chunk, with no line or frame alignment, containing transfer
+headers, file data and ``sign`` tokens alike. ``client_id`` is the peer
+endpoint of the socket that produced the event; for a side-channel event
+this is that temporary TCP connection's ``"ip:port"``, not the control
+connection's client id. Control lines are ``str``; side-channel chunks are
+``bytes``.
+
+Threading: on the synchronous server path, control-line callbacks run on
+the per-client receive thread; on the asynchronous path
+(``is_asynic_clients_io=True``) they run on the worker thread used by
+``asyncio.to_thread``. Raw side-channel chunks and file callbacks run on the
+thread that reads or transfers that socket, never on the event loop. Send
+callbacks run on the thread that calls `send_message`. Listeners can
+therefore run concurrently for different clients/sockets, and send callbacks
+for concurrent sends on the same socket may also overlap; they must be
+thread-safe. Per-socket inbound order is preserved, cross-socket order is
+not.
 
 ``add_send_message_listener`` registers ``listener(target_id, message)``
-and fires after every payload that `send_message` writes successfully,
-``str`` and ``bytes`` alike. ``target_id`` is the receiving client's
-``"ip:port"``. Lines written with ``is_send_raw=True`` are never reported.
+and calls it synchronously on the sending thread after every payload that
+`send_message` writes successfully, for ``str`` and ``bytes`` alike.
+``str`` payloads are reported stripped of leading/trailing whitespace;
+``bytes`` are reported unchanged. ``target_id`` is the peer endpoint of the
+socket that performed the write: the client's ``"ip:port"`` for a control
+socket, or the temporary TCP connection's ``"ip:port"`` for a file/forward
+side channel. Lines written with ``is_send_raw=True`` and internal protocol
+frames such as the ECDH public-key publication are never reported.
 
-``add_file_listener`` registers ``listener(client_id, full_path, name, size, command)``
-and fires after a file uploaded by a client has been fully written to the
-transfer directory (``command`` is the wire command that triggered it, so
-protocol pushes such as ``/crypto_pub_key`` can be recognised).
+When several threads call `send_message` on the same socket, the socket
+writes remain serialized, but the send-listener callbacks are not guaranteed
+to run in the same order as the wire writes. This affects observation order
+only: it does not change socket write order, receive order, or file data
+integrity. Callers that need a strict observation order must serialize their
+own `send_message` calls.
 
-Listeners run on the thread that performs the I/O, so they must not block,
-and an exception inside a listener is logged and swallowed. The ``remove_*``
-counterparts unregister a listener and ignore unknown ones. On the
-asynchronous server path (``is_asynic_clients_io``), listeners for raw
-transfer chunks run on the event loop thread, so they must not block the
-loop.
+``add_file_listener`` registers
+``listener(client_id, full_path, name, size, command)`` and fires once after
+a file uploaded by a client (a direct send, or a forwarded item staged on
+the server) has been fully written to its destination. ``client_id`` is the
+uploader's control-connection ``"ip:port"``; ``command`` is the wire command
+that triggered the transfer, so protocol pushes such as
+``/crypto_pub_key`` can be recognised. The callback runs on the transfer
+thread and fires before the completion sign is sent; it does not wait for
+the peer's ACK. Per-chunk progress is reported to the message listeners as
+``bytes``, not by this callback. For ``/crypto_pub_key`` the callback runs
+before the key is registered; a listener must not move or delete the file.
+
+Listeners must not block, and an exception inside one is logged and
+swallowed. The ``remove_*`` counterparts unregister a listener and ignore
+unknown ones; add/remove take effect for subsequent notifications, while a
+notification already in progress may still run. ``stop()`` stops new
+delivery, clears the listener lists and suppresses the remaining callbacks
+of an in-flight dispatch; a callback already past that check on another
+thread may still finish. Listener lists are per instance and are not
+replayed; after ``stop()`` create a new instance to register listeners
+again.
 
 Control traffic is also kept per peer socket in four stores, each value a
 list of ``[content, timestamp]`` pairs:
