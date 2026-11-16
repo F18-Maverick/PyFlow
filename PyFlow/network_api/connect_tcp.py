@@ -747,6 +747,49 @@ def _start_resume_send(instance, key, target, send):
     return True
 
 
+def _validate_transfer_control_identity(fid, trans_type, direction):
+    """Validate a file leg's id, transfer type and sender/receiver role."""
+    if type(fid) is not int or fid < 0:
+        raise ValueError("fid must be a nonnegative integer")
+    if type(trans_type) is not int or trans_type not in (0, 1):
+        raise ValueError("trans_type must be 0 (ordinary) or 1 (forwarded)")
+    if type(direction) is not int or direction not in (0, 1):
+        raise ValueError("direction must be 0 (sender) or 1 (receiver)")
+
+
+def _parse_transfer_control_command(command):
+    """Parse a four-token pause/start line, returning None for malformed input.
+
+    Return ``(paused, fid, trans_type, direction)``. The wire direction is the
+    command issuer's role; the receiving side's local role is ``1 - direction``.
+    This parser does not resolve a peer, register state or send a response.
+    """
+    if not isinstance(command, str):
+        return None
+    try:
+        parts = shlex.split(command)
+        if len(parts) != 4:
+            return None
+        name = parts[0].lower()
+        if name not in ("/pause_trans", "/start_trans"):
+            return None
+        fid, trans_type, direction = map(int, parts[1:])
+        _validate_transfer_control_identity(fid, trans_type, direction)
+        return name == "/pause_trans", fid, trans_type, direction
+    except ValueError:
+        return None
+
+
+def _transfer_control_key(peer, fid, trans_type, direction):
+    """Build a runtime control key from a resolved peer and the local leg role.
+
+    Callers resolve configured/concrete endpoints before building the key and
+    invert incoming wire directions. Progress stores retain their existing keys.
+    """
+    _validate_transfer_control_identity(fid, trans_type, direction)
+    return tuple(peer), fid, trans_type, direction
+
+
 def _pause_command_fid(command):
     """Return the fid of a ``/pause_trans``/``/start_trans`` line, or None.
 
@@ -1063,6 +1106,19 @@ def _socket_peer_endpoint(sock):
     except OSError:
         return None
     return (address[0], address[1]) if address else None
+
+
+def _is_control_endpoint(endpoint, configured_endpoint, connected_endpoint):
+    """Match only the configured identity or this connection's actual endpoint.
+
+    ``connected_endpoint`` comes from the appropriate local/peer socket helper;
+    None keeps only the configured fallback after a control socket is closed.
+    A wildcard configuration never makes unrelated same-port addresses match.
+    """
+    endpoint = tuple(endpoint)
+    return endpoint == configured_endpoint or (
+        connected_endpoint is not None and endpoint == connected_endpoint
+    )
 
 
 class _FidAllocator:
@@ -6532,12 +6588,8 @@ class TCP_Server_Base:  # TCP server class
         Returns:
             bool: True when the endpoint is this side of that connection.
         """
-        endpoint = tuple(endpoint)
-        if endpoint == (self.host, self.port):
-            return True
-        if isinstance(sock, tuple):
-            return endpoint == tuple(sock)
-        return endpoint == _socket_local_endpoint(sock)
+        connected_endpoint = tuple(sock) if isinstance(sock, tuple) else _socket_local_endpoint(sock)
+        return _is_control_endpoint(endpoint, (self.host, self.port), connected_endpoint)
 
     def _control_local_endpoint(self, sock):
         """Return the endpoint this instance advertises on a control connection.
@@ -10880,15 +10932,12 @@ class TCP_Client_Base:  # TCP client class
         # connection; the configured address is accepted too so a peer using
         # either convention is recognised. The upload row key keeps the
         # configured namespace, so persisted rows are unchanged.
-        server_endpoints = {server_peer}
         connected_endpoint = _socket_peer_endpoint(control_socket)
-        if connected_endpoint is not None:
-            server_endpoints.add(connected_endpoint)
         target = tuple(peer_addr) if peer_addr is not None else (
             connected_endpoint or server_peer
         )
         key = (server_peer, fid)
-        is_direct = target in server_endpoints
+        is_direct = _is_control_endpoint(target, server_peer, connected_endpoint)
 
         def send(entry):
             if not is_direct:

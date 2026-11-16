@@ -318,3 +318,20 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
   still consumed by the existing ACK wait. Wire commands, progress rows,
   public signatures and the pause/start semantics of a live session are
   unchanged.
+
+## Transfer control C1: typed identity and shared endpoint matching
+
+- Private foundations parse four-token pause/start commands and validate a
+  nonnegative integer FID, transfer type (ordinary/forwarded) and local role
+  (sender/receiver). Runtime keys include peer, FID, type and local direction;
+  progress keys and JSON remain unchanged.
+- Server-local and Client resume identity checks share the same exact
+  configured-or-connected endpoint predicate. Wildcard configuration does not
+  admit unrelated addresses with the same port; closed sockets retain the
+  configured fallback. No additional endpoint alias table is introduced.
+- The new parser is not yet used by production dispatch. Existing pause/start
+  wire messages and public APIs remain in use until the separately permitted
+  C2b cutover. C1's targeted run passed 81 tests, including real bidirectional
+  resume with configured aliases and wildcard binds. Evidence and exclusions
+  are in `docs/plans/transfer-pause-start-direction-report.md`.
+
