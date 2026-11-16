@@ -790,6 +790,138 @@ def _transfer_control_key(peer, fid, trans_type, direction):
     return tuple(peer), fid, trans_type, direction
 
 
+class _TransferControlRegistry:
+    """Serialize each leg's decisions and control writes without blocking other legs.
+
+    Lock order is leg lock then pause condition; lookups release the condition
+    before taking a leg lock. ``send(socket, line)`` must use the secure control
+    gate and normal send_message path. It runs inside the leg lock so state and
+    wire order agree; callers must not wait for crypto on its receive thread.
+    """
+
+    def __init__(self, paused, condition):
+        self._paused = paused
+        self._condition = condition
+        self._legs = {}
+
+    def register(self, key, control_socket, owner):
+        """Bind an unclaimed identity, adopting only its sender's preset pause."""
+        if control_socket is None or owner is None:
+            raise ValueError("a control socket and leg owner are required")
+        with self._condition:
+            state = self._legs.get(key)
+            if state is not None:
+                return state if (state["control_socket"] is control_socket
+                                 and state["owner"] is owner) else None
+            paused = key[3] == 0 and self._paused.get(key, False)
+            state = {
+                "key": key, "control_socket": control_socket, "owner": owner,
+                "lock": threading.RLock(), "confirmed_state": paused,
+                "last_requested_state": False, "initial_notification": paused,
+            }
+            self._legs[key] = state
+            return state
+
+    def _live(self, state):
+        with self._condition:
+            return self._legs.get(state["key"]) is state
+
+    def _confirm(self, state, paused):
+        with self._condition:
+            state["confirmed_state"] = paused
+            if state["key"][3] == 0:
+                if paused:
+                    self._paused[state["key"]] = True
+                else:
+                    self._paused.pop(state["key"], None)
+                    self._condition.notify_all()
+
+    def _send(self, state, paused, send):
+        _, fid, trans_type, direction = state["key"]
+        name = "/pause_trans" if paused else "/start_trans"
+        try:
+            sent = send(state["control_socket"], f"{name} {fid} {trans_type} {direction}")
+        except Exception:
+            self.release(state)
+            raise
+        if not sent:
+            self.release(state)
+            return False
+        state["initial_notification"] = False
+        return True
+
+    def announce(self, state, send):
+        """Publish an adopted pause once the peer can locate the new leg."""
+        with state["lock"]:
+            if not self._live(state) or not state["initial_notification"]:
+                return False
+            return self._send(state, state["confirmed_state"], send)
+
+    def local(self, key, paused, send):
+        """Decide a sender state or submit a receiver intent, deduplicating both."""
+        with self._condition:
+            state = self._legs.get(key)
+            if state is None:
+                if key[3] == 0:
+                    if paused:
+                        self._paused[key] = True
+                    else:
+                        self._paused.pop(key, None)
+                        self._condition.notify_all()
+                return False
+        with state["lock"]:
+            if not self._live(state):
+                return False
+            if key[3] == 0:
+                if state["confirmed_state"] == paused:
+                    return False
+                self._confirm(state, paused)
+            else:
+                if (state["confirmed_state"] == paused
+                        and state["last_requested_state"] == paused):
+                    return False
+                state["last_requested_state"] = paused
+            return self._send(state, paused, send)
+
+    def receive(self, key, control_socket, paused, send):
+        """Process a request at S or a notification at R; never create wire state."""
+        with self._condition:
+            state = self._legs.get(key)
+        if state is None:
+            return False
+        with state["lock"]:
+            if not self._live(state) or state["control_socket"] is not control_socket:
+                return False
+            changed = state["confirmed_state"] != paused
+            self._confirm(state, paused)
+            if key[3] == 0:
+                # Even a same-state request needs the actual-state notification.
+                return self._send(state, paused, send)
+            return changed
+
+    def release(self, state):
+        """Retire only this owner, clear control intent and wake paused senders."""
+        with state["lock"]:
+            with self._condition:
+                key = state["key"]
+                if self._legs.get(key) is not state:
+                    return False
+                del self._legs[key]
+                self._paused.pop(key, None)
+                state["confirmed_state"] = False
+                state["last_requested_state"] = False
+                state["initial_notification"] = False
+                self._condition.notify_all()
+                return True
+
+    def discard_socket(self, control_socket):
+        """Discard one control session without touching a replacement owner."""
+        with self._condition:
+            states = [state for state in self._legs.values()
+                      if state["control_socket"] is control_socket]
+        return sum(self.release(state) for state in states)
+
+
 def _pause_command_fid(command):
     """Return the fid of a ``/pause_trans``/``/start_trans`` line, or None.
 
@@ -2412,6 +2544,9 @@ class TCP_Server_Base:  # TCP server class
         # (receiver, fid) -> bool; a pause never affects a different receiver.
         self._transfer_pause = {}
         self._transfer_pause_cond = threading.Condition()
+        self._transfer_controls = _TransferControlRegistry(
+            self._transfer_pause, self._transfer_pause_cond
+        )
         self._active_transfer_fids = set()  # fids of the legs running right now
         self._active_transfer_sockets = {}  # receive fid / (receiver, fid) -> socket
         self.project_dir = os.path.dirname(os.path.abspath(__file__))
@@ -7675,6 +7810,9 @@ class TCP_Client_Base:  # TCP client class
         # (receiver, fid) -> bool, including forwarded uploads to the server.
         self._transfer_pause = {}
         self._transfer_pause_cond = threading.Condition()
+        self._transfer_controls = _TransferControlRegistry(
+            self._transfer_pause, self._transfer_pause_cond
+        )
         self._active_transfer_fids = set()  # fids of the legs running right now
         self._active_transfer_sockets = {}  # receive fid / (receiver, fid) -> socket
         self.project_dir = os.path.dirname(os.path.abspath(__file__))

@@ -1,10 +1,18 @@
 """Contracts for typed transfer control and connection-scoped endpoint identity."""
 
+import json
 import socket
+import threading
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor
+from itertools import product
 
 import pytest
 
 from PyFlow.network_api.connect_tcp import (
+    TCP_Client_Base,
+    TCP_Server_Base,
+    _TransferControlRegistry,
     _is_control_endpoint,
     _parse_transfer_control_command,
     _socket_local_endpoint,
@@ -107,3 +115,255 @@ def test_control_endpoint_matches_only_this_connection_and_configuration(
             assert _socket_peer_endpoint(client) is None
             assert _is_control_endpoint(configured, configured, None)
             assert not _is_control_endpoint(local, configured, None)
+
+
+class _ControlPair:
+    def __init__(self):
+        self.paused = [{}, {}]
+        self.registries = [
+            _TransferControlRegistry(flags, threading.Condition()) for flags in self.paused
+        ]
+        self.keys = [_transfer_control_key(PEER, 42, 0, role) for role in (0, 1)]
+        self.sockets = [object(), object()]
+        self.states = [registry.register(key, sock, object()) for registry, key, sock in zip(
+            self.registries, self.keys, self.sockets
+        )]
+        self.pending = [deque(), deque()]
+
+    def send(self, side):
+        def enqueue(sock, line):
+            assert sock is self.sockets[side]
+            self.pending[1 - side].append(line)
+            return True
+        return enqueue
+
+    def local(self, side, paused):
+        return self.registries[side].local(self.keys[side], paused, self.send(side))
+
+    def deliver(self, side):
+        paused, fid, trans_type, direction = _parse_transfer_control_command(
+            self.pending[side].popleft()
+        )
+        key = _transfer_control_key(PEER, fid, trans_type, 1 - direction)
+        return self.registries[side].receive(key, self.sockets[side], paused, self.send(side))
+
+    def drain(self):
+        while any(self.pending):
+            for side in (0, 1):
+                if self.pending[side]:
+                    self.deliver(side)
+
+
+def test_duplicate_requests_still_confirm_and_receiver_preserves_its_last_intent():
+    pair = _ControlPair()
+    assert not pair.local(0, False) and not pair.local(1, False)
+    assert pair.local(1, True) and pair.local(1, True)
+    assert pair.states[1]["confirmed_state"] is False
+    pair.deliver(0)
+    pair.deliver(0)
+    assert tuple(pair.pending[1]) == ("/pause_trans 42 0 0",) * 2
+    pair.drain()
+    assert pair.states[0]["confirmed_state"] is pair.states[1]["confirmed_state"] is True
+    assert not pair.local(0, True) and not pair.local(1, True)
+    assert pair.local(0, False)
+    pair.drain()
+    assert pair.states[1]["last_requested_state"] is True
+    assert pair.local(1, True)  # The sender's start must not suppress another pause.
+    assert pair.local(1, False)  # An unconfirmed pause must not swallow the reverse intent.
+    pair.drain()
+    assert pair.states[0]["confirmed_state"] is pair.states[1]["confirmed_state"] is False
+    assert pair.paused == [{}, {}] and not any(pair.pending)
+
+
+@pytest.mark.parametrize("operations", tuple(product(product((0, 1), (False, True)), repeat=3)))
+def test_every_fifo_delivery_interleaving_converges_after_finite_input(operations):
+    def explore(schedule=()):
+        pair = _ControlPair()
+        submitted = 0
+        expected = False
+        for action in schedule:
+            if action == "local":
+                if operations[submitted][0] == 0:
+                    expected = operations[submitted][1]
+                pair.local(*operations[submitted])
+                submitted += 1
+            else:
+                if action == 0:
+                    expected = _parse_transfer_control_command(pair.pending[0][0])[0]
+                pair.deliver(action)
+        actions = (["local"] if submitted < len(operations) else []) + [
+            side for side in (0, 1) if pair.pending[side]
+        ]
+        if not actions:
+            sender, receiver = pair.states
+            assert sender["confirmed_state"] == receiver["confirmed_state"], schedule
+            assert sender["confirmed_state"] == expected, schedule
+            assert pair.paused[0].get(pair.keys[0], False) == sender["confirmed_state"]
+            assert pair.paused[1] == {}
+            return
+        assert len(schedule) <= 3 * len(operations), schedule  # No notification loop.
+        for action in actions:
+            explore((*schedule, action))
+    explore()
+
+
+def test_preset_pause_is_adopted_once_and_start_never_leaves_a_false_entry():
+    pair = _ControlPair()
+    registry, key, sock = pair.registries[0], pair.keys[0], pair.sockets[0]
+    assert registry.release(pair.states[0])
+    assert not registry.local(key, True, pair.send(0))
+    assert not registry.local(pair.keys[1], True, pair.send(0))
+    assert pair.paused[0] == {key: True} and not any(pair.pending)
+    state = registry.register(key, sock, object())
+    assert state["confirmed_state"] is True
+    assert registry.register(key, sock, state["owner"]) is state
+    assert registry.announce(state, pair.send(0))
+    assert not registry.announce(state, pair.send(0))
+    pair.drain()
+    assert pair.states[1]["confirmed_state"] is True
+    assert pair.local(0, False)
+    pair.drain()
+    assert pair.paused == [{}, {}]
+    assert registry.release(state)
+    assert not registry.local(key, True, pair.send(0))
+    assert not registry.local(key, False, pair.send(0))
+    fresh = registry.register(key, sock, object())
+    assert fresh["confirmed_state"] is False and not registry.announce(fresh, pair.send(0))
+
+
+def test_control_namespace_and_session_ownership_isolate_active_legs():
+    pair = _ControlPair()
+    registry, key, sock = pair.registries[0], pair.keys[0], pair.sockets[0]
+    unknown = _transfer_control_key(("127.0.0.2", 6000), 42, 0, 0)
+    relay = _transfer_control_key(PEER, 42, 1, 0)
+    reverse = _transfer_control_key(PEER, 42, 0, 1)
+    others = [registry.register(other, object(), object()) for other in (relay, reverse)]
+    assert not registry.receive(unknown, sock, True, pair.send(0))
+    assert not registry.receive(key, object(), True, pair.send(0))
+    others.append(registry.register(unknown, object(), object()))
+    assert registry.register(key, sock, object()) is None
+    assert registry.register(key, object(), pair.states[0]["owner"]) is None
+    assert pair.local(0, True)
+    assert all(state["confirmed_state"] is False for state in others)
+    assert pair.paused[0] == {key: True}
+    assert registry.discard_socket(sock) == 1
+    new = registry.register(key, object(), object())
+    assert not registry.release(pair.states[0]) and registry.discard_socket(sock) == 0
+    assert new["confirmed_state"] is False and pair.paused[0] == {}
+    assert registry.receive(key, new["control_socket"], True, lambda *_: True)
+    assert new["confirmed_state"] is True and pair.paused[0] == {key: True}
+
+
+@pytest.mark.parametrize("side", [0, 1])
+@pytest.mark.parametrize("raises", [False, True])
+def test_failed_control_write_retires_owner_without_retry(side, raises):
+    pair = _ControlPair()
+    def fail(sock, line):
+        if raises:
+            raise BrokenPipeError("closed control socket")
+        return False
+    registry, key, state = pair.registries[side], pair.keys[side], pair.states[side]
+    if raises:
+        with pytest.raises(BrokenPipeError):
+            registry.local(key, True, fail)
+    else:
+        assert registry.local(key, True, fail) is False
+    assert pair.paused[side] == {} and not any(pair.pending)
+    assert state["confirmed_state"] is state["last_requested_state"] is False
+    assert registry.register(key, object(), object())["confirmed_state"] is False
+
+
+
+def test_start_before_initial_publication_cancels_the_adopted_pause():
+    pair = _ControlPair()
+    registry, key = pair.registries[0], pair.keys[0]
+    assert registry.release(pair.states[0])
+    assert not registry.local(key, True, pair.send(0))
+    state = registry.register(key, pair.sockets[0], object())
+    assert pair.local(0, False)
+    assert not registry.announce(state, pair.send(0))
+    pair.drain()
+    assert state["confirmed_state"] is pair.states[1]["confirmed_state"] is False
+    assert pair.paused == [{}, {}]
+
+
+@pytest.mark.parametrize("sock,owner", [(None, object()), (object(), None)])
+def test_leg_registration_requires_both_session_and_owner(sock, owner):
+    registry = _TransferControlRegistry({}, threading.Condition())
+    with pytest.raises(ValueError):
+        registry.register(_transfer_control_key(PEER, 42, 0, 0), sock, owner)
+
+@pytest.mark.parametrize("finish", ["start", "release"])
+def test_start_and_release_wake_a_sender_without_reordering_control_writes(finish):
+    pair = _ControlPair()
+    registry, state = pair.registries[0], pair.states[0]
+    entered, proceed, attempted, woke, ready = (threading.Event() for _ in range(5))
+    class ObservedLock:
+        def __enter__(self):
+            if entered.is_set():
+                attempted.set()
+            return self.lock.__enter__()
+
+        def __exit__(self, *args):
+            return self.lock.__exit__(*args)
+
+    observed = ObservedLock()
+    observed.lock = state["lock"]
+    state["lock"] = observed
+    condition, key = registry._condition, pair.keys[0]
+    def send(sock, line):
+        entered.set()
+        assert proceed.wait(2)
+        return pair.send(0)(sock, line)
+    def waiter():
+        with condition:
+            ready.set()
+            assert condition.wait(timeout=2)
+            assert key not in pair.paused[0]
+        woke.set()
+    def complete():
+        if finish == "start":
+            registry.receive(key, pair.sockets[0], False, pair.send(0))
+        else:
+            registry.release(state)
+    with ThreadPoolExecutor(max_workers=3) as workers:
+        first = workers.submit(registry.local, key, True, send)
+        try:
+            assert entered.wait(2)
+            waiting = workers.submit(waiter)
+            assert ready.wait(2)
+            second = workers.submit(complete)
+            assert attempted.wait(2)
+            assert state["confirmed_state"] is True and pair.paused[0] == {key: True}
+        finally:
+            proceed.set()
+        for worker in (first, second, waiting):
+            worker.result(timeout=2)
+    assert woke.is_set() and pair.paused[0] == {}
+    if finish == "start":
+        pair.drain()
+        assert pair.states[1]["confirmed_state"] is False
+    else:
+        assert tuple(pair.pending[1]) == ("/pause_trans 42 0 0",)
+
+
+@pytest.mark.parametrize("owner_type", [TCP_Server_Base, TCP_Client_Base])
+def test_control_state_never_enters_the_persisted_progress_snapshot(owner_type, tmp_path):
+    owner = owner_type(host="127.0.0.1", port=0, is_extend_command=True,
+                       is_enable_encrypto=False, is_input_command_in_console=False,
+                       is_print_log=False)
+    for attr in ("messages_log_file", "events_log_file", "sent_messages_log_file",
+                 "sent_events_log_file", "file_trans_progress_file"):
+        setattr(owner, attr, str(tmp_path / f"{attr}.json"))
+    owner.file_upload_progress[(PEER, 42)] = [3, 10, None, "/send/file.bin", PEER]
+    before = owner._transfer_progress_snapshot()
+    try:
+        key = _transfer_control_key(PEER, 42, 0, 0)
+        controls = owner._transfer_controls
+        assert not controls.local(key, True, lambda *_: True)
+        controls.register(key, object(), object())
+        owner._persist_transfer_progress()
+        with open(owner.file_trans_progress_file, encoding="utf-8") as stream:
+            assert json.load(stream) == before
+    finally:
+        owner.stop() if owner_type is TCP_Server_Base else owner.close()

@@ -335,3 +335,23 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
   resume with configured aliases and wildcard binds. Evidence and exclusions
   are in `docs/plans/transfer-pause-start-direction-report.md`.
 
+## Transfer control C2a: sender-authoritative control state
+
+- Server and Client initialize a shared private control-registry implementation.
+  Each typed leg binds its control socket and owner; a per-leg lock serializes
+  state decisions and control writes. Same-state receiver requests still get
+  an actual-state notification; receivers track confirmed and last-requested
+  state separately and never echo notifications.
+- Sender presets are adopted by the matching leg and published once when the
+  peer can locate it. Start removes the pause key. Owner/session release or a
+  failed write clears control intent and wakes waiting senders; stale owners
+  cannot remove a replacement record. Control state stays out of progress JSON.
+- Deterministic FIFO interleavings, blocked-write ordering and lifecycle tests
+  passed with existing progress-query contracts (154 tests). A pytest iterable
+  deprecation was fixed; the affected 64 scheduling cases then passed without
+  warnings. Four plaintext socketpair runs exercised the real send_message
+  paths in both endpoint roles and both transfer types, converging with no
+  pause keys. The implementation report records evidence and limitations.
+- Production leg registration, pause/start API and protocol cutover, secure
+  dispatch, data-loop integration and real-file control remain at the C2b gate.
+
