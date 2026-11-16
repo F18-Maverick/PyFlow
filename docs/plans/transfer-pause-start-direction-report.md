@@ -1,6 +1,6 @@
 # 双向文件暂停、继续与按对象恢复 — 实施报告
 
-状态：需求卡和七项拆分已确认。**C1–C4a 已通过人工放行；C4b 已实现并完成局部验证，待人工审查；C5 未开始。** 本报告随已完成的原子变更增补，不将未实现或未运行的路径标为完成。本轮未创建提交、合并或推送。
+状态：需求卡和七项拆分已确认。**C1–C4b 已提交并通过人工放行；C5 文档与相关合并验收已完成，待人工最终审查。** 各阶段记录保留实际失败及定向重跑，不将未运行或未覆盖的场景标为完成。本轮未创建提交、合并或推送。
 
 ## C1：严格解析、typed identity 与共享端点识别
 
@@ -421,7 +421,92 @@ C2a 后续审查结论：用户已审计放行，并明确授权开始 C2b，包
 - 控制写入不是逐请求恢复确认；未回应请求按现有接收预留期限处理，实际 relay owner 不按时钟强制替换。
 - 新场景验证 source 断线重连和 target 断线拒绝；未另加 target 同端点重连补传场景，不宣称网络时序全集已枚举。配置/持久化与加密的相关合并验收留在 C5。
 - 本轮未改公共签名、wire、持久化 schema、CI、依赖或 coverage 策略；未删除测试或弱化内容/ACK/稳定身份断言。未运行 formatter、lint、文档构建、repo-wide suite 或多平台验证；Ruff 不支持 references，不能记作成功引用分析。
-- **C4b 待人工审查，未创建提交**。C5 未开始。
+- C4b 后续结论：用户已授权开始 C5，C4b 随该放行进入收尾阶段；C5 总表和合并回归见下节。
+
+## C5：总体报告与合并验收
+
+### 原子提交汇总
+
+| 阶段 | 已观察提交 | 意图与审查状态 |
+|---|---|---|
+| C1 | `b02def0` | 严格 parser、typed identity、共享端点基础；已放行 |
+| C2a | `01de684` | 发送端权威状态、FIFO、意图/确认分离、预置暂停；已放行 |
+| C2b | `fd189d1` | 普通收发与 relay 生产接入、breaking API/wire 切换；已放行 |
+| C3 | `86223f1` | child 定位、writer 隔离、用户/压力 OR、高水位门槛；已放行 |
+| C4a | `11ba6ab` | 普通对象级恢复资格和原子占用；已放行 |
+| C4b | `25aac75` | 共享 source 恢复资格、pending 接管和会话清理；已放行 |
+| C5 | 本轮未提交 | 接口文档/逐路径总表完成；合并回归 640 passed、1 skipped；待人工最终验收 |
+
+### 总体数据流与架构影响
+
+pause/start：公开 API 校验 fid/type/本地角色并归一 control peer → 精确 typed leg 与实际 socket/owner → S 决定状态或 R 登记意图 → per-leg FIFO 等待对端登记和安全通道 → 现有 send_message → 对端按实际会话验证、反转角色并处理 → S 通知确认。发送循环在新块之前读暂停状态；接收与在途落盘持续进行，start 不重建/seek/truncate。relay 每个 writer 独立控制，upstream 用户暂停与背压取 OR；source start 不解除 reader 独立高水位门槛。
+
+resume：保留的进度/route 与 origin/target 校验 → 对象级资格和原子占用 → 原有 listener/port/安全握手 → 从 receiver 磁盘 offset、原 fid/路径继续 → 实际文件 ACK → 完成/保留中断状态并释放 owner。活跃/暂停/建连/清理对象返回 False，不关闭、不排队。离线 source 的 pending 保留最新 target offset，投递与 relay 复用同一 upstream 占用；未完成 route 仍由真实 ACK 决定。
+
+公共变化：四 token pause/start、不兼容旧 remote API、必填 type/direction、异步登记不等于确认；resume 签名及五 token wire 保持，忙碌改为 False。持久化五字段、upload key、relay targets/completed 与 query schema 保持；typed 控制、FIFO、意图及恢复占用仅存内存。未改变 CI、依赖或覆盖率策略。
+
+### P01–P18 逐路径对照
+
+以下“覆盖”指已定义路径有运行/机械证据，非对任意网络时序或环境的穷举。合并回归结果在下节单列；各阶段的失败与修复记录保留在前文。
+
+| 路径 | 结论 | 主要证据与边界 |
+|---|---|---|
+| P01 | 覆盖 | 单元 parser/本地参数拒绝；same_fid 实际连接输入旧/非法/type/fid 命令后经消息屏障检查状态不变 |
+| P02 | 覆盖 | same_fid 双向普通实际内容/ACK、独立 socket；不同 peer 的真实同 fid 上传隔离、typed type/role key 契约；不授予进度行覆盖能力 |
+| P03 | 覆盖 | pause_start 上传参数组：S/R 控制、同 socket 完成；receiver_keeps 验证已确认暂停后在途块仍落盘 |
+| P04 | 覆盖 | 同 P03 的下载参数组，方向反转，真实最终 ACK 与内容 |
+| P05 | 覆盖 | 全部三操作 FIFO 交错的确定性枚举；unconfirmed_reverse 与阻塞发送屏障验证本地/远端交叉、反向意图和排空收敛 |
+| P06 | 覆盖 | empty_and_eof 真实最终 ACK；既有文件夹回归；C2b 临时脚本四个实际文件夹 leg 的 S pause/R start、内容和清理证据 |
+| P07 | 覆盖 | 精确预置暂停接管/单次公布/解除；实际注册后通知；未知 wire 不建立控制状态；start 不留 False key |
+| P08 | 覆盖 | 两 target 实际 child/合法 alias 控制、错误 peer/type/role 屏障；另一 writer 内容/ACK 完成；exact child 数字交叉和陈旧 alias 单元契约 |
+| P09 | 覆盖 | relay_pressure 固定 source/用户/背压交叉，reader 被唤醒仍回到压力门槛、读取计数不增；peak ≤ high_water + max_enqueue |
+| P10 | 覆盖 | 慢/断 target 的有界缓冲、其他目标完成、上游失败及未完成 route 保留；disconnected_target 验证活跃共享 source 不重放 |
+| P11 | 覆盖，有限交错 | plain/encrypted 配置实际控制；真实强制 re-key 持有 key publication，reader 继续处理 key、控制帧无明文；relay 实际 encrypted 帧。未另跑 relay 专用 re-key 组合全集 |
+| P12 | 覆盖 | localhost/concrete/wildcard 的普通与转发场景，真实 socket 关闭回退与同端口异地址拒绝；source 原端点重连和旧 control 迟到清理 |
+| P13 | 覆盖 | 三组实际 channel：plain、encrypted、encrypted async/tracking off；运行控制/恢复/关闭不依赖新增进度行，receiver 未阻塞密钥交换 |
+| P14 | 覆盖 | online_resume 上传/下载：control 在线、真实 partial offset、唯一新 owner、独立反向 leg 原 socket 保持、内容/ACK |
+| P15 | 覆盖 | 活跃/暂停/协商/接收监听/旧 finally 屏障拒绝；并发只有一次 True/worker，busy 不关闭或排队；EOF 行仍可补最终确认 |
+| P16 | 覆盖 | shared source 活跃拒绝、离线 pending 最新 offset、重连稳定 fid/route/completed；零偏移、空文件与 EOF 真实恢复，完成 sibling 不重放 |
+| P17 | 覆盖定义分支 | 普通双向及 relay source/target 实际断线均退出旧 worker/清控制；source 重连新 owner 默认运行，旧记录迟到释放无效。未另跑 target 同端点重连补传组合 |
+| P18 | 覆盖定义分支 | query schema/typed paused 投影、实际 JSON 无控制字段、route reload、预置不挡路由/真 owner 冲突、真实 stop 后清理及配置删除/重复 stop 契约 |
+
+### C5 当前文档与机械核对
+
+修正 Client API 仍描述 target 排队/重复合并的段落；历史 changelog 标明其已被 C4a/C4b 替代。三份 RST 明确 receiver 的未确认重复请求可能再次登记并返回 True、控制登记不等于 ACK、同 socket start、对象级恢复、无 wildcard/resume-all、data-only failure 不新增自动重试，以及活跃共享 source 被跳过后需重新请求。
+
+临时标准输入脚本通过 inspect.signature 核对六个公开方法：四个 pause/start 都要求 keyword-only type/direction；Server peer 必填，Client peer=None；两个 resume 均为 `(self, peer_addr, fid, offset)`；旧 remote 符号不存在。三份 RST 共检查 23 个显式锚点，transfer 引用全部解析，未保留旧 remote 或当前 coalescing 说明。结果 PASS，未落盘脚本。
+
+文档完整构建：
+
+```bash
+.venv/bin/python -m sphinx -b html -q -w /tmp/pyflow-c5-docs-ihOz0C/warnings.log docs/source /tmp/pyflow-c5-docs-ihOz0C/html
+```
+
+退出码 **0**，墙钟 **14.54s**；两项警告为 `html_static_path` 的 `_static` 不存在，以及 `command_control_extension_tcp` 模块 docstring 第 23 行 definition list 缩进。完成最终措辞后对同一输出目录增量构建，退出码 **0**、墙钟 **2.30s**，仅 `_static` 警告；不把增量构建未重读的 docstring 警告记为已修复。未改 Sphinx 配置或无关 docstring。
+
+通过真实浏览器打开构建的 File_Transfer 页面和控制章节锚点，观察并截取当前签名、typed 角色、wire 与返回值说明；Client API 页面文本确认包含共享 upstream 的拒绝规则和未确认请求说明，不再包含重复合并旧规则。浏览器页已关闭。构建输出位于 `/tmp/pyflow-c5-docs-ihOz0C/html`，没有写入仓库。
+
+### C5 相关合并回归
+
+执行一次计划中的相关合并回归，不含 repo-wide suite：
+
+```bash
+.venv/bin/python -m pytest test/unit/network_api test/integration/network_api/test_tcp_transfer_control.py test/integration/network_api/test_tcp_file_transfer.py test/integration/network_api/test_tcp_transfer_resume.py test/integration/network_api/test_crypto_tcp.py test/integration/network_api/test_tcp_async_server.py test/integration/test_forward_extension.py test/integration/test_forward_msg_attribution.py -q
+```
+
+**640 passed、1 skipped in 761.28s（12 分 41 秒）**，墙钟 **761.77s**。该命令执行一次，无失败、无 deselected；本轮未因结果通过而重复或扩大套件。唯一 skip 是 plain fixture 不适用的重新交换场景（`test_receiver_pause_start_waits_for_real_rekey_without_blocking_key_reader`），两组加密配置实际运行。原始输出见本会话 `artifact://70`。
+
+C5 本轮只修改三份接口 RST、变更记录、计划和本报告，未修改生产实现或测试。总体数据流、六个实现提交、P01–P18 路径结论、实际文档构建及浏览器证据已汇总；上述合并回归是本次最终代码状态的相关验证，不替代逐路径运行证据或人工审查。已完成全部七项计划阶段的交付，最终人工验收、提交/合并和远端操作尚未批准。
+
+C5 验证后，用户单独授权将 `.github/workflows/ci.yml` 的 Test job 超时从 10 分钟调至 30 分钟。测试命令、OS/Python 矩阵和覆盖率策略不变；未改其他 job。仅核对工作流配置，不为时限调整重复运行测试，也未触发远端 Actions。
+
+### 明确限制与最终人工闸门
+
+- 活跃恢复不排队、无逐请求 wire 拒绝 ACK；target 单次重连请求被跳过后需再次发起。离线已有多 target pending 同 upstream 一次只投递一个，余项等待后续合格 flush/请求/重连触发；未增加最终自动补传保证。
+- 单元状态契约加实际路径证据不等于任意调度穷举。未覆盖 relay 专用 re-key 全组合、target 同端点重连补传、NAT/端口改变、多进程进度共享、多平台和所有网络中断组合；已按各阶段报告边界披露，最终需人工接受。
+- 最终 ACK 超时仍保守保留进度；控制可用且可投递是远程 pause/start 前提。缓冲允许一次 enqueue fan-out 的有限超调，不承诺绝不超过阈值。
+- 规则沉淀为 typed 双向隔离、FIFO 收敛、对象原子恢复与 owner 清理契约；未删除测试或降 coverage。C5 验证后仅按用户单独授权延长 Test job 时限，未改测试命令与矩阵。阶段 C2b/C4a 规模偏差已随后续放行记录保留；C5 以文档与合并验证收尾。
+- 本轮不创建提交、合并或推送。最终报告须由人类审查放行；合并/远端提交另需明确授权。
 
 ## 公共协议/API 变更许可记录
 

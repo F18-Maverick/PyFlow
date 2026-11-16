@@ -1,11 +1,13 @@
 # Change note: server FID routes, sender ownership and socket/FID recovery
 
-> Atomic changes 1–4 and supplemental O1–O4 passed human review; their historical
-> reports remain unchanged. Sender-ownership revision R1 and socket/FID revision
-> R2 are implemented and verified, awaiting human review. The final affected suite
-> passed 434 tests; independent plaintext/encrypted runs and the documentation
-> build passed. Known lint/doc warnings and earlier failed runs are disclosed in
-> `docs/plans/transfer-sender-fid-r2-report.md`. No commit, merge or push.
+> Current transfer-control contract: C1–C4b are committed and have passed their
+> stage review gates; C5 documentation and combined acceptance are complete,
+> pending final human review.
+> The chronological entries below preserve earlier implementation history;
+> C2b supersedes the old pause/start API and wire format, and C4a/C4b supersede
+> queued/coalesced active recovery and immediate sweep ownership release.
+> Current behavior and evidence are in
+> `docs/plans/transfer-pause-start-direction-report.md`.
 
 ## Revision R1: sender-owned relay upstream FID
 
@@ -73,7 +75,7 @@ R1 behavior evidence and remaining review items are in
   regeneration or replacement translations are supplied; new source text uses
   English fallback pending translation.
 
-## Atomic change 4: one recovery command and one source of file metadata
+## Historical atomic change 4: one recovery command and one source of file metadata
 
 - The sole resume wire is `/resume_trans <fid> <offset> <origin> <target>`, with
   shell-quoted tuple endpoints. Server checks target against the actual requester,
@@ -304,6 +306,9 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
 
 ## Follow-up: reconnect sweep releases paused legs
 
+This describes the pre-control-registry sweep. C2b replaces its wait helper;
+C4a retains ownership until final cleanup and rejects active resume requests.
+
 - `_drop_stale_transfers` now clears the pause switch of every upload leg it
   sweeps (after closing the socket, outside the progress lock) and wakes the
   pause condition. `_wait_transfer_paused` also takes the leg's own transfer
@@ -453,4 +458,26 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
   Existing forwarding/recovery/handshake checks passed 39 tests. Full commands,
   exclusions and runtime evidence are in the C4b report; combined acceptance
   remains the C5 review stage.
+
+## Transfer control C5: current contract and combined acceptance
+
+- Current File_Transfer and TCP API documentation now distinguishes sender
+  changes from receiver requests, including unconfirmed duplicate requests.
+  Recovery documentation states the per-object busy rule, no active-source
+  queue, no wildcard resume-all command and no new data-only retry loop.
+- Historical queued/coalesced recovery and immediate sweep-release notes are
+  explicitly superseded by C4a/C4b. The implementation report maps P01–P18 to
+  runtime evidence, records the six implementation commits and retains known
+  limitations rather than treating unit passes as global-property proof.
+- Public signatures and RST transfer targets passed mechanical checks. Sphinx
+  generated the HTML documentation successfully, and the actual control/API
+  pages were inspected in a browser. Existing static-path and docstring
+  warnings are retained in the report; no unrelated configuration was changed.
+- The planned combined regression ran once: 640 passed and one skipped in
+  761.28 seconds. The skip is the plaintext fixture's inapplicable re-key case;
+  encrypted variants ran. C5 changes documentation only; final human acceptance
+  and any commit, merge or push remain separate gates.
+- After C5 verification, the user separately authorized increasing the CI Test
+  job timeout from 10 to 30 minutes. Test commands, matrix and coverage policy
+  are unchanged.
 

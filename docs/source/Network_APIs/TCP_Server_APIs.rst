@@ -681,9 +681,10 @@ Built-in client commands include:
   local data role (``0`` sender, ``1`` receiver). The wire role describes the
   issuer. Both methods update local control and notify the peer; sender state
   is authoritative and receiver confirmation is eventual. An in-flight receive
-  and write continues, and start uses the same data socket. A changed registered
-  operation returns ``True``, not a peer ACK; duplicates and a preset sender
-  pause before registration return ``False``. ``peer`` is always required.
+  and write continues, and start uses the same data socket. A registered sender
+  change or receiver request returns ``True``, not a peer ACK. Known duplicates
+  return ``False``; an unconfirmed receiver request may be sent again. A preset
+  sender pause returns ``False`` before registration. ``peer`` is required.
   See :ref:`transfer-pause-and-reconnect` for control identity and cleanup.
   Forwarded requests carry a source-allocated ``fid=<upstream fid>``. A new
   upload omits ``resume=``; replay includes ``resume=<offset>``, including zero,

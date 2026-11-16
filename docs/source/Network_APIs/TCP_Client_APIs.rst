@@ -868,9 +868,10 @@ local_role)`` independently of the progress row's logical receiver.
 The sender owns confirmed pause state. A receiver records its local request
 and waits for an eventual sender notification; secure sends are asynchronous
 and ordered per leg. In-flight receives and disk writes continue. Start uses
-the same data socket without a new handshake or seek. A changed registered
-operation returns ``True``, not a peer ACK; duplicates and preset sender pauses
-before registration return ``False``. Pause is runtime-only. See
+the same data socket without a new handshake or seek. A registered sender
+change or receiver request returns ``True``, not a peer ACK. Known duplicates
+return ``False``; an unconfirmed receiver request may be sent again. A preset
+sender pause returns ``False`` before registration. Pause is runtime-only. See
 :ref:`transfer-pause-and-reconnect` for details. The upload value's ``peer``
 is the original receiver; ``resume_offset`` continues the interrupted file from
 the byte the receiver already holds.
@@ -882,9 +883,9 @@ marker. The wait is 30 seconds plus 10 seconds per 100 MiB; a long pause or
 slow delivery can outlast it, and a lost ACK conservatively retains state. No
 separate receipt or retry protocol is used. Direct transfer and public-key
 confirmation remain data-ACK based. The server retains the upstream/child IDs
-and full target mapping. Transient source locks serialize different target
-requests on one upload and coalesce concurrent duplicates; they hold no file
-metadata and are released after the last in-flight request.
+and full target mapping. Transient ownership admits one recovery per upstream
+FID; another target's request is rejected while that source is live or reserved.
+After cleanup it must be requested again; no active-source queue is retained.
 
 We recommend that for client-to-server file transfers, 
 you use the console commands (``/file``, ``/file_folder``, 

@@ -862,12 +862,13 @@ in-flight receive and disk write: pause does not promise an immediate freeze
 of the receiving file. Start releases the same open data socket without a new
 handshake, offset or seek.
 
-A real state change on a registered leg returns ``True``; this reports the
-local operation, not a peer acknowledgement. Duplicate operations return
-``False``. Presetting a pause for an exact, not-yet-active sender identity
-also returns ``False`` while retaining that pause for registration. Pause state
-is runtime-only and is never persisted. Reconnect cleanup releases paused
-waiters, clears their state and closes the old sockets before replay.
+A registered sender state change or receiver request returns ``True``; this
+reports local registration, not peer acknowledgement. A sender's same-state
+operation returns ``False``. A receiver ignores an operation only when its
+target equals both confirmed and last-requested state; unconfirmed duplicates
+may therefore return ``True``. Presetting an exact, not-yet-active sender pause
+returns ``False`` while retaining it for registration. Pause state is never
+persisted. Reconnect clears old control state and closes sockets before replay.
 
 Ordinary recovery is per object: ``resume_trans(peer_addr, fid, offset)``
 returns ``True`` only when a new recovery worker is reserved. A running,
@@ -981,10 +982,12 @@ per target. Resumes reuse the existing upstream and child FIDs.
 Public-key pushes remain untracked and TOFU verification still precedes their
 ACK.
 
-The server requests a peer's interrupted downloads when that peer reconnects,
-and a client with ``is_auto_reconnect=True`` does the same after every connect,
-so no separate call is needed. Legs the previous session left behind are closed
-before the resume runs, so two legs never write the same transfer.
+After reconnect, the server requests that peer's eligible interrupted downloads,
+and the client runs the same per-object request pass. Manual recovery can use
+the existing control connection; a data-only failure does not start a new retry
+loop. There is no wildcard-FID or public resume-all command. Existing owners
+finish cleanup before automatic recovery; busy shared relays follow the skip
+rule above rather than promising completion from one reconnect request.
 
 .. _related-apis:
 

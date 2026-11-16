@@ -1,6 +1,6 @@
 # 双向文件暂停、继续与按对象恢复 — 需求卡与更改计划
 
-状态：**C1–C4a 已通过人工放行；C4b 已实现并完成局部验证，待人工审查**。需求卡和七项拆分已确认。C4b 完成共享 source/live relay 门槛、离线 pending 和会话清理；活跃请求跳过且不排队，单次跳过不保证稍后自动恢复。C5 尚未开始。每个原子变更完成后另附验证报告并等待审查。不自行提交、合并或推送。证据见[实施报告](transfer-pause-start-direction-report.md)。
+状态：**C1–C4b 已提交并通过人工放行；C5 文档和相关合并验收已完成，待人工最终审查**。需求卡和七项拆分已确认。活跃恢复请求跳过且不排队，单次跳过不保证稍后自动恢复。C5 已汇总 P01–P18 证据、完成一次约定的相关合并回归和接口文档核对；未覆盖项与构建警告保留在报告，不以测试通过代替人工验收。不自行提交、合并或推送。证据见[实施报告](transfer-pause-start-direction-report.md)。
 
 ## 1. 需求卡
 
@@ -188,7 +188,7 @@ relay 高水位证据按实际入队粒度计算：记录高水位、单次 enqu
 
 ## 6. 验收命令与报告要求
 
-各阶段实际命令与边界见实施报告。C1：81 passed；C2a：154 passed，告警修复后受影响 64 项通过。C2b 首轮 223 passed、2 failed、1 skipped，修复后两项通过；owner 检查 134 passed，既有回归 159 passed。C3 主验证 217 passed、3 deselected，既有转发/恢复 20 passed、73 deselected。C4a 主验证 42 passed、66 deselected；既有首轮 139 passed、2 failed、14 deselected，契约迁移后两项通过；重连检查 34 passed，最终监听交接 2 passed。C4b 首轮 137 passed、6 failed、63 deselected，测试断点屏障修正后六项通过；既有转发/恢复/握手 39 passed、69 deselected。不将定向重跑计作全量复跑；C5 尚未运行。
+各阶段实际命令与边界见实施报告。C1：81 passed；C2a：154 passed，告警修复后受影响 64 项通过。C2b 首轮 223 passed、2 failed、1 skipped，修复后两项通过；owner 检查 134 passed，既有回归 159 passed。C3 主验证 217 passed、3 deselected，既有转发/恢复 20 passed、73 deselected。C4a 主验证 42 passed、66 deselected；既有首轮 139 passed、2 failed、14 deselected，契约迁移后两项通过；重连检查 34 passed，最终监听交接 2 passed。C4b 首轮 137 passed、6 failed、63 deselected，测试断点屏障修正后六项通过；既有转发/恢复/握手 39 passed、69 deselected。不将定向重跑计作全量复跑。C5 一次相关合并回归为 **640 passed、1 skipped in 761.28s**；唯一 skip 为明文配置不适用重新交换。六个公开签名与 23 个 RST 锚点机械核对通过，Sphinx 构建退出 0 且已浏览实际页面；警告与未覆盖项见报告。
 
 ```bash
 # C1/C2a：实现后新增必要边界契约
@@ -218,6 +218,6 @@ relay 高水位证据按实际入队粒度计算：记录高水位、单次 enqu
 
 - **公共协议/接口有变化**：四 token；direction 的角色定义；pause/start 必填 type/direction；移除旧 remote API；控制确认语义改为发送端权威；resume 活跃对象返回 False。
 - **持久化数据模型不变**；运行时控制记录改变。查询返回 schema 不变。测试增加必要边界契约及迁移受影响断言，不降低验证强度。
-- **CI/依赖/覆盖率策略不变**。不宣称本计划覆盖未运行的多平台环境、NAT、多进程共享或任意网络中断组合。
+- **依赖/覆盖率策略不变**。C5 验证后用户单独授权将 CI Test job 的 timeout-minutes 从 10 调至 30；测试命令与矩阵不变。不宣称本计划覆盖未运行的多平台环境、NAT、多进程共享或任意网络中断组合。
 - 新功能依赖存活且可投递的控制连接；仅有数据 socket 存活但控制连接不可用时，不承诺远程 pause/start。自然关闭路径按既有机制结束旧 leg。
-- 用户已授权开始 C4b，C4a 随该放行进入下一阶段。C4b 已完成转发资格和清理、定向验证及局部报告，待人工审查，详见[实施报告 C4b](transfer-pause-start-direction-report.md#c4b转发共享-source-恢复门槛与会话清理)。复用既有状态，不改变活跃请求不排队的约束，单次跳过不保证最终自动恢复。C5 尚未开始。本轮未创建提交、合并或推送。
+- 用户已授权开始 C5，C4b 随该放行进入收尾阶段。全部七项计划阶段已交付，C5 文档、逐路径总表和相关合并验收完成，待人工最终审查；本轮未修改生产代码或测试，未新增自动重试或活跃恢复队列。未覆盖项须由人类明确接受，测试通过不代替放行。本轮未创建提交、合并或推送。
