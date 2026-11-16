@@ -702,6 +702,11 @@ Built-in client commands include:
   for a newly reserved worker; busy and duplicate calls return ``False`` without
   closing or queueing. Other objects remain independent. Use ``start_trans``
   to continue an existing paused connection.
+  Forwarded recovery also requires its shared source/relay owner to be idle,
+  even when the requesting target has disconnected. Busy requests are skipped,
+  not queued; the target must request again after cleanup. An offline source's
+  existing pending requests are retained and revalidated at reconnect, with
+  one upstream reservation. No active relay is torn down to make it eligible.
 - Forwarded transfers return the existing final data-ACK marker upstream only
   after the current input stream is complete and every accepted target has
   acknowledged. The normal send path reframes the marker for the upstream hop;

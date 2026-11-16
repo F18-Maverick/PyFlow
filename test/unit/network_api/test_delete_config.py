@@ -1,6 +1,7 @@
 """Contracts for named local state deletion and discarded-progress lifetime."""
 
 import json
+import socket
 import threading
 from pathlib import Path
 
@@ -249,6 +250,41 @@ def test_transient_resume_state_prevents_deletion_until_released(instance, users
     finally:
         instance._resume_sends.clear()
     assert instance.delete_config(path.name) is True
+
+
+@pytest.mark.parametrize("cleanup", ["release", "failed", "closed"])
+def test_receive_owner_blocks_deletion_until_request_cleanup(instance, cleanup, tmp_path):
+    populate(instance)
+    close(instance)
+    control, peer = socket.socketpair()
+    with control, peer:
+        record = connect_tcp._claim_receive(instance, 6, control, owner=control)
+        assert record is not None
+        path = Path(instance.file_trans_progress_file)
+        with pytest.raises(RuntimeError):
+            instance.delete_config(path.name)
+        assert instance._receive_transfers[6] is record
+        connect_tcp._release_receive(instance, 6, record)
+        if cleanup != "release":
+            partial = tmp_path / "partial.bin"
+            partial.write_bytes(b"partial")
+            entry = [7, 10, None, str(partial), PEER]
+            instance.running = True
+            if isinstance(instance, TCP_Client_Base):
+                instance.client_socket = control
+            control.shutdown(socket.SHUT_WR)
+            if cleanup == "closed":
+                control.close()
+            try:
+                try:
+                    sent = connect_tcp._request_receive_resume(instance, 6, entry, control, PEER, PEER)
+                except OSError:
+                    sent = False
+                assert sent is False
+            finally:
+                instance.running = False
+        assert instance._receive_transfers == {}
+        assert instance.delete_config(path.name) is True
 
 
 def test_delete_waits_for_inflight_progress_publication(instance, monkeypatch):

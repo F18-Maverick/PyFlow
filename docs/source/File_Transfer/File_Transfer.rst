@@ -963,13 +963,17 @@ timeout or a lost ACK conservatively retains the source upload progress,
 even if the server completed delivery. No separate receipt or retry
 protocol is used. If a target cannot send its final ACK, its receive entry
 survives even when the disk file is complete; an EOF replay with the same fid
-can confirm it without retransmitting the body. Retries for different targets
-of one upstream fid are serialized at the source, concurrent duplicate requests
-for the same target are coalesced, and completed targets are not replayed.
-Ordinary resumes share the same in-flight coalescing. Offline-source requests
-are kept on the server per upstream fid/target, retaining the latest offset.
-Reconnect sends through the same secure control path; a failed send keeps the
-request, and completed or missing routes are never replayed.
+can confirm it without retransmitting the body. A shared upstream fid admits
+one recovery owner at a time. Running, paused, negotiating or finalizing
+source/relay owners reject another request without queueing or tearing down
+the live relay. A disconnected target must request again after that owner
+exits; one skipped request does not promise eventual automatic replay.
+Completed targets are not replayed. If the source is offline and no relay is
+live, the server retains the latest offset per upstream fid/target. Reconnect
+revalidates and reserves one eligible replay through the secure control path;
+failed writes retain pending requests, and completed or missing routes are
+pruned. Other independent fids remain eligible. Receive requests/listeners
+retain per-object ownership through final cleanup, including tracking off.
 Fids no longer encode a plain/relay kind: the reserved low bit is always zero,
 and diagnostics use ``e<epoch>.<counter>``. Ordinary senders own their FIDs;
 the relay source owns the upstream FID and the Server allocates one child FID

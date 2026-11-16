@@ -1,6 +1,6 @@
 # 双向文件暂停、继续与按对象恢复 — 实施报告
 
-状态：需求卡和七项拆分已确认。**C1–C3 已通过人工放行；C4a 已实现并完成局部验证，待人工审查；C4b、C5 未开始。** 本报告随已完成的原子变更增补，不将未实现或未运行的路径标为完成。本轮未创建提交、合并或推送。
+状态：需求卡和七项拆分已确认。**C1–C4a 已通过人工放行；C4b 已实现并完成局部验证，待人工审查；C5 未开始。** 本报告随已完成的原子变更增补，不将未实现或未运行的路径标为完成。本轮未创建提交、合并或推送。
 
 ## C1：严格解析、typed identity 与共享端点识别
 
@@ -361,7 +361,67 @@ C2a 后续审查结论：用户已审计放行，并明确授权开始 C2b，包
 - 未应答 receive 请求保留无数据 owner 的短期占用，按 RESUME_ACCEPT_TIMEOUT 期限在后续请求时允许替换；实际 listener/data owner 不按时钟强制替换。失败发送/会话关闭立即清理请求；这不是逐请求完成 future。
 - 实际范围比原 180–300 行预估更大，原因是发送资格之外必须同时覆盖接收请求、监听交接和自动重连清理。审查应连同新增契约与报告评估该规模偏差；未擅自增加 C4b 的转发资格或拆出混用新旧资格的中间阶段。
 - 本轮未改公共签名、wire、progress JSON schema、CI、依赖或覆盖率策略；没有删除测试或弱化内容/ACK/隔离断言。未执行 repo-wide suite、formatter、lint、文档构建或多平台检查。语言服务仅 Ruff，references 请求返回 -32601，不能记作成功的引用分析。
-- **C4a 待人工审查，未创建提交**。C4b 与 C5 未开始。
+- C4a 后续结论：用户已放行 C4b，C4a 随该放行进入下一阶段。C4b 实施与独立待审事项见下节。
+
+## C4b：转发共享 source 恢复门槛与会话清理
+
+### 提交意图与数据流
+
+一个 upstream fid 同时只允许一个 source/relay owner。即使请求 target 已断开，运行、暂停、建连或清理中的共享 source/relay 仍使本次请求返回 False，不排队、不主动 teardown。只有无活动对象且 source 离线时保留现有 pending；单次活跃请求被跳过不保证稍后自动补传，需重新发起。
+
+- source 普通/转发 `resume_trans` 共用 `_transfer_busy` 和 `_start_resume_send`，在 progress lock 内检查两种 typed sender、active socket/fid、发送占用和 pending/unresolved 握手，再登记唯一 worker。删除旧的重复合并、不同 target 排队路径，不留无 control socket 的兼容分支。
+- target 请求和转发 listener 复用 C4a `_claim_receive`，沿请求→监听→数据 owner 保持占用，最终按 owner 清理；tracking off 同样生效。
+- Server 验证 origin/target/child route → progress/route 锁内检查共享 upstream 占用 → 忙碌则不写 pending；无活动且 source 离线则保留最新 offset。在线 flush 在同一边界预留 upstream 请求，释放锁后通过既有安全门槛和 `send_message` 投递。失败写释放预留、保留 pending。
+- `/forward_item` 校验原 route/未完成 target → 原子接管同会话 upstream 请求记录、登记 canonical child keys → 原有文件/ACK 路径 → 最终清理释放预留。旧记录的迟到释放不能删除替换 owner。未新增状态表、持久化字段、重试协议或文件成功标记。
+
+### 变更范围
+
+生产改动集中于 `connect_tcp.py` 的恢复资格、pending 投递、relay 登记和 target 接收占用。测试位于 `test_fid_routes.py`、`test_delete_config.py`、`test_tcp_transfer_resume.py`、`test_tcp_transfer_control.py`。旧的“活动 source 后排队”契约迁移为“拒绝、owner 退出后显式重试”，保留不同 offset、稳定 fid、目标路径、内容及最终 ACK 断言。三份 RST、变更记录、计划和本报告同步更新。现有断线 shutdown、加密、路由持久化与配置删除契约保留。
+
+### 局部验证与实际结果
+
+首轮门槛、生命周期及真实连接检查：
+
+```bash
+.venv/bin/python -m pytest test/unit/network_api/test_fid_routes.py test/unit/network_api/test_delete_config.py test/unit/network_api/test_resume_matching.py test/integration/network_api/test_tcp_transfer_control.py -k 'not pause_start_preserves and not receiver_unconfirmed and not same_fid and not empty_and_eof and not receiver_keeps and not receiver_pause_start_waits and not relay_child_and_upstream and not relay_pressure and not online_resume and not control_disconnect_releases' -q
+```
+
+**137 passed、6 failed、63 deselected in 87.46s**。六项失败均停在新增 source/stop 用例的 1 KiB 断点：按 writer 等待调用次数定位无法固定预期 payload 进度。改为首个真实 payload 块实际发送后设置事件屏障，保留真实 send/crypto 和 receiver 进度断言；未改生产代码或放宽落盘/ACK 断言。
+
+仅重跑六个受影响场景：
+
+```bash
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_transfer_control.py::test_relay_offline_source_replays_stable_route_or_stops_cleanly -q
+```
+
+**6 passed in 47.99s**。不将定向重跑记作全量复跑。
+
+受影响既有转发、零偏移/EOF、恢复及握手回归：
+
+```bash
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_transfer_resume.py test/integration/network_api/test_tcp_file_transfer.py test/unit/network_api/test_transfer_handshakes.py -k 'forward or stale_sweep or handshake or port_replies or pre_send_cancellation or sent_cancellation or terminal_reply or old_record or wait_many or disconnect_cancels or reconnect_socket or port_announcement or old_or_malformed' -q
+```
+
+**39 passed、69 deselected in 58.59s**。
+
+### 路径对照与运行证据
+
+| 路径 | C4b 结论与证据边界 |
+|---|---|
+| P10 | 实际关闭 target 控制/data socket，共享 source 仍活跃时两端拒绝恢复、不增加 pending/worker；另一 target 保留原 socket 并完成内容/ACK，上游失败且未完成 route 保留 |
+| P12/P13 | plain alias、encrypted、encrypted async/tracking off wildcard 均运行新增场景；旧 control/receive 记录迟到清理不影响新 owner；未改变端点命名空间或加密入口 |
+| P16 | source 断线且旧 relay 全部退出后，离线请求从 offset 0 更新为实际 1 KiB；原 client 端点重连后单次重放复用 upstream/child fid、同 route/completed，已完成 target 不重发。零偏移/空文件/EOF 由既有真实回归覆盖；单位契约覆盖不同 fid 独立及并发 flush 只发送一次 |
+| P17 | source/target 真实断线释放旧 worker、socket 和暂停状态；新 owner 默认 running。保留旧记录执行迟到清理后，新 owner 仍有效，重复恢复 False；最终内容等于 payload、source 得到真实成功 ACK、状态清空 |
+| P18 | 同一实际断点执行 stop，transfer/control worker 退出、占用释放、route 快照保留；随后可删除 progress 文件，重复 stop 不重新生成文件，内存 route 按原契约保留。单位契约覆盖失败写/关闭请求释放和配置删除门槛；合并总验收仍在 C5 |
+
+### 风险与明确未覆盖
+
+- 活跃请求不排队：target 重连时若只发起一次请求而 source 仍活跃，需要稍后重新请求。未新增 timer、自动重试或 wire 拒绝确认，不能宣称最终自动补传。
+- 离线已有多个 target pending 时，同 upstream 一次只预留一个；剩余项等待后续合格 flush/请求/重连触发，不在活动对象后建立 worker 队列。
+- 控制写入不是逐请求恢复确认；未回应请求按现有接收预留期限处理，实际 relay owner 不按时钟强制替换。
+- 新场景验证 source 断线重连和 target 断线拒绝；未另加 target 同端点重连补传场景，不宣称网络时序全集已枚举。配置/持久化与加密的相关合并验收留在 C5。
+- 本轮未改公共签名、wire、持久化 schema、CI、依赖或 coverage 策略；未删除测试或弱化内容/ACK/稳定身份断言。未运行 formatter、lint、文档构建、repo-wide suite 或多平台验证；Ruff 不支持 references，不能记作成功引用分析。
+- **C4b 待人工审查，未创建提交**。C5 未开始。
 
 ## 公共协议/API 变更许可记录
 

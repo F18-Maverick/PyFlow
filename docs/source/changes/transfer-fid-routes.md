@@ -432,3 +432,25 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
   passed 34 tests, and the final listener-handoff check passed both directions.
   Full commands and exclusions are in the C4a report. Relay recovery remains C4b.
 
+## Transfer control C4b: shared-source relay resume eligibility
+
+- Direct and relay recovery share the existing per-object reservation gate.
+  Active, paused, negotiating or finalizing upstream owners reject recovery
+  for any target without queueing or tearing down the live relay. A skipped
+  target request must be issued again after that owner exits; it does not
+  promise eventual automatic replay.
+- Server pending delivery reserves the upstream object before control writes;
+  relay setup adopts that record and releases it after final cleanup. Target
+  receive requests/listeners reuse the same ownership mechanism. Offline-source
+  pending offsets are retained, failed writes release reservations without
+  dropping pending work, and completed/missing routes are revalidated.
+- Real source reconnect reuses upstream/child FIDs and retained route completion,
+  starts new owners running, and ignores late cleanup of old records. Stop
+  releases active ownership before configuration deletion while preserving the
+  existing route snapshot and in-memory deletion semantics.
+- The first targeted run passed 137 tests and found six test-barrier failures;
+  all six passed after placing the barrier after the real first payload write.
+  Existing forwarding/recovery/handshake checks passed 39 tests. Full commands,
+  exclusions and runtime evidence are in the C4b report; combined acceptance
+  remains the C5 review stage.
+

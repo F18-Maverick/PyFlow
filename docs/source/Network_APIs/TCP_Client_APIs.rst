@@ -310,9 +310,11 @@ commands sent by the server, such as:
   supplies the source path; a non-server target is replayed through the server
   with its stable upstream fid. The receiver's retained full path handles folder
   items without copying directory or destination metadata at the source.
-  Direct uploads recover only when no live, paused, negotiating or finalizing
-  owner holds that object. ``resume_trans`` returns ``True`` for a newly reserved
-  worker; busy and duplicate calls return ``False`` without closing or queueing.
+  Both direct and relay uploads recover only when no live, paused, negotiating
+  or finalizing source owner holds that object. ``resume_trans`` returns ``True``
+  for a newly reserved worker; busy and duplicate calls return ``False`` without
+  closing or queueing. A shared upstream FID cannot replay for a second target
+  until its previous owner exits; the skipped request must be issued again.
   Another file or opposite direction does not prevent recovery. A paused live
   connection continues through ``start_trans`` instead.
 

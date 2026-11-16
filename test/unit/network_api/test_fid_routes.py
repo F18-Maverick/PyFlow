@@ -2,10 +2,13 @@
 
 import json
 import socket
+import threading
 
 import pytest
 
-from PyFlow.network_api.connect_tcp import TCP_Server_Base, parse_resume_command
+from PyFlow.network_api.connect_tcp import (
+    TCP_Server_Base, _claim_receive, _release_receive, parse_resume_command,
+)
 
 
 # The server's control side as the unit tests drive `_resume_request` by hand.
@@ -420,6 +423,7 @@ def test_pending_resume_survives_failed_send_and_prunes_completed_or_missing_rou
             ORIGINATOR: {(302, TARGET_1): 13, (302, TARGET_2): 13}
         }
     finally:
+        assert server._receive_transfers == {}
         broken.close()
     assert server._complete_fid_target(302, route, TARGET_1, 304)
     writer, reader = socket.socketpair()
@@ -433,9 +437,11 @@ def test_pending_resume_survives_failed_send_and_prunes_completed_or_missing_rou
         assert server._pending_originator_resumes == {}
         assert not server._resume_request(SERVER_LOCAL, TARGET_1, 304, 0, ORIGINATOR, TARGET_1)
         # An accepted request must not outlive its owning route.
+        _release_receive(server, 302, server._receive_transfers[302])
         assert server._queue_resume_to_originator(302, route, TARGET_2, 29)
         reader.recv(4096)
         server.clients.pop(ORIGINATOR)
+        _release_receive(server, 302, server._receive_transfers[302])
         assert not server._queue_resume_to_originator(302, route, TARGET_2, 31)
         assert server._drop_fid_route(302, route)
         server.clients[ORIGINATOR] = {"socket": writer}
@@ -446,3 +452,69 @@ def test_pending_resume_survives_failed_send_and_prunes_completed_or_missing_rou
         server.clients.clear()
         writer.close()
         reader.close()
+
+
+@pytest.mark.parametrize("owner", ["request", "receiver", "relay"])
+def test_live_upstream_refuses_recovery_without_pending_other_fids_remain_eligible(server, owner):
+    route = server._register_fid_route(302, ORIGINATOR, {TARGET_1: 304, TARGET_2: 306})
+    server._register_fid_route(402, ORIGINATOR, {TARGET_3: 404})
+    control, peer = socket.socketpair()
+    with control, peer:
+        record = None
+        if owner == "relay":
+            server._forward_relays[(TARGET_1, 304)] = {"fid": 302, "route": route, "upstream": control}
+        else:
+            record = _claim_receive(server, 302, control, None if owner == "request" else control)
+            assert record is not None
+        try:
+            for target, child in route["targets"].items():
+                assert not server._resume_request(SERVER_LOCAL, target, child, 13, ORIGINATOR, target)
+            assert server._pending_originator_resumes == {}
+            assert not server._resume_request(SERVER_LOCAL, TARGET_3, 404, 19, ORIGINATOR, TARGET_3)
+            assert server._pending_originator_resumes == {ORIGINATOR: {(402, TARGET_3): 19}}
+        finally:
+            server._forward_relays.clear()
+            if record is not None:
+                _release_receive(server, 302, record)
+
+
+def test_concurrent_pending_flushes_send_one_real_control_request(server, monkeypatch):
+    server._register_fid_route(302, ORIGINATOR, {TARGET_1: 304, TARGET_2: 306})
+    for target, child in ((TARGET_1, 304), (TARGET_2, 306)):
+        assert not server._resume_request(SERVER_LOCAL, target, child, 13, ORIGINATOR, target)
+    entered, release = threading.Event(), threading.Event()
+    real_send = server.send_message
+
+    def held_send(*args, **kwargs):
+        entered.set()
+        assert release.wait(timeout=5)
+        return real_send(*args, **kwargs)
+
+    monkeypatch.setattr(server, "send_message", held_send)
+    writer, reader = socket.socketpair()
+    with writer, reader:
+        server.running = True
+        server.clients[ORIGINATOR] = {"socket": writer}
+        results = []
+        workers = [threading.Thread(target=lambda: results.append(
+            server._flush_pending_originator_resumes(ORIGINATOR))) for _ in range(2)]
+        try:
+            workers[0].start()
+            assert entered.wait(timeout=5)
+            workers[1].start()
+            workers[1].join(timeout=1)
+        finally:
+            release.set()
+            for worker in workers:
+                if worker.ident is not None:
+                    worker.join(timeout=5)
+            server.running = False
+            server.clients.clear()
+        assert not any(worker.is_alive() for worker in workers)
+        assert sorted(results) == [0, 1]
+        reader.settimeout(1)
+        assert parse_resume_command(reader.recv(4096).decode()) == (302, 13, ORIGINATOR, TARGET_1)
+        with pytest.raises(socket.timeout):
+            reader.recv(4096)
+        assert server._pending_originator_resumes == {ORIGINATOR: {(302, TARGET_2): 13}}
+        _release_receive(server, 302, server._receive_transfers[302])

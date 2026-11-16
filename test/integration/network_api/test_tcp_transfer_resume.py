@@ -1590,7 +1590,7 @@ def test_forward_ack_loss_retains_state_and_resumes_original_ids(
         sender.join(timeout=20)
         assert not sender.is_alive(), "the source attempt did not finish"
         assert outcomes == [False]
-        assert wait_until(lambda: not server._forward_relays, timeout=10)
+        assert wait_until(lambda: not server._forward_relays and not server._receive_transfers, timeout=10)
         assert len(server._fid_routes) == 1
         fid, route = next(iter(server._fid_routes.items()))
         original_targets = dict(route["targets"])
@@ -1626,23 +1626,23 @@ def test_forward_ack_loss_retains_state_and_resumes_original_ids(
             child_fid = original_targets[addr]
             losing_ack[addr] = False
             # The receiver discovers the disk offset using its normal reconnect
-            # path. A second request while its ACK is held must be coalesced.
+            # path. Its live receive owner rejects another request at the ACK gate.
             assert target._request_resumes() == 1
             if index == 0:
                 assert resume_ack.wait(timeout=10)
                 assert len(calls) == 2
                 assert source.file_upload_progress[upload_key][0:2] == [len(payload), len(payload)]
                 assert source.file_upload_progress[upload_key][3:] == [str(src), addr]
-                # The first request's data socket is still registered. Replay
-                # the reconnect request after clearing that stale session marker.
+                # Removing a stale active marker cannot bypass the listener owner.
                 target._active_transfer_fids.discard(child_fid)
-                assert target._request_resumes() == 1
-                assert wait_until(lambda: len(resume_requests) == 2, timeout=10)
-                assert resume_requests == [(addr, fid, len(payload))] * 2
+                assert target._request_resumes() == 0
+                assert resume_requests == [(addr, fid, len(payload))]
                 assert len(calls) == 2, "a duplicate resume started another upload"
+                assert source._resume_sends[upload_key]["targets"] == {addr}
                 release_ack.set()
             assert wait_until(lambda: len(outcomes) == index + 2, timeout=10)
-            assert wait_until(lambda: not server._forward_relays, timeout=10)
+            assert wait_until(lambda: not server._forward_relays and not server._receive_transfers
+                              and not source._resume_sends, timeout=10)
             assert outcomes[-1] is (index == len(failed) - 1)
             assert len(upstream_acks) == (1 if index == len(failed) - 1 else 0)
             assert terminal_controls == ["/server_file_transfer_port"] * (index + 2)
@@ -2464,7 +2464,7 @@ def test_download_resumes_after_connect_without_a_manual_call(tmp_path):
 
 
 def test_unified_resume_serializes_distinct_offsets_without_local_fid_fallback(tmp_path, monkeypatch):
-    """One upload serves queued targets once, preserving paths and endpoint scope."""
+    """Busy recovery skips targets until the old source owner fully exits."""
     workers = _track_socket_workers(monkeypatch)
     server = _start_server(tmp_path)
     clients = []
@@ -2521,15 +2521,33 @@ def test_unified_resume_serializes_distinct_offsets_without_local_fid_fallback(t
         monkeypatch.setattr(source, "file_transfer_mode", observe_mode)
         assert first._request_resumes() == 1
         assert held.wait(timeout=10), "the first target never reached its ACK barrier"
+        rejected = threading.Event()
+        original_queue = server._queue_resume_to_originator
+
+        def observe_rejection(fid, route, target, offset):
+            accepted = original_queue(fid, route, target, offset)
+            if target == second_addr:
+                assert accepted is False
+                rejected.set()
+            return accepted
+
+        monkeypatch.setattr(server, "_queue_resume_to_originator", observe_rejection)
         assert second._request_resumes() == 1
-        assert first.send_message(
-            first.client_socket, format_resume_line(502, 999, source_addr, first_addr)
+        assert rejected.wait(timeout=10)
+        assert not server._resume_request(
+            server.clients[first_addr]["socket"], first_addr, 502, 999, source_addr, first_addr
         )
-        assert wait_until(
-            lambda: source._resume_sends.get(key, {}).get("targets") == {first_addr, second_addr}
-        )
-        assert wait_until(lambda: transfers == [(500, offsets[0])])
+        assert source.resume_trans(second_addr, 500, offsets[1]) is False
+        assert source.resume_trans(first_addr, 500, 999) is False
+        assert server._pending_originator_resumes == {}
+        assert source._resume_sends[key]["targets"] == {first_addr}
+        assert transfers == [(500, offsets[0])]
         release.set()
+        assert wait_until(lambda: not source._resume_sends and not server._forward_relays
+                          and 500 not in server._receive_transfers
+                          and key not in source._active_transfer_sockets)
+        assert route["completed"] == {first_addr}
+        assert source.resume_trans(second_addr, 500, offsets[1]) is True
         assert wait_until(lambda: key not in source.file_upload_progress, timeout=15)
         assert wait_until(lambda: not source._resume_sends and not server._fid_routes)
         assert transfers == [(500, offset) for offset in offsets]
@@ -2999,7 +3017,7 @@ def test_paused_leg_is_released_by_stale_sweep(tmp_path, monkeypatch, sender_sid
         assert key in sender.file_upload_progress
 
         calls = []
-        assert _start_resume_send(sender, key, target, calls.append)
+        assert _start_resume_send(sender, key, target, calls.append, control_socket=control)
         assert wait_until(lambda: calls, timeout=10), "the queued resume never ran"
         assert calls[0] is sender.file_upload_progress[key]
     finally:
