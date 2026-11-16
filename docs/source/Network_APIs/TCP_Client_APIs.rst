@@ -297,9 +297,13 @@ commands sent by the server, such as:
   ``/crypto_key_exchange_ack``, ``/crypto_reject``,
   ``/crypto_pub_key``, ``/crypto_ready``: the encrypted-channel
   handshake messages; a ``/crypto_mode`` mismatch closes the connection.
-- ``/pause_trans``, ``/start_trans`` and ``/forward_error <fid> <reason>``:
-  transfer control and FID-scoped forwarding failures. Forward uploads use
-  the common ``/server_file_transfer_port`` reply; no ``/forward_upload`` line.
+- ``/pause_trans <fid> <type> <issuer_role>``,
+  ``/start_trans <fid> <type> <issuer_role>`` and
+  ``/forward_error <fid> <reason>``: typed transfer control and FID-scoped
+  forwarding failures. The control lines require exactly four tokens. Type is
+  ``0`` for ordinary transfers or ``1`` for relay legs; issuer role is ``0``
+  for the data sender or ``1`` for the data receiver. Forward uploads use the
+  common ``/server_file_transfer_port`` reply; no ``/forward_upload`` line.
 - ``/resume_trans <fid> <offset> <origin> <target>``: the sole resume command,
   with shell-quoted tuple endpoints. Only an origin matching this control
   connection's own identity may resume a local upload. The existing upload row
@@ -840,13 +844,29 @@ And the low-level send mode function is:
 
     def file_transfer_mode(
         self, filename, server_address, server_port, client_port,
-        control_socket=None, crypto=None, fid=None, peer=None, resume_offset=0)
+        control_socket=None, crypto=None, fid=None, peer=None, resume_offset=0,
+        trans_type=0)
 
-``((host, port), fid)`` keys the leg in ``file_upload_progress``. The
-``/pause_trans`` / ``/start_trans`` lines and local methods address that server
-scope; an explicit local ``peer`` must be the server, not the logical target.
-The value's ``peer`` is the original receiver; ``resume_offset`` continues
-the interrupted file from the byte the receiver already holds.
+``((host, port), fid)`` keys the leg in ``file_upload_progress``. Ordinary
+senders use ``trans_type=0``; forwarding callers pass ``trans_type=1``.
+``pause_trans(fid, peer=None, *, trans_type, direction)`` and
+``start_trans(fid, peer=None, *, trans_type, direction)`` require both keyword
+arguments. ``direction`` describes the local data role: ``0`` sender or ``1``
+receiver. These methods apply local control and notify the server. An omitted
+``peer`` selects the current server; an explicit peer may use its configured
+address or concrete control endpoint, not the logical forwarded target. Control
+identity is canonicalized to ``((client.host, client.port), fid, trans_type,
+local_role)`` independently of the progress row's logical receiver.
+
+The sender owns confirmed pause state. A receiver records its local request
+and waits for an eventual sender notification; secure sends are asynchronous
+and ordered per leg. In-flight receives and disk writes continue. Start uses
+the same data socket without a new handshake or seek. A changed registered
+operation returns ``True``, not a peer ACK; duplicates and preset sender pauses
+before registration return ``False``. Pause is runtime-only. See
+:ref:`transfer-pause-and-reconnect` for details. The upload value's ``peer``
+is the original receiver; ``resume_offset`` continues the interrupted file from
+the byte the receiver already holds.
 
 For a forwarded upload, the server forwards the existing final data-ACK marker
 after the full input stream and all accepted target ACKs complete. The source
@@ -992,8 +1012,8 @@ is as follows:
 
 5.1. The transfer pause and reconnect APIs (see
   :ref:`transfer-pause-and-reconnect`):
-    - `pause_trans` / `start_trans`
-    - `pause_trans_remote` / `start_trans_remote`
+    - `pause_trans(fid, peer=None, *, trans_type, direction)` /
+      `start_trans(fid, peer=None, *, trans_type, direction)`
     - `resume_trans`
 
 6. The client console commands (interactive mode):

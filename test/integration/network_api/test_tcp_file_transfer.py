@@ -904,11 +904,12 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
 
     server_port, _stamp = request_transfer_listener(client, server, f"/file {src} {fid}")
 
-    assert client.pause_trans(fid) is False  # armed before the leg exists
+    assert client.pause_trans(fid, trans_type=0, direction=0) is False  # armed before the leg exists
     sender = threading.Thread(
         target=client.file_transfer_mode,
         args=(str(src), "127.0.0.1", server_port, 0),
-        kwargs={"fid": fid, "peer": (server.host, server.port)},
+        kwargs={"fid": fid, "peer": (server.host, server.port),
+                "control_socket": client.client_socket, "crypto": _stamp},
         daemon=True,
     )
     sender.start()
@@ -929,7 +930,7 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
         assert recv_entry[4] == client.client_socket.getsockname()
         assert upload_entry[4] == (server.host, server.port)
     finally:
-        client.start_trans(fid)
+        client.start_trans(fid, trans_type=0, direction=0)
         sender.join(timeout=15)
     assert not sender.is_alive(), "the upload did not finish"
 
@@ -966,11 +967,12 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
 
     server_port, _stamp = request_transfer_listener(server, client, f"/file {src} {fid}")
 
-    assert server.pause_trans(fid, receiver) is False  # armed before the leg exists
+    assert server.pause_trans(fid, receiver, trans_type=0, direction=0) is False  # armed before the leg exists
     sender = threading.Thread(
         target=server.file_transfer_mode,
         args=(str(src), "127.0.0.1", server_port, 0),
-        kwargs={"fid": fid, "peer": receiver},
+        kwargs={"fid": fid, "peer": receiver,
+                "control_socket": server.clients[receiver]["socket"], "crypto": _stamp},
         daemon=True,
     )
     sender.start()
@@ -990,7 +992,7 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
         assert recv_entry[4] == (server.host, server.port)
         assert upload_entry[4] == client.client_socket.getsockname()
     finally:
-        server.start_trans(fid, receiver)
+        server.start_trans(fid, receiver, trans_type=0, direction=0)
         sender.join(timeout=15)
     assert not sender.is_alive(), "the download did not finish"
 
@@ -1047,11 +1049,12 @@ def test_file_progress_and_speed_can_be_disabled(tmp_path):
 
         server_port, _stamp = request_transfer_listener(client, server, f"/file {src} {fid}")
 
-        client.pause_trans(fid)  # the pause works with tracking off too
+        client.pause_trans(fid, trans_type=0, direction=0)  # the pause works with tracking off too
         sender = threading.Thread(
             target=client.file_transfer_mode,
             args=(str(src), "127.0.0.1", server_port, 0),
-            kwargs={"fid": fid, "peer": (server.host, server.port)},
+            kwargs={"fid": fid, "peer": (server.host, server.port),
+                    "control_socket": client.client_socket, "crypto": _stamp},
             daemon=True,
         )
         sender.start()
@@ -1064,7 +1067,7 @@ def test_file_progress_and_speed_can_be_disabled(tmp_path):
             assert server.file_recv_progress == {}
             assert client.file_upload_progress == {}
         finally:
-            client.start_trans(fid)
+            client.start_trans(fid, trans_type=0, direction=0)
             sender.join(timeout=15)
         assert not sender.is_alive(), "the upload did not finish"
 

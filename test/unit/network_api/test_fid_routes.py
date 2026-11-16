@@ -127,7 +127,7 @@ def test_registration_collision_is_atomic_for_primary_and_downstream_indexes(ser
     "owner",
     [
         "receive", "upload", "active_fid", "active_receive_fid",
-        "active_socket", "active_receive_socket", "pause", "relay", "route_index",
+        "active_socket", "active_receive_socket", "control", "relay", "route_index",
     ],
 )
 def test_registration_rejects_upstream_fid_that_collides_with_live_transfer_identity(
@@ -147,8 +147,14 @@ def test_registration_rejects_upstream_fid_that_collides_with_live_transfer_iden
         server._active_transfer_sockets[target_key] = object()
     elif owner == "active_receive_socket":
         server._active_transfer_sockets[fid] = object()
-    elif owner == "pause":
-        server._transfer_pause[target_key] = True
+    elif owner == "control":
+        data_socket = object()
+        server._register_transfer_socket(target_key, data_socket)
+        state = server._transfer_controls.register(
+            (TARGET_1, fid, 1, 0), object(), data_socket,
+        )
+        assert state is not None
+        server._transfer_controls.local(state["key"], True, lambda *_: True)
     elif owner == "relay":
         server._forward_relays[target_key] = object()
     else:

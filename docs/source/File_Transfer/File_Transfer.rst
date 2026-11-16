@@ -537,18 +537,14 @@ i.e. 2 GB) that bounds
 the memory the forwarding machinery may hold in that
 process. When the server's
 buffered bytes exceed ``max_mem_buff`` it sends
-``/pause_trans`` to the
-forwarding client, which stops reading the source file;
-once the writers drain
-the buffers below the low-water mark (half the limit) the
-server sends
-``/start_trans`` and the upload resumes. Receiving clients
-drain each chunk to
-disk synchronously, so their buffered memory stays bounded
-by a single chunk;
-the ``/pause_trans``/``/start_trans`` handlers exist on
-both sides so any side
-can throttle a transfer when it buffers data.
+``/pause_trans <fid> 1 1`` to the forwarding client: the server is the local
+receiver of this relay leg, and the client stops reading the source file.
+Once the writers drain the buffers below the low-water mark (half the limit),
+the server sends ``/start_trans <fid> 1 1`` and the upload resumes on the same
+socket. Receiving clients drain each chunk to disk synchronously, so their
+buffered memory stays bounded by a single chunk. Ordinary and relay legs use
+the same typed control handlers on both sides; an in-flight receive and write
+continues while a receiver waits for sender confirmation.
 
 .. _concurrency-and-threading:
 
@@ -763,8 +759,9 @@ The result contains ``progress_enabled`` and ``speed_enabled`` flags, a
 ``memory`` section, and a separate ``persisted`` section. Memory rows include
 the integer ``fid``, the complete upload ``receiver`` scope when applicable,
 the logical ``peer``, path/name, byte counts, speed, local ``active`` and
-``socket_registered`` observations, and upload ``paused`` state. Uploads with
-the same numeric fid but different receivers remain separate. Server relay
+``socket_registered`` observations, and upload ``paused`` state projected from
+the live typed sender control state. The progress schema is unchanged. Uploads
+with the same numeric fid but different receivers remain separate. Server relay
 rows show ``originator``, all accepted ``targets`` and ``completed`` targets.
 Clients expose forwarded uploads through their existing upload rows; their
 ``relays`` section is empty, with no second recovery-metadata table.
@@ -829,20 +826,40 @@ or isolation is provided. This is a local Python API, not a console/HTTP command
 Pausing, Reconnecting and Resuming Transfers
 --------------------------------------------
 
-An outbound transfer can be held and released with the server methods
-``pause_trans(fid, peer)`` / ``start_trans(fid, peer)``; the receiving peer is
-required, including when arming a transfer that has not started. The client
-methods default to its connected server and reject a different explicit peer.
-Remote ``/pause_trans <fid>`` / ``/start_trans <fid>`` lines use their requesting
-control peer as the scope; ``pause_trans_remote(peer, fid)`` /
-``start_trans_remote(peer, fid)`` send them. Their wire format is unchanged.
-The leg stops before its next chunk and stays open; a leg that is paused
-keeps its socket, so nothing is torn down. Every outbound transfer honours
-its own fid — a plain upload as much as the upload leg of a forwarded file —
-so the flow control the server uses on a relay works on any transfer.
-A paused leg that belongs to a session swept at reconnect is released by
-that sweep: its pause switch is cleared, its socket is closed, and the leg
-ends, so a resume request queued behind its per-fid send lock can run.
+The server exposes ``pause_trans(fid, peer, *, trans_type, direction)`` and
+``start_trans(fid, peer, *, trans_type, direction)``. The client exposes the
+same methods with ``peer=None`` defaulting to its current server; an explicit
+peer may be the configured server address or its concrete control endpoint.
+``trans_type`` is required: ``0`` selects an ordinary transfer and ``1`` a
+relay leg. ``direction`` is also required and always describes the caller's
+local role: ``0`` is the data sender and ``1`` the data receiver. The server
+requires ``peer`` even when presetting a sender pause before registration.
+The control identity is ``(control_peer, fid, trans_type, local_role)``;
+client control peers are canonicalized to ``(client.host, client.port)`` even
+when the logical forwarded target differs.
+
+Both methods apply the local operation and notify the peer through the existing
+secure control connection. The wire commands have exactly four tokens:
+``/pause_trans <fid> <type> <issuer_role>`` and
+``/start_trans <fid> <type> <issuer_role>``. The type and role use the same
+values as the API; the issuer's role is opposite the receiving endpoint's
+local role. There are no separate remote-control methods or one-argument wire
+forms. Ordinary and relay legs use this same control path.
+
+The sender owns the confirmed pause state and stops before its next chunk.
+A receiver's local call records a request; its confirmed state changes only
+when the sender's notification arrives. Secure control sends are asynchronous
+and ordered per leg, so confirmation is eventual. A receiver continues any
+in-flight receive and disk write: pause does not promise an immediate freeze
+of the receiving file. Start releases the same open data socket without a new
+handshake, offset or seek.
+
+A real state change on a registered leg returns ``True``; this reports the
+local operation, not a peer acknowledgement. Duplicate operations return
+``False``. Presetting a pause for an exact, not-yet-active sender identity
+also returns ``False`` while retaining that pause for registration. Pause state
+is runtime-only and is never persisted. Reconnect cleanup releases paused
+waiters, clears their state and closes the old sockets before replay.
 
 The temporary connections of a transfer are resumed after a disconnect:
 
@@ -1120,8 +1137,7 @@ reference.
 - ``multiple_file_multiple_client_transfer_server_recv_client_start``
 - ``diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start``
 - ``file_folder_transfer_server_recv_server_start_thread`` (folder receiving)
-- ``pause_trans`` / ``start_trans`` (hold and release an outbound transfer)
-- ``pause_trans_remote`` / ``start_trans_remote`` (ask a client to do it)
+- ``pause_trans`` / ``start_trans`` (control a typed local sender or receiver leg)
 - ``resume_trans`` (continue one interrupted transfer, sender side)
 
 (The low-level helpers
@@ -1140,8 +1156,7 @@ public but are documented for completeness.)
 - ``file_transfer_client_recv_server_start``
 - ``file_transfer_client_recv_server_start_thread``
 - ``file_folder_transfer_client_recv_server_start_thread``
-- ``pause_trans`` / ``start_trans`` (hold and release an outbound transfer)
-- ``pause_trans_remote`` / ``start_trans_remote`` (ask the server to do it)
+- ``pause_trans`` / ``start_trans`` (control a typed local sender or receiver leg)
 - ``resume_trans`` (continue one interrupted transfer, sender side)
 
 (The low-level helpers are documented but not part of the

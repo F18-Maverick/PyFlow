@@ -672,10 +672,19 @@ Built-in client commands include:
 - ``/crypto_mode <0|1>``, ``/crypto_pub_key``, ``/crypto_pub_key_request``:
   internal handshake messages of the encrypted channel.
 - ``/forward_item``, ``/forward_send_msg``, ``/pause_trans``, ``/start_trans``:
-  internal forwarding/transfer-control messages. ``/pause_trans <fid>`` and
-  ``/start_trans <fid>`` hold and release the outbound transfer to the requesting
-  peer. Local calls require ``pause_trans(fid, peer)`` / ``start_trans(fid, peer)``;
-  the receiver scope is required even when arming a future transfer.
+  internal forwarding/transfer-control messages. Control lines are strictly
+  ``/pause_trans <fid> <type> <issuer_role>`` and
+  ``/start_trans <fid> <type> <issuer_role>``. Local calls require
+  ``pause_trans(fid, peer, *, trans_type, direction)`` /
+  ``start_trans(fid, peer, *, trans_type, direction)``. ``trans_type`` is
+  ``0`` for ordinary transfers or ``1`` for relay legs; ``direction`` is the
+  local data role (``0`` sender, ``1`` receiver). The wire role describes the
+  issuer. Both methods update local control and notify the peer; sender state
+  is authoritative and receiver confirmation is eventual. An in-flight receive
+  and write continues, and start uses the same data socket. A changed registered
+  operation returns ``True``, not a peer ACK; duplicates and a preset sender
+  pause before registration return ``False``. ``peer`` is always required.
+  See :ref:`transfer-pause-and-reconnect` for control identity and cleanup.
   Forwarded requests carry a source-allocated ``fid=<upstream fid>``. A new
   upload omits ``resume=``; replay includes ``resume=<offset>``, including zero,
   and must match an existing route before the Server reuses its upstream and
@@ -1175,8 +1184,8 @@ are as follows:
 
 5.1. The transfer pause and reconnect APIs (see
   :ref:`transfer-pause-and-reconnect`):
-    - `pause_trans` / `start_trans`
-    - `pause_trans_remote` / `start_trans_remote`
+    - `pause_trans(fid, peer, *, trans_type, direction)` /
+      `start_trans(fid, peer, *, trans_type, direction)`
     - `resume_trans`
 
 6. The server console commands:

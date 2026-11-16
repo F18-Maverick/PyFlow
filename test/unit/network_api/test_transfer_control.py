@@ -367,3 +367,38 @@ def test_control_state_never_enters_the_persisted_progress_snapshot(owner_type, 
             assert json.load(stream) == before
     finally:
         owner.stop() if owner_type is TCP_Server_Base else owner.close()
+
+
+@pytest.mark.parametrize("owner_type", [TCP_Server_Base, TCP_Client_Base])
+def test_public_control_requires_typed_keywords_and_presets_only_exact_senders(owner_type, tmp_path):
+    owner = owner_type(host=PEER[0], port=PEER[1], is_extend_command=True,
+                       is_enable_encrypto=False, is_input_command_in_console=False,
+                       is_print_log=False)
+    for attr in ("messages_log_file", "events_log_file", "sent_messages_log_file",
+                 "sent_events_log_file", "file_trans_progress_file"):
+        setattr(owner, attr, str(tmp_path / f"{attr}.json"))
+    try:
+        for operation in (owner.pause_trans, owner.start_trans):
+            with pytest.raises(TypeError):
+                operation(42, PEER)
+            with pytest.raises(TypeError):
+                operation(42, PEER, 0, 0)
+            with pytest.raises(ValueError):
+                operation(42, PEER, trans_type=2, direction=0)
+        if owner_type is TCP_Server_Base:
+            with pytest.raises(ValueError):
+                owner.pause_trans(42, None, trans_type=0, direction=0)
+        else:
+            assert not owner.pause_trans(42, ("127.0.0.2", 6000), trans_type=0, direction=0)
+        assert not owner.pause_trans(42, PEER, trans_type=0, direction=1)
+        assert not owner.pause_trans(42, PEER, trans_type=1, direction=1)
+        assert owner._transfer_pause == {}
+        for kind in (0, 1):
+            assert not owner.pause_trans(42, PEER, trans_type=kind, direction=0)
+        assert owner._transfer_pause == {(PEER, 42, kind, 0): True for kind in (0, 1)}
+        assert not owner.start_trans(42, PEER, trans_type=0, direction=0)
+        assert owner._transfer_pause == {(PEER, 42, 1, 0): True}
+        assert not owner.start_trans(42, PEER, trans_type=1, direction=0)
+        assert owner._transfer_pause == {} and owner._transfer_controls._legs == {}
+    finally:
+        owner.stop() if owner_type is TCP_Server_Base else owner.close()

@@ -1,6 +1,6 @@
 # 双向文件暂停、继续与按对象恢复 — 实施报告
 
-状态：需求卡和七项拆分已确认。**C1 已通过人工审查；本轮获准完成的 C2a 已实现并通过定向验证，等待人工审查；C2b–C5 未开始。** 本报告随已完成的原子变更增补，不将未实现或未运行的路径标为完成。本轮未创建提交、合并或推送。
+状态：需求卡和七项拆分已确认。**C1、C2a 已通过人工审查；C2b 已实现并完成局部验证，待人工审查；C3–C5 未开始。** 本报告随已完成的原子变更增补，不将未实现或未运行的路径标为完成。本轮未创建提交、合并或推送。
 
 ## C1：严格解析、typed identity 与共享端点识别
 
@@ -123,11 +123,98 @@ C1 没有改加密入口、安全就绪、数据循环、路由占用规则、�
 
 本轮未改公开 API、生产 parser/协议、data loop、relay pump、加密门槛、恢复资格或 CI/依赖。新登记表已初始化，但生产 leg 和关闭路径尚未调用它，故不宣称暂停新行为已对外可用。C2b 必须将生产调用、发送调度与生命周期统一接入；不能保留旧控制状态或旁路。未运行 broad suite、formatter、lint 或加密/多平台验证。语言服务能力仍仅 Ruff，无 references 支持。
 
-待 C2a 人工审查放行，以及下节公共协议/API 许可后，才能进入 C2b。
+C2a 后续审查结论：用户已审计放行，并明确授权开始 C2b，包括下节列明的公共协议/API 切换。
 
-## 公共协议/API 变更许可点
+## C2b：普通收发端到端接入与协议/API 切换
 
-以下仍是拟定契约，C1 未实施；应在 C2b 生产切换前明确许可：
+### 提交意图、接口与数据流
+
+将已审查的控制状态机接入普通收发和 relay 的全部生产控制入口。本轮“开始 C2b”的授权包含计划第 3.1 节的公共协议/API 变更；旧 remote API、旧 fid parser 和独立 writer_pause 状态均移除。
+
+- API → fid/type/本地角色校验 → 配置/当前控制端点归一化 → 精确 typed key（relay 使用该 peer 对应的 child fid）→ registry 串行登记 → per-leg FIFO worker → 等待对端 leg 可定位与既有安全就绪门槛 → 正常 `send_message`。接收线程只分派，不等待密钥交换。
+- S 决定与通知保持 FIFO；R 请求与确认值分开。数据 socket 建立前 S 绑定 owner，对端 R 在 startup sign 前登记；S 观察 startup 后释放初始通知门槛。普通/转发、上传/下载与 tracking off 共用入口。
+- sender loop 每个新数据块前读取预绑定状态；R 持续 recv/落盘。在途块不丢弃；start 无 seek/truncate/重建。空文件、EOF 恢复与最终 ACK 不等待不存在的下一块。
+- 加密开启时，控制发送先等待 framed readiness，再在写入入口拒绝无 framed channel 的控制帧；帧创建阶段检查 secure/frames_allowed，防止重新交换窗口回退明文。未改 plaintext allowlist，未新增 raw send 旁路。
+- relay writer 直接等待自己的控制记录，上游高/低水位请求携带 type=1、direction=1；reader 的高水位硬门槛独立保留。活动 owner 冲突仍拒绝，纯预置暂停不作为路由占用。复杂多目标路由/背压的完整验收仍属 C3。
+- 数据 owner/实际控制 socket 关闭、stale sweep 或发送失败释放记录和等待者。进度查询从活动 typed sender 记录投影到旧 upload key；持久化字段不变。
+
+### 变更文件与局部止血
+
+实现位于 `PyFlow/network_api/connect_tcp.py`。新增真实控制契约位于 `test/integration/network_api/test_tcp_transfer_control.py`；迁移 `test_transfer_control.py`、`test_transfer_progress_query.py`、`test_fid_routes.py`、`test_tcp_file_transfer.py` 与 `test_tcp_transfer_resume.py` 的调用/状态契约。三份 File_Transfer/TCP_Server_APIs/TCP_Client_APIs RST、变更记录、计划及本报告同步更新。
+
+旧测试中直接构造 pair 暂停键/把活跃 progress 当控制 leg 的样板改为真实 typed owner；断言保留内容、最终 ACK 和清理。首次新场景发现 tracking off 的 EOF 接收恢复已成功但保留旧进度行：让接收 leg 持有既有 resume_entry 供现有完成清理，不为未跟踪的新传输创建进度行。原失败断言未放宽。
+
+### 实际命令、结果与运行证据
+
+首轮：
+
+```bash
+.venv/bin/python -m pytest test/unit/network_api/test_transfer_control.py test/unit/network_api/test_transfer_progress_query.py test/unit/network_api/test_fid_routes.py test/integration/network_api/test_tcp_transfer_control.py -q
+```
+
+**223 passed、2 failed、1 skipped in 180.92s**。失败仅为 encrypted/async/tracking off 的 EOF 上传和下载：文件内容及最终 ACK 成功，但旧 receive progress 行未删除。plain fixture 的 re-key 用例被跳过，encrypted 两组实际运行。
+
+修复旧 receive 行所有权后仅重跑失败项：
+
+```bash
+.venv/bin/python -m pytest 'test/integration/network_api/test_tcp_transfer_control.py::test_empty_and_eof_progress_complete_with_real_ack[encrypted-async-untracked-wildcard-eof-upload]' 'test/integration/network_api/test_tcp_transfer_control.py::test_empty_and_eof_progress_complete_with_real_ack[encrypted-async-untracked-wildcard-eof-download]' -q
+```
+
+**2 passed in 9.19s**。不将首轮失败抹去或标成全量复跑成功。
+
+已观察运行证据：
+
+- 真实文件 socket：普通上传/下载 × S/R 本地控制，确认后同一 socket 继续，最终 sender 返回真实 ACK 成功且文件字节一致，owner/进度/暂停键清理。
+- 同 fid 双向传输分别绑定角色；对一边 start 不影响另一边。非法/旧/缺多 token、错误 type、未知 fid 输入通过真实控制通道送达后不改变活动状态。client 配置别名与实际 peer 地址归一到同 key，含 wildcard bind。
+- receiver 快速 pause→start 在首个请求实际发送前登记相反意图；排空通知后 S/R 运行状态一致。另一个真实在途块在 pause 确认后才交给发送调用，接收端仍写入该块。
+- Plain、encrypted、encrypted+async+tracking off 三种实际配置执行控制；两组 encrypted 配置触发真实强制重新交换并持有 key publication。R pause→start 仍返回、读线程继续接受真实对端 key，安全门槛打开后 FIFO 请求/通知收敛。观测帧均含 FRAME_MAGIC 且无控制明文片段，未使用 raw 控制写入。
+- 临时标准输入脚本通过正式文件夹入口上传/下载各两项，每条在数据循环观察点执行 S pause、R start；四份文件内容一致，四条 leg 的 owner/socket 均保持，最终进度行、控制 owner 和暂停键为零。脚本退出码 0，未落盘。
+
+其后为 owner 隔离补强发送等待条件：仅当前 registry 仍持有同一 state 时等待暂停键，防止旧等待者观察同 key 新 owner 的暂停。执行控制基础及 plain 同 fid 双向实际传输用例：
+
+```bash
+.venv/bin/python -m pytest test/unit/network_api/test_transfer_control.py 'test/integration/network_api/test_tcp_transfer_control.py::test_same_fid_opposite_directions_and_invalid_wire_are_isolated[plain-alias]' -q
+```
+
+**134 passed in 4.12s**。
+
+既有受影响路径一次相关回归：
+
+```bash
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_file_transfer.py test/integration/network_api/test_tcp_transfer_resume.py test/integration/network_api/test_crypto_tcp.py test/integration/network_api/test_tcp_async_server.py test/unit/network_api/test_transfer_handshakes.py test/unit/network_api/test_wire_lines.py -q
+```
+
+**159 passed in 358.02s**。包含普通文件/文件夹、relay 背压与多目标 ACK、原有断线恢复、实际控制端点识别、加密重新交换、async server、socket/FID handshake 和 wire buffer；不替代 C3/C4 新契约的路径验收。
+
+### 路径对照与明确未覆盖
+
+| 路径 | C2b 结论与证据边界 |
+|---|---|
+| P01 | 生产分派已严格使用四 token parser；真实控制连接的旧/非法/type/fid 输入及基础参数边界通过，不创建未知 wire 状态 |
+| P02 | 真实同 peer/type/fid 反向普通传输独立暂停；纯状态契约覆盖不同 peer/type。复杂 relay 身份全集仍在 C3 |
+| P03/P04 | 真实上传/下载，S/R 均能 pause/start，同 data socket 完成内容及最终 ACK；接收在途块继续落盘 |
+| P05 | C2a 全部有限三操作 FIFO 交错契约通过；生产连接补充 R 未确认 pause→start 和 S/R 交叉，消息排空后状态一致 |
+| P06 | 空文件、EOF 恢复、最终 ACK 及逐文件夹 leg 的真实内容/owner 清理证据通过 |
+| P07 | 预置发送暂停在对端登记后公布；start 删除键；未知 wire 不产生预置状态，基础和实际连接均有证据 |
+| P11 | 明文及实际加密、重新交换窗口通过；控制写入走安全门槛和 send_message，帧无控制明文片段。加密 relay 的复杂交叉验收仍属 C3 |
+| P12 | 配置别名、concrete endpoint、wildcard 以及既有关闭 socket 身份回归通过；旧 source/target owner 全部恢复竞争仍属 C4b |
+| P13 | 新控制场景覆盖 tracking off 和 encrypted async 分派，重新交换时读线程继续处理 key；原有线程式/async 回归通过 |
+| P18 | 查询 schema 及活动 typed pause 投影、JSON 无控制字段、完成/关闭释放均通过；stop/config 与转发恢复竞争的完整验收在 C4b/C5 |
+| P08–P10、P14–P17 | 仅复用既有相关回归，不标为新增契约已全验收；分别按 C3 和 C4a/C4b 路径清单继续 |
+
+没有改 CI、依赖、coverage 策略或 progress JSON schema；没有删除/跳过既有测试或放宽失败断言。本轮唯一 skip 是纯明文 fixture 不适用重新交换场景，两组加密场景均实际运行。未运行 repo-wide suite、formatter、lint、文档构建或多平台检查。
+
+### 风险与审查注意
+
+- **变更规模超出计划预估的 300–500 行**：单是新集成契约文件为 387 行，此外还有生产接入、旧入口删除、既有调用迁移和接口文档。此次保持一次协议生产者/消费者同步切换，未擅自拆成混用新旧协议的中间阶段。该规模偏差必须在 C2b 人工审查中明确接受，或按仓库流程退回计划重拆；不以测试通过代替放行。
+- 状态登记成功仅表示已进入控制 FIFO，不代表对端确认。控制发送失败沿既有错误/关闭机制终止会话，不重试、不降级；不承诺仅有 data socket、控制连接不可用时仍可远程控制。
+- 生产控制 FIFO 只排控制消息，不排每块文件数据。活动记录与暂停键分离；路由冲突仍检查真实 owner，复杂 relay 路由/背压、共享 source 门槛及恢复资格没有在本轮提前宣称交付。
+- 语言服务仍只有 Ruff、无 referencesProvider；公开符号引用请求返回 `-32601`，随后按调用枚举迁移。不能将该请求计为成功引用分析。
+- **C2b 待人工审查，未创建提交**。C3 及后续阶段未获本轮执行授权。
+
+## 公共协议/API 变更许可记录
+
+用户审查放行 C2a 并授权开始 C2b；下列协议/API 按已确认计划执行切换。恢复资格的新语义按 C4a/C4b 后续实施。
 
 ```python
 # Server
@@ -144,4 +231,4 @@ start_trans(fid, peer=None, *, trans_type, direction)
 - bool 表示活跃 leg 的操作是否登记，不表示已确认或文件成功。发送端未建连时允许精确 key 的预置 pause，返回 False；start 解除预置；非法本地 fid/type/direction 抛 ValueError。
 - `resume_trans(peer_addr, fid, offset)` 保留签名，但活跃、暂停或正建连对象静默跳过并返回 False；具体资格门槛在 C4a/C4b 实现。
 
-需求卡和拆分的确认不在本报告中代替这一许可；未获许可前不修改公共协议/API。
+本轮 C2b 授权包含上述 pause/start 协议/API 的切换；C3–C5 保持原定分阶段审查闸门。

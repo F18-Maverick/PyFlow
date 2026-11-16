@@ -26,6 +26,7 @@ from helpers import (
     wait_until,
 )
 
+from PyFlow.network_api import connect_tcp
 from PyFlow.network_api.connect_tcp import (
     TRANSFER_SIGN_BUFFER_LIMIT,
     TCP_Client_Base,
@@ -272,7 +273,7 @@ def test_equal_server_upload_fids_are_isolated_by_receiver(tmp_path):
             sources.append(src)
             payloads.append(payload)
             outputs.append(recv_dir / src.name)
-            assert server.pause_trans(fid, receiver) is False
+            assert server.pause_trans(fid, receiver, trans_type=0, direction=0) is False
             results[receiver] = request_transfer_listener(
                 server, client, f"/file {shlex.quote(str(src))} {fid}"
             )
@@ -308,7 +309,7 @@ def test_equal_server_upload_fids_are_isolated_by_receiver(tmp_path):
         sockets = [server._active_transfer_sockets[key] for key in keys]
         assert sockets[0] is not sockets[1]
         assert all(key in server._active_transfer_fids for key in keys)
-        assert server.pause_trans(fid, receivers[0]) is True
+        assert server.pause_trans(fid, receivers[0], trans_type=0, direction=0) is False
 
         assert server._drop_stale_transfers(receivers[0]) == 1
         assert sockets[0].fileno() == -1
@@ -319,18 +320,18 @@ def test_equal_server_upload_fids_are_isolated_by_receiver(tmp_path):
 
         # Release only the dead leg's waiter and let its real cleanup finish.
         # If start/pause or cleanup is fid-only, the other leg now sends or dies.
-        server.start_trans(fid, receivers[0])
+        server.start_trans(fid, receivers[0], trans_type=0, direction=0)
         senders[0].join(timeout=15)
         assert not senders[0].is_alive(), "the cleared upload did not stop"
         assert results[receivers[0]] is False
         assert server.file_upload_progress[keys[1]] is rows[1]
         assert rows[1][0] == 0
         assert clients[1].file_recv_progress[fid][0] == 0
-        assert server._transfer_pause[keys[1]] is True
+        assert server._transfer_pause[(*keys[1], 0, 0)] is True
         assert server._active_transfer_sockets[keys[1]] is sockets[1]
         assert senders[1].is_alive()
 
-        assert server.start_trans(fid, receivers[1]) is True
+        assert server.start_trans(fid, receivers[1], trans_type=0, direction=0) is True
         senders[1].join(timeout=20)
         assert not senders[1].is_alive(), "the unaffected receiver did not finish"
         assert results[receivers[1]] is True
@@ -342,7 +343,7 @@ def test_equal_server_upload_fids_are_isolated_by_receiver(tmp_path):
         assert keys[1] not in server._active_transfer_fids
     finally:
         for receiver in receivers:
-            server.start_trans(fid, receiver)
+            server.start_trans(fid, receiver, trans_type=0, direction=0)
         for client in clients:
             client.close()
         server.stop()
@@ -423,7 +424,12 @@ def test_equal_inbound_and_outbound_fids_cleanup_only_their_own_sockets(tmp_path
             )
             instance._register_transfer_socket(fid, inbound)
             instance._register_transfer_socket(upload_key, outbound)
-            assert instance.pause_trans(fid, receiver) is True
+            control = (instance.clients[receiver]["socket"] if instance is server
+                       else client.client_socket)
+            control_key = (receiver, fid, 1, 0)
+            state = instance._transfer_controls.register(control_key, control, outbound)
+            assert state is not None
+            assert instance.pause_trans(fid, receiver, trans_type=1, direction=0) is True
             assert len(recv_entry) == len(upload_entry) == 5
             assert upload_entry[4] == logical_peer
 
@@ -437,7 +443,8 @@ def test_equal_inbound_and_outbound_fids_cleanup_only_their_own_sockets(tmp_path
             assert instance.file_upload_progress[upload_key] is upload_entry
             assert upload_key in instance._active_transfer_fids
             assert instance._active_transfer_sockets[upload_key] is outbound
-            assert instance._transfer_pause[upload_key] is True
+            assert instance._transfer_pause[control_key] is True
+            assert instance._transfer_controls._legs[control_key] is state
             outbound.sendall(b"x")
             assert outbound_remote.recv(1) == b"x"
 
@@ -452,7 +459,8 @@ def test_equal_inbound_and_outbound_fids_cleanup_only_their_own_sockets(tmp_path
             )
             instance._release_transfer_socket(upload_key, outbound)
             assert upload_key not in instance.file_upload_progress
-            instance.start_trans(fid, receiver)
+            instance.start_trans(fid, receiver, trans_type=1, direction=0)
+            instance._transfer_controls.release(state)
     finally:
         for sock in sockets:
             sock.close()
@@ -485,11 +493,12 @@ def test_paused_transfer_is_persisted_when_the_connection_drops(tmp_path):
 
         transfer_port, _stamp = request_transfer_listener(client, server, f"/file {src} {fid}")
 
-        client.pause_trans(fid)  # hold the leg before its first chunk
+        client.pause_trans(fid, trans_type=0, direction=0)  # hold the leg before its first chunk
         sender = threading.Thread(
             target=client.file_transfer_mode,
             args=(str(src), "127.0.0.1", transfer_port, 0),
-            kwargs={"fid": fid, "peer": (server.host, server.port)},
+            kwargs={"fid": fid, "peer": (server.host, server.port),
+                    "control_socket": client.client_socket, "crypto": _stamp},
             daemon=True,
         )
         sender.start()
@@ -519,7 +528,7 @@ def test_paused_transfer_is_persisted_when_the_connection_drops(tmp_path):
         assert entry[3] == str(server_recv / "payload.bin")
         assert entry[4] == list(client.client_socket.getsockname())
 
-        client.start_trans(fid)  # release the paused leg so the test can end
+        client.start_trans(fid, trans_type=0, direction=0)  # release the paused leg so the test can end
         sender.join(timeout=10)
     finally:
         if client is not None:
@@ -571,11 +580,12 @@ def test_upload_resumes_after_a_reconnect(tmp_path):
             client, server, f"/file {shlex.quote(str(src))} {fid}"
         )
 
-        client.pause_trans(fid)  # freeze the leg, then give it a partial file
+        client.pause_trans(fid, trans_type=0, direction=0)  # freeze the leg, then give it a partial file
         sender = threading.Thread(
             target=client.file_transfer_mode,
             args=(str(src), "127.0.0.1", transfer_port, 0),
-            kwargs={"fid": fid, "peer": (server.host, server.port)},
+            kwargs={"fid": fid, "peer": (server.host, server.port),
+                    "control_socket": client.client_socket, "crypto": _stamp},
             daemon=True,
         )
         sender.start()
@@ -617,7 +627,7 @@ def test_upload_resumes_after_a_reconnect(tmp_path):
             lambda: ((client.host, client.port), fid) not in client.file_upload_progress,
             timeout=10,
         )
-        client.start_trans(fid)
+        client.start_trans(fid, trans_type=0, direction=0)
         sender.join(timeout=10)
     finally:
         if client is not None:
@@ -937,6 +947,7 @@ def _watch_sign_capacity(monkeypatch, sender, receiver, overflow, capacity_handl
     errors = []
     compactions = []
     real_feed = _TransferSignBuffer.feed
+    real_wait = connect_tcp._wait_transfer_control
     real_scan = _TransferSignBuffer._scan_pending_locked
     real_send = receiver.send_message
 
@@ -972,14 +983,16 @@ def _watch_sign_capacity(monkeypatch, sender, receiver, overflow, capacity_handl
                 pass  # the sender may already have rejected an overlong line
         return written
 
-    def hold_body(_key, leg_socket=None):
-        body_held.set()
-        assert capacity_handled.wait(timeout=10), "the buffer never reached or rejected its limit"
+    def hold_body(instance, state, leg_socket):
+        if instance is sender:
+            body_held.set()
+            assert capacity_handled.wait(timeout=10), "the buffer never reached or rejected its limit"
+        return real_wait(instance, state, leg_socket)
 
     monkeypatch.setattr(_TransferSignBuffer, "feed", observe_feed)
     monkeypatch.setattr(_TransferSignBuffer, "_scan_pending_locked", observe_scan)
     monkeypatch.setattr(receiver, "send_message", inject_after_header)
-    monkeypatch.setattr(sender, "_wait_transfer_paused", hold_body)
+    monkeypatch.setattr(connect_tcp, "_wait_transfer_control", hold_body)
     return retained, errors, compactions
 
 @pytest.mark.parametrize("server_sends", [False, True], ids=["upload", "download"])
@@ -1999,7 +2012,7 @@ def test_forward_route_is_removed_only_after_all_real_targets_complete(tmp_path,
                                destination_path=None):
             if target == targets[1]:
                 held["fid"] = tfid
-                held["paused"] = server.pause_trans(tfid, target)
+                held["paused"] = server.pause_trans(tfid, target, trans_type=1, direction=0)
             return real_forward_item_to(
                 target, kind, rel_dir, fname, originator_addr, tfid, destination_path
             )
@@ -2019,7 +2032,7 @@ def test_forward_route_is_removed_only_after_all_real_targets_complete(tmp_path,
         ), "the unpaused target did not finish"
         assert outputs[0].read_bytes() == payload
         assert wait_until(lambda: not clients[1].file_recv_progress, timeout=10)
-        assert held["paused"] is True
+        assert held["paused"] is False  # preset before the relay writer registers
         assert not outputs[1].exists() or outputs[1].stat().st_size == 0
         assert len(server._fid_routes) == 1
         fid, route = next(iter(server._fid_routes.items()))
@@ -2030,7 +2043,7 @@ def test_forward_route_is_removed_only_after_all_real_targets_complete(tmp_path,
         assert server._lookup_fid_route(targets[0], route["targets"][targets[0]]) is None
         assert server._lookup_fid_route(targets[1], route["targets"][targets[1]])[1] is route
 
-        assert server.start_trans(held["fid"], targets[1]) is True
+        assert server.start_trans(held["fid"], targets[1], trans_type=1, direction=0) is True
         assert wait_until(
             lambda: outputs[1].exists() and outputs[1].stat().st_size == len(payload),
             timeout=20,
@@ -2047,17 +2060,12 @@ def test_forward_route_is_removed_only_after_all_real_targets_complete(tmp_path,
             assert server._lookup_fid_route(target, tfid) is None
     finally:
         if held:
-            server.start_trans(held["fid"], targets[1])
+            server.start_trans(held["fid"], targets[1], trans_type=1, direction=0)
         _close_socket_workers(server, clients, workers)
 
 
 def test_pause_and_start_trans_control_a_plain_transfer(tmp_path):
-    """``pause_trans``/``start_trans`` hold and release any outbound leg.
-
-    The receiver stops reading until the sender is released, so the pause
-    works on a plain (non-forwarded) transfer: nothing arrives while the leg
-    is held, and the file completes after ``start_trans``.
-    """
+    """A sender preset holds the body until start releases the same data leg."""
     server = _start_server(tmp_path)
     server_recv = tmp_path / "server_recv"
     server_recv.mkdir()
@@ -2072,11 +2080,12 @@ def test_pause_and_start_trans_control_a_plain_transfer(tmp_path):
 
         transfer_port, _stamp = request_transfer_listener(client, server, f"/file {src} {fid}")
 
-        assert client.pause_trans(fid) is False  # armed before the leg starts
+        assert client.pause_trans(fid, trans_type=0, direction=0) is False  # armed before the leg starts
         sender = threading.Thread(
             target=client.file_transfer_mode,
             args=(str(src), "127.0.0.1", transfer_port, 0),
-            kwargs={"fid": fid, "peer": (server.host, server.port)},
+            kwargs={"fid": fid, "peer": (server.host, server.port),
+                    "control_socket": client.client_socket, "crypto": _stamp},
             daemon=True,
         )
         sender.start()
@@ -2084,11 +2093,12 @@ def test_pause_and_start_trans_control_a_plain_transfer(tmp_path):
         assert wait_until(lambda: client.file_upload_progress.get(upload_key)), (
             "the uploader never registered the transfer"
         )
-        time.sleep(0.5)
+        control_key = ((client.host, client.port), fid, 0, 0)
+        assert wait_until(lambda: control_key in client._transfer_controls._legs)
         output = server_recv / "payload.bin"
         assert not output.exists() or output.stat().st_size == 0, "the paused leg sent data"
 
-        assert client.start_trans(fid) is True  # a live leg is released
+        assert client.start_trans(fid, trans_type=0, direction=0) is True  # a live leg is released
         assert wait_until(
             lambda: output.exists() and output.stat().st_size == len(payload), timeout=20
         ), "the released transfer did not finish"
@@ -2392,7 +2402,7 @@ def test_download_resumes_after_connect_without_a_manual_call(tmp_path):
         with alloc._lock:
             fid = ((alloc._counter + 1) << 32) | (alloc._epoch << 1)
         upload_key = (client_addr, fid)
-        assert server.pause_trans(fid, client_addr) is False, "the leg was already running"
+        assert server.pause_trans(fid, client_addr, trans_type=0, direction=0) is False, "the leg was already running"
 
         # the server pushes the file: the client opens its listener and the
         # server connects from a send leg
@@ -2431,7 +2441,7 @@ def test_download_resumes_after_connect_without_a_manual_call(tmp_path):
         assert wait_until(
             lambda: server._active_transfer_sockets.get(upload_key) is not dead_leg, timeout=20
         ), "the dead session's leg was never cleared"
-        server.start_trans(fid, client_addr)  # the test, not the protocol, parked this leg
+        server.start_trans(fid, client_addr, trans_type=0, direction=0)  # the test, not the protocol, parked this leg
         assert wait_until(lambda: server.clients.get(client_addr) is not None, timeout=20), (
             "the client did not come back"
         )
@@ -2937,13 +2947,13 @@ def test_paused_leg_is_released_by_stale_sweep(tmp_path, monkeypatch, sender_sid
             )
             key = (peer, fid)
             target = peer
-            assert sender.pause_trans(fid, peer) is False
+            assert sender.pause_trans(fid, peer, trans_type=0, direction=0) is False
         else:
             sender, receiver = client, server
             command = f"/file {shlex.quote(str(src))} {fid}"
             key = ((client.host, client.port), fid)
             target = (client.host, client.port)
-            assert sender.pause_trans(fid) is False
+            assert sender.pause_trans(fid, trans_type=0, direction=0) is False
         port, stamp = request_transfer_listener(sender, receiver, command)
         control = (
             server.clients[peer]["socket"] if sender is server else client.client_socket
@@ -2974,14 +2984,15 @@ def test_paused_leg_is_released_by_stale_sweep(tmp_path, monkeypatch, sender_sid
             and key in sender.file_upload_progress,
             timeout=10,
         ), "the paused leg never registered"
-        assert sender._transfer_pause.get(key) is True
+        control_key = (*key, 0, 0)
+        assert sender._transfer_pause.get(control_key) is True
         swept = sender._drop_stale_transfers(peer=peer if sender is server else None)
         assert swept == 1
         assert wait_until(lambda: not leg.is_alive(), timeout=10), (
             "the swept leg stayed paused"
         )
         assert result.get("value") is False
-        assert key not in sender._transfer_pause
+        assert control_key not in sender._transfer_pause
         assert key in sender.file_upload_progress
 
         calls = []

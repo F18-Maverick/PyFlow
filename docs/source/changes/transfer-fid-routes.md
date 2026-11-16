@@ -355,3 +355,33 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
 - Production leg registration, pause/start API and protocol cutover, secure
   dispatch, data-loop integration and real-file control remain at the C2b gate.
 
+## Transfer control C2b: unified bidirectional production control
+
+- Public pause/start now require keyword-only `trans_type` (0 ordinary,
+  1 forwarded) and `direction` (0 local sender, 1 local receiver). The wire is
+  strictly `/pause_trans <fid> <type> <issuer_role>` or its start equivalent.
+  The old remote-only APIs and fid-only parser are removed; all production
+  callers and API documentation use the unified entry.
+- Ordinary and relay legs bind actual control sockets and data-socket owners
+  to typed control records independently of progress tracking. Per-leg FIFO
+  control workers wait for peer leg registration and existing crypto readiness
+  before calling `send_message`; control readers never wait for their own key
+  exchange. Control frames cannot fall back to plaintext while encryption is
+  unavailable, including a re-exchange between readiness and frame creation.
+- Send loops inspect their bound pause state before each new block. Receivers
+  continue draining and writing in-flight data. Start retains the same socket;
+  empty files, EOF replay and final ACKs do not wait on a nonexistent next block.
+  Disabled tracking creates no new progress rows; a resumed receiver retains
+  ownership of its existing row so successful EOF confirmation removes it.
+- Relay writers use the same control registry; high/low-water requests use
+  type 1 and the local receiver role. The reader's buffer gate stays separate
+  from control state. Progress queries project active typed sender records onto
+  the existing upload rows, and owner/session cleanup releases controls.
+- Runtime verification covered real upload/download control and encrypted
+  re-exchange. The first targeted run found two untracked EOF cleanup failures;
+  both passed after the ownership fix. Existing affected regressions passed
+  159 tests, and the owner-isolation check passed 134. Full commands, the one
+  plaintext re-key skip and review-size deviation are in the implementation
+  report. Complex multi-target routing/backpressure acceptance and object-level
+  resume eligibility retain their C3/C4 review gates.
+
