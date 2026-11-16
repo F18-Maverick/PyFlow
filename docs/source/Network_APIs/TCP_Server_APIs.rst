@@ -697,6 +697,11 @@ Built-in client commands include:
   sender, translates to the stable upstream fid, and forwards the same command.
   Unknown or mismatched identities never fall back to another route
   (see :ref:`transfer-pause-and-reconnect`). No fid kind selects this branch.
+  Ordinary local uploads recover only when no live, paused, negotiating or
+  finalizing owner holds that scoped object. ``resume_trans`` returns ``True``
+  for a newly reserved worker; busy and duplicate calls return ``False`` without
+  closing or queueing. Other objects remain independent. Use ``start_trans``
+  to continue an existing paused connection.
 - Forwarded transfers return the existing final data-ACK marker upstream only
   after the current input stream is complete and every accepted target has
   acknowledged. The normal send path reframes the marker for the upstream hop;

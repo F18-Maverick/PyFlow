@@ -620,7 +620,7 @@ def _delete_config(instance, config_name, *, is_list_config):
         if (instance.running or instance._config_busy
                 or (instance._config_started and not instance._config_closed)
                 or instance._active_transfer_fids or instance._active_transfer_sockets
-                or instance._resume_sends):
+                or instance._resume_sends or instance._receive_transfers):
             raise RuntimeError("stop the instance and finish active transfers before deletion")
         if hasattr(instance, "_forward_relays"):
             with instance._forward_relays_lock:
@@ -709,16 +709,88 @@ def _sending_transfer(instance, key):
         with state["lock"]:
             yield state
     finally:
-        with instance._transfer_progress_lock:
+        with instance._transfer_progress_changed:
             state["users"] -= 1
             if not state["users"] and not state["targets"]:
                 instance._resume_sends.pop(key, None)
+            instance._transfer_progress_changed.notify_all()
 
 
-def _start_resume_send(instance, key, target, send):
-    """Reserve a target before starting its worker; duplicates join that request."""
+def _ordinary_transfer_busy(instance, key, control_socket):
+    """Called under the progress lock; closed owners still own final cleanup."""
+    if key in instance._active_transfer_fids or key in instance._active_transfer_sockets:
+        return True
+    if isinstance(key, tuple):
+        state = instance._resume_sends.get(key)
+        if state is not None and (state["users"] or state["targets"]):
+            return True
+        peer, fid = key
+        with instance._transfer_pause_cond:
+            if (peer, fid, 0, 0) in instance._transfer_controls._legs:
+                return True
+        return instance._transfer_handshakes.occupied(control_socket, fid)
+    return False
+
+
+def _claim_receive(instance, fid, control_socket, owner=None):
+    """Reserve a resume request or adopt it into its sole receive listener."""
+    if fid is None:
+        return None
+    with instance._transfer_progress_lock:
+        if instance._progress_discarded or _ordinary_transfer_busy(instance, fid, control_socket):
+            return None
+        record = instance._receive_transfers.get(fid)
+        if record is not None:
+            if record["owner"] is not None:
+                return None
+            if owner is not None and record["control_socket"] is control_socket:
+                record["owner"] = owner
+                return record
+            if record["deadline"] > time.monotonic():
+                return None
+        record = {"control_socket": control_socket, "owner": owner,
+                  "deadline": time.monotonic() + RESUME_ACCEPT_TIMEOUT}
+        instance._receive_transfers[fid] = record
+        return record
+
+
+def _release_receive(instance, fid, record):
+    with instance._transfer_progress_changed:
+        if instance._receive_transfers.get(fid) is record:
+            instance._receive_transfers.pop(fid, None)
+            instance._transfer_progress_changed.notify_all()
+
+
+def _request_receive_resume(instance, fid, entry, control_socket, origin, target):
+    record = _claim_receive(instance, fid, control_socket)
+    if record is None:
+        return False
+    sent = False
+    try:
+        entry[0] = _resume_offset_for(entry)
+        sent = instance.send_message(control_socket, format_resume_line(fid, entry[0], origin, target))
+        return bool(sent)
+    finally:
+        if not sent or not instance.running or control_socket.fileno() < 0:
+            _release_receive(instance, fid, record)
+
+
+def _discard_receive_requests(instance, control_socket):
+    with instance._transfer_progress_changed:
+        for fid, record in list(instance._receive_transfers.items()):
+            if record["control_socket"] is control_socket and record["owner"] is None:
+                del instance._receive_transfers[fid]
+        instance._transfer_progress_changed.notify_all()
+
+
+def _start_resume_send(instance, key, target, send, *, control_socket=None):
+    """Reserve ordinary recovery once; relay target coalescing is kept separate."""
     with instance._transfer_progress_lock:
         if instance._progress_discarded or key not in instance.file_upload_progress:
+            return False
+        if control_socket is not None and (
+            control_socket.fileno() < 0 or _ordinary_transfer_busy(instance, key, control_socket)
+        ):
             return False
         state = instance._resume_sends.get(key)
         if state is None and key in instance._active_transfer_fids:
@@ -737,10 +809,11 @@ def _start_resume_send(instance, key, target, send):
                 if entry is not None:
                     send(entry)
         finally:
-            with instance._transfer_progress_lock:
+            with instance._transfer_progress_changed:
                 state["targets"].discard(target)
                 if not state["users"] and not state["targets"]:
                     instance._resume_sends.pop(key, None)
+                instance._transfer_progress_changed.notify_all()
 
     threading.Thread(target=run, daemon=True).start()
     return True
@@ -1743,6 +1816,12 @@ class _TransferHandshakeRegistry:
                 if not resources:
                     del self._resources[control_socket]
 
+    def occupied(self, control_socket, fid):
+        """Pending and uncertain negotiations both prevent a second same-FID leg."""
+        with self._changed:
+            key = (control_socket, fid)
+            return key in self._pending or key in self._unresolved
+
     @staticmethod
     def _close_socket(sock):
         try:
@@ -2716,6 +2795,8 @@ class TCP_Server_Base:  # TCP server class
         )
         self._transfer_progress_lock = threading.RLock()  # serialises the persist/load pair
         self._resume_sends = {}  # transient locks and request sets; no file metadata
+        self._transfer_progress_changed = threading.Condition(self._transfer_progress_lock)
+        self._receive_transfers = {}  # request/listener/data owner until final cleanup
         self._progress_discarded = False
         self._config_started = False
         self._config_closed = False
@@ -3267,11 +3348,16 @@ class TCP_Server_Base:  # TCP server class
         self._transfer_controls.release_owner(sock)
         if fid is None:
             return
-        with self._transfer_progress_lock:
+        with self._transfer_progress_changed:
             if self._active_transfer_sockets.get(fid) is sock:
                 del self._active_transfer_sockets[fid]
+                self._active_transfer_fids.discard(fid)
+            record = self._receive_transfers.get(fid)
+            if record is not None and record["owner"] is sock:
+                del self._receive_transfers[fid]
+            self._transfer_progress_changed.notify_all()
 
-    def _drop_stale_transfers(self, peer=None):
+    def _drop_stale_transfers(self, peer=None, *, wait=False):
         """Close the legs a peer's previous session left behind.
 
         A peer that (re)connects proves that the legs of its earlier session
@@ -3280,23 +3366,25 @@ class TCP_Server_Base:  # TCP server class
 
         Args:
             peer (tuple | None): Match the outgoing receiver namespace or incoming progress peer; None clears all tracked legs.
+            wait (bool): During reconnect only, wait for old worker cleanup.
 
         Returns:
         int: Number of legs closed.
         """
         stale = []
+        with self._transfer_progress_lock:
+            sends = [(key, state) for key, state in self._resume_sends.items()
+                     if peer is None or key[0] == tuple(peer)] if wait else []
         for store in (self.file_upload_progress, self.file_recv_progress):
             for fid, entry in list(store.items()):
                 owner = fid[0] if store is self.file_upload_progress else entry[4]
                 if peer is not None and (owner is None or tuple(owner) != tuple(peer)):
                     continue
                 with self._transfer_progress_lock:
-                    sock = self._active_transfer_sockets.pop(fid, None)
-                    if sock is not None:
-                        self._active_transfer_fids.discard(fid)
+                    sock = self._active_transfer_sockets.get(fid)
                 if sock is not None:
-                    stale.append(sock)
-        for sock in stale:
+                    stale.append((fid, sock))
+        for fid, sock in stale:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
             except OSError:
@@ -3306,6 +3394,11 @@ class TCP_Server_Base:  # TCP server class
             except OSError:
                 pass
             self._transfer_controls.release_owner(sock)
+        if wait:
+            with self._transfer_progress_changed:
+                self._transfer_progress_changed.wait_for(lambda: all(
+                    self._active_transfer_sockets.get(key) is not sock for key, sock in stale
+                ) and all(self._resume_sends.get(key) is not state for key, state in sends))
         return len(stale)
 
 
@@ -5260,6 +5353,7 @@ class TCP_Server_Base:  # TCP server class
         """
         self._transfer_handshakes.cancel_socket(client_socket)
         self._transfer_controls.discard_socket(client_socket)
+        _discard_receive_requests(self, client_socket)
         with self.client_lock:
             owns_peer = self.clients.get(client_address, {}).get("socket") is client_socket
             if owns_peer:
@@ -5832,6 +5926,7 @@ class TCP_Server_Base:  # TCP server class
                     self._log(f"error while starting the file transfer: {e}")
                     self._log_exc()
                 close_socket()
+                self._release_transfer_socket(progress_fid, client_file_socket)
                 return False
             try:
                 name_len_bytes = b""
@@ -6037,6 +6132,11 @@ class TCP_Server_Base:  # TCP server class
         if resume_entry is not None:
             # the sender answers this resume with /file; its connection is the continued leg
             server_file_socket.settimeout(RESUME_ACCEPT_TIMEOUT)
+        receive_record = _claim_receive(self, progress_fid, client_socket, server_file_socket)
+        if progress_fid is not None and receive_record is None:
+            server_file_socket.close()
+            return
+        handed_off = False
         try:
             if not self._transfer_handshakes.track_socket(client_socket, server_file_socket):
                 return
@@ -6045,12 +6145,15 @@ class TCP_Server_Base:  # TCP server class
             client_file_socket, client_file_address = server_file_socket.accept()
             if not self._transfer_handshakes.track_socket(client_socket, client_file_socket):
                 return
+            if receive_record is not None:
+                receive_record["owner"] = client_file_socket
             if resume_entry is not None:
                 client_file_socket.settimeout(None)  # the accept timeout is the listener's only
             self._crypto_attach_transfer_in(client_file_socket, client_socket, stamp)
             self._register_transfer_socket(progress_fid, client_file_socket)
             _bind_transfer_control(self, progress_fid, client_socket, client_file_socket, 0, 1)
             if resume_entry is not None:
+                handed_off = True
                 threading.Thread(
                     target=file_transfer_client_recv, args=(client_id,), daemon=True
                 ).start()
@@ -6059,6 +6162,7 @@ class TCP_Server_Base:  # TCP server class
                 if is_open_file_transfer == None:
                     pass
                 else:
+                    handed_off = True
                     threading.Thread(
                         target=file_transfer_client_recv, args=(client_id,), daemon=True
                     ).start()
@@ -6074,6 +6178,10 @@ class TCP_Server_Base:  # TCP server class
         finally:
             server_file_socket.close()
             self._transfer_handshakes.release_socket(client_socket, server_file_socket)
+            if not handed_off:
+                if client_file_socket is not None:
+                    self._release_transfer_socket(progress_fid, client_file_socket)
+                _release_receive(self, progress_fid, receive_record)
 
     def diff_multiple_file_diff_multiple_client_transfer_server_recv_client_start(self, message):
         """Send grouped files and folders to their listed clients.
@@ -6579,6 +6687,10 @@ class TCP_Server_Base:  # TCP server class
                 self.file_upload_progress, transfer_key, file_size, filename,
                 peer=peer, initial=resume_offset,
             )
+            if progress is None:
+                progress = self.file_upload_progress.get(transfer_key)
+                if progress is not None:
+                    progress[0] = resume_offset
             with open(filename, "rb") as f:
                 if resume_offset:
                     f.seek(resume_offset)
@@ -6696,13 +6808,7 @@ class TCP_Server_Base:  # TCP server class
                 continue  # not a download from this peer
             if self._lookup_fid_route(None, fid) is not None:
                 continue  # a forwarded transfer: its target drives the resume
-            with self._transfer_progress_lock:
-                if fid in self._active_transfer_fids:
-                    continue  # a leg is already running for this fid
-            entry[0] = _resume_offset_for(entry)
-            if self.send_message(
-                info["socket"], format_resume_line(fid, entry[0], peer, target)
-            ):
+            if _request_receive_resume(self, fid, entry, info["socket"], peer, target):
                 started += 1
         return started
 
@@ -6720,7 +6826,7 @@ class TCP_Server_Base:  # TCP server class
             offset (int): Byte offset the receiver already holds.
 
         Returns:
-            bool: True when the request was queued or joined in flight.
+            bool: True only for a newly reserved ordinary recovery worker.
         """
         if peer_addr is None:
             return False
@@ -6755,7 +6861,7 @@ class TCP_Server_Base:  # TCP server class
                 finally:
                     self.pfree(client_port)
 
-        return _start_resume_send(self, key, peer_addr, send)
+        return _start_resume_send(self, key, peer_addr, send, control_socket=info["socket"])
 
 
     def _is_control_local_endpoint(self, endpoint, sock):
@@ -6867,7 +6973,7 @@ class TCP_Server_Base:  # TCP server class
         Args:
             client_address (tuple): Value used by the operation.
         """
-        self._drop_stale_transfers(peer=tuple(client_address))
+        self._drop_stale_transfers(peer=tuple(client_address), wait=True)
         self._request_resumes(tuple(client_address))
         self._flush_pending_originator_resumes(tuple(client_address))
 
@@ -7671,6 +7777,7 @@ class TCP_Server_Base:  # TCP server class
             for client_info in self.clients.values():
                 self._transfer_handshakes.cancel_socket(client_info["socket"])
                 self._transfer_controls.discard_socket(client_info["socket"])
+                _discard_receive_requests(self, client_info["socket"])
                 try:
                     # a client thread blocked in recv() keeps the connection half
                     # open past close(): the shutdown sends its FIN and wakes it
@@ -7888,6 +7995,8 @@ class TCP_Client_Base:  # TCP client class
         )
         self._transfer_progress_lock = threading.RLock()  # serialises the persist/load pair
         self._resume_sends = {}  # transient locks and request sets; no file metadata
+        self._transfer_progress_changed = threading.Condition(self._transfer_progress_lock)
+        self._receive_transfers = {}  # request/listener/data owner until final cleanup
         self._progress_discarded = False
         self._config_started = False
         self._config_closed = False
@@ -8866,11 +8975,16 @@ class TCP_Client_Base:  # TCP client class
         self._transfer_controls.release_owner(sock)
         if fid is None:
             return
-        with self._transfer_progress_lock:
+        with self._transfer_progress_changed:
             if self._active_transfer_sockets.get(fid) is sock:
                 del self._active_transfer_sockets[fid]
+                self._active_transfer_fids.discard(fid)
+            record = self._receive_transfers.get(fid)
+            if record is not None and record["owner"] is sock:
+                del self._receive_transfers[fid]
+            self._transfer_progress_changed.notify_all()
 
-    def _drop_stale_transfers(self, peer=None):
+    def _drop_stale_transfers(self, peer=None, *, wait=False):
         """Close the legs a peer's previous session left behind.
 
         A peer that (re)connects proves that the legs of its earlier session
@@ -8879,23 +8993,25 @@ class TCP_Client_Base:  # TCP client class
 
         Args:
             peer (tuple | None): Match the outgoing receiver namespace or incoming progress peer; None clears all tracked legs.
+            wait (bool): During reconnect only, wait for old worker cleanup.
 
         Returns:
         int: Number of legs closed.
         """
         stale = []
+        with self._transfer_progress_lock:
+            sends = [(key, state) for key, state in self._resume_sends.items()
+                     if peer is None or key[0] == tuple(peer)] if wait else []
         for store in (self.file_upload_progress, self.file_recv_progress):
             for fid, entry in list(store.items()):
                 owner = fid[0] if store is self.file_upload_progress else entry[4]
                 if peer is not None and (owner is None or tuple(owner) != tuple(peer)):
                     continue
                 with self._transfer_progress_lock:
-                    sock = self._active_transfer_sockets.pop(fid, None)
-                    if sock is not None:
-                        self._active_transfer_fids.discard(fid)
+                    sock = self._active_transfer_sockets.get(fid)
                 if sock is not None:
-                    stale.append(sock)
-        for sock in stale:
+                    stale.append((fid, sock))
+        for fid, sock in stale:
             try:
                 sock.shutdown(socket.SHUT_RDWR)
             except OSError:
@@ -8905,6 +9021,11 @@ class TCP_Client_Base:  # TCP client class
             except OSError:
                 pass
             self._transfer_controls.release_owner(sock)
+        if wait:
+            with self._transfer_progress_changed:
+                self._transfer_progress_changed.wait_for(lambda: all(
+                    self._active_transfer_sockets.get(key) is not sock for key, sock in stale
+                ) and all(self._resume_sends.get(key) is not state for key, state in sends))
         return len(stale)
 
 
@@ -9379,7 +9500,7 @@ class TCP_Client_Base:  # TCP client class
                 # session and is over. The sweep runs before the receive thread
                 # starts, so a resume request of the new session cannot be
                 # affected by it.
-                self._drop_stale_transfers()
+                self._drop_stale_transfers(wait=True)
                 self.receive_thread = threading.Thread(
                     target=self.receive_messages
                 )  # set up get msg thread
@@ -9518,6 +9639,7 @@ class TCP_Client_Base:  # TCP client class
                 break
         self._transfer_handshakes.cancel_socket(control_socket)
         self._transfer_controls.discard_socket(control_socket)
+        _discard_receive_requests(self, control_socket)
 
     def send_message(self, client_socket, message, is_send_raw=False):
         # send msg to server
@@ -10887,6 +11009,10 @@ class TCP_Client_Base:  # TCP client class
                 self.file_upload_progress, transfer_key, file_size, filename,
                 peer=peer, initial=resume_offset,
             )
+            if progress is None:
+                progress = self.file_upload_progress.get(transfer_key)
+                if progress is not None:
+                    progress[0] = resume_offset
             with open(filename, "rb") as f:
                 if resume_offset:
                     f.seek(resume_offset)
@@ -11001,17 +11127,23 @@ class TCP_Client_Base:  # TCP client class
         for fid, entry in list(self.file_recv_progress.items()):
             if entry[4] is None:
                 continue  # without a peer there is nobody to continue with
-            with self._transfer_progress_lock:
-                if fid in self._active_transfer_fids:
-                    continue  # a leg is already running for this fid
+            is_direct = _is_control_endpoint(entry[4], configured_peer, connected_peer)
             if connected_peer is not None and tuple(entry[4]) == configured_peer:
                 entry[4] = connected_peer
-            entry[0] = _resume_offset_for(entry)
-            if self.send_message(
-                self.client_socket,
-                format_resume_line(fid, entry[0], entry[4], self.client_socket.getsockname()),
-            ):
-                started += 1
+            if is_direct:
+                started += _request_receive_resume(
+                    self, fid, entry, self.client_socket, entry[4], self.client_socket.getsockname()
+                )
+            else:
+                with self._transfer_progress_lock:
+                    if fid in self._active_transfer_fids:
+                        continue  # relay eligibility is handled separately
+                entry[0] = _resume_offset_for(entry)
+                if self.send_message(
+                    self.client_socket,
+                    format_resume_line(fid, entry[0], entry[4], self.client_socket.getsockname()),
+                ):
+                    started += 1
         return started
 
 
@@ -11021,8 +11153,8 @@ class TCP_Client_Base:  # TCP client class
         Server-bound uploads answer with ``/file``; other final targets replay
         through the server with the stable upstream fid. The retained upload
         path is sufficient because the receiver owns its full destination path.
-        Runtime locks coalesce duplicate targets and serialize different
-        targets without persisting file metadata.
+        Ordinary recovery skips any live, paused, negotiating or finalizing owner.
+        Relay target serialization remains separate from ordinary recovery.
 
         Args:
             peer_addr (tuple | None): Final receiver; None selects the server.
@@ -11030,7 +11162,7 @@ class TCP_Client_Base:  # TCP client class
             offset (int): Byte offset the receiver already holds.
 
         Returns:
-            bool: True when the request was queued or joined in flight.
+            bool: True for newly reserved ordinary recovery; False when busy.
         """
         server_peer = (self.host, self.port)
         control_socket = self.client_socket
@@ -11075,7 +11207,9 @@ class TCP_Client_Base:  # TCP client class
                 finally:
                     self.pfree(client_port)
 
-        return _start_resume_send(self, key, target, send)
+        return _start_resume_send(
+            self, key, target, send, control_socket=control_socket if is_direct else None
+        )
 
 
     # ---- native in-memory forward (client side) ----------------------------
@@ -11498,6 +11632,7 @@ class TCP_Client_Base:  # TCP client class
                     self._log(f"error while starting the file transfer: {e}")
                     self._log_exc()
                 close_socket()
+                self._release_transfer_socket(progress_fid, client_file_socket)
                 return False
             try:
                 name_len_bytes = b""
@@ -11681,6 +11816,7 @@ class TCP_Client_Base:  # TCP client class
             server_file_socket.close()
             return
         progress_fid = _transfer_fid(command_part)  # keys this leg in file_recv_progress
+        is_direct = parse_forward_originator(command, self._own_address_text()) is None
         resume_entry = _resumable_entry(self.file_recv_progress, progress_fid, peer, command_part)
         destination_path = _parse_destination_path(command_part)
         stamp = self._crypto_transfer_stamp(
@@ -11693,6 +11829,13 @@ class TCP_Client_Base:  # TCP client class
         if resume_entry is not None:
             # the sender answers this resume with /file; its connection is the continued leg
             server_file_socket.settimeout(RESUME_ACCEPT_TIMEOUT)
+        receive_record = _claim_receive(
+            self, progress_fid, client_socket, server_file_socket
+        ) if is_direct else None
+        if is_direct and progress_fid is not None and receive_record is None:
+            server_file_socket.close()
+            return
+        handed_off = False
         try:
             if not self._transfer_handshakes.track_socket(client_socket, server_file_socket):
                 return
@@ -11701,6 +11844,8 @@ class TCP_Client_Base:  # TCP client class
             client_file_socket, client_file_address = server_file_socket.accept()
             if not self._transfer_handshakes.track_socket(client_socket, client_file_socket):
                 return
+            if receive_record is not None:
+                receive_record["owner"] = client_file_socket
             if resume_entry is not None:
                 client_file_socket.settimeout(None)  # the accept timeout is the listener's only
             self._crypto_attach_transfer_in(client_file_socket, client_socket, stamp)
@@ -11710,6 +11855,7 @@ class TCP_Client_Base:  # TCP client class
                 self, progress_fid, client_socket, client_file_socket, trans_type, 1
             )
             if resume_entry is not None:
+                handed_off = True
                 threading.Thread(
                     target=file_transfer_client_recv, args=(client_id,), daemon=True
                 ).start()
@@ -11718,6 +11864,7 @@ class TCP_Client_Base:  # TCP client class
                 if is_open_file_transfer == None:
                     pass
                 else:
+                    handed_off = True
                     threading.Thread(
                         target=file_transfer_client_recv, args=(client_id,), daemon=True
                     ).start()
@@ -11733,6 +11880,10 @@ class TCP_Client_Base:  # TCP client class
         finally:
             server_file_socket.close()
             self._transfer_handshakes.release_socket(client_socket, server_file_socket)
+            if not handed_off:
+                if client_file_socket is not None:
+                    self._release_transfer_socket(progress_fid, client_file_socket)
+                _release_receive(self, progress_fid, receive_record)
 
     @_config_lifecycle(starting=False)
     def close(self):  # close connection
@@ -11748,6 +11899,7 @@ class TCP_Client_Base:  # TCP client class
         if self.client_socket:
             self._transfer_handshakes.cancel_socket(self.client_socket)
             self._transfer_controls.discard_socket(self.client_socket)
+            _discard_receive_requests(self, self.client_socket)
             try:
                 # the receive thread may be blocked in recv() on this socket:
                 # close() alone sends no FIN and leaves that read waiting for its
@@ -11797,6 +11949,7 @@ class TCP_Client_Base:  # TCP client class
             return
         self._transfer_handshakes.cancel_socket(sock)
         self._transfer_controls.discard_socket(sock)
+        _discard_receive_requests(self, sock)
         try:
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
         except OSError:

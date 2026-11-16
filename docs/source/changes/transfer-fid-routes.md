@@ -411,3 +411,24 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
   failure without a false upstream success ACK. C4 resume eligibility remains
   outside this change.
 
+## Transfer control C4a: ordinary per-object resume eligibility
+
+- Ordinary resume atomically reserves one recovery worker only after the
+  scoped data owner, negotiation and prior cleanup have finished. Running,
+  paused, negotiating and duplicate requests return False without closing or
+  queueing. Independent files and opposite directions do not block recovery.
+- Receive requests reserve the object before sending; the same session's
+  listener and data owner adopt the reservation. Failed sends, listener
+  failures and session closure release it; pending unanswered requests use the
+  existing accept-timeout window. Reconnect waits for old owner cleanup, while
+  manual busy requests return immediately.
+- A failed data connection can recover on the same live control connection
+  from the receiver's disk offset and original FID. New owners do not inherit
+  pause state. Tracking-off recovery adopts retained progress rows for final
+  cleanup without creating new tracked rows.
+- New eligibility/real-connection checks passed 42 tests; the affected existing
+  run had 139 passes and two obsolete immediate-sweep-release assertions, both
+  passing after migration to final owner release. Reconnect ownership checks
+  passed 34 tests, and the final listener-handoff check passed both directions.
+  Full commands and exclusions are in the C4a report. Relay recovery remains C4b.
+

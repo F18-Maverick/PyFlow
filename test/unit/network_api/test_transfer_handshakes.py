@@ -21,6 +21,8 @@ def test_port_replies_match_socket_and_fid_independently_of_order():
     control, other_control = _Control(), _Control()
     first, second = registry.register(control, 17), registry.register(control, 18)
     assert first["key"] == (control, 17)
+    assert registry.occupied(control, 17)
+    assert not registry.occupied(other_control, 17)
     assert second["key"] == (control, 18)
     assert registry.mark_sent(first)
     assert not registry.mark_sent(first)
@@ -36,6 +38,7 @@ def test_port_replies_match_socket_and_fid_independently_of_order():
     }
     assert not registry.resolve_port(control, 17, 41003, "enc:late")
     assert registry._pending == {}
+    assert not registry.occupied(control, 17)
 
 
 def test_pre_send_cancellation_does_not_make_fid_unresolved():
@@ -58,6 +61,7 @@ def test_sent_cancellation_and_timeout_leave_fid_unresolved_until_disconnect():
     assert registry.mark_sent(cancelled)
     registry.cancel(cancelled)
     assert registry.register(control, 17) is None
+    assert registry.occupied(control, 17)
     assert not registry.resolve_port(control, 17, 42001, "plain")
 
     timed_out = registry.register(control, 18)
@@ -68,6 +72,7 @@ def test_sent_cancellation_and_timeout_leave_fid_unresolved_until_disconnect():
     registry.cancel_socket(control)
     assert (control, 17) not in registry._unresolved
     assert (control, 18) not in registry._unresolved
+    assert not registry.occupied(control, 17)
     assert registry.register(control, 17) is None
 
 

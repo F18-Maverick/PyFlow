@@ -869,6 +869,19 @@ also returns ``False`` while retaining that pause for registration. Pause state
 is runtime-only and is never persisted. Reconnect cleanup releases paused
 waiters, clears their state and closes the old sockets before replay.
 
+Ordinary recovery is per object: ``resume_trans(peer_addr, fid, offset)``
+returns ``True`` only when a new recovery worker is reserved. A running,
+paused, negotiating or still-finalizing owner returns ``False`` without closing
+its socket or queueing another attempt. Use ``start_trans`` for a paused live
+leg. Other files and opposite-direction legs do not block an interrupted file.
+The control connection may stay online while a failed data connection is
+replaced; the receiver requests its actual disk size, retaining the same fid.
+Concurrent requests share one eligibility/reservation boundary. Receive
+requests and listeners also reserve that object until handoff or failure.
+Old workers release ownership only after progress cleanup; a new leg starts
+running rather than inheriting the old pause. Existing retained rows can be
+recovered with tracking disabled without creating new progress rows.
+
 The temporary connections of a transfer are resumed after a disconnect:
 
 - when a connection drops, both sides write their transfer stores to

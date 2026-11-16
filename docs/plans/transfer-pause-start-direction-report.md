@@ -1,6 +1,6 @@
 # 双向文件暂停、继续与按对象恢复 — 实施报告
 
-状态：需求卡和七项拆分已确认。**C1–C2b 已通过人工放行；C3 已实现并完成局部验证，待人工审查；C4–C5 未开始。** 本报告随已完成的原子变更增补，不将未实现或未运行的路径标为完成。本轮未创建提交、合并或推送。
+状态：需求卡和七项拆分已确认。**C1–C3 已通过人工放行；C4a 已实现并完成局部验证，待人工审查；C4b、C5 未开始。** 本报告随已完成的原子变更增补，不将未实现或未运行的路径标为完成。本轮未创建提交、合并或推送。
 
 ## C1：严格解析、typed identity 与共享端点识别
 
@@ -279,7 +279,89 @@ C2a 后续审查结论：用户已审计放行，并明确授权开始 C2b，包
 - 自动请求与用户意图汇总不改变发送端权威规则：source 本地 start 可暂时确认运行，reader 仍自行守住高水位；后续请求按 source 处理顺序决定状态。返回 True 仍只表示控制操作登记，非逐请求 ACK。
 - 本轮未改公共签名、wire 格式、持久化 schema、CI、依赖或覆盖率策略；未删除或弱化既有测试。新测试使用真实 socket/加密、事件屏障和实际内容/ACK，未运行 formatter、lint、文档构建、repo-wide suite 或多平台验证。
 - C3 保留小范围生产修改并补充两目标契约（集成新增 241 行）；文档/报告与测试也是本次审查的一部分。完成范围仅为上表证据，不宣称所有断线/网络时序组合已枚举。
-- **C3 待人工审查，未创建提交**。C4a/C4b 与 C5 未开始。
+- C3 后续结论：用户已授权开始 C4a，C3 随该放行进入下一阶段。C4a 实施与独立待审事项见下节。
+
+## C4a：普通对象级恢复资格与原子占用
+
+### 提交意图与数据流
+
+让普通恢复仅接纳已中断、无活动 owner 的具体文件对象；活跃、暂停、建连、重复恢复及仍在最终清理的对象静默返回 False，不关闭或排队等待。其他 fid 和相反方向不阻挡该对象。公共签名和 resume wire 不变。
+
+- Server/Client 普通 `resume_trans` → 既有 peer/进度行匹配 → progress lock 内检查 scoped active socket/fid、发送 worker、typed sender owner 和同 socket/FID 的 pending/unresolved 握手 → 原子登记一个恢复 worker → 原有安全握手和 file_transfer_mode → 真实内容/最终 ACK → owner 释放。
+- 接收端 `_request_resumes` → 同一个 per-fid 资格边界 → 请求占用 → 收到 `/file` 时同会话 listener 接管 → accept 后数据 owner 接管 → 最终进度清理后释放。重复请求/监听不能创建第二条 leg；发送失败释放请求，未回应请求按既有 accept 超时期限允许重新申请，会话结束清理无 owner 请求。
+- 数据 socket 关闭不会立即抹掉 registry 所有权；旧 worker 的最终清理仍阻挡恢复。重连 sweep 关闭旧 socket 并等待其 owner/外层发送记录结束，然后沿现有自动恢复流程继续；手动活跃请求不进入等待。
+- tracking off 不创建新进度行；恢复已有上传/下载行时，该 leg 持有旧行完成清理。暂停/断线清除旧控制状态，新恢复 leg 默认 running，fid 和接收完整路径保持。
+
+### 变更范围与局部止血
+
+实现集中在 `PyFlow/network_api/connect_tcp.py`。新增普通接收请求/监听占用与 progress Condition、握手 occupied 判定；普通发送恢复使用原子占用，转发 target 合并/共享 source 资格留给 C4b。现有 socket shutdown、加密和文件 ACK 机制继续使用。
+
+测试修改位于 `test_resume_matching.py`、`test_transfer_handshakes.py`、`test_tcp_transfer_control.py`、`test_tcp_transfer_resume.py`。旧清扫断言从“close 即释放”迁移为“worker 最终释放”，保留不同 receiver/方向隔离及最终清理断言。补充控制在线、双向恢复、tracking off、建连前/清理中拒绝，以及旧 socket 已移除但外层发送 owner 仍在的重连等待契约。三份 File_Transfer/TCP API RST、变更记录、计划和本报告同步更新。
+
+### 局部验证与运行证据
+
+新资格、握手及实际连接场景：
+
+```bash
+.venv/bin/python -m pytest test/unit/network_api/test_resume_matching.py test/unit/network_api/test_transfer_handshakes.py test/integration/network_api/test_tcp_transfer_control.py -k 'resume or control_disconnect_releases' -q
+```
+
+**42 passed、66 deselected in 75.32s**（墙钟 76.40s）。实际上传/下载各覆盖 plain alias、encrypted、encrypted async/tracking off wildcard：
+
+- 中断真实 data socket，control socket 始终在线；落盘 partial 内容先核对。旧 sender/receiver 完成退出后，两个并发恢复调用只有一个 True；活动、暂停、pending handshake、接收 listener 及旧 finally 屏障期间均拒绝第二次恢复。
+- sender bookkeeping 与 receiver 行值被刻意设成不同于实际磁盘长度；接收请求使用磁盘 offset，恢复 worker 实际参数保留原 fid/offset，接收完整文件等于 payload，sender 得到真实最终 ACK。
+- 另一条相反方向传输在整个恢复期间保持原 socket 和暂停状态；随后可独立完成。新 owner 不继承旧 pause，结束时进度、控制记录、socket 和恢复占用清理。
+- 真实 control shutdown 唤醒双向暂停 leg；旧线程退出，所有新控制意图/暂停键及对象占用释放，包含 tracking off。未用人工 sweep 替代断线证据。
+
+受影响既有普通恢复/配置/查询契约：
+
+```bash
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_transfer_resume.py test/unit/network_api/test_transfer_handshakes.py test/unit/network_api/test_delete_config.py test/unit/network_api/test_transfer_progress_query.py -k 'not forward and not unified_resume_serializes' -q
+```
+
+首轮 **139 passed、2 failed、14 deselected in 151.66s**。两项失败均为旧清扫契约要求 socket 关闭立即删除 active 索引，与本次保留 owner 到最终清理的契约冲突。迁移断言位置/增加关闭后 owner 仍保留的断言，未弱化隔离、内容、ACK 或最终释放：
+
+```bash
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_transfer_resume.py::test_equal_server_upload_fids_are_isolated_by_receiver test/integration/network_api/test_tcp_transfer_resume.py::test_equal_inbound_and_outbound_fids_cleanup_only_their_own_sockets -q
+```
+
+**2 passed in 4.92s**。不将定向重跑记作全量复跑成功。
+
+自动重连等待补强后，执行实际 upload/download 自动重连及恢复单位契约：
+
+```bash
+.venv/bin/python -m pytest test/unit/network_api/test_resume_matching.py test/integration/network_api/test_tcp_transfer_resume.py::test_upload_resumes_after_a_reconnect test/integration/network_api/test_tcp_transfer_resume.py::test_download_resumes_after_connect_without_a_manual_call -q
+```
+
+**34 passed in 12.05s**。新增事件屏障契约确认：即使 data socket 已释放，外层旧发送记录退出之前，重连清扫仍等待；记录退出的 Condition 通知使等待结束。
+
+接收 claim 调整至安全/listener 初始化后、首次公告前，避免初始化失败残留占用。仅重跑受影响的 plain 双向实际恢复场景：
+
+```bash
+.venv/bin/python -m pytest 'test/integration/network_api/test_tcp_transfer_control.py::test_online_resume_reserves_one_owner_and_uses_receiver_disk_offset[plain-alias-upload]' 'test/integration/network_api/test_tcp_transfer_control.py::test_online_resume_reserves_one_owner_and_uses_receiver_disk_offset[plain-alias-download]' -q
+```
+
+**2 passed in 13.33s**。
+
+### 路径对照与明确未覆盖
+
+| 路径 | C4a 结论与证据边界 |
+|---|---|
+| P14 | 控制连接在线、进度有行但无数据 owner 时，普通上传/下载可以恢复；receiver 实际落盘 offset、原 fid、最终内容/ACK 均有真实证据，另一活跃反向文件保留原 socket |
+| P15 | 运行、暂停、握手、重复恢复、接收 request/listener 和旧 owner 最终清理期间拒绝恢复；屏障并发只接纳一个 worker，不排队、不关闭活跃对象 |
+| P17 | 普通双向真实 control shutdown 清理新控制记录、暂停键、数据 socket 和 worker；数据中断后新 owner 默认 running；最终清理中恢复被拒绝。转发 source/target 与跨会话迟到清理的完整验收在 C4b |
+| P12/P13 | 新普通恢复场景含配置别名、encrypted async/tracking off wildcard；保留 control socket 身份，不新增未跟踪进度行。转发会话身份仍按 C4b 验收 |
+| P18 | 受影响 query/config 契约通过；接收占用纳入配置删除门槛，恢复完成和会话关闭清理占用，持久化 schema 不变。新增接收占用与 stop/config 删除的专门交叉验收仍在 C4b/C5 |
+| P10/P16 | 本轮未切换 relay 共享 source/live leg/pending-originator 资格；既有 relay target 合并行为保留，由 C4b 统一处理 |
+
+### 风险与审查注意
+
+- `True` 仅表示普通恢复 worker 已原子预留，不表示恢复已成功；最终文件 ACK 才是完成证据。完整但未确认的 EOF 行仍可恢复，以完成确认。
+- 重连流程等待已结束会话的 owner 最终清理，不通过先删索引抢占资格；等待使用 Condition，无新增自动重试。手动请求遇到占用直接 False。
+- 未应答 receive 请求保留无数据 owner 的短期占用，按 RESUME_ACCEPT_TIMEOUT 期限在后续请求时允许替换；实际 listener/data owner 不按时钟强制替换。失败发送/会话关闭立即清理请求；这不是逐请求完成 future。
+- 实际范围比原 180–300 行预估更大，原因是发送资格之外必须同时覆盖接收请求、监听交接和自动重连清理。审查应连同新增契约与报告评估该规模偏差；未擅自增加 C4b 的转发资格或拆出混用新旧资格的中间阶段。
+- 本轮未改公共签名、wire、progress JSON schema、CI、依赖或覆盖率策略；没有删除测试或弱化内容/ACK/隔离断言。未执行 repo-wide suite、formatter、lint、文档构建或多平台检查。语言服务仅 Ruff，references 请求返回 -32601，不能记作成功的引用分析。
+- **C4a 待人工审查，未创建提交**。C4b 与 C5 未开始。
 
 ## 公共协议/API 变更许可记录
 

@@ -313,8 +313,6 @@ def test_equal_server_upload_fids_are_isolated_by_receiver(tmp_path):
 
         assert server._drop_stale_transfers(receivers[0]) == 1
         assert sockets[0].fileno() == -1
-        assert keys[0] not in server._active_transfer_sockets
-        assert keys[0] not in server._active_transfer_fids
         assert server._active_transfer_sockets[keys[1]] is sockets[1]
         assert keys[1] in server._active_transfer_fids
 
@@ -323,6 +321,8 @@ def test_equal_server_upload_fids_are_isolated_by_receiver(tmp_path):
         server.start_trans(fid, receivers[0], trans_type=0, direction=0)
         senders[0].join(timeout=15)
         assert not senders[0].is_alive(), "the cleared upload did not stop"
+        assert keys[0] not in server._active_transfer_sockets
+        assert keys[0] not in server._active_transfer_fids
         assert results[receivers[0]] is False
         assert server.file_upload_progress[keys[1]] is rows[1]
         assert rows[1][0] == 0
@@ -435,10 +435,12 @@ def test_equal_inbound_and_outbound_fids_cleanup_only_their_own_sockets(tmp_path
 
             assert instance._drop_stale_transfers(inbound_peer) == 1
             assert inbound_remote.recv(1) == b""
-            assert fid not in instance._active_transfer_sockets
-            assert fid not in instance._active_transfer_fids
+            assert instance._active_transfer_sockets[fid] is inbound
+            assert fid in instance._active_transfer_fids
             instance._file_progress_finish(instance.file_recv_progress, fid, recv_entry)
             instance._release_transfer_socket(fid, inbound)
+            assert fid not in instance._active_transfer_sockets
+            assert fid not in instance._active_transfer_fids
             assert fid not in instance.file_recv_progress
             assert instance.file_upload_progress[upload_key] is upload_entry
             assert upload_key in instance._active_transfer_fids
@@ -452,12 +454,14 @@ def test_equal_inbound_and_outbound_fids_cleanup_only_their_own_sockets(tmp_path
             # logical forward target; cleanup must use the scoped namespace.
             assert instance._drop_stale_transfers(receiver) == 1
             assert outbound_remote.recv(1) == b""
-            assert upload_key not in instance._active_transfer_sockets
-            assert upload_key not in instance._active_transfer_fids
+            assert instance._active_transfer_sockets[upload_key] is outbound
+            assert upload_key in instance._active_transfer_fids
             instance._file_progress_finish(
                 instance.file_upload_progress, upload_key, upload_entry
             )
             instance._release_transfer_socket(upload_key, outbound)
+            assert upload_key not in instance._active_transfer_sockets
+            assert upload_key not in instance._active_transfer_fids
             assert upload_key not in instance.file_upload_progress
             instance.start_trans(fid, receiver, trans_type=1, direction=0)
             instance._transfer_controls.release(state)
@@ -2917,11 +2921,10 @@ def test_closed_control_socket_falls_back_to_the_configured_endpoint(tmp_path):
 
 @pytest.mark.parametrize("sender_side", ["server", "client"])
 def test_paused_leg_is_released_by_stale_sweep(tmp_path, monkeypatch, sender_side):
-    """A reconnect sweep releases a paused leg and unblocks its queued resume.
+    """A reconnect sweep releases the paused owner before recovery starts.
 
-    The sweep removes the leg's socket from the registry before closing it, so
-    the pause wait must also observe the leg's own socket; otherwise the leg
-    keeps the per-fid send lock and a resume request never runs.
+    Closing wakes the pause wait; the owner keeps its socket index until final
+    cleanup, then releases the per-fid send lock and permits a new resume.
     """
     workers = _track_socket_workers(monkeypatch)
     server = _start_server(tmp_path)

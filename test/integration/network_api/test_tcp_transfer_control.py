@@ -2,6 +2,7 @@
 
 import os
 import shlex
+import socket
 import threading
 from pathlib import Path
 
@@ -626,3 +627,162 @@ def test_relay_pressure_preserves_user_intent_and_source_start_cannot_open_reade
         route = relay["route"]
         assert route["completed"] == {targets[1].client_socket.getsockname()}
         assert set(route["targets"]) - route["completed"]
+
+
+@pytest.mark.parametrize("server_sends", [False, True], ids=["upload", "download"])
+def test_online_resume_reserves_one_owner_and_uses_receiver_disk_offset(
+    channel, tmp_path, monkeypatch, server_sends
+):
+    other = _leg(channel, tmp_path, monkeypatch, not server_sends)
+    leg = _leg(channel, tmp_path, monkeypatch, server_sends, offset=1)
+    sender, receiver, states, body_release, worker, result, output, payload = leg
+    peer, fid = key = states[0]["key"][:2]
+    old_socket, control = states[0]["owner"], states[0]["control_socket"]
+    old_other_socket = other[2][0]["owner"]
+    # Retained rows remain resumable with tracking off; no new tracked leg is invented.
+    old_progress = sender.file_upload_progress.setdefault(
+        key, [1, len(payload), None, str(tmp_path / output.name), peer],
+    )
+    partial, interrupt, cleaning, cleaned, negotiating, negotiated, listening, announced, resumed, finish = (
+        threading.Event() for _ in range(10)
+    )
+    channel[2].extend((interrupt, cleaned, negotiated, announced, finish))
+    real_wait, real_release = connect_tcp._wait_transfer_control, sender._release_transfer_socket
+
+    def hold_body(instance, state, sock):
+        if instance is sender and state is not None and state["key"] == states[0]["key"]:
+            entered, release = (partial, interrupt) if state is states[0] else (resumed, finish)
+            entered.set()
+            assert release.wait(timeout=20)
+        return real_wait(instance, state, sock)
+
+    def hold_cleanup(transfer_key, sock):
+        if transfer_key == key and sock is old_socket:
+            cleaning.set()
+            assert cleaned.wait(timeout=20)
+        return real_release(transfer_key, sock)
+
+    monkeypatch.setattr(connect_tcp, "_wait_transfer_control", hold_body)
+    monkeypatch.setattr(sender, "_release_transfer_socket", hold_cleanup)
+    assert sender.resume_trans(peer, fid, 0) is False  # paused live owner
+    assert _control(sender, states[0], False)
+    _confirmed(states, False)
+    assert sender.resume_trans(peer, fid, 0) is False  # running, before first body write
+    body_release.set()
+    assert partial.wait(timeout=10)  # the second wait follows one real chunk
+    disk = 1 + sender.file_transfer_chunk_len
+    assert wait_until(lambda: output.stat().st_size == disk)
+    assert _control(sender, states[0], True)
+    _confirmed(states, True)
+    old_socket.shutdown(socket.SHUT_RDWR)  # keep the existing control session
+    interrupt.set()
+    assert cleaning.wait(timeout=10)
+    assert old_socket.fileno() < 0 and sender._active_transfer_sockets[key] is old_socket
+    assert sender.resume_trans(peer, fid, disk) is False  # closed, but old finally still owns it
+    cleaned.set()
+    worker.join(timeout=10)
+    assert not worker.is_alive() and result == {"ack": False}
+    assert wait_until(lambda: fid not in receiver._active_transfer_sockets
+                      and fid not in receiver._receive_transfers)
+    assert sender.file_upload_progress[key] is old_progress
+    assert output.read_bytes() == payload[:disk]
+    old_progress[0] = len(payload) - 1  # sender bookkeeping cannot choose the receiver's seek
+    receiver.file_recv_progress[fid][0] = 1
+    requests, calls, resumed_result = [], [], {}
+    real_request = connect_tcp._send_transfer_request
+    real_send, real_mode = receiver.send_message, sender.file_transfer_mode
+
+    def hold_request(instance, record, command):
+        if instance is sender and record["key"] == (control, fid):
+            requests.append(command)
+            negotiating.set()
+            assert negotiated.wait(timeout=20)
+        return real_request(instance, record, command)
+
+    def hold_listener(sock, message, is_send_raw=False):
+        port = connect_tcp._parse_transfer_port_announcement(message) if isinstance(message, str) else None
+        if port is not None and port[1] == fid:
+            listening.set()
+            assert announced.wait(timeout=20)
+        return real_send(sock, message, is_send_raw=is_send_raw)
+
+    def observe_mode(*args, **kwargs):
+        calls.append((kwargs["fid"], kwargs["resume_offset"], threading.current_thread()))
+        resumed_result["ack"] = real_mode(*args, **kwargs)
+        return resumed_result["ack"]
+
+    monkeypatch.setattr(connect_tcp, "_send_transfer_request", hold_request)
+    monkeypatch.setattr(receiver, "send_message", hold_listener)
+    monkeypatch.setattr(sender, "file_transfer_mode", observe_mode)
+    barrier, accepted = threading.Barrier(3), []
+
+    def resume():
+        barrier.wait(timeout=10)
+        accepted.append(sender.resume_trans(peer, fid, disk))
+
+    contenders = [threading.Thread(target=resume, daemon=True) for _ in range(2)]
+    for contender in contenders:
+        contender.start()
+    barrier.wait(timeout=10)
+    for contender in contenders:
+        contender.join(timeout=10)
+        assert not contender.is_alive()
+    assert sorted(accepted) == [False, True]
+    assert negotiating.wait(timeout=10)
+    assert sender._transfer_handshakes.occupied(control, fid)
+    assert sender.resume_trans(peer, fid, disk) is False
+    request_resumes = (lambda: receiver._request_resumes(states[1]["key"][0])) if receiver is channel[0] else receiver._request_resumes
+    assert request_resumes() == 1
+    assert receiver.file_recv_progress[fid][0] == disk
+    assert request_resumes() == 0  # pending receiver request
+    negotiated.set()
+    assert listening.wait(timeout=10)
+    assert request_resumes() == 0  # existing listener, before its real announcement
+    assert sender.resume_trans(peer, fid, disk) is False
+    announced.set()
+    assert resumed.wait(timeout=15)
+    assert wait_until(lambda: all(state["key"] in owner._transfer_controls._legs
+                                 for owner, state in zip((sender, receiver), states)))
+    new_states = tuple(owner._transfer_controls._legs[state["key"]]
+                       for owner, state in zip((sender, receiver), states))
+    _confirmed(new_states, False)  # the interrupted owner's pause was discarded
+    assert all(new["owner"] is not old["owner"] and new["control_socket"] is old["control_socket"]
+               for new, old in zip(new_states, states))
+    assert sender._active_transfer_sockets[key] is new_states[0]["owner"]
+    assert len(calls) == 1 and calls[0][:2] == (fid, disk)
+    assert sender.resume_trans(peer, fid, disk) is False
+    assert _control(sender, new_states[0], True)
+    _confirmed(new_states, True)
+    assert sender.resume_trans(peer, fid, disk) is False
+    assert request_resumes() == 0
+    assert len(requests) == 1 and shlex.split(requests[0])[-1] == str(fid)
+    assert all(state["confirmed_state"] for state in other[2])
+    assert other[0]._active_transfer_sockets[other[2][0]["key"][:2]] is old_other_socket
+    assert _control(sender, new_states[0], False)
+    _complete((sender, receiver, new_states, finish, calls[0][2], resumed_result, output, payload))
+    assert wait_until(lambda: key not in sender._resume_sends
+                      and key not in sender._active_transfer_sockets
+                      and fid not in receiver._receive_transfers)
+    assert len(requests) == len(calls) == 1
+    assert _control(other[0], other[2][0], False)
+    _complete(other)
+
+
+@pytest.mark.parametrize("server_sends", [False, True], ids=["upload", "download"])
+def test_control_disconnect_releases_paused_ordinary_workers(channel, tmp_path, monkeypatch, server_sends):
+    leg = _leg(channel, tmp_path, monkeypatch, server_sends)
+    sender, receiver, states, release, worker, result, *_ = leg
+    server, client, _ = channel
+    peer = client.client_socket.getsockname()
+    client.client_socket.shutdown(socket.SHUT_RDWR)
+    assert wait_until(lambda: not client.running and peer not in server.clients)
+    assert wait_until(lambda: all(state["key"] not in owner._transfer_controls._legs
+                                 for owner, state in zip((sender, receiver), states)))
+    release.set()
+    worker.join(timeout=15)
+    assert not worker.is_alive() and result == {"ack": False}
+    assert wait_until(lambda: all(not owner._active_transfer_sockets and not owner._receive_transfers
+                                 and not owner._transfer_controls._legs and not owner._resume_sends
+                                 and not owner._transfer_pause for owner in (sender, receiver)))
+    assert all(state["owner"].fileno() < 0 and not state["confirmed_state"]
+               and not state["last_requested_state"] for state in states)
