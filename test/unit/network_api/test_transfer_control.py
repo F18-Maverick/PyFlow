@@ -13,6 +13,7 @@ from PyFlow.network_api.connect_tcp import (
     TCP_Client_Base,
     TCP_Server_Base,
     _TransferControlRegistry,
+    _control_key,
     _is_control_endpoint,
     _parse_transfer_control_command,
     _socket_local_endpoint,
@@ -402,3 +403,76 @@ def test_public_control_requires_typed_keywords_and_presets_only_exact_senders(o
         assert owner._transfer_pause == {} and owner._transfer_controls._legs == {}
     finally:
         owner.stop() if owner_type is TCP_Server_Base else owner.close()
+
+
+def test_relay_control_prefers_exact_child_and_requires_one_live_same_peer_alias():
+    server = TCP_Server_Base.__new__(TCP_Server_Base)
+    server._forward_relays, server._forward_relays_lock = {}, threading.Lock()
+    server._fid_route_index = {}
+    server._transfer_pause_cond = threading.Condition()
+    registry = _TransferControlRegistry({}, server._transfer_pause_cond)
+    server._transfer_controls = registry
+    sock = object()
+    keys = [(PEER, child, 1, 0) for child in (42, 100, 43)]
+    states = [registry.register(key, sock, object()) for key in keys]
+    relays = [{"fid": fid, "route": {"targets": {PEER: key[1]}},
+               "controls": {PEER: state}}
+              for fid, key, state in zip((100, 200, 200), keys, states)]
+    server._forward_relays.update(zip(((PEER, 42), (PEER, 100)), relays))
+
+    assert _control_key(server, PEER, 100, 1, 0) == keys[1]
+    assert _control_key(server, PEER, 200, 1, 0) == keys[1]
+    assert registry.receive(_control_key(server, PEER, 100, 1, 0), sock, True,
+                            lambda *_: True)
+    assert [state["confirmed_state"] for state in states] == [False, True, False]
+    for peer, fid, kind, role in [(("127.0.0.2", 6000), 200, 1, 0),
+                                  (PEER, 200, 0, 0), (PEER, 200, 1, 1),
+                                  (PEER, 999, 1, 0)]:
+        assert _control_key(server, peer, fid, kind, role) == (peer, fid, kind, role)
+        assert not registry.receive(_control_key(server, peer, fid, kind, role),
+                                    sock, True, lambda *_: True)
+    server._forward_relays[(PEER, 43)] = relays[2]
+    assert not registry.receive(_control_key(server, PEER, 200, 1, 0), sock, True,
+                                lambda *_: True)  # Ambiguous upstream alias.
+    assert registry.release(states[2])
+    assert _control_key(server, PEER, 200, 1, 0) == keys[1]
+    assert registry.release(states[1])
+    assert _control_key(server, PEER, 200, 1, 0) == (PEER, 200, 1, 0)
+    assert not registry.receive(_control_key(server, PEER, 200, 1, 0), sock, True,
+                                lambda *_: True)  # Stale relay mappings cannot route.
+    assert states[0]["confirmed_state"] is False
+
+
+def test_receiver_pressure_and_user_intents_survive_notifications_and_stale_owner():
+    pair = _ControlPair()
+    registry, key, state = pair.registries[1], pair.keys[1], pair.states[1]
+    pressure = lambda paused: registry.local(
+        key, paused, pair.send(1), backpressure=True, owner=state["owner"])
+    assert pressure(True)
+    pair.drain()
+    pair.local(1, True)
+    pressure(False)
+    pair.drain()
+    assert state["user_paused"] and not state["backpressure"]
+    assert state["confirmed_state"] and state["last_requested_state"]
+    assert pair.local(0, False)
+    pair.drain()
+    assert state["user_paused"] and not state["backpressure"]
+    assert state["last_requested_state"] and not state["confirmed_state"]
+    pressure(True)
+    pair.local(1, False)
+    pair.drain()
+    assert not state["user_paused"] and state["backpressure"]
+    assert state["confirmed_state"] and state["last_requested_state"]
+    assert pair.local(0, False)
+    pair.drain()
+    assert not state["confirmed_state"] and state["backpressure"]
+    assert state["last_requested_state"] and not state["user_paused"]
+    pressure(False)
+    pair.drain()
+    assert not state["last_requested_state"] and pair.paused == [{}, {}]
+    assert registry.release(state)
+    replacement = registry.register(key, pair.sockets[1], object())
+    assert not pressure(True)
+    assert not replacement["backpressure"] and not replacement["user_paused"]
+    assert not replacement["last_requested_state"] and not any(pair.pending)

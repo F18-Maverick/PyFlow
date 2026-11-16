@@ -385,3 +385,244 @@ def test_receiver_pause_start_waits_for_real_rekey_without_blocking_key_reader(
     assert wire and all(data.startswith(connect_tcp.FRAME_MAGIC) for data in wire)
     assert not any(b"/pause_trans" in data or b"/start_trans" in data for data in wire)
     _complete(leg)
+
+
+@pytest.fixture
+def relay_clients(channel, tmp_path):
+    server, source, releases = channel
+    targets = []
+    try:
+        for name in ("target_a", "target_b"):
+            target = TCP_Client_Base(
+                host=source.host, port=source.port, client_host="127.0.0.1",
+                is_extend_command=True, is_input_command_in_console=False,
+                is_enable_encrypto=source.is_enable_encrypto, is_print_log=False,
+                is_enable_file_transfer_progress_bar=source.is_enable_file_transfer_progress_bar,
+            )
+            targets.append(target)
+            isolate_instance_files(target, tmp_path, name)
+            destination = tmp_path / name
+            destination.mkdir()
+            target.file_transfer_dir = str(destination)
+            if target.is_enable_encrypto:
+                crypto = target.crypto
+                crypto.pvt_key_dir = str(tmp_path / f"{name}_private")
+                crypto.pub_key_dir = str(tmp_path / f"{name}_public")
+                crypto.ssh_dir = str(tmp_path / "ssh")
+                crypto.registry_path = os.path.join(crypto.pub_key_dir, "pub_key.json")
+                for directory in (crypto.pvt_key_dir, crypto.pub_key_dir, crypto.ssh_dir):
+                    os.makedirs(directory, exist_ok=True)
+            assert target.connect()
+            peer = target.client_socket.getsockname()
+            assert wait_until(lambda: peer in server.clients)
+            if target.is_enable_encrypto:
+                assert wait_until(lambda: target.client_socket in target._encrypted_sockets
+                                  and server.clients[peer]["socket"] in server._encrypted_sockets,
+                                  timeout=20)
+        yield server, source, targets, releases
+    finally:
+        for release in releases:
+            release.set()
+        for target in targets:
+            target.close()
+
+
+def _relay(relay_clients, tmp_path, monkeypatch, *, pressure=False):
+    server, source, targets, releases = relay_clients
+    addresses = [target.client_socket.getsockname() for target in targets]
+    payload = os.urandom(16 * 1024 + 7)
+    path = tmp_path / "relay.bin"
+    path.write_bytes(payload)
+    server.max_mem_buff = 64 if pressure else len(payload) * 4
+    server.file_transfer_chunk_len = source.file_transfer_chunk_len = 1024
+    entered = [threading.Event() for _ in range(3)]
+    gates = [threading.Event() for _ in range(3)]
+    releases.extend(gates)
+    observed = {"reads": 0, "waits": 0, "controls": [], "frames": []}
+    tail = threading.Event()
+    releases.append(tail)
+    observed["tail"] = tail
+    waiting = threading.Event()
+    real_wait, real_pump = connect_tcp._wait_transfer_control, server._forward_pump
+    real_read = server._forward_recv_exact
+
+    def hold(instance, state, sock):
+        if state is not None and state["key"][2:] == (1, 0):
+            index = 0 if instance is source else (
+                1 + addresses.index(state["key"][0]) if instance is server else None)
+            if index is not None:
+                entered[index].set()
+                assert gates[index].wait(timeout=30), "relay body gate was not released"
+                if index == 0 and pressure and observed.get("source_entered"):
+                    assert tail.wait(timeout=30), "source tail gate was not released"
+                if index == 0:
+                    observed["source_entered"] = True
+        return real_wait(instance, state, sock)
+
+    def pump(up, connections, control, fid, name, relay, offset=0):
+        observed["relay"] = relay
+        real_condition_wait = relay["cond"].wait
+
+        def pressure_wait(timeout=None):
+            if relay["buffer"]["backpressured"]:
+                observed["waits"] += 1
+                waiting.set()
+            return real_condition_wait(timeout)
+
+        monkeypatch.setattr(relay["cond"], "wait", pressure_wait)
+        return real_pump(up, connections, control, fid, name, relay, offset)
+
+    def read(sock, count):
+        observed["reads"] += 1
+        return real_read(sock, count)
+
+    monkeypatch.setattr(connect_tcp, "_wait_transfer_control", hold)
+    monkeypatch.setattr(server, "_forward_pump", pump)
+    monkeypatch.setattr(server, "_forward_recv_exact", read)
+    for owner in (server, source, *targets):
+        real_send = owner.send_message
+
+        def send(sock, message, is_send_raw=False, send=real_send):
+            if isinstance(message, str) and message.startswith(("/pause_trans ", "/start_trans ")):
+                observed["controls"].append((message, is_send_raw))
+            return send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(owner, "send_message", send)
+        if owner.is_enable_encrypto:
+            for secure in list(owner._channels.values()):
+                real_sendall = secure._sendall
+
+                def frame(data, sendall=real_sendall):
+                    observed["frames"].append(bytes(data))
+                    return sendall(data)
+
+                monkeypatch.setattr(secure, "_sendall", frame)
+    result = {}
+    worker = threading.Thread(target=lambda: result.update(ack=source._forward_one(
+        "file", "", path.name, str(path), addresses)), daemon=True)
+    worker.start()
+    assert all(event.wait(timeout=20) for event in entered)
+    relay = observed["relay"]
+    upstream = relay["upstream"]
+    sender = source._transfer_controls._legs[((source.host, source.port), relay["fid"], 1, 0)]
+    _confirmed((sender, upstream), False)
+    return relay, sender, gates, worker, result, payload, observed, waiting
+
+
+def _relay_done(relay_clients, run, *, failed=False):
+    server, source, targets, _ = relay_clients
+    relay, sender, gates, worker, result, payload, observed, _ = run
+    for gate in gates:
+        gate.set()
+    observed["tail"].set()
+    worker.join(timeout=20)
+    assert not worker.is_alive() and result == {"ack": not failed}
+    buffer = relay["buffer"]
+    assert buffer["complete"] and not buffer["failed"] and buffer["buffered"] == 0
+    assert buffer["peak"] <= buffer["high_water"] + buffer["max_enqueue"]
+    assert wait_until(lambda: not server._forward_relays)
+    for target in targets[1:] if failed else targets:
+        assert (Path(target.file_transfer_dir) / "relay.bin").read_bytes() == payload
+    assert wait_until(lambda: all(not owner._transfer_controls._legs
+                                  and not owner._transfer_pause
+                                  for owner in (server, source, *targets)))
+    assert observed["controls"] and not any(raw for _, raw in observed["controls"])
+    if source.is_enable_encrypto:
+        assert observed["frames"] and all(frame.startswith(connect_tcp.FRAME_MAGIC)
+                                          for frame in observed["frames"])
+        assert not any(b"/pause_trans" in frame or b"/start_trans" in frame
+                       for frame in observed["frames"])
+    if failed:
+        assert server._fid_routes[relay["fid"]] is relay["route"]
+    else:
+        assert not server._fid_routes and not server._fid_route_index
+
+
+def test_relay_child_and_upstream_alias_control_only_the_selected_writer(
+    relay_clients, tmp_path, monkeypatch
+):
+    run = _relay(relay_clients, tmp_path, monkeypatch)
+    server, source, targets, _ = relay_clients
+    relay, sender, gates, _, result, _, _, _ = run
+    first, second = [relay["controls"][target.client_socket.getsockname()] for target in targets]
+    receiver = targets[0]._transfer_controls._legs[
+        ((source.host, source.port), first["key"][1], 1, 1)]
+    data_socket = first["owner"]
+    assert _control(targets[0], receiver, True)
+    _confirmed((first, receiver), True)
+    assert server.start_trans(relay["fid"], first["key"][0], trans_type=1, direction=0)
+    _confirmed((first, receiver), False)
+    assert server.pause_trans(relay["fid"], first["key"][0], trans_type=1, direction=0)
+    _confirmed((first, receiver), True)
+    for owner, command in (
+        (source, f"/start_trans {first['key'][1]} 1 1"),
+        (targets[1], f"/start_trans {first['key'][1]} 1 1"),
+        (targets[0], f"/start_trans {first['key'][1]} 0 1"),
+        (targets[0], f"/start_trans {first['key'][1]} 1 0"),
+    ):
+        barrier = threading.Event()
+        marker = f"/relay_barrier_{id(barrier)}"
+        server.add_message_listener(lambda _peer, line, marker=marker, event=barrier:
+                                    event.set() if line == marker else None)
+        assert owner.send_message(owner.client_socket, command)
+        assert owner.send_message(owner.client_socket, marker)
+        assert barrier.wait(timeout=10)
+        assert first["confirmed_state"] and not second["confirmed_state"]
+        assert not sender["confirmed_state"] and not relay["upstream"]["confirmed_state"]
+    gates[0].set()
+    gates[2].set()
+    second_peer = targets[1].client_socket.getsockname()
+    assert wait_until(lambda: second_peer in relay["route"]["completed"], timeout=15)
+    assert (Path(targets[1].file_transfer_dir) / "relay.bin").read_bytes() == run[5]
+    assert result == {} and first["owner"] is data_socket and data_socket.fileno() >= 0
+    assert _control(targets[0], receiver, False)
+    _relay_done(relay_clients, run)
+
+
+@pytest.mark.parametrize("close_target", [False, True], ids=["drain", "target-close"])
+def test_relay_pressure_preserves_user_intent_and_source_start_cannot_open_reader(
+    relay_clients, tmp_path, monkeypatch, close_target
+):
+    run = _relay(relay_clients, tmp_path, monkeypatch, pressure=True)
+    server, source, targets, _ = relay_clients
+    relay, sender, gates, _, _, _, observed, waiting = run
+    upstream, buffer = relay["upstream"], relay["buffer"]
+    sockets = [state["owner"] for state in relay["controls"].values()]
+    gates[0].set()
+    assert waiting.wait(timeout=10)
+    _confirmed((sender, upstream), True)
+    assert buffer["backpressured"] and upstream["backpressure"]
+    assert _control(server, upstream, True) is False
+    assert upstream["user_paused"]
+    assert _control(source, sender, False)
+    _confirmed((sender, upstream), False)
+    assert _control(server, upstream, False)
+    assert not upstream["user_paused"] and upstream["last_requested_state"]
+    _confirmed((sender, upstream), True)
+    assert _control(source, sender, False)
+    _confirmed((sender, upstream), False)
+    with relay["cond"]:
+        reads = observed["reads"]
+        waiting.clear()
+        relay["cond"].notify_all()
+    assert waiting.wait(timeout=10), "reader did not re-enter its pressure gate"
+    assert observed["reads"] == reads and buffer["backpressured"]
+    assert _control(source, sender, True)
+    _confirmed((sender, upstream), True)
+    assert _control(server, upstream, True) is False
+    if close_target:
+        targets[0].close()
+    gates[1].set()
+    gates[2].set()
+    assert wait_until(lambda: not buffer["backpressured"], timeout=10)
+    assert upstream["user_paused"] and not upstream["backpressure"]
+    assert upstream["last_requested_state"] and sender["confirmed_state"]
+    assert buffer["peak"] <= buffer["high_water"] + buffer["max_enqueue"]
+    assert buffer["peak"] > buffer["high_water"]
+    assert all(state["owner"] is sock for state, sock in zip(relay["controls"].values(), sockets))
+    assert _control(server, upstream, False)
+    _relay_done(relay_clients, run, failed=close_target)
+    if close_target:
+        route = relay["route"]
+        assert route["completed"] == {targets[1].client_socket.getsockname()}
+        assert set(route["targets"]) - route["completed"]

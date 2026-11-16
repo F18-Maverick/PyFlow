@@ -540,11 +540,13 @@ buffered bytes exceed ``max_mem_buff`` it sends
 ``/pause_trans <fid> 1 1`` to the forwarding client: the server is the local
 receiver of this relay leg, and the client stops reading the source file.
 Once the writers drain the buffers below the low-water mark (half the limit),
-the server sends ``/start_trans <fid> 1 1`` and the upload resumes on the same
-socket. Receiving clients drain each chunk to disk synchronously, so their
-buffered memory stays bounded by a single chunk. Ordinary and relay legs use
-the same typed control handlers on both sides; an in-flight receive and write
-continues while a receiver waits for sender confirmation.
+the server releases its automatic pause request. This is combined with the
+server user's upstream pause using OR: draining cannot cancel a user pause,
+and a user start cannot cancel pressure. The reader independently waits at the
+high-water gate, even if the source locally starts. Buffering can exceed the
+threshold by one enqueue's fan-out bytes; it does not grow without bound.
+Receiving clients continue in-flight writes; ordinary and relay legs share
+the typed secure control path and retain the same data sockets.
 
 .. _concurrency-and-threading:
 
@@ -837,6 +839,12 @@ requires ``peer`` even when presetting a sender pause before registration.
 The control identity is ``(control_peer, fid, trans_type, local_role)``;
 client control peers are canonicalized to ``(client.host, client.port)`` even
 when the logical forwarded target differs.
+
+Relay downstream control uses the target's child fid. An upstream fid alias
+is accepted only when that control peer has one matching live writer; an exact
+child match takes precedence. Each target pauses independently, although its
+backlog can eventually apply shared upstream pressure. Runtime control records
+without a live data owner do not reserve a route.
 
 Both methods apply the local operation and notify the peer through the existing
 secure control connection. The wire commands have exactly four tokens:

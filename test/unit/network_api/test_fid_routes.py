@@ -168,6 +168,37 @@ def test_registration_rejects_upstream_fid_that_collides_with_live_transfer_iden
     assert server._fid_route_index == indexes_before
 
 
+@pytest.mark.parametrize("record", ["false", "preset", "sender", "other_type", "other_direction"])
+def test_route_registration_ignores_control_records_without_live_data_ownership(server, record):
+    key = (TARGET_1, 303, 0 if record == "other_type" else 1, 0)
+    if record == "other_direction":
+        key = (ORIGINATOR, 303, 1, 1)
+    if record in ("false", "preset"):
+        server._transfer_pause[key] = record == "preset"
+    else:
+        state = server._transfer_controls.register(key, object(), object())
+        assert state is not None and not state["confirmed_state"]
+    paused_before = dict(server._transfer_pause)
+    controls_before = dict(server._transfer_controls._legs)
+
+    route = server._register_fid_route(303, ORIGINATOR, {TARGET_1: 305})
+
+    assert route is not None and server._lookup_fid_route(TARGET_1, 305) == (303, route)
+    assert server._fid_route_index == {(TARGET_1, 305): 303}
+    assert server._transfer_pause == paused_before
+    assert server._transfer_controls._legs == controls_before
+
+
+def test_route_registration_refuses_a_live_setup_owner_before_socket_indexing(server):
+    with socket.socket() as owner:
+        state = server._transfer_controls.register((TARGET_1, 303, 1, 0), object(), owner)
+        assert state is not None and server._active_transfer_sockets == {}
+        routes_before, indexes_before = dict(server._fid_routes), dict(server._fid_route_index)
+        assert server._register_fid_route(303, ORIGINATOR, {TARGET_1: 305}) is None
+        assert server._fid_routes == routes_before and server._fid_route_index == indexes_before
+        assert server._transfer_controls._legs[state["key"]] is state
+
+
 def test_registration_scopes_live_downstream_upload_conflicts_by_receiver(server):
     fid = 303
     server.file_upload_progress[(TARGET_2, fid)] = [0, 1, None, "/tmp/live", TARGET_2]

@@ -385,3 +385,29 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
   report. Complex multi-target routing/backpressure acceptance and object-level
   resume eligibility retain their C3/C4 review gates.
 
+## Transfer control C3: scoped relay control and independent backpressure
+
+- Relay control indexes contain only canonical target/child-FID pairs. An
+  exact child takes precedence; an upstream alias resolves only to one live
+  writer for that control peer. Wrong peers, types and roles never fall back
+  to a global FID match. Writer controls are registered before data connect
+  and released on setup failure.
+- Relay receiver state keeps user pause and automatic backpressure as separate
+  intents. Their OR determines upstream requests; low-water release cannot
+  cancel a user pause. Notifications preserve both intents, and an old pump
+  cannot mutate a replacement owner.
+- The reader's high-water gate remains independent of source pause/start.
+  Headers also obey the gate; queued bytes are bounded by the threshold plus
+  one enqueue's fan-out bytes. Each writer pauses before real data, while END
+  and final ACK handling do not wait for a nonexistent next block.
+- Presets, False flags and records without a live data owner do not reserve
+  routes. Actual setup sockets and existing active/progress/route ownership
+  still refuse replacement. Runtime acceptance and remaining limitations are
+  recorded in the C3 implementation report.
+- C3 verification passed 217 control/routing tests (three existing re-key
+  cases deselected) and 20 affected forwarding/resume regressions (73 unrelated
+  cases deselected). New real two-target scenarios cover independent writers,
+  user/pressure crossings, encrypted frames, bounded buffering and target-close
+  failure without a false upstream success ACK. C4 resume eligibility remains
+  outside this change.
+

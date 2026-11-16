@@ -819,6 +819,7 @@ class _TransferControlRegistry:
                 "lock": threading.RLock(), "confirmed_state": paused,
                 "last_requested_state": False, "initial_notification": paused,
                 "ready": self._instance is None or key[3] == 1,
+                "user_paused": False, "backpressure": False,
             }
             self._legs[key] = state
             return state
@@ -862,10 +863,12 @@ class _TransferControlRegistry:
                 return False
             return self._send(state, state["confirmed_state"], send)
 
-    def local(self, key, paused, send=None):
+    def local(self, key, paused, send=None, *, backpressure=False, owner=None):
         """Decide a sender state or submit a receiver intent, deduplicating both."""
         with self._condition:
             state = self._legs.get(key)
+            if owner is not None and (state is None or state["owner"] is not owner):
+                return False
             if state is None:
                 if key[3] == 0:
                     if paused:
@@ -877,6 +880,11 @@ class _TransferControlRegistry:
         with state["lock"]:
             if not self._live(state):
                 return False
+            if owner is not None and state["owner"] is not owner:
+                return False
+            if key[3] == 1:
+                state["backpressure" if backpressure else "user_paused"] = paused
+                paused = state["user_paused"] or state["backpressure"]
             if key[3] == 0:
                 if state["confirmed_state"] == paused:
                     return False
@@ -918,6 +926,7 @@ class _TransferControlRegistry:
                 state["confirmed_state"] = False
                 state["last_requested_state"] = False
                 state["initial_notification"] = False
+                state["user_paused"] = state["backpressure"] = False
                 self._condition.notify_all()
                 return True
 
@@ -996,12 +1005,24 @@ def _control_peer(instance, peer):
 
 
 def _control_key(instance, peer, fid, trans_type, direction):
+    key = _transfer_control_key(peer, fid, trans_type, direction)
     if trans_type == 1 and direction == 0 and isinstance(instance, TCP_Server_Base):
         with instance._forward_relays_lock:
-            relay = instance._forward_relays.get((peer, fid))
-            if relay is not None:
-                fid = relay["route"]["targets"].get(peer, fid)
-    return _transfer_control_key(peer, fid, trans_type, direction)
+            if (peer, fid) in instance._forward_relays or (peer, fid) in instance._fid_route_index:
+                return key
+            candidates = [relay["controls"].get(peer)
+                          for (target, child), relay in instance._forward_relays.items()
+                          if target == peer and relay["fid"] == fid]
+        with instance._transfer_pause_cond:
+            if key in instance._transfer_controls._legs:
+                return key
+            matches = [state for state in candidates if state is not None
+                       and instance._transfer_controls._legs.get(state["key"]) is state]
+        if len(matches) > 1:
+            return None
+        if matches:
+            return matches[0]["key"]
+    return key
 
 
 def _set_transfer_control(instance, fid, peer, trans_type, direction, paused):
@@ -1009,9 +1030,8 @@ def _set_transfer_control(instance, fid, peer, trans_type, direction, paused):
     peer = _control_peer(instance, peer)
     if peer is None:
         return False
-    return instance._transfer_controls.local(
-        _control_key(instance, peer, fid, trans_type, direction), paused
-    )
+    key = _control_key(instance, peer, fid, trans_type, direction)
+    return instance._transfer_controls.local(key, paused) if key is not None else False
 
 
 def _receive_transfer_control(instance, sock, peer, command):
@@ -1020,7 +1040,8 @@ def _receive_transfer_control(instance, sock, peer, command):
         return
     paused, fid, trans_type, direction = parsed
     key = _control_key(instance, peer, fid, trans_type, 1 - direction)
-    instance._transfer_controls.receive(key, sock, paused)
+    if key is not None:
+        instance._transfer_controls.receive(key, sock, paused)
 
 
 def _bind_transfer_control(instance, fid, sock, owner, trans_type, direction):
@@ -2963,12 +2984,13 @@ class TCP_Server_Base:  # TCP server class
                 or any(key in self._active_transfer_sockets for key in upstream_leg_keys)
             )
             with self._transfer_pause_cond:
-                paused_collision = any(
-                    leg_fid == fid and (
+                control_collision = any(
+                    leg_fid == fid and isinstance(state["owner"], socket.socket)
+                    and state["owner"].fileno() >= 0 and (
                         role == 0 and (peer, fid) in upstream_leg_keys
                         or role == 1 and peer == tuple(originator)
                     )
-                    for peer, leg_fid, kind, role in self._transfer_controls._legs
+                    for (peer, leg_fid, kind, role), state in self._transfer_controls._legs.items()
                 )
                 with self._forward_relays_lock:
                     if (
@@ -2978,7 +3000,7 @@ class TCP_Server_Base:  # TCP server class
                         or fid in self.file_recv_progress
                         or any(key in self.file_upload_progress for key in upstream_leg_keys)
                         or active_collision
-                        or paused_collision
+                        or control_collision
                         or any(key in self._forward_relays for key in upstream_leg_keys)
                         or any(key in self._fid_route_index for key in upstream_leg_keys)
                         or any(
@@ -7096,8 +7118,9 @@ class TCP_Server_Base:  # TCP server class
             "cond": threading.Condition(),
             "controls": {},
             "route": route,
+            "fid": fid,
         }
-        relay_keys = [(target, leg_fid) for target, tfid in zip(targets, tfids) for leg_fid in (fid, tfid)]
+        relay_keys = [(target, tfid) for target, tfid in zip(targets, tfids)]
         with self._forward_relays_lock:
             if any(key in self._forward_relays for key in relay_keys):
                 self._forward_notify_error(
@@ -7163,25 +7186,29 @@ class TCP_Server_Base:  # TCP server class
                 target_control = target_handshakes[(target, tfid)]["key"][0]
                 if not own(target_control, sock) or not own(forwarder_sock, sock):
                     return
+                control = _bind_transfer_control(self, tfid, target_control, sock, 1, 0)
+                relay["controls"][target] = control
                 try:
                     sock.connect((target[0], tport))
                 except Exception as e:
                     self._log(f"forward: cannot connect to target {target}: {e}")
+                    self._transfer_controls.release_owner(sock)
                     sock.close()
                     continue
                 try:
                     self._crypto_attach_transfer_out(sock, target_control, stamp)
                 except _CryptoUnavailable as exc:
                     self._log(f"forward: target {target} transfer aborted: {exc}")
+                    self._transfer_controls.release_owner(sock)
                     sock.close()
                     continue
                 if not self._forward_read_sign(sock, self.server_start_file_transfer_sign):
                     self._log(f"forward: target {target} did not start, skipped")
+                    self._transfer_controls.release_owner(sock)
                     sock.close()
                     continue
                 target_conns.append((tfid, target, sock))
-                control = _bind_transfer_control(self, tfid, target_control, sock, 1, 0)
-                relay["controls"][target] = control
+                # The target's start sign proves its receiving leg is registered.
                 _announce_transfer_control(self, control)
             if not target_conns:
                 fail("no target accepted the transfer")
@@ -7264,7 +7291,11 @@ class TCP_Server_Base:  # TCP server class
         low_water = max(1, max_bytes // 2)
         cond = relay["cond"]
         controls = relay["controls"]
-        state = {"buffered": 0, "paused": False, "complete": False, "failed": False}
+        state = relay["buffer"] = {
+            "buffered": 0, "backpressured": False, "complete": False, "failed": False,
+            "high_water": max_bytes, "peak": 0, "max_enqueue": 0,
+        }
+        upstream = relay["upstream"]
         queues = {(target, tfid): queue.Queue() for tfid, target, _ in target_conns}
         END = object()
         result = {"ok": 0, "ack": None}
@@ -7272,32 +7303,40 @@ class TCP_Server_Base:  # TCP server class
         def release_buffered(byte_count):
             """Called under cond; failed writers also release upstream backpressure."""
             state["buffered"] -= byte_count
-            if state["paused"] and state["buffered"] <= low_water:
-                state["paused"] = False
-                try:
-                    self.start_trans(fid, _socket_peer_endpoint(forwarder_sock), trans_type=1, direction=1)
-                except Exception:
-                    pass
+            if state["backpressured"] and state["buffered"] <= low_water:
+                state["backpressured"] = False
+                self._transfer_controls.local(
+                    upstream["key"], False, backpressure=True, owner=upstream["owner"]
+                )
             cond.notify_all()
 
         def enqueue(chunk):
             with cond:
-                state["buffered"] += len(chunk) * len(queues)
+                while state["backpressured"]:
+                    if up_sock.fileno() < 0:
+                        raise ConnectionError("uploader control session closed")
+                    cond.wait(timeout=0.5)
+                added = len(chunk) * len(queues)
+                state["buffered"] += added
+                state["peak"] = max(state["peak"], state["buffered"])
+                state["max_enqueue"] = max(state["max_enqueue"], added)
                 for pending in queues.values():
                     pending.put(chunk)
-                if not state["paused"] and state["buffered"] > max_bytes:
-                    state["paused"] = True
-                    self.pause_trans(fid, _socket_peer_endpoint(forwarder_sock), trans_type=1, direction=1)
+                if not state["backpressured"] and state["buffered"] > max_bytes:
+                    state["backpressured"] = True
+                    self._transfer_controls.local(
+                        upstream["key"], True, backpressure=True, owner=upstream["owner"]
+                    )
 
         def writer(tfid, target, sock):
             key = (target, tfid)
             pending = queues[key]
             try:
                 while True:
-                    _wait_transfer_control(self, controls[target], sock)
                     item = pending.get()
                     if item is END:
                         break
+                    _wait_transfer_control(self, controls[target], sock)
                     try:
                         if not self.send_message(sock, item):
                             return
@@ -7339,7 +7378,7 @@ class TCP_Server_Base:  # TCP server class
                 remaining = file_size - resume_offset
                 while remaining > 0:
                     with cond:
-                        while state["paused"]:
+                        while state["backpressured"]:
                             if up_sock.fileno() < 0:
                                 raise ConnectionError("uploader control session closed")
                             cond.wait(timeout=0.5)

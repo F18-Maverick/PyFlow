@@ -1,6 +1,6 @@
 # 双向文件暂停、继续与按对象恢复 — 实施报告
 
-状态：需求卡和七项拆分已确认。**C1、C2a 已通过人工审查；C2b 已实现并完成局部验证，待人工审查；C3–C5 未开始。** 本报告随已完成的原子变更增补，不将未实现或未运行的路径标为完成。本轮未创建提交、合并或推送。
+状态：需求卡和七项拆分已确认。**C1–C2b 已通过人工放行；C3 已实现并完成局部验证，待人工审查；C4–C5 未开始。** 本报告随已完成的原子变更增补，不将未实现或未运行的路径标为完成。本轮未创建提交、合并或推送。
 
 ## C1：严格解析、typed identity 与共享端点识别
 
@@ -210,7 +210,76 @@ C2a 后续审查结论：用户已审计放行，并明确授权开始 C2b，包
 - 状态登记成功仅表示已进入控制 FIFO，不代表对端确认。控制发送失败沿既有错误/关闭机制终止会话，不重试、不降级；不承诺仅有 data socket、控制连接不可用时仍可远程控制。
 - 生产控制 FIFO 只排控制消息，不排每块文件数据。活动记录与暂停键分离；路由冲突仍检查真实 owner，复杂 relay 路由/背压、共享 source 门槛及恢复资格没有在本轮提前宣称交付。
 - 语言服务仍只有 Ruff、无 referencesProvider；公开符号引用请求返回 `-32601`，随后按调用枚举迁移。不能将该请求计为成功引用分析。
-- **C2b 待人工审查，未创建提交**。C3 及后续阶段未获本轮执行授权。
+- C2b 后续结论：用户已放行 C3，本阶段的协议/API 切换及规模偏差随该放行进入下一阶段。C3 实施及其独立待审事项见下节。
+
+## C3：转发精确控制、用户意图与共享背压
+
+### 提交意图与改动内容
+
+完成 P08–P10 的转发控制：每条 downstream leg 独立定位并沿同一 socket 继续，shared upstream 的用户暂停和自动背压互不覆盖；reader 通过独立高水位门槛保持有限缓冲。本轮不改 resume 资格。
+
+| 文件 | 关键改动 |
+|---|---|
+| `PyFlow/network_api/connect_tcp.py` | registry 为 receiver 分开记录 user_paused/backpressure 并汇总请求；转发索引仅存 canonical child；唯一活跃同 peer alias 查找；writer 在 connect 前绑定控制并在失败时释放；END 不等待数据暂停；reader/header enqueue 硬门槛与有限缓冲观测；真实 setup socket 占用保护 |
+| `test/unit/network_api/test_transfer_control.py` | 精确 child 优先、同 peer 唯一活跃 alias、错误类型/角色/peer、陈旧映射与 owner、用户/压力 OR 和通知意图隔离 |
+| `test/unit/network_api/test_fid_routes.py` | 预置/False/无数据 owner 的控制记录不预占路由；真实 setup socket 在 active index 尚未登记时拒绝覆盖 |
+| `test/integration/network_api/test_tcp_transfer_control.py` | 两目标真实 relay 控制、错误命令隔离、未暂停 target 的真实 ACK、用户/压力交叉、source start 不开读门、关闭 target 及峰值上界证据 |
+| File_Transfer RST、计划、变更记录、本报告 | 同步 upstream OR 语义、child 优先、缓冲边界及实际验收记录 |
+
+### 数据流与不变量
+
+- public 或 wire 控制 → peer/type/local role → exact child key 优先 → 仅在无 exact child 时接受同 peer 唯一活跃 writer 的 upstream alias → 原有 per-leg 串行决定/FIFO → 对应 target。索引不再同时写 child/upstream 别名，避免两个 route 的数字交叉时覆盖。
+- server 用户对 upstream receiver 的 pause/start 更新 user_paused；buffer high/low 更新 backpressure，均提交 `user_paused OR backpressure`。收到 source 的权威通知只改 confirmed，不清理任一意图。背压操作携带 upstream owner，旧 pump 无法改新记录。
+- source 本地 start 仍是发送端权威决定，允许暂时确认 running；relay reader 的独立 backpressured 门槛不会因此打开。只有 buffered 降到 low water 才解除该门槛。header enqueue 同样经过门槛，峰值必须小于等于 high_water + max_enqueue，后者为实际最大单次 fan-out 入队字节数。
+- writer 先取 item，END 直接进入最终 ACK；仅真实数据发送前等待暂停。数据 connect 前登记 writer，让 receiver startup 之后立刻发来的请求可定位；connect/安全握手/startup 失败立即释放绑定。
+- 无真实数据 owner 的记录、False 残留及精确预置暂停不独立阻挡路由；真实 socket/setup owner、active socket/progress/route 冲突仍原子拒绝，不授予覆盖进度行的能力。
+
+### 局部验证
+
+主定向验证：
+
+```bash
+.venv/bin/python -m pytest test/unit/network_api/test_transfer_control.py test/unit/network_api/test_fid_routes.py test/integration/network_api/test_tcp_transfer_control.py -k 'not receiver_pause_start_waits_for_real_rekey_without_blocking_key_reader' -q
+```
+
+**217 passed、3 deselected in 274.44s**（墙钟 276.27s）。三项 deselected 为本轮未重复运行的 C2b 普通连接重新交换用例，不是新增 skip；两组加密配置下的新转发用例实际运行。
+
+运行时证据：
+
+- 两个真实 target 连接和实际 relay 文件流；target child 控制与 server upstream alias 均只改变指定 writer。错误 peer/type/role 控制通过真实连接送达并用后续消息屏障确认已处理，其他 writer/upstream 状态保持。
+- 一个 writer 暂停期间，另一个 target 收到完整内容并返回真实最终 ACK；指定 writer 沿原 data socket 继续后，全部目标完成，source 获得成功 ACK，route/index/control/pause 均清理。
+- tiny high water、writer 事件屏障及真实 source pause/start 交叉；buffer pressure 触发后，source 本地 start 虽可确认运行，reader 被唤醒后仍重新等待高水位门槛，实际读取计数不增加。峰值大于阈值但不超过 `high_water + max_enqueue`。
+- 用户 pause 在自动 pressure 释放后仍保留；用户 start 在 pressure 存在时仍请求 pause。源端权威通知只更新确认状态，不清除 user/pressure 意图，最终解除用户 pause 后实际流排空。
+- 一个 target 在背压期间关闭：剩余 target 的文件内容完整，source 获得失败结果，不伪造全目标成功；仅真实完成 target 写入 completed，未完成 route 保留，control owner 与暂停键释放。
+- plain、encrypted、encrypted+async+tracking off 配置全部执行上述场景。加密配置观察真实控制通道帧：含 FRAME_MAGIC、无 pause/start 明文片段，未 raw 发送；未替换加密或实际传输。
+
+既有受影响的转发与恢复回归：
+
+```bash
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_file_transfer.py test/integration/network_api/test_tcp_transfer_resume.py -k forward -q
+```
+
+**20 passed、73 deselected in 65.45s**（墙钟 66.20s）。覆盖既有多目标文件/文件夹、背压、目标不可达、ACK 丢失/写失败、最后目标 ACK、路由 reload、零偏移恢复和并发转发握手；未将这些旧路径回归计作 C4 新恢复资格契约的验收。
+
+### 路径对照与明确未覆盖
+
+| 路径 | C3 结论与证据边界 |
+|---|---|
+| P08 | 真实 target child 与 server upstream alias 精确命中，错误 peer/type/role 无效果，另一 target 独立完成；单位契约覆盖数字交叉时 child 优先、唯一活跃 alias 与陈旧映射 |
+| P09 | source 本地操作、server 用户意图及自动背压交叉后可继续；reader 不受 source start 绕过，实际读取计数与有界峰值通过 |
+| P10 | 另一 target 被事件屏障放慢或关闭时，解除控制不解除 reader 高水位门槛；正常流内容/真实 ACK 成功，关闭分支仅记录真实完成目标、上游失败且保留未完成 route。无 live leg 后的恢复资格仍属 C4b |
+| P11 | 新 relay 场景在真实加密连接中执行，帧无控制明文且未 raw 写入；C2b 已有重新交换窗口证据，本轮未重复执行那三项普通连接用例，不声称新增 relay 专用 re-key 交错全集 |
+| P13 | plain、encrypted、encrypted async/tracking off 三组配置运行全部新增多目标场景；未跟踪场景仍由运行时记录控制 |
+| P18 | 完成/target 关闭均释放控制 owner 和暂停键；active socket/setup owner 冲突拒绝，而 False/预置/无数据 owner 记录不单独阻挡路由。config 删除、stop 竞争及 reload 与新恢复资格的总验收仍在 C4b/C5 |
+| P14–P17 | 本轮不实现新恢复资格或跨会话恢复竞争；仅记录既有相关回归结果，按 C4a/C4b 继续 |
+
+### 风险与审查注意
+
+- 下游控制保持独立，但慢 target 的积压达到共享阈值后会间接阻止 source 和其他 target 获得新数据，这是共享上游的既定背压语义。缓冲上界包含一次 enqueue 的 fan-out 超调，不承诺绝不超过 max_mem_buff。
+- 自动请求与用户意图汇总不改变发送端权威规则：source 本地 start 可暂时确认运行，reader 仍自行守住高水位；后续请求按 source 处理顺序决定状态。返回 True 仍只表示控制操作登记，非逐请求 ACK。
+- 本轮未改公共签名、wire 格式、持久化 schema、CI、依赖或覆盖率策略；未删除或弱化既有测试。新测试使用真实 socket/加密、事件屏障和实际内容/ACK，未运行 formatter、lint、文档构建、repo-wide suite 或多平台验证。
+- C3 保留小范围生产修改并补充两目标契约（集成新增 241 行）；文档/报告与测试也是本次审查的一部分。完成范围仅为上表证据，不宣称所有断线/网络时序组合已枚举。
+- **C3 待人工审查，未创建提交**。C4a/C4b 与 C5 未开始。
 
 ## 公共协议/API 变更许可记录
 
