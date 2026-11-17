@@ -499,3 +499,22 @@ C4a retains ownership until final cleanup and rejects active resume requests.
   re-key skip in 331.25 seconds. The subset's coverage is not a full-suite
   measurement. Native Windows still requires a subsequent Actions run.
 
+## Windows reconnect follow-up: preserve the source's passive close
+
+- The first CI follow-up's client-side shutdown let the source initiate FIN;
+  the next Windows run connected from a fallback port instead of the retained
+  route identity. The relay fault now half-closes the server's write side,
+  waits for source EOF/receive-loop exit, releases the client socket normally,
+  then waits for server unregister. The server reader keeps its own socket
+  until its finally block, including asyncio/Proactor reads.
+- Original endpoint, FID/route, content, ACK and worker-exit checks remain.
+  Teardown failures now name surviving workers instead of reporting a bare
+  boolean. No longer joins, retries, skips or production behavior changes.
+- Linux verification cannot establish Windows port reuse or Proactor cleanup;
+  native Windows Actions must confirm both after this change.
+- Linux CPython 3.14.4 with coverage passed all three affected source-reconnect
+  variants in 27.90 seconds, retaining original endpoint, content/ACK and
+  worker-exit assertions. An intermediate immediate-close attempt failed the
+  async unregister check; that result remains in the report. Windows native
+  verification is still pending.
+

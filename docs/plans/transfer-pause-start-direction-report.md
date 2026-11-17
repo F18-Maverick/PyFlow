@@ -1,6 +1,6 @@
 # 双向文件暂停、继续与按对象恢复 — 实施报告
 
-状态：需求卡和七项拆分已确认。**C1–C5 已交付；后续跨平台测试屏障修复已完成，Linux CPython 3.14.4 带 coverage 的完整控制文件通过，native Windows 仍待 CI 验证及人工审查。** 保留先前 Python 3.10 验收和用户提供的 CI 失败记录，不将 Linux 通过等同于 Windows 已通过。本轮未创建提交、合并或推送。
+状态：需求卡和七项拆分已确认。**C1–C5 已交付；Windows 原端点重连故障的测试关闭顺序已修正，Linux CPython 3.14.4 带 coverage 的三个受影响参数组通过，native Windows 仍待 Actions 验证及人工审查。** 历史 Linux 结果、两轮 Windows 失败及本轮中间失败均保留，不将 Linux 验证等同于 Windows 通过。本轮未创建提交、合并或推送。
 
 ## C1：严格解析、typed identity 与共享端点识别
 
@@ -545,6 +545,32 @@ COVERAGE_FILE=/tmp/pyflow-ci-fix-314.coverage uv run --isolated --no-project --p
 本轮修复仅涉及一个测试文件及现有计划/报告/变更记录，Python 3.10 和 3.14 的定向检查完成，不重复运行全仓库套件。当前无 native Windows 运行环境，通配绑定/loopback 连接与 source Client shutdown 的修复仍需后续 Windows Actions 确认；没有把 Linux 结果记成 Windows 通过，也未触发远端工作流。
 
 Windows 原日志中的 `WinError 995` 出现在夹具连接失败后的 Proactor accept 清理阶段；本轮未屏蔽异常或改事件循环。loopback 连接修复后该清理警告是否仍出现，必须由 native Windows CI 确认，不能依据 Linux 结果推定已消失。
+
+## Windows CI 二次修复：保留 source 的被动关闭角色
+
+### 实际失败与修复范围
+
+用户提供的第二轮 Windows Actions：**3 failed、937 passed、3 skipped、2 teardown errors in 748.98s**。三项失败都发生在 source 重连：connect 返回 True，但端口已随机回退，无法匹配原 source 路由；其余旧写入/连接失败未在该次结果出现。两个 teardown 错误出现在加密参数组，原断言未列出残留线程身份，不能仅凭日志认定具体加密线程或 Proactor 是独立根因。
+
+前次将故障注入改为 source Client 主动 shutdown，遗漏了关闭角色对 TCP TIME_WAIT 的影响：主动发送 FIN 后再等待双端退出、最后设置 linger-0，不能保证撤销已发生的关闭序列或立即复用原四元组。Windows 实际端口回退证明原测试顺序不满足其稳定身份前提。参考 [Microsoft graceful shutdown/close 说明](https://learn.microsoft.com/en-us/windows/win32/winsock/graceful-shutdown-linger-options-and-socket-closure-2)和 [closesocket/linger 行为](https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-closesocket)。本轮不修改生产连接回退、SO_LINGER 编码或身份匹配规则。
+
+初次尝试复用普通恢复测试的 server shutdown 后立即 close，在本轮 Linux 定向检查出现 async 参数组无法注销（见下方结果）；该写法跨线程使 asyncio 正在等待的 read 句柄失效，不作为最终修复。最终故障顺序为：server accepted socket `shutdown(SHUT_WR)` 仅发送 FIN，保留 reader 的句柄；source 收到 EOF 后退出接收线程，再调用原 `_release_client_socket` 关闭 Client 端，最后等待 Server 读循环注销。source 保持被动关闭，Server 由原有 reader/finally 关闭实际句柄。原端点、fid/route、partial 内容、最终 ACK、迟到 owner 清理和全部线程退出断言保留。
+
+夹具仍断言零存活线程，只把失败信息改为列出线程名；不延长 join、不忽略 daemon、不新增 skip/retry、不改生产加密或事件循环。端点变化后加密线程未完成是本次 teardown 错误的可能后果，尚不能代替 native Windows 复验。
+
+### 验证
+
+首次 Linux CPython 3.14.4 带 coverage 定向检查（六项 relay source/stop、普通自动重连及两项旧 control callback 隔离）为 **8 passed、1 failed in 51.11s**（墙钟 51.88s）。失败发生在 encrypted async source 组的 Server 注销等待，暴露立即 close 与 pending async read 的冲突；未把该结果计为通过。
+
+改为 `SHUT_WR` 半关闭后，仅重跑受影响的三个 relay source 参数组：
+
+```bash
+COVERAGE_FILE=/tmp/pyflow-passive-close-314.coverage uv run --isolated --no-project --python cpython-3.14.4-linux-x86_64-gnu --with pytest --with pytest-cov --with flask python -m pytest 'test/integration/network_api/test_tcp_transfer_control.py::test_relay_offline_source_replays_stable_route_or_stops_cleanly[plain-alias-source]' 'test/integration/network_api/test_tcp_transfer_control.py::test_relay_offline_source_replays_stable_route_or_stops_cleanly[encrypted-source]' 'test/integration/network_api/test_tcp_transfer_control.py::test_relay_offline_source_replays_stable_route_or_stops_cleanly[encrypted-async-untracked-wildcard-source]' --cov=PyFlow.network_api.connect_tcp --cov-report=term -q
+```
+
+**3 passed in 27.90s**（墙钟 28.21s），Linux CPython 3.14.4、coverage 开启。三组均完成原 source 端点重用、稳定 fid/route 恢复、真实内容/最终 ACK、迟到 owner 隔离及全部已跟踪 worker 退出。该小范围执行的 connect_tcp.py 覆盖率为 57%，不是全套覆盖率，也未改 coverage 策略。
+
+本轮仅修改同一测试文件的故障关闭顺序和线程泄漏诊断，以及现有文档记录。没有延长等待、放宽原端点或清理断言，也未屏蔽 Proactor 异常。当前没有 native Windows 执行环境；后续 Windows Actions 仍是端口复用、加密 teardown 和 WinError 995 是否消失的最终验证。不将本机 Linux 的 3 passed 宣称为 Windows 已通过。
 
 ## 公共协议/API 变更许可记录
 

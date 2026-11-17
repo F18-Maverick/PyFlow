@@ -74,7 +74,8 @@ def channel(request, tmp_path, monkeypatch):
         server.stop()
         for worker in workers:
             worker.join(timeout=10)
-        assert not any(worker.is_alive() for worker in workers)
+        alive = [worker.name for worker in workers if worker.is_alive()]
+        assert not alive, f"control fixture leaked workers: {alive}"
 
 
 def _observe_target_writes(monkeypatch, output, byte_count):
@@ -924,10 +925,14 @@ def test_relay_offline_source_replays_stable_route_or_stops_cleanly(
     if fault == "stop":
         server.stop()
     else:
-        old_client.shutdown(socket.SHUT_RDWR)
-        assert wait_until(lambda: not source.running and origin not in server.clients)
+        # Peer FIN leaves source passive-close without invalidating the socket
+        # owned by the server's pending recv (including asyncio/Proactor reads).
+        old_server.shutdown(socket.SHUT_WR)
+        assert wait_until(lambda: not source.running)
         source.receive_thread.join(timeout=10)
+        assert not source.receive_thread.is_alive()
         source._release_client_socket()
+        assert wait_until(lambda: origin not in server.clients)
     interrupt.set()
     worker.join(timeout=20)
     for old_worker in tuple(workers):

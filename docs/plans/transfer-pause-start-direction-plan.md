@@ -1,6 +1,6 @@
 # 双向文件暂停、继续与按对象恢复 — 需求卡与更改计划
 
-状态：**C1–C5 已交付；后续跨平台测试屏障修复已完成，Linux CPython 3.14.4 带 coverage 的完整控制文件通过，native Windows 仍待 CI 验证及人工审查**。历史 C5 与用户提供的 CI 失败均保留，不将 Linux 通过等同于 Windows 通过。恢复语义、依赖和 CI 检查策略不变；修复范围与平台边界见[实施报告](transfer-pause-start-direction-report.md#后续-ci-修复python-314-文件缓冲与-windows-连接断线注入)。不自行提交、合并或推送。
+状态：**C1–C5 已交付；Windows 原端点重连故障的测试关闭顺序已修正，Linux CPython 3.14.4 带 coverage 的三个受影响参数组通过，native Windows 仍待 Actions 验证及人工审查**。历史结果与本轮中间失败保留；不将 Linux 通过等同于 Windows 通过。生产恢复语义、依赖和 CI 检查策略不变，证据及平台边界见[实施报告](transfer-pause-start-direction-report.md)。不自行提交、合并或推送。
 
 ## 1. 需求卡
 
@@ -220,4 +220,4 @@ relay 高水位证据按实际入队粒度计算：记录高水位、单次 enqu
 - **持久化数据模型不变**；运行时控制记录改变。查询返回 schema 不变。测试增加必要边界契约及迁移受影响断言，不降低验证强度。
 - **依赖/覆盖率策略不变**。C5 验证后用户单独授权将 CI Test job 的 timeout-minutes 从 10 调至 30；测试命令与矩阵不变。不宣称本计划覆盖未运行的多平台环境、NAT、多进程共享或任意网络中断组合。
 - 新功能依赖存活且可投递的控制连接；仅有数据 socket 存活但控制连接不可用时，不承诺远程 pause/start。自然关闭路径按既有机制结束旧 leg。
-- C1–C5 已交付，后续按用户提供的 Linux/Windows CI 错误修复测试的真实写入观察、wildcard 连接目的地址和 source 断线注入；不改生产控制/恢复语义或放宽内容/ACK 断言。Python 3.10 定向 18 项通过；Linux CPython 3.14.4 带 coverage 的完整控制文件 71 passed、1 skipped（明文 re-key 不适用）。native Windows 仍需后续 CI 结果，修复及报告待人工审查。本轮未创建提交、合并或推送。
+- 首轮跨版本修复的 Linux CPython 3.14.4 完整控制文件为 71 passed、1 skipped；后续 Windows 报告 source 原端点重连 3 failed、2 teardown errors。本轮修正为 Server `SHUT_WR` 半关闭、source EOF 后释放 Client socket、最后等待 Server 自行注销；直接 close 的中间尝试在 Linux async 复验失败，记录保留。半关闭最终方案在 Linux CPython 3.14.4 带 coverage 的三个受影响参数组全部通过（27.90s），原端点/内容/ACK/清理断言不变，并增加残留线程名称诊断。native Windows 的端口复用、加密 teardown 和 WinError 995 仍需后续 Actions 确认。未创建提交、合并或推送。
