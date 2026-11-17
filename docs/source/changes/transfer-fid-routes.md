@@ -1,6 +1,6 @@
 # Change note: server FID routes, sender ownership and socket/FID recovery
 
-> Current transfer-control contract: C1–C4b are committed and have passed their
+> Previous transfer-control revision: C1–C4b are committed and have passed their
 > stage review gates; C5 documentation and combined acceptance are complete,
 > pending final human review.
 > The chronological entries below preserve earlier implementation history;
@@ -8,6 +8,19 @@
 > queued/coalesced active recovery and immediate sweep ownership release.
 > Current behavior and evidence are in
 > `docs/plans/transfer-pause-start-direction-report.md`.
+
+## Lifecycle revision C1: retire actual control sessions
+
+- Session cancellation owns listeners, data sockets and negotiations by actual
+  control socket, independently of progress tracking. Reconnect no longer scans
+  peer progress to close whichever sockets happen to be current.
+- Resource registration remains until worker cleanup; recovery waits for captured
+  old owners off the control reader. Delayed cleanup cannot close a newer session.
+- Recovery workers keep their admitted control socket, including forwarded uploads.
+  Stable FIDs, original paths, wire fields, persistence and real final ACKs remain.
+- This does not isolate delayed pause/start across same-socket, same-FID data-leg
+  replacement (deferred issue 2). Later lifecycle stages are not implemented here.
+- Evidence: `docs/plans/transfer-control-lifecycle-report.md`.
 
 ## Revision R1: sender-owned relay upstream FID
 

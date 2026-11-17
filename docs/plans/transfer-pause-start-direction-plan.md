@@ -2,6 +2,8 @@
 
 状态：**C1–C5 已交付；Windows 原端点重连故障的测试关闭顺序已修正，Linux CPython 3.14.4 带 coverage 的三个受影响参数组通过，native Windows 仍待 Actions 验证及人工审查**。历史结果与本轮中间失败保留；不将 Linux 通过等同于 Windows 通过。生产恢复语义、依赖和 CI 检查策略不变，证据及平台边界见[实施报告](transfer-pause-start-direction-report.md)。不自行提交、合并或推送。
 
+后续需求已收敛为“暂缓问题二，保持稳定 fid 和既有控制/端口格式；保留实际会话清理、旧 worker 固定 socket、自转发拒绝、全局转发暂停、结束旧 relay 后逐 Target 重放及 EOF 再确认”，见[传输控制生命周期更改计划](transfer-control-lifecycle-plan.md)（待人工确认，未实现）。此前恢复换新 fid 的提案已撤回，临时 leg_id 方案本轮不实施；本文保留上一轮历史设计和验证，独立下游 writer 暂停、live relay 恢复静默跳过等旧约束不作为后续方案的要求。
+
 ## 1. 需求卡
 
 ### 目标

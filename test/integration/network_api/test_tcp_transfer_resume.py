@@ -36,6 +36,7 @@ from PyFlow.network_api.connect_tcp import (
     _socket_local_endpoint,
     _socket_peer_endpoint,
     _start_resume_send,
+    _retire_transfer_session,
     _transfer_handshake,
     format_resume_line,
 )
@@ -311,7 +312,7 @@ def test_equal_server_upload_fids_are_isolated_by_receiver(tmp_path):
         assert all(key in server._active_transfer_fids for key in keys)
         assert server.pause_trans(fid, receivers[0], trans_type=0, direction=0) is False
 
-        assert server._drop_stale_transfers(receivers[0]) == 1
+        _retire_transfer_session(server, server.clients[receivers[0]]["socket"])
         assert sockets[0].fileno() == -1
         assert server._active_transfer_sockets[keys[1]] is sockets[1]
         assert keys[1] in server._active_transfer_fids
@@ -391,7 +392,7 @@ def test_equal_upload_fids_persist_and_reload_per_receiver(tmp_path):
 
 
 def test_equal_inbound_and_outbound_fids_cleanup_only_their_own_sockets(tmp_path):
-    """Receive cleanup cannot close an equal-id upload, including a client forward."""
+    """Actual old-session cleanup cannot close an equal-id new-session upload."""
     server = _start_server(tmp_path)
     client = None
     other = None
@@ -410,6 +411,8 @@ def test_equal_inbound_and_outbound_fids_cleanup_only_their_own_sockets(tmp_path
             inbound, inbound_remote = socket.socketpair()
             outbound, outbound_remote = socket.socketpair()
             sockets.extend((inbound, inbound_remote, outbound, outbound_remote))
+            inbound_control, inbound_wire = socket.socketpair()
+            sockets.extend((inbound_control, inbound_wire))
             inbound_remote.settimeout(2)
             outbound_remote.settimeout(2)
             fid = 606
@@ -427,18 +430,21 @@ def test_equal_inbound_and_outbound_fids_cleanup_only_their_own_sockets(tmp_path
             control = (instance.clients[receiver]["socket"] if instance is server
                        else client.client_socket)
             control_key = (receiver, fid, 1, 0)
+            assert instance._transfer_handshakes.track_socket(inbound_control, inbound)
+            assert instance._transfer_handshakes.track_socket(control, outbound)
             state = instance._transfer_controls.register(control_key, control, outbound)
             assert state is not None
             assert instance.pause_trans(fid, receiver, trans_type=1, direction=0) is True
             assert len(recv_entry) == len(upload_entry) == 5
             assert upload_entry[4] == logical_peer
 
-            assert instance._drop_stale_transfers(inbound_peer) == 1
+            _retire_transfer_session(instance, inbound_control)
             assert inbound_remote.recv(1) == b""
             assert instance._active_transfer_sockets[fid] is inbound
             assert fid in instance._active_transfer_fids
             instance._file_progress_finish(instance.file_recv_progress, fid, recv_entry)
             instance._release_transfer_socket(fid, inbound)
+            instance._transfer_handshakes.release_socket(inbound_control, inbound)
             assert fid not in instance._active_transfer_sockets
             assert fid not in instance._active_transfer_fids
             assert fid not in instance.file_recv_progress
@@ -450,9 +456,8 @@ def test_equal_inbound_and_outbound_fids_cleanup_only_their_own_sockets(tmp_path
             outbound.sendall(b"x")
             assert outbound_remote.recv(1) == b"x"
 
-            # The client's receiver is its server even when row[4] names the
-            # logical forward target; cleanup must use the scoped namespace.
-            assert instance._drop_stale_transfers(receiver) == 1
+            # Retire the actual control owner, not the logical target in row[4].
+            _retire_transfer_session(instance, control)
             assert outbound_remote.recv(1) == b""
             assert instance._active_transfer_sockets[upload_key] is outbound
             assert upload_key in instance._active_transfer_fids
@@ -460,6 +465,7 @@ def test_equal_inbound_and_outbound_fids_cleanup_only_their_own_sockets(tmp_path
                 instance.file_upload_progress, upload_key, upload_entry
             )
             instance._release_transfer_socket(upload_key, outbound)
+            instance._transfer_handshakes.release_socket(control, outbound)
             assert upload_key not in instance._active_transfer_sockets
             assert upload_key not in instance._active_transfer_fids
             assert upload_key not in instance.file_upload_progress
@@ -2938,11 +2944,11 @@ def test_closed_control_socket_falls_back_to_the_configured_endpoint(tmp_path):
 
 
 @pytest.mark.parametrize("sender_side", ["server", "client"])
-def test_paused_leg_is_released_by_stale_sweep(tmp_path, monkeypatch, sender_side):
-    """A reconnect sweep releases the paused owner before recovery starts.
+def test_paused_leg_is_released_by_session_retirement(tmp_path, monkeypatch, sender_side):
+    """Retire the actual session, then recover stable IDs with a real final ACK.
 
-    Closing wakes the pause wait; the owner keeps its socket index until final
-    cleanup, then releases the per-fid send lock and permits a new resume.
+    Closing wakes the pause wait; reconnect must wait for the original owner
+    without closing a replacement session's data sockets.
     """
     workers = _track_socket_workers(monkeypatch)
     server = _start_server(tmp_path)
@@ -2953,7 +2959,8 @@ def test_paused_leg_is_released_by_stale_sweep(tmp_path, monkeypatch, sender_sid
         server.file_transfer_dir = str(server_recv)
         client_recv = tmp_path / "client_recv"
         client_recv.mkdir()
-        client = _start_client(tmp_path, server, name="client", recv_dir=client_recv)
+        client = _start_client(tmp_path, server, name="client", recv_dir=client_recv,
+                               client_port=free_port())
         clients.append(client)
         peer = client.client_socket.getsockname()
         assert wait_until(lambda: peer in server.clients)
@@ -2982,7 +2989,7 @@ def test_paused_leg_is_released_by_stale_sweep(tmp_path, monkeypatch, sender_sid
         result = {}
 
         def send_leg():
-            with _sending_transfer(sender, key), _transfer_handshake(
+            with _sending_transfer(sender, key, control_socket=control), _transfer_handshake(
                 sender, control, fid
             ):
                 return sender.file_transfer_mode(
@@ -3007,18 +3014,22 @@ def test_paused_leg_is_released_by_stale_sweep(tmp_path, monkeypatch, sender_sid
         ), "the paused leg never registered"
         control_key = (*key, 0, 0)
         assert sender._transfer_pause.get(control_key) is True
-        swept = sender._drop_stale_transfers(peer=peer if sender is server else None)
-        assert swept == 1
+        _retire_transfer_session(sender, control)
         assert wait_until(lambda: not leg.is_alive(), timeout=10), (
-            "the swept leg stayed paused"
+            "the retired leg stayed paused"
         )
         assert result.get("value") is False
         assert control_key not in sender._transfer_pause
         assert key in sender.file_upload_progress
 
-        calls = []
-        assert _start_resume_send(sender, key, target, calls.append, control_socket=control)
-        assert wait_until(lambda: calls, timeout=10), "the queued resume never ran"
-        assert calls[0] is sender.file_upload_progress[key]
+        assert not _start_resume_send(sender, key, target, lambda row: pytest.fail("retired owner"),
+                                      control_socket=control)
+        client.client_socket.shutdown(socket.SHUT_RDWR)
+        assert wait_until(lambda: not client.running and peer not in server.clients)
+        assert client.connect()
+        output = (client_recv if receiver is client else server_recv) / src.name
+        assert wait_until(lambda: key not in sender.file_upload_progress
+                          and fid not in receiver.file_recv_progress, timeout=20)
+        assert output.read_bytes() == src.read_bytes()
     finally:
         _close_socket_workers(server, clients, workers)

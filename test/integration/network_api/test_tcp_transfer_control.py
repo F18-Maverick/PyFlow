@@ -993,3 +993,49 @@ def test_relay_offline_source_replays_stable_route_or_stops_cleanly(
         and not owner._active_transfer_sockets and not owner._receive_transfers
         and not owner._resume_sends for owner in (server, source, *targets)))
     assert not server._pending_originator_resumes
+
+
+def test_reconnect_keeps_delayed_forward_resume_on_its_old_session(channel, tmp_path, monkeypatch):
+    server, client, releases = channel
+    source = tmp_path / "old-session.bin"
+    source.write_bytes(b"retained forward source")
+    fid, target = 734, ("127.0.0.1", free_port())
+    key = ((client.host, client.port), fid)
+    row = [0, source.stat().st_size, None, str(source), target]
+    client.file_upload_progress[key] = row
+    old_control = client.client_socket
+    entered, release, done = threading.Event(), threading.Event(), threading.Event()
+    releases.append(release)
+    original, result = client._forward_one, {}
+
+    def delayed(*args, **kwargs):
+        entered.set()
+        assert release.wait(20), "old worker was not released"
+        result["socket"] = kwargs.get("control_socket")
+        result["sent"] = original(*args, **kwargs)
+        done.set()
+
+    monkeypatch.setattr(client, "_forward_one", delayed)
+    assert client.resume_trans(target, fid, 0)
+    assert entered.wait(10)
+    assert client.connect(), "new control reader must not wait for the old worker"
+    new_control = client.client_socket
+    assert new_control is not old_control
+    release.set()
+    assert done.wait(10)
+    assert result == {"socket": old_control, "sent": False}
+    assert wait_until(lambda: not client._resume_sends)
+    assert client.file_upload_progress[key] is row
+    assert fid not in server._fid_routes
+    peer = new_control.getsockname()
+    assert wait_until(lambda: peer in server.clients)
+    assert client._wait_control_secure(new_control)
+    assert server._wait_control_secure(server.clients[peer]["socket"])
+    # A delayed reconnect task must not sweep or adopt the current session.
+    server._resume_after_connect(peer, old_control, ())
+    received = threading.Event()
+    client.add_message_listener(lambda sender, message: received.set()
+                                if message == "session-still-live" else None)
+    assert server.send_message(server.clients[peer]["socket"], "session-still-live")
+    assert received.wait(10)
+    assert client.client_socket is new_control and new_control.fileno() >= 0

@@ -129,6 +129,19 @@ def test_disconnect_cancels_only_its_socket_requests_and_resources():
     assert registry.resolve_port(new_control, 17, 43002, "plain")
     assert registry.wait(first, 0) is None
     assert registry.wait(second, 0) == ("port", 17, 43002, "plain")
+    replacement, replacement_wire = socket.socketpair()
+    try:
+        assert registry.track_socket(new_control, replacement)
+        registry.release_socket(old_control, left)
+        registry.cancel_socket(old_control)  # delayed teardown, after new ownership
+        registry.wait_socket(old_control)
+        replacement.sendall(b"new session survives")
+        assert replacement_wire.recv(64) == b"new session survives"
+        assert registry.closed(old_control) and not registry.closed(new_control)
+    finally:
+        registry.release_socket(new_control, replacement)
+        replacement.close()
+        replacement_wire.close()
 
 
 def test_reconnect_socket_allows_same_fid_after_old_session_is_retired():

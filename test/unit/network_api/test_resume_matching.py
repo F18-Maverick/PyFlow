@@ -19,6 +19,8 @@ from PyFlow.network_api.connect_tcp import (
     _TransferHandshakeRegistry,
     _start_resume_send,
     _resumable_entry,
+    _retire_transfer_session,
+    _wait_transfer_session,
     format_resume_line,
     parse_resume_command,
 )
@@ -101,6 +103,7 @@ def ordinary_resume():
         _transfer_progress_lock=threading.RLock(), _progress_discarded=False,
         file_upload_progress={key: [100, 100, None, "/send/eof.bin", PEER]},
         _resume_sends={}, _active_transfer_fids=set(), _active_transfer_sockets={},
+        _receive_transfers={},
         _transfer_pause=paused, _transfer_pause_cond=condition,
         _transfer_controls=_TransferControlRegistry(paused, condition),
         _transfer_handshakes=_TransferHandshakeRegistry(),
@@ -185,7 +188,7 @@ def test_ordinary_resume_atomically_reserves_eof_without_blocking_other_roles(or
 def test_reconnect_waits_for_final_send_owner_after_its_socket_is_released(
     ordinary_resume, owner_type, monkeypatch
 ):
-    owner, key, _, _ = ordinary_resume
+    owner, key, control, wire = ordinary_resume
     owner.file_recv_progress = {}
     waiting = threading.Event()
     real_wait = owner._transfer_progress_changed.wait
@@ -196,9 +199,13 @@ def test_reconnect_waits_for_final_send_owner_after_its_socket_is_released(
 
     monkeypatch.setattr(owner._transfer_progress_changed, "wait", observe_wait)
     with ThreadPoolExecutor(max_workers=1) as pool:
-        with _sending_transfer(owner, key):
-            reconnect = pool.submit(owner_type._drop_stale_transfers, owner, PEER, wait=True)
+        with _sending_transfer(owner, key, control_socket=control):
+            retired = _retire_transfer_session(owner, control)
+            reconnect = pool.submit(_wait_transfer_session, owner, retired)
             assert waiting.wait(5)
             assert not reconnect.done()
-        assert reconnect.result(timeout=5) == 0
+            owner._active_transfer_sockets[key] = wire
+            owner_type._release_transfer_socket(owner, key, control)
+            assert owner._active_transfer_sockets[key] is wire
+        assert reconnect.result(timeout=5) is None
     assert not owner._resume_sends
