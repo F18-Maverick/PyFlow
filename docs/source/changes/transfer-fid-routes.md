@@ -481,3 +481,21 @@ C4a retains ownership until final cleanup and rejects active resume requests.
   job timeout from 10 to 30 minutes. Test commands, matrix and coverage policy
   are unchanged.
 
+## Transfer control CI follow-up: portable write and connection barriers
+
+- Live receive tests observe the real target write and verify admitted payload
+  bytes instead of treating stat growth on an open buffered file as completion.
+  Python 3.14's larger default buffer can retain the first 64 KiB chunk until
+  close; resumed partial-file contents and offsets are still checked after the
+  old receiver exits, and final content/ACK assertions remain intact.
+- Wildcard scenarios retain the server's 0.0.0.0 bind while clients connect to
+  loopback, which is also valid on Windows. Source-disconnect injection shuts
+  down the actual client socket and still waits for both ends to exit.
+- Production control and persistence behavior, test timeouts, crypto/async
+  coverage, CI configuration and skip policy are unchanged. Native Windows
+  results must come from a subsequent CI run; Linux is not Windows evidence.
+- Verification passed 18 affected cases on Python 3.10 and the full control
+  file on Linux CPython 3.14.4 with coverage: 71 passed, one existing plaintext
+  re-key skip in 331.25 seconds. The subset's coverage is not a full-suite
+  measurement. Native Windows still requires a subsequent Actions run.
+

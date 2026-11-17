@@ -1,6 +1,6 @@
 # 双向文件暂停、继续与按对象恢复 — 实施报告
 
-状态：需求卡和七项拆分已确认。**C1–C4b 已提交并通过人工放行；C5 文档与相关合并验收已完成，待人工最终审查。** 各阶段记录保留实际失败及定向重跑，不将未运行或未覆盖的场景标为完成。本轮未创建提交、合并或推送。
+状态：需求卡和七项拆分已确认。**C1–C5 已交付；后续跨平台测试屏障修复已完成，Linux CPython 3.14.4 带 coverage 的完整控制文件通过，native Windows 仍待 CI 验证及人工审查。** 保留先前 Python 3.10 验收和用户提供的 CI 失败记录，不将 Linux 通过等同于 Windows 已通过。本轮未创建提交、合并或推送。
 
 ## C1：严格解析、typed identity 与共享端点识别
 
@@ -507,6 +507,44 @@ C5 验证后，用户单独授权将 `.github/workflows/ci.yml` 的 Test job 超
 - 最终 ACK 超时仍保守保留进度；控制可用且可投递是远程 pause/start 前提。缓冲允许一次 enqueue fan-out 的有限超调，不承诺绝不超过阈值。
 - 规则沉淀为 typed 双向隔离、FIFO 收敛、对象原子恢复与 owner 清理契约；未删除测试或降 coverage。C5 验证后仅按用户单独授权延长 Test job 时限，未改测试命令与矩阵。阶段 C2b/C4a 规模偏差已随后续放行记录保留；C5 以文档与合并验证收尾。
 - 本轮不创建提交、合并或推送。最终报告须由人类审查放行；合并/远端提交另需明确授权。
+
+## 后续 CI 修复：Python 3.14 文件缓冲与 Windows 连接/断线注入
+
+### 用户报告与定位
+
+- Linux GitHub Actions（Python 3.14.4、coverage）实际结果：12 failed、930 passed、1 skipped，647.97s；失败为 in-flight 写入和在线恢复的双向三配置用例，各六项。
+- Windows GitHub Actions（Python 3.14.10）实际结果：10 failed、906 passed、3 skipped、24 setup errors，602.29s。除相同写入屏障外，24 项 async/wildcard 夹具均无法 connect，另两项 source 断线注入未到达预期断线状态。报告是本轮复现依据，未先重跑旧测试确认。
+- 本机解释器输出：Python 3.10 的 `io.DEFAULT_BUFFER_SIZE=8192`，标准 CPython 3.14.4 为 `131072`。生产接收循环通过正常 buffered file 的 write 写入，progress 在 write 返回后更新，文件退出上下文后关闭。64 KiB 首块在 3.14 可留在用户态缓冲，暂停期间 stat 大小不等同于 write 未执行；旧测试把这两者混为一谈。
+- wildcard 夹具将 `0.0.0.0` 同时用于 server bind 和 client connect；Windows 不接受这个远端目的地址。既有跨平台身份测试采用 wildcard bind + loopback connect。
+- source 断线用例原从 server accepted socket 调用 shutdown，并依赖同一 socket 上阻塞的服务端 recv 同时退出；Windows 日志显示该状态未到达。本轮从 source client socket 注入 shutdown，与既有实际会话断线测试一致，仍等待双端真实退出，不直接删除 registry 代替断线。
+
+### 修改与不变量
+
+仅修改 `test/integration/network_api/test_tcp_transfer_control.py` 的夹具/观察屏障：新增小型 `_observe_target_writes`，包裹实际目标文件的 write，真实调用返回后累计字节并在指定块完整写入后发 Event。两组失败场景检查完整首块等于 payload 对应 slice；在线恢复仍在旧接收 owner 退出、文件关闭后检查 partial 的磁盘内容和恢复 offset，完整文件内容、实际最终 ACK、socket/owner 清理断言全部保留。
+
+Server 继续 wildcard bind，Client 连接 loopback，async/encrypted/tracking off 三项配置保持；source 故障从 Client 端注入真实 shutdown。没有 flush 每块文件来迎合测试、缩小缓冲、禁用加密/async、延长等待、增加 retry/skip 或修改生产暂停/恢复语义；CI 命令、矩阵和 coverage 策略未改。
+
+### 验证
+
+Python 3.10 受影响场景：
+
+```bash
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_transfer_control.py::test_receiver_keeps_writing_inflight_data_after_confirmed_pause test/integration/network_api/test_tcp_transfer_control.py::test_online_resume_reserves_one_owner_and_uses_receiver_disk_offset test/integration/network_api/test_tcp_transfer_control.py::test_relay_offline_source_replays_stable_route_or_stops_cleanly -q
+```
+
+**18 passed in 108.23s**（墙钟 108.56s）。
+
+标准 CPython 3.14.4 带覆盖率的完整控制文件：
+
+```bash
+COVERAGE_FILE=/tmp/pyflow-ci-fix-314.coverage uv run --isolated --no-project --python cpython-3.14.4-linux-x86_64-gnu --with pytest --with pytest-cov --with flask python -m pytest test/integration/network_api/test_tcp_transfer_control.py --cov=PyFlow.network_api.connect_tcp --cov-report=term -q
+```
+
+**71 passed、1 skipped in 331.25s**（墙钟 335.09s），平台 linux、CPython 3.14.4。唯一 skip 为 plain 配置不适用重新交换，两组 encrypted 实际运行；没有新增 skip。该控制文件单独执行时 connect_tcp.py 覆盖率为 **62%**，不是全套覆盖率结果，不与用户 CI 全套的 81% 混同。临时隔离 uv 环境使用 pytest/pytest-cov/flask，未修改项目依赖或锁文件；coverage 数据写入 `/tmp`。
+
+本轮修复仅涉及一个测试文件及现有计划/报告/变更记录，Python 3.10 和 3.14 的定向检查完成，不重复运行全仓库套件。当前无 native Windows 运行环境，通配绑定/loopback 连接与 source Client shutdown 的修复仍需后续 Windows Actions 确认；没有把 Linux 结果记成 Windows 通过，也未触发远端工作流。
+
+Windows 原日志中的 `WinError 995` 出现在夹具连接失败后的 Proactor accept 清理阶段；本轮未屏蔽异常或改事件循环。loopback 连接修复后该清理警告是否仍出现，必须由 native Windows CI 确认，不能依据 Linux 结果推定已消失。
 
 ## 公共协议/API 变更许可记录
 

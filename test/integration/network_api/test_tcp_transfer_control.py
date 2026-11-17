@@ -17,7 +17,7 @@ from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
 @pytest.fixture(params=[
     (False, False, True, "127.0.0.1", "localhost"),
     (True, False, True, "127.0.0.1", "127.0.0.1"),
-    (True, True, False, "0.0.0.0", "0.0.0.0"),
+    (True, True, False, "0.0.0.0", "127.0.0.1"),
 ], ids=["plain-alias", "encrypted", "encrypted-async-untracked-wildcard"])
 def channel(request, tmp_path, monkeypatch):
     encrypted, asynchronous, tracked, bind_host, configured_host = request.param
@@ -75,6 +75,30 @@ def channel(request, tmp_path, monkeypatch):
         for worker in workers:
             worker.join(timeout=10)
         assert not any(worker.is_alive() for worker in workers)
+
+
+def _observe_target_writes(monkeypatch, output, byte_count):
+    """Observe real writes without assuming buffered bytes are visible to stat."""
+    written, received = bytearray(), threading.Event()
+    real_open = connect_tcp._open_transfer_target
+
+    def open_target(path, offset):
+        target = real_open(path, offset)
+        if Path(path) == output:
+            real_write = target.write
+
+            def write(data):
+                count = real_write(data)
+                written.extend(data[:count])
+                if len(written) >= byte_count:
+                    received.set()
+                return count
+
+            monkeypatch.setattr(target, "write", write)
+        return target
+
+    monkeypatch.setattr(connect_tcp, "_open_transfer_target", open_target)
+    return written, received
 
 
 def _leg(channel, tmp_path, monkeypatch, server_sends, *, fid=720, offset=0, payload=None):
@@ -283,8 +307,12 @@ def test_empty_and_eof_progress_complete_with_real_ack(channel, tmp_path, monkey
 def test_receiver_keeps_writing_inflight_data_after_confirmed_pause(
     channel, tmp_path, monkeypatch, server_sends
 ):
+    receiver = channel[1] if server_sends else channel[0]
+    output = Path(receiver.file_transfer_dir) / ("download.bin" if server_sends else "upload.bin")
+    sender = channel[0] if server_sends else channel[1]
+    written, received = _observe_target_writes(monkeypatch, output, sender.file_transfer_chunk_len)
     leg = _leg(channel, tmp_path, monkeypatch, server_sends)
-    sender, receiver, states, body_release, _, _, output, _ = leg
+    sender, receiver, states, body_release, _, _, output, payload = leg
     inflight, send_release = threading.Event(), threading.Event()
     channel[2].append(send_release)
     real_send = sender.send_message
@@ -303,9 +331,10 @@ def test_receiver_keeps_writing_inflight_data_after_confirmed_pause(
     assert _control(receiver, states[1], True)
     _confirmed(states, True)
     send_release.set()
-    assert wait_until(lambda: output.exists() and output.stat().st_size > 0), (
+    assert received.wait(timeout=10), (
         "receiver pause blocked a chunk already admitted by the sender"
     )
+    assert written == payload[:sender.file_transfer_chunk_len]
     assert sender._transfer_pause == {states[0]["key"]: True}
     assert states[1]["key"] not in receiver._transfer_pause
     assert _control(receiver, states[1], False)
@@ -635,6 +664,10 @@ def test_online_resume_reserves_one_owner_and_uses_receiver_disk_offset(
     channel, tmp_path, monkeypatch, server_sends
 ):
     other = _leg(channel, tmp_path, monkeypatch, not server_sends)
+    receiver = channel[1] if server_sends else channel[0]
+    output = Path(receiver.file_transfer_dir) / ("download.bin" if server_sends else "upload.bin")
+    sender = channel[0] if server_sends else channel[1]
+    written, received = _observe_target_writes(monkeypatch, output, sender.file_transfer_chunk_len)
     leg = _leg(channel, tmp_path, monkeypatch, server_sends, offset=1)
     sender, receiver, states, body_release, worker, result, output, payload = leg
     peer, fid = key = states[0]["key"][:2]
@@ -672,7 +705,8 @@ def test_online_resume_reserves_one_owner_and_uses_receiver_disk_offset(
     body_release.set()
     assert partial.wait(timeout=10)  # the second wait follows one real chunk
     disk = 1 + sender.file_transfer_chunk_len
-    assert wait_until(lambda: output.stat().st_size == disk)
+    assert received.wait(timeout=10)
+    assert written == payload[1:disk]
     assert _control(sender, states[0], True)
     _confirmed(states, True)
     old_socket.shutdown(socket.SHUT_RDWR)  # keep the existing control session
@@ -890,7 +924,7 @@ def test_relay_offline_source_replays_stable_route_or_stops_cleanly(
     if fault == "stop":
         server.stop()
     else:
-        old_server.shutdown(socket.SHUT_RDWR)
+        old_client.shutdown(socket.SHUT_RDWR)
         assert wait_until(lambda: not source.running and origin not in server.clients)
         source.receive_thread.join(timeout=10)
         source._release_client_socket()
