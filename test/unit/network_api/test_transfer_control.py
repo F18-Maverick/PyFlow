@@ -119,12 +119,12 @@ def test_control_endpoint_matches_only_this_connection_and_configuration(
 
 
 class _ControlPair:
-    def __init__(self):
+    def __init__(self, trans_type=0):
         self.paused = [{}, {}]
         self.registries = [
             _TransferControlRegistry(flags, threading.Condition()) for flags in self.paused
         ]
-        self.keys = [_transfer_control_key(PEER, 42, 0, role) for role in (0, 1)]
+        self.keys = [_transfer_control_key(PEER, 42, trans_type, role) for role in (0, 1)]
         self.sockets = [object(), object()]
         self.states = [registry.register(key, sock, object()) for registry, key, sock in zip(
             self.registries, self.keys, self.sockets
@@ -443,36 +443,54 @@ def test_relay_control_prefers_exact_child_and_requires_one_live_same_peer_alias
     assert states[0]["confirmed_state"] is False
 
 
-def test_receiver_pressure_and_user_intents_survive_notifications_and_stale_owner():
-    pair = _ControlPair()
-    registry, key, state = pair.registries[1], pair.keys[1], pair.states[1]
-    pressure = lambda paused: registry.local(
-        key, paused, pair.send(1), backpressure=True, owner=state["owner"])
-    assert pressure(True)
-    pair.drain()
-    pair.local(1, True)
-    pressure(False)
-    pair.drain()
-    assert state["user_paused"] and not state["backpressure"]
-    assert state["confirmed_state"] and state["last_requested_state"]
-    assert pair.local(0, False)
-    pair.drain()
-    assert state["user_paused"] and not state["backpressure"]
-    assert state["last_requested_state"] and not state["confirmed_state"]
-    pressure(True)
-    pair.local(1, False)
-    pair.drain()
-    assert not state["user_paused"] and state["backpressure"]
-    assert state["confirmed_state"] and state["last_requested_state"]
-    assert pair.local(0, False)
-    pair.drain()
-    assert not state["confirmed_state"] and state["backpressure"]
-    assert state["last_requested_state"] and not state["user_paused"]
-    pressure(False)
-    pair.drain()
-    assert not state["last_requested_state"] and pair.paused == [{}, {}]
-    assert registry.release(state)
-    replacement = registry.register(key, pair.sockets[1], object())
-    assert not pressure(True)
-    assert not replacement["backpressure"] and not replacement["user_paused"]
-    assert not replacement["last_requested_state"] and not any(pair.pending)
+def test_relay_requests_wait_for_source_and_fan_out_without_echoing_notifications():
+    pair = _ControlPair(trans_type=1)
+    registry, upstream = pair.registries[1], pair.states[1]
+    relay = {"control_lock": threading.RLock(), "upstream": upstream, "controls": {}}
+    upstream["relay"] = relay
+    children = [registry.register((PEER, fid, 1, 0), object(), object(), relay=relay)
+                for fid in (100, 102)]
+    relay["controls"].update(enumerate(children))
+    frames = []
+
+    def send(sock, line):
+        if sock is upstream["control_socket"]:
+            return pair.send(1)(sock, line)
+        frames.append((sock, line))
+        return True
+
+    assert not registry.receive(children[0]["key"], object(), True, send)
+    for child, paused in zip(children, (True, False)):
+        assert registry.receive(child["key"], child["control_socket"], paused, send)
+    assert not any(state["confirmed_state"] for state in [upstream, *children])
+    assert not frames  # A Target request is not a Server decision.
+    pair.deliver(0)
+    assert pair.states[0]["confirmed_state"]
+    pair.deliver(0)
+    assert not pair.states[0]["confirmed_state"]
+    for paused in (True, False):
+        line = pair.pending[1].popleft()
+        assert _parse_transfer_control_command(line)[0] is paused
+        assert registry.receive(upstream["key"], upstream["control_socket"], paused, send)
+        assert all(state["confirmed_state"] is paused for state in [upstream, *children])
+    assert [line for _, line in frames] == [
+        "/pause_trans 100 1 0", "/pause_trans 102 1 0",
+        "/start_trans 100 1 0", "/start_trans 102 1 0",
+    ]
+    assert not any(pair.pending)
+    assert not registry.receive(upstream["key"], object(), True, send)
+    old_owner = children[0]["owner"]
+    assert registry.release(children[0])
+    replacement = registry.register(children[0]["key"], object(), object(), relay=relay)
+    assert not registry.local(replacement["key"], True, send, owner=old_owner)
+
+
+def test_relay_start_before_upstream_exists_overrides_a_preset_pause():
+    registry = _TransferControlRegistry({}, threading.Condition())
+    key = (PEER, 100, 1, 0)
+    assert not registry.local(key, True)
+    relay = {"control_lock": threading.RLock(), "controls": {}}
+    child = registry.register(key, object(), object(), relay=relay)
+    assert relay["requested"] is True and not child["confirmed_state"]
+    assert registry.local(key, False)
+    assert relay["requested"] is False and not child["confirmed_state"]

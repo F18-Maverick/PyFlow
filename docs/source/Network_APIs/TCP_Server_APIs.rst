@@ -59,9 +59,10 @@ The parameters of the ``__init__`` method are as follows:
   user-supplied RSA keys. Both files must exist, parse as PEM, and pair
   with each other; an invalid pair is silently ignored and the default
   key lookup is used instead (``None`` keeps the default lookup).
-- ``max_mem_buff``: The in-memory buffering ceiling of the forward pump,
-  given in MiB and stored as bytes (``self.max_mem_buff``); past it the
-  uploading peer is told to pause. The default is 2048.
+- ``max_mem_buff``: The forward pump's queued-byte high-water mark, in MiB and
+  stored as bytes. The reader waits for low-water drain, applying TCP flow
+  control independently of user pause/start. One fan-out enqueue may overshoot;
+  it is not a total process RAM ceiling. The default is 2048.
 - ``recv_messages_chunk_len``: The number of bytes read per receive on the
   control connection, covering commands and messages. The default is 4096.
 - ``file_transfer_chunk_len``: The chunk size in bytes for streaming a file
@@ -679,11 +680,12 @@ Built-in client commands include:
   ``start_trans(fid, peer, *, trans_type, direction)``. ``trans_type`` is
   ``0`` for ordinary transfers or ``1`` for relay legs; ``direction`` is the
   local data role (``0`` sender, ``1`` receiver). The wire role describes the
-  issuer. Both methods update local control and notify the peer; sender state
-  is authoritative and receiver confirmation is eventual. An in-flight receive
-  and write continues, and start uses the same data socket. A registered sender
-  change or receiver request returns ``True``, not a peer ACK. Known duplicates
-  return ``False``; an unconfirmed receiver request may be sent again. A preset
+  issuer. Ordinary senders decide their leg state; relay Source decides the
+  whole route. Server calls are requests, and Source notifications are projected
+  onto child fids. Buffered bytes keep draining to Targets during user pause.
+  Start uses the same sockets and cannot bypass the local pressure gate.
+  ``True`` means registration, not peer ACK; relay requests may repeat.
+  Known duplicates on ordinary legs return ``False``. A preset
   sender pause returns ``False`` before registration. ``peer`` is required.
   See :ref:`transfer-pause-and-reconnect` for control identity and cleanup.
   Forwarded requests carry a source-allocated ``fid=<upstream fid>``. A new

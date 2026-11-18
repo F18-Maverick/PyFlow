@@ -865,12 +865,15 @@ address or concrete control endpoint, not the logical forwarded target. Control
 identity is canonicalized to ``((client.host, client.port), fid, trans_type,
 local_role)`` independently of the progress row's logical receiver.
 
-The sender owns confirmed pause state. A receiver records its local request
-and waits for an eventual sender notification; secure sends are asynchronous
-and ordered per leg. In-flight receives and disk writes continue. Start uses
+The ordinary sender, or the relay Source, owns confirmed pause state. Target
+requests travel through Server to Source and affect the whole route; any
+participant can request start. Notifications are asynchronous and ordered per
+leg. Server-buffered bytes and Target disk writes continue while user-paused.
+Start cannot bypass Server's pressure gate and uses
 the same data socket without a new handshake or seek. A registered sender
 change or receiver request returns ``True``, not a peer ACK. Known duplicates
-return ``False``; an unconfirmed receiver request may be sent again. A preset
+return ``False`` for ordinary legs; relay receiver requests may repeat because
+another participant's opposite request can still be in flight. A preset
 sender pause returns ``False`` before registration. Pause is runtime-only. See
 :ref:`transfer-pause-and-reconnect` for details. The upload value's ``peer``
 is the original receiver; ``resume_offset`` continues the interrupted file from

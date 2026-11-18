@@ -9,6 +9,19 @@
 > Current behavior and evidence are in
 > `docs/plans/transfer-pause-start-direction-report.md`.
 
+## Lifecycle revision C2: Source-arbitrated global relay pause
+
+- Source serializes all user decisions. Server translates validated requests
+  to upstream fid and projects Source notifications onto each live child fid.
+  Relay requests may repeat so an unseen opposite intent is not swallowed.
+- Server writers no longer wait on per-Target user pauses; queued bytes drain
+  on the existing sockets. Source alone stops before its next body block.
+- Backpressure uses the local reader high/low-water gate and TCP flow control,
+  not automatic user pause/start messages. Drain cannot cancel user pause.
+- Stable FIDs, wire fields and real final ACKs remain unchanged. Issue 2 is
+  deferred; route reconstruction and EOF reconfirmation remain later stages.
+- Evidence: `docs/plans/transfer-control-lifecycle-report.md`.
+
 ## Lifecycle revision C1: retire actual control sessions
 
 - Session cancellation owns listeners, data sockets and negotiations by actual

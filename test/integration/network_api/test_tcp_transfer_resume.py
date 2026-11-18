@@ -1996,11 +1996,11 @@ def test_forward_route_survives_a_refused_target_listener_and_reload(tmp_path, m
 
 
 def test_forward_route_is_removed_only_after_all_real_targets_complete(tmp_path, monkeypatch):
-    """A completed sibling leaves the route live until the held writer finishes."""
+    """A completed sibling leaves the route live until the other real ACK arrives."""
     workers = _track_socket_workers(monkeypatch)
     server = _start_server(tmp_path)
     clients = []
-    held = {}
+    held, release = threading.Event(), threading.Event()
     try:
         source = _start_client(tmp_path, server, name="source")
         clients.append(source)
@@ -2016,51 +2016,41 @@ def test_forward_route_is_removed_only_after_all_real_targets_complete(tmp_path,
             targets.append(target.client_socket.getsockname())
             outputs.append(recv_dir / "complete_forward.bin")
         assert wait_until(lambda: all(target in server.clients for target in targets))
-        real_forward_item_to = server.forward_item_to
+        real_send = clients[2].send_message
 
-        def hold_second_writer(target, kind, rel_dir, fname, originator_addr, tfid,
-                               destination_path=None):
-            if target == targets[1]:
-                held["fid"] = tfid
-                held["paused"] = server.pause_trans(tfid, target, trans_type=1, direction=0)
-            return real_forward_item_to(
-                target, kind, rel_dir, fname, originator_addr, tfid, destination_path
-            )
+        def hold_second_ack(sock, message, is_send_raw=False):
+            if message == clients[2].server_received_file_data_sign:
+                held.set()
+                assert release.wait(20), "second Target ACK was not released"
+            return real_send(sock, message, is_send_raw=is_send_raw)
 
-        monkeypatch.setattr(server, "forward_item_to", hold_second_writer)
+        monkeypatch.setattr(clients[2], "send_message", hold_second_ack)
         src = tmp_path / "complete_forward.bin"
         payload = os.urandom(96 * 1024)
         src.write_bytes(payload)
+        result = {}
         sender = threading.Thread(
-            target=source._forward_one,
-            args=("file", "", src.name, str(src), targets), daemon=True,
+            target=lambda: result.update(ack=source._forward_one(
+                "file", "", src.name, str(src), targets)), daemon=True,
         )
         sender.start()
-        assert wait_until(
-            lambda: outputs[0].exists() and outputs[0].stat().st_size == len(payload),
-            timeout=20,
-        ), "the unpaused target did not finish"
-        assert outputs[0].read_bytes() == payload
-        assert wait_until(lambda: not clients[1].file_recv_progress, timeout=10)
-        assert held["paused"] is False  # preset before the relay writer registers
-        assert not outputs[1].exists() or outputs[1].stat().st_size == 0
+        assert held.wait(15), "the second Target never reached its final ACK"
+        assert sender.is_alive() and result == {}
         assert len(server._fid_routes) == 1
         fid, route = next(iter(server._fid_routes.items()))
         assert set(route["targets"]) == set(targets)
         assert wait_until(lambda: route["completed"] == {targets[0]}, timeout=10)
+        assert outputs[0].read_bytes() == outputs[1].read_bytes() == payload
+        assert wait_until(lambda: not clients[1].file_recv_progress, timeout=10)
         expected_index = {(targets[1], route["targets"][targets[1]]): fid}
         assert server._fid_route_index == expected_index
         assert server._lookup_fid_route(targets[0], route["targets"][targets[0]]) is None
         assert server._lookup_fid_route(targets[1], route["targets"][targets[1]])[1] is route
 
-        assert server.start_trans(held["fid"], targets[1], trans_type=1, direction=0) is True
-        assert wait_until(
-            lambda: outputs[1].exists() and outputs[1].stat().st_size == len(payload),
-            timeout=20,
-        ), "the released target did not finish"
-        assert outputs[1].read_bytes() == payload
+        release.set()
         sender.join(timeout=20)
         assert not sender.is_alive(), "the real source transfer did not finish"
+        assert result == {"ack": True}
         assert wait_until(lambda: not server._forward_relays, timeout=10)
         assert wait_until(lambda: not clients[2].file_recv_progress, timeout=10)
         assert server._fid_routes == {}
@@ -2069,8 +2059,7 @@ def test_forward_route_is_removed_only_after_all_real_targets_complete(tmp_path,
         for target, tfid in route["targets"].items():
             assert server._lookup_fid_route(target, tfid) is None
     finally:
-        if held:
-            server.start_trans(held["fid"], targets[1], trans_type=1, direction=0)
+        release.set()
         _close_socket_workers(server, clients, workers)
 
 

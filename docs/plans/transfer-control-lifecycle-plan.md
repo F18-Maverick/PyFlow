@@ -1,6 +1,6 @@
 # 传输控制生命周期、全局转发暂停与顺序恢复 — 更改计划
 
-状态：**用户已授权按最后拆分开始 C1；C1 实现及局部验收完成，等待人工审查；C2–C6 未开始**。保持原 upstream fid/child fid，不引入 leg_id，不修改 pause/start 和端口响应格式；本轮仅实施实际控制会话清理、旧 owner 收尾及旧 worker 固定 socket，不自动创建 git 提交、合并或推送。后续阶段仍逐项等待人工放行；本轮证据见[实施报告](transfer-control-lifecycle-report.md)。
+状态：**C1 已获阶段推进；C2 实现及局部验收完成，等待人工审查；C3–C6 未开始**。保持原 fid、pause/start 和端口响应格式。本轮实施 Source 仲裁的全局转发暂停、child 状态投影及 writer 排空；自动背压仅使用既有 reader 高/低水位门槛与 TCP 流控，不再混入用户 pause/start。实际证据见[实施报告](transfer-control-lifecycle-report.md)，不自动提交、合并或推送。
 
 需求依据：[需求卡](transfer-control-lifecycle-requirements.md)。历史实现依据：[上一轮计划](transfer-pause-start-direction-plan.md)及其报告；它们的历史验证结果不作为本轮验证结果。
 
@@ -137,7 +137,7 @@ Web 的 `client_backend.py` 已知通过 Client 的文件/文件夹转发入口�
 - Source 的本地操作与这些请求在一个串行入口决定状态；Server 校验上游通知后，用各 Target 自己的 child fid 投影状态，不自行成为第二决定者。
 - Server 下游控制记录是 Source 决定的投影；其暂停字段不能再阻塞 writer。移除 relay writer 的独立用户暂停门槛，继续排空既有字节；Source 下一块前才等待。
 - 用户 start 不要求所有参与方逐个解锁。保留 confirmed/last_requested 以免未确认 pause→start 丢失，不把它改成请求 ACK 计数器。
-- 自动背压请求与用户意图分开；高水位 reader 门槛仍独立，只有缓冲下降才能解除。记录实际峰值和一次扇出超调，不宣称 total RAM 的严格上限。
+- 自动背压与用户意图分开：保留 reader 高/低水位门槛，缓冲下降才能解除；通过 TCP 流控传递压力，不再发送无法区分意图的自动 pause/start，避免低水位 start 覆盖 Source 或 Target 的用户暂停。用户 start 不能打开 reader 门槛。记录实际峰值和一次扇出超调，不宣称 total RAM 的严格上限。
 - 暂停不撤回最后一块，不阻止已完成文件的真实 ACK，也不把暂停计作传输失败。数据已全部发出时不凭暂停伪造完成；原有 ACK 成功条件不变，不另外设计新的全局超时策略。
 
 ## 6. 强制重建与逐 Target 调度（问题八）
@@ -254,4 +254,4 @@ flowchart TD
 - **规则沉淀**：真实会话资源取消、不同 offset 顺序内容恢复、末次 ACK 再失败/成功三类消费者可见回归成为检查项，不新增源码字符串断言，也不为暂缓的问题二增加新测试约束。
 - **文档/报告**：最终报告逐 P01–P20 给结论，单列问题二暂缓；每个原子变更含意图、范围、数据流、局部命令、未覆盖项、风险；文档随变更完成，不留“以后补”。
 
-本轮用户已明确要求开始 C1，作为 C1 的实施授权；不再重复索取同一确认。C1 完成后提交局部证据与报告，等待人工审查，不因此自动进入 C2–C6。
+用户已明确要求开始 C2，作为本阶段实施授权；C1 已获阶段推进。C2 完成后提交局部证据与报告供人工审查，不自动进入 C3–C6，不自动提交、合并或推送。

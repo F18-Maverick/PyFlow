@@ -532,21 +532,13 @@ machinery:
 Because uploader, server and targets may have different
 bandwidths, data can
 pile up in the server's memory. ``TCP_Server_Base``
-takes a ``max_mem_buff`` parameter (in MiB, default 2048,
-i.e. 2 GB) that bounds
-the memory the forwarding machinery may hold in that
-process. When the server's
-buffered bytes exceed ``max_mem_buff`` it sends
-``/pause_trans <fid> 1 1`` to the forwarding client: the server is the local
-receiver of this relay leg, and the client stops reading the source file.
-Once the writers drain the buffers below the low-water mark (half the limit),
-the server releases its automatic pause request. This is combined with the
-server user's upstream pause using OR: draining cannot cancel a user pause,
-and a user start cannot cancel pressure. The reader independently waits at the
-high-water gate, even if the source locally starts. Buffering can exceed the
-threshold by one enqueue's fan-out bytes; it does not grow without bound.
-Receiving clients continue in-flight writes; ordinary and relay legs share
-the typed secure control path and retain the same data sockets.
+takes a ``max_mem_buff`` parameter (in MiB, default 2048) for the pump's
+accounted queued bytes. Above the high-water mark, its reader waits until
+writers drain to the low-water mark (half the limit); TCP flow control carries
+the pressure upstream. Automatic pressure does not send user pause/start lines,
+so draining cannot cancel a user pause and user start cannot bypass the gate.
+One enqueue can overshoot by its fan-out bytes. This is not a total process RAM
+ceiling; socket, crypto and in-flight writer buffers are separate.
 
 .. _concurrency-and-threading:
 
@@ -842,9 +834,11 @@ when the logical forwarded target differs.
 
 Relay downstream control uses the target's child fid. An upstream fid alias
 is accepted only when that control peer has one matching live writer; an exact
-child match takes precedence. Each target pauses independently, although its
-backlog can eventually apply shared upstream pressure. Runtime control records
-without a live data owner do not reserve a route.
+child match takes precedence. Source arbitrates user pause/start for the whole
+route. Server and Target operations request its decision; Server projects each
+notification using the corresponding child fid. Pausing stops Source before
+its next block, while every Server writer drains bytes already received.
+Runtime control records without a live data owner do not reserve a route.
 
 Both methods apply the local operation and notify the peer through the existing
 secure control connection. The wire commands have exactly four tokens:
@@ -854,9 +848,9 @@ values as the API; the issuer's role is opposite the receiving endpoint's
 local role. There are no separate remote-control methods or one-argument wire
 forms. Ordinary and relay legs use this same control path.
 
-The sender owns the confirmed pause state and stops before its next chunk.
+The ordinary sender, or the relay Source, owns confirmed pause state.
 A receiver's local call records a request; its confirmed state changes only
-when the sender's notification arrives. Secure control sends are asynchronous
+when the authoritative notification arrives. Secure control sends are asynchronous
 and ordered per leg, so confirmation is eventual. A receiver continues any
 in-flight receive and disk write: pause does not promise an immediate freeze
 of the receiving file. Start releases the same open data socket without a new
@@ -864,9 +858,11 @@ handshake, offset or seek.
 
 A registered sender state change or receiver request returns ``True``; this
 reports local registration, not peer acknowledgement. A sender's same-state
-operation returns ``False``. A receiver ignores an operation only when its
-target equals both confirmed and last-requested state; unconfirmed duplicates
-may therefore return ``True``. Presetting an exact, not-yet-active sender pause
+operation returns ``False``. Ordinary receivers ignore an operation only when
+it equals both confirmed and last-requested state. Relay requests may repeat
+even at the confirmed value: another participant's opposite request may still
+be in flight. Any participant can request start; no per-Target pause lock must
+be individually cleared. Presetting an exact, not-yet-active sender pause
 returns ``False`` while retaining it for registration. Pause state is never
 persisted. Reconnect clears old control state and closes sockets before replay.
 

@@ -474,21 +474,21 @@ def _relay(relay_clients, tmp_path, monkeypatch, *, pressure=False):
     tail = threading.Event()
     releases.append(tail)
     observed["tail"] = tail
+    observed["tail_waiting"], observed["pause_waiting"] = threading.Event(), threading.Event()
     waiting = threading.Event()
     real_wait, real_pump = connect_tcp._wait_transfer_control, server._forward_pump
     real_read = server._forward_recv_exact
 
     def hold(instance, state, sock):
-        if state is not None and state["key"][2:] == (1, 0):
-            index = 0 if instance is source else (
-                1 + addresses.index(state["key"][0]) if instance is server else None)
-            if index is not None:
-                entered[index].set()
-                assert gates[index].wait(timeout=30), "relay body gate was not released"
-                if index == 0 and pressure and observed.get("source_entered"):
-                    assert tail.wait(timeout=30), "source tail gate was not released"
-                if index == 0:
-                    observed["source_entered"] = True
+        if instance is source and state is not None and state["key"][2:] == (1, 0):
+            entered[0].set()
+            assert gates[0].wait(timeout=30), "source body gate was not released"
+            if observed.get("source_entered"):
+                observed["tail_waiting"].set()
+                assert tail.wait(timeout=30), "source tail gate was not released"
+            observed["source_entered"] = True
+            if state["confirmed_state"]:
+                observed["pause_waiting"].set()
         return real_wait(instance, state, sock)
 
     def pump(up, connections, control, fid, name, relay, offset=0):
@@ -514,9 +514,14 @@ def _relay(relay_clients, tmp_path, monkeypatch, *, pressure=False):
     for owner in (server, source, *targets):
         real_send = owner.send_message
 
-        def send(sock, message, is_send_raw=False, send=real_send):
+        def send(sock, message, is_send_raw=False, send=real_send, instance=owner):
             if isinstance(message, str) and message.startswith(("/pause_trans ", "/start_trans ")):
                 observed["controls"].append((message, is_send_raw))
+            if instance is server and isinstance(message, bytes) and "relay" in observed:
+                for index, child in enumerate(observed["relay"]["controls"].values(), 1):
+                    if sock is child["owner"]:
+                        entered[index].set()
+                        assert gates[index].wait(timeout=30), "target writer gate was not released"
             return send(sock, message, is_send_raw=is_send_raw)
 
         monkeypatch.setattr(owner, "send_message", send)
@@ -570,44 +575,86 @@ def _relay_done(relay_clients, run, *, failed=False):
         assert not server._fid_routes and not server._fid_route_index
 
 
-def test_relay_child_and_upstream_alias_control_only_the_selected_writer(
-    relay_clients, tmp_path, monkeypatch
+@pytest.mark.parametrize("issuer", ["source", "server-upstream", "server-alias", "target-a", "target-b"])
+def test_relay_global_pause_drains_queued_bytes_and_any_target_can_start(
+    relay_clients, tmp_path, monkeypatch, issuer
 ):
+    writes = [_observe_target_writes(monkeypatch, tmp_path / name / "relay.bin", 1024)
+              for name in ("target_a", "target_b")]
     run = _relay(relay_clients, tmp_path, monkeypatch)
     server, source, targets, _ = relay_clients
-    relay, sender, gates, _, result, _, _, _ = run
-    first, second = [relay["controls"][target.client_socket.getsockname()] for target in targets]
-    receiver = targets[0]._transfer_controls._legs[
-        ((source.host, source.port), first["key"][1], 1, 1)]
-    data_socket = first["owner"]
-    assert _control(targets[0], receiver, True)
-    _confirmed((first, receiver), True)
-    assert server.start_trans(relay["fid"], first["key"][0], trans_type=1, direction=0)
-    _confirmed((first, receiver), False)
-    assert server.pause_trans(relay["fid"], first["key"][0], trans_type=1, direction=0)
-    _confirmed((first, receiver), True)
+    relay, sender, gates, _, _, payload, observed, _ = run
+    children = list(relay["controls"].values())
+    receivers = [target._transfer_controls._legs[
+        ((source.host, source.port), child["key"][1], 1, 1)]
+        for target, child in zip(targets, children)]
+    states = [sender, relay["upstream"], *children, *receivers]
+    sockets = [state["owner"] for state in states]
+    gates[0].set()
+    assert observed["tail_waiting"].wait(10)  # Exactly one real source block is in flight.
+    if issuer == "server-alias":
+        assert server.pause_trans(relay["fid"], children[0]["key"][0], trans_type=1, direction=0)
+    else:
+        owner, state = {"source": (source, sender), "server-upstream": (server, relay["upstream"]),
+                        "target-a": (targets[0], receivers[0]), "target-b": (targets[1], receivers[1])}[issuer]
+        assert _control(owner, state, True)
+    _confirmed(states, True)
     for owner, command in (
-        (source, f"/start_trans {first['key'][1]} 1 1"),
-        (targets[1], f"/start_trans {first['key'][1]} 1 1"),
-        (targets[0], f"/start_trans {first['key'][1]} 0 1"),
-        (targets[0], f"/start_trans {first['key'][1]} 1 0"),
+        (source, f"/start_trans {children[0]['key'][1]} 1 1"),
+        (targets[1], f"/start_trans {children[0]['key'][1]} 1 1"),
+        (targets[0], f"/start_trans {children[0]['key'][1]} 0 1"),
+        (targets[0], f"/start_trans {children[0]['key'][1]} 1 0"),
     ):
-        barrier = threading.Event()
-        marker = f"/relay_barrier_{id(barrier)}"
-        server.add_message_listener(lambda _peer, line, marker=marker, event=barrier:
+        processed = threading.Event()
+        marker = f"/relay_barrier_{id(processed)}"
+        server.add_message_listener(lambda peer, line, marker=marker, event=processed:
                                     event.set() if line == marker else None)
         assert owner.send_message(owner.client_socket, command)
         assert owner.send_message(owner.client_socket, marker)
-        assert barrier.wait(timeout=10)
-        assert first["confirmed_state"] and not second["confirmed_state"]
-        assert not sender["confirmed_state"] and not relay["upstream"]["confirmed_state"]
-    gates[0].set()
+        assert processed.wait(10)
+        assert all(state["confirmed_state"] for state in states)
+    gates[1].set()
     gates[2].set()
-    second_peer = targets[1].client_socket.getsockname()
-    assert wait_until(lambda: second_peer in relay["route"]["completed"], timeout=15)
-    assert (Path(targets[1].file_transfer_dir) / "relay.bin").read_bytes() == run[5]
-    assert result == {} and first["owner"] is data_socket and data_socket.fileno() >= 0
-    assert _control(targets[0], receiver, False)
+    for written, received in writes:
+        assert received.wait(10)
+        assert written == payload[:1024]  # Paused writers must still drain queued bytes.
+    observed["tail"].set()
+    assert observed["pause_waiting"].wait(10)
+    assert all(state["owner"] is sock and sock.fileno() >= 0 for state, sock in zip(states, sockets))
+    assert _control(targets[1], receivers[1], False)
+    _confirmed(states, False)
+    _relay_done(relay_clients, run)
+
+
+def test_relay_cross_target_start_and_unconfirmed_reverse_intent_reach_source(
+    relay_clients, tmp_path, monkeypatch
+):
+    run = _relay(relay_clients, tmp_path, monkeypatch)
+    server, source, targets, releases = relay_clients
+    relay, sender = run[:2]
+    children = list(relay["controls"].values())
+    receivers = [target._transfer_controls._legs[
+        ((source.host, source.port), child["key"][1], 1, 1)]
+        for target, child in zip(targets, children)]
+    entered, release = threading.Event(), threading.Event()
+    releases.append(release)
+    real_send = source.send_message
+
+    def delay(sock, message, is_send_raw=False):
+        if isinstance(message, str) and message.startswith("/pause_trans "):
+            entered.set()
+            assert release.wait(20)
+        return real_send(sock, message, is_send_raw=is_send_raw)
+
+    monkeypatch.setattr(source, "send_message", delay)
+    assert _control(targets[0], receivers[0], True)
+    assert entered.wait(10)
+    assert not receivers[1]["confirmed_state"]
+    assert _control(targets[1], receivers[1], False)  # Must not deduplicate an unseen opposite request.
+    assert _control(targets[0], receivers[0], False)
+    assert wait_until(lambda: not sender["confirmed_state"])
+    release.set()
+    _confirmed([sender, relay["upstream"], *children, *receivers], False)
     _relay_done(relay_clients, run)
 
 
@@ -622,14 +669,9 @@ def test_relay_pressure_preserves_user_intent_and_source_start_cannot_open_reade
     sockets = [state["owner"] for state in relay["controls"].values()]
     gates[0].set()
     assert waiting.wait(timeout=10)
-    _confirmed((sender, upstream), True)
-    assert buffer["backpressured"] and upstream["backpressure"]
-    assert _control(server, upstream, True) is False
-    assert upstream["user_paused"]
-    assert _control(source, sender, False)
     _confirmed((sender, upstream), False)
-    assert _control(server, upstream, False)
-    assert not upstream["user_paused"] and upstream["last_requested_state"]
+    assert buffer["backpressured"]
+    assert _control(server, upstream, True)
     _confirmed((sender, upstream), True)
     assert _control(source, sender, False)
     _confirmed((sender, upstream), False)
@@ -641,14 +683,13 @@ def test_relay_pressure_preserves_user_intent_and_source_start_cannot_open_reade
     assert observed["reads"] == reads and buffer["backpressured"]
     assert _control(source, sender, True)
     _confirmed((sender, upstream), True)
-    assert _control(server, upstream, True) is False
+    assert _control(server, upstream, True)
     if close_target:
         targets[0].close()
     gates[1].set()
     gates[2].set()
     assert wait_until(lambda: not buffer["backpressured"], timeout=10)
-    assert upstream["user_paused"] and not upstream["backpressure"]
-    assert upstream["last_requested_state"] and sender["confirmed_state"]
+    assert sender["confirmed_state"] and upstream["confirmed_state"]
     assert buffer["peak"] <= buffer["high_water"] + buffer["max_enqueue"]
     assert buffer["peak"] > buffer["high_water"]
     assert all(state["owner"] is sock for state, sock in zip(relay["controls"].values(), sockets))
@@ -907,6 +948,7 @@ def test_relay_offline_source_replays_stable_route_or_stops_cleanly(
         return real_wait(instance, state, sock)
 
     monkeypatch.setattr(connect_tcp, "_wait_transfer_control", hold)
+    observed["tail"].set()
     for gate in gates:
         gate.set()
     assert partial.wait(timeout=15)

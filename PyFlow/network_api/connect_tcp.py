@@ -901,7 +901,7 @@ class _TransferControlRegistry:
         self._legs = {}
         self._instance = instance
 
-    def register(self, key, control_socket, owner):
+    def register(self, key, control_socket, owner, *, relay=None):
         """Bind an unclaimed identity, adopting only its sender's preset pause."""
         if control_socket is None or owner is None:
             raise ValueError("a control socket and leg owner are required")
@@ -911,13 +911,19 @@ class _TransferControlRegistry:
                 return state if (state["control_socket"] is control_socket
                                  and state["owner"] is owner) else None
             paused = key[3] == 0 and self._paused.get(key, False)
+            if relay is not None and key[3] == 0:
+                if paused:
+                    relay["requested"] = True
+                paused = False
+                self._paused.pop(key, None)
             state = {
                 "key": key, "control_socket": control_socket, "owner": owner,
                 "lock": threading.RLock(), "confirmed_state": paused,
                 "last_requested_state": False, "initial_notification": paused,
                 "ready": self._instance is None or key[3] == 1,
-                "user_paused": False, "backpressure": False,
             }
+            if relay is not None:
+                state["relay"] = relay
             self._legs[key] = state
             return state
 
@@ -960,7 +966,7 @@ class _TransferControlRegistry:
                 return False
             return self._send(state, state["confirmed_state"], send)
 
-    def local(self, key, paused, send=None, *, backpressure=False, owner=None):
+    def local(self, key, paused, send=None, *, owner=None):
         """Decide a sender state or submit a receiver intent, deduplicating both."""
         with self._condition:
             state = self._legs.get(key)
@@ -974,20 +980,20 @@ class _TransferControlRegistry:
                         self._paused.pop(key, None)
                         self._condition.notify_all()
                 return False
+        if "relay" in state:
+            return self._relay_control(state, paused, send, owner=owner)
         with state["lock"]:
             if not self._live(state):
                 return False
             if owner is not None and state["owner"] is not owner:
                 return False
-            if key[3] == 1:
-                state["backpressure" if backpressure else "user_paused"] = paused
-                paused = state["user_paused"] or state["backpressure"]
             if key[3] == 0:
                 if state["confirmed_state"] == paused:
                     return False
                 self._confirm(state, paused)
             else:
-                if (state["confirmed_state"] == paused
+                # Other relay participants may have an in-flight opposite intent.
+                if (key[2] != 1 and state["confirmed_state"] == paused
                         and state["last_requested_state"] == paused):
                     return False
                 state["last_requested_state"] = paused
@@ -999,6 +1005,8 @@ class _TransferControlRegistry:
             state = self._legs.get(key)
         if state is None:
             return False
+        if "relay" in state:
+            return self._relay_control(state, paused, send, control_socket=control_socket)
         with state["lock"]:
             if not self._live(state) or state["control_socket"] is not control_socket:
                 return False
@@ -1008,6 +1016,37 @@ class _TransferControlRegistry:
                 # Even a same-state request needs the actual-state notification.
                 return self._send(state, paused, send)
             return changed
+
+
+    def _relay_control(self, state, paused, send, *, control_socket=None, owner=None):
+        relay = state["relay"]
+        # Serialize request translation and notification fanout, not network I/O.
+        with relay["control_lock"]:
+            with state["lock"]:
+                if (not self._live(state)
+                        or control_socket is not None and state["control_socket"] is not control_socket
+                        or owner is not None and state["owner"] is not owner):
+                    return False
+            if control_socket is None or state["key"][3] == 0:
+                state["last_requested_state"] = paused
+                upstream = relay.get("upstream")
+                if upstream is None:
+                    relay["requested"] = paused
+                    return True
+                with upstream["lock"]:
+                    if not self._live(upstream):
+                        return False
+                    upstream["last_requested_state"] = paused
+                    return self._send(upstream, paused, send)
+            # Only a notification on the actual upstream session confirms state.
+            with state["lock"]:
+                self._confirm(state, paused)
+            for child in relay["controls"].values():
+                with child["lock"]:
+                    if self._live(child):
+                        self._confirm(child, paused)
+                        self._send(child, paused, send)
+            return True
 
     def release(self, state):
         """Retire only this owner, clear control intent and wake paused senders."""
@@ -1023,7 +1062,6 @@ class _TransferControlRegistry:
                 state["confirmed_state"] = False
                 state["last_requested_state"] = False
                 state["initial_notification"] = False
-                state["user_paused"] = state["backpressure"] = False
                 self._condition.notify_all()
                 return True
 
@@ -1140,12 +1178,12 @@ def _receive_transfer_control(instance, sock, peer, command):
         instance._transfer_controls.receive(key, sock, paused)
 
 
-def _bind_transfer_control(instance, fid, sock, owner, trans_type, direction):
+def _bind_transfer_control(instance, fid, sock, owner, trans_type, direction, *, relay=None):
     if fid is None or sock is None:
         return None  # public-key legs and standalone transfer sockets
     peer = _control_peer(instance, _socket_peer_endpoint(sock))
     state = instance._transfer_controls.register(
-        _transfer_control_key(peer, fid, trans_type, direction), sock, owner
+        _transfer_control_key(peer, fid, trans_type, direction), sock, owner, relay=relay
     )
     if state is None:
         raise RuntimeError("transfer control identity already owned")
@@ -3334,7 +3372,7 @@ class TCP_Server_Base:  # TCP server class
 
 
     def pause_trans(self, fid, peer, *, trans_type, direction):
-        """Register a pause decision (sender) or request (receiver) for one leg.
+        """Request an ordinary leg pause or a Source-arbitrated relay-wide pause.
 
         Args:
             fid (int): Nonnegative transfer id.
@@ -3343,9 +3381,9 @@ class TCP_Server_Base:  # TCP server class
             direction (int): Local data role: 0 sender, 1 receiver.
 
         Returns:
-            bool: Operation registered on a live leg; False for duplicates or a
-                missing leg. A missing sender leg retains a preset pause.
-                Registration is not peer confirmation; in-flight data still lands.
+            bool: Operation registered, not peer confirmation. Relay operations
+                are requests to Source; buffered bytes continue to all Targets.
+                A missing sender leg retains a preset pause and returns False.
 
         Raises:
             ValueError: Invalid fid/type/direction or missing peer.
@@ -3353,7 +3391,7 @@ class TCP_Server_Base:  # TCP server class
         return _set_transfer_control(self, fid, peer, trans_type, direction, True)
 
     def start_trans(self, fid, peer, *, trans_type, direction):
-        """Continue the selected leg on its existing socket; clear preset pauses.
+        """Continue the ordinary leg or whole relay on its existing data sockets.
 
         Arguments and registration result match ``pause_trans``. No seek,
         truncation or new handshake occurs; receivers continue reading throughout.
@@ -7258,6 +7296,7 @@ class TCP_Server_Base:  # TCP server class
             return
         relay = {
             "cond": threading.Condition(),
+            "control_lock": threading.RLock(), "requested": None,
             "controls": {},
             "route": route,
             "fid": fid,
@@ -7332,7 +7371,7 @@ class TCP_Server_Base:  # TCP server class
                 target_control = target_handshakes[(target, tfid)]["key"][0]
                 if not own(target_control, sock) or not own(forwarder_sock, sock):
                     return
-                control = _bind_transfer_control(self, tfid, target_control, sock, 1, 0)
+                control = _bind_transfer_control(self, tfid, target_control, sock, 1, 0, relay=relay)
                 relay["controls"][target] = control
                 try:
                     sock.connect((target[0], tport))
@@ -7385,9 +7424,12 @@ class TCP_Server_Base:  # TCP server class
             if not own(forwarder_sock, up_client):
                 return
             self._crypto_attach_transfer_in(up_client, forwarder_sock, up_stamp)
-            relay["upstream"] = _bind_transfer_control(
-                self, fid, forwarder_sock, up_client, 1, 1
-            )
+            with relay["control_lock"]:
+                relay["upstream"] = _bind_transfer_control(
+                    self, fid, forwarder_sock, up_client, 1, 1, relay=relay
+                )
+                if relay["requested"] is not None:
+                    self._transfer_controls.local(relay["upstream"]["key"], relay.pop("requested"))
             self.send_message(up_client, self.server_start_file_transfer_sign)
             self._forward_pump(
                 up_client, target_conns, forwarder_sock, fid, fname, relay, resume_offset
@@ -7443,7 +7485,6 @@ class TCP_Server_Base:  # TCP server class
             "buffered": 0, "backpressured": False, "complete": False, "failed": False,
             "high_water": max_bytes, "peak": 0, "max_enqueue": 0,
         }
-        upstream = relay["upstream"]
         queues = {(target, tfid): queue.Queue() for tfid, target, _ in target_conns}
         END = object()
         result = {"ok": 0, "ack": None}
@@ -7453,9 +7494,6 @@ class TCP_Server_Base:  # TCP server class
             state["buffered"] -= byte_count
             if state["backpressured"] and state["buffered"] <= low_water:
                 state["backpressured"] = False
-                self._transfer_controls.local(
-                    upstream["key"], False, backpressure=True, owner=upstream["owner"]
-                )
             cond.notify_all()
 
         def enqueue(chunk):
@@ -7472,9 +7510,6 @@ class TCP_Server_Base:  # TCP server class
                     pending.put(chunk)
                 if not state["backpressured"] and state["buffered"] > max_bytes:
                     state["backpressured"] = True
-                    self._transfer_controls.local(
-                        upstream["key"], True, backpressure=True, owner=upstream["owner"]
-                    )
 
         def writer(tfid, target, sock):
             key = (target, tfid)
@@ -7484,7 +7519,6 @@ class TCP_Server_Base:  # TCP server class
                     item = pending.get()
                     if item is END:
                         break
-                    _wait_transfer_control(self, controls[target], sock)
                     try:
                         if not self.send_message(sock, item):
                             return
@@ -8967,7 +9001,7 @@ class TCP_Client_Base:  # TCP client class
 
 
     def pause_trans(self, fid, peer=None, *, trans_type, direction):
-        """Register a pause decision/request for one ordinary or forwarded leg.
+        """Pause an ordinary leg or request Source-arbitrated relay-wide pause.
 
         Args:
             fid (int): Nonnegative transfer id.
@@ -8976,9 +9010,9 @@ class TCP_Client_Base:  # TCP client class
             direction (int): Local data role: 0 sender, 1 receiver.
 
         Returns:
-            bool: Operation registered on a live leg, not peer confirmation.
-                False for duplicates, wrong peers or missing legs; a missing
-                sender leg retains a preset pause. In-flight data still lands.
+            bool: Operation registered, not peer confirmation. Source decides
+                relay state; Target requests may repeat to preserve cross-peer
+                intent. A missing sender retains a preset pause and returns False.
 
         Raises:
             ValueError: Invalid fid, transfer type or direction.
