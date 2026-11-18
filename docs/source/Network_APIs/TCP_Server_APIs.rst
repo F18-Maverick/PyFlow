@@ -705,11 +705,30 @@ Built-in client commands include:
   for a newly reserved worker; busy and duplicate calls return ``False`` without
   closing or queueing. Other objects remain independent. Use ``start_trans``
   to continue an existing paused connection.
-  Forwarded recovery also requires its shared source/relay owner to be idle,
-  even when the requesting target has disconnected. Busy requests are skipped,
-  not queued; the target must request again after cleanup. An offline source's
-  existing pending requests are retained and revalidated at reconnect, with
-  one upstream reservation. No active relay is torn down to make it eligible.
+  A valid forwarded receive request instead records the actual Target control
+  socket and nonnegative numeric disk offset, read after its old receive owner
+  and file have closed. No ``?`` query or ``None`` offset is supported.
+  Server waits for all old owners of that original route, including listeners,
+  negotiations, reader/writers and ``finally``, to finish naturally. It does
+  not force teardown, start a paused route, wait on unrelated fids or block the
+  control reader/event loop while holding a global lock.
+  It then opens an independent Source-to-Server-to-Target stream per Target,
+  preserving upstream/child fids, full paths and persistence schema. Offsets,
+  runtime progress, resources and failures are independent. Bodies run in
+  parallel; a late Target does not wait for another body or final ACK. Only
+  port negotiation on the same actual control socket plus fid is briefly
+  serialized, never the body or ACK wait. One Target has at most one active
+  recovery owner; completed Targets are not resent.
+  Source remains the global pause/start arbiter; shared control state is
+  released only by its last owner. Backpressure remains independent of user
+  start. Offline Source requests stay pending. A Target disconnect drops its
+  old-socket pending request; its new session must submit a fresh actual disk
+  offset after old receive cleanup. One stream's failure does not cancel
+  siblings or automatically retry. A real Target ACK updates only its own
+  completion; intermediate success cannot fabricate an overall route ACK.
+  Strict same-session/fid generation isolation remains deferred. C4 all-Target
+  upstream EOF reconfirmation, C5 self-target rejection and C6 combined
+  acceptance are not implemented by this revision.
 - Forwarded transfers return the existing final data-ACK marker upstream only
   after the current input stream is complete and every accepted target has
   acknowledged. The normal send path reframes the marker for the upstream hop;

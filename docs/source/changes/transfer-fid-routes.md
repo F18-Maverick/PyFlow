@@ -1,13 +1,47 @@
 # Change note: server FID routes, sender ownership and socket/FID recovery
 
-> Previous transfer-control revision: C1–C4b are committed and have passed their
-> stage review gates; C5 documentation and combined acceptance are complete,
-> pending final human review.
-> The chronological entries below preserve earlier implementation history;
-> C2b supersedes the old pause/start API and wire format, and C4a/C4b supersede
-> queued/coalesced active recovery and immediate sweep ownership release.
-> Current behavior and evidence are in
-> `docs/plans/transfer-pause-start-direction-report.md`.
+> Current lifecycle revision evidence is in
+> `docs/plans/transfer-control-lifecycle-report.md`.
+> The chronological entries below preserve earlier implementation history.
+> Previous transfer-control C1–C4b commits and C5 acceptance are documented in
+> `docs/plans/transfer-pause-start-direction-report.md`; those historical
+> results are not verification of the current lifecycle revision.
+
+## Lifecycle revision C3: numeric offsets and independent parallel recovery
+
+- The user approved the revised requirements and plan. Old C3a/C3b offset
+  queries, forced route teardown and one-active-Target/FIFO rounds are withdrawn
+  history, not the current contract or current verification evidence.
+- Receiver waits for its old owner, including final cleanup and file closure,
+  then sends its actual nonnegative numeric disk offset. The sole resume line
+  remains `/resume_trans <fid> <offset> <origin> <target>`; remove `?` queries,
+  `offset=None` and query state/consumers without adding wire fields or commands.
+- Server validates the actual Target socket and stable child route, queues the
+  numeric request and waits for every old owner of the original route, including
+  listeners, negotiations, reader/writers and `finally`, to finish naturally.
+  No forced teardown, automatic start, global-lock wait or control-reader/event-
+  loop blocking; healthy control and unrelated fids continue.
+- Then each Target gets its own offset, Source→Server→Target stream, runtime
+  progress, resources and failure handling. Original upstream/child fids, full
+  paths and persistence schema remain. Bodies run in parallel: late Targets do
+  not wait for an existing large body or ACK. The same actual socket+fid only
+  serializes short port negotiation, never body transfer or final ACK.
+- C1 actual-session ownership and C2 Source-arbitrated global pause/start remain.
+  Shared task control state lives until its last owner exits; buffered bytes
+  drain and user start cannot bypass local backpressure. One stream cannot
+  overwrite sibling progress or prematurely delete the task upload row.
+- Only real Target ACKs update `completed`. All accepted Targets must really
+  acknowledge before task success; an intermediate Target cannot fabricate a
+  whole-route ACK. Completed siblings are not replayed.
+- Offline Source requests stay pending. Target disconnection discards old-socket
+  requests; reconnect requires a fresh actual disk offset on the new session.
+  Individual failure does not cancel siblings or start automatic retries.
+- Strict same-session/fid generation isolation remains deferred. C4 all-Target
+  upstream EOF reconfirmation, C5 self-target rejection and C6 combined acceptance
+  are not implemented. No new wire, schema, dependencies or CI changes.
+- This round is **pending unified verification**. Old C3a/C3b pass counts do not
+  verify this replacement. Paths, risks and historical evidence are recorded in
+  `docs/plans/transfer-control-lifecycle-report.md`.
 
 ## Lifecycle revision C2: Source-arbitrated global relay pause
 

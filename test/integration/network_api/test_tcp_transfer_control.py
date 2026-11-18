@@ -878,22 +878,215 @@ def test_disconnected_relay_target_cannot_queue_behind_live_source(relay_clients
         [0, len(payload), None, str(tmp_path / "relay.bin"), first])
     assert _control(source, sender, True)
     _confirmed((sender, relay["upstream"]), True)
-    assert source.resume_trans(second, fid, 0) is False
+    assert targets[1]._request_resumes() == 0  # A live local receiver cannot request recovery.
     targets[0].close()
     assert wait_until(lambda: first not in server.clients and relay["controls"][first]["owner"].fileno() < 0)
     assert server._resume_request(control, first, route["targets"][first], 0, origin, first) is False
-    assert server._queue_resume_to_originator(fid, route, first, 1) is False
-    assert source.resume_trans(first, fid, 0) is False
-    assert not server._pending_originator_resumes
+    assert server._queue_resume_to_originator(fid, route, first, 1, control_socket=control) is False
+    assert targets[1]._request_resumes() == 0
+    assert not server._relay_recoveries
     assert server._receive_transfers[fid]["owner"] is relay
     assert sender["owner"] is sockets[0] and sockets[0].fileno() >= 0
     assert relay["controls"][second]["owner"] is sockets[-1] and sockets[-1].fileno() >= 0
-    assert worker.is_alive() and result == {} and not source._resume_sends.get(sender["key"][:2], {}).get("targets")
+    assert worker.is_alive() and result == {}
+    _confirmed((sender, relay["upstream"], relay["controls"][second]), True)
     assert _control(source, sender, False)
     _relay_done(relay_clients, run, failed=True)
     assert all(sock.fileno() < 0 for sock in sockets)
     assert wait_until(lambda: all(not owner._receive_transfers and not owner._active_transfer_sockets
                                   and not owner._resume_sends for owner in (server, source, *targets)))
+
+
+def test_parallel_recoveries_wait_for_old_owner_and_share_source_pause(
+    relay_clients, tmp_path, monkeypatch
+):
+    server, source, targets, releases = relay_clients
+    # The untracked variant starts with legacy receive rows; retaining the same
+    # real row lets the original receiver own and update its partial file.
+    for target in targets:
+        real_progress = target._file_progress_start
+
+        def progress(store, transfer_id, size, path, peer=None, initial=0,
+                     start=real_progress):
+            return start(store, transfer_id, size, path, peer, initial) or store.setdefault(
+                transfer_id, [initial, size, None, str(path), peer])
+
+        monkeypatch.setattr(target, "_file_progress_start", progress)
+    writes = [_observe_target_writes(monkeypatch, Path(target.file_transfer_dir) / "relay.bin", 1024)
+              for target in targets]
+    raw_wait = connect_tcp._wait_transfer_control
+    run = _relay(relay_clients, tmp_path, monkeypatch)
+    relay, sender, gates, worker, result, payload, observed, _ = run
+    fid, route = relay["fid"], relay["route"]
+    origin = source.client_socket.getsockname()
+    addresses = [target.client_socket.getsockname() for target in targets]
+    old_receive = server._receive_transfers[fid]
+    old_sockets = [sender["owner"], relay["upstream"]["owner"],
+                   *(relay["controls"][address]["owner"] for address in addresses)]
+    source.file_upload_progress.setdefault(sender["key"][:2],
+        [0, len(payload), None, str(tmp_path / "relay.bin"), addresses[0]])
+    for target, address in zip(targets, addresses):
+        target.file_recv_progress.setdefault(route["targets"][address],
+            [0, len(payload), None, str(Path(target.file_transfer_dir) / "relay.bin"), origin])
+    partial = [threading.Event() for _ in targets]
+    interrupt, cleaning, cleaned = (threading.Event() for _ in range(3))
+    releases.extend((interrupt, cleaned))
+    real_send, real_release = server.send_message, connect_tcp._release_receive
+
+    def hold_payload(sock, message, is_send_raw=False):
+        sent = real_send(sock, message, is_send_raw=is_send_raw)
+        for index, address in enumerate(addresses):
+            if sock is relay["controls"][address]["owner"] and message == payload[:1024]:
+                partial[index].set()
+                assert interrupt.wait(timeout=30), "old target writer was not released"
+        return sent
+
+    def hold_cleanup(instance, key, record):
+        if instance is server and key == fid and record is old_receive:
+            cleaning.set()
+            assert cleaned.wait(timeout=30), "old route cleanup was not released"
+        return real_release(instance, key, record)
+
+    monkeypatch.setattr(server, "send_message", hold_payload)
+    monkeypatch.setattr(connect_tcp, "_release_receive", hold_cleanup)
+    for gate in gates:
+        gate.set()
+    assert all(event.wait(timeout=15) for event in partial)
+    assert all(event.wait(timeout=10) for _, event in writes)
+    assert all(written == payload[:1024] for written, _ in writes)
+    controls = [server.clients[address]["socket"] for address in addresses]
+    first, second = addresses
+    assert server._resume_request(controls[0], first, route["targets"][first], 1024, origin, first)
+    recovery = server._relay_recoveries[fid]
+    assert recovery["pending"] == {first: (controls[0], 1024)} and not recovery["active"]
+    assert server._receive_transfers[fid] is old_receive and old_receive["owner"] is relay
+    assert all(sock.fileno() >= 0 for sock in old_sockets)
+    assert worker.is_alive() and result == {}
+    receiver = targets[0]._transfer_controls._legs[((source.host, source.port), route["targets"][first], 1, 1)]
+    assert _control(targets[0], receiver, True)
+    _confirmed((sender, relay["upstream"], *relay["controls"].values()), True)
+    assert server._resume_request(controls[1], second, route["targets"][second], 1024, origin, second)
+    assert recovery["pending"] == dict(zip(addresses, ((control, 1024) for control in controls)))
+    assert not recovery["active"]
+    assert server._receive_transfers[fid] is old_receive
+    assert all(sock.fileno() >= 0 for sock in old_sockets)
+    _confirmed((sender, relay["upstream"], *relay["controls"].values()), True)
+
+    streams, local = {}, threading.local()
+    inherited_wait = connect_tcp._wait_transfer_control
+    real_condition_wait = source._transfer_pause_cond.wait
+    real_source_send = source.send_message
+
+    def hold_recovery(instance, state, sock):
+        if instance is source and state is not None and state["key"] == sender["key"] and state is not sender:
+            stream = streams.get(sock)
+            if stream is None:
+                stream = {name: threading.Event() for name in ("entered", "gate", "blocked", "passed", "written")}
+                stream["writes"] = []
+                streams[sock] = stream
+                releases.append(stream["gate"])
+            stream["entered"].set()
+            assert stream["gate"].wait(timeout=30), "recovery body gate was not released"
+            local.socket = sock
+            try:
+                raw_wait(instance, state, sock)
+            finally:
+                del local.socket
+            stream["passed"].set()
+            return
+        return inherited_wait(instance, state, sock)
+
+    def observe_pause_wait(timeout=None):
+        sock = getattr(local, "socket", None)
+        if sock is not None:
+            streams[sock]["blocked"].set()
+        return real_condition_wait(timeout)
+
+    slow = {"socket": None}
+    slow_entered, slow_release = threading.Event(), threading.Event()
+    releases.append(slow_release)
+
+    def observe_source_write(sock, message, is_send_raw=False):
+        if sock is slow["socket"] and message == payload[1024:2048]:
+            slow_entered.set()
+            assert slow_release.wait(timeout=30), "slow recovery writer was not released"
+        sent = real_source_send(sock, message, is_send_raw=is_send_raw)
+        if sock in streams and isinstance(message, bytes) and sent:
+            streams[sock]["writes"].append(message)
+            streams[sock]["written"].set()
+        return sent
+
+    monkeypatch.setattr(connect_tcp, "_wait_transfer_control", hold_recovery)
+    monkeypatch.setattr(source._transfer_pause_cond, "wait", observe_pause_wait)
+    monkeypatch.setattr(source, "send_message", observe_source_write)
+    assert _control(source, sender, False)
+    _confirmed((sender, relay["upstream"]), False)
+    sender["owner"].shutdown(socket.SHUT_RDWR)
+    observed["tail"].set()
+    interrupt.set()
+    assert cleaning.wait(timeout=15)
+    worker.join(timeout=10)
+    assert not worker.is_alive() and result == {"ack": False}
+    assert wait_until(lambda: all(not target._receive_transfers for target in targets))
+    assert all(target.file_recv_progress[route["targets"][address]][0] == 1024
+               and (Path(target.file_transfer_dir) / "relay.bin").read_bytes() == payload[:1024]
+               for target, address in zip(targets, addresses))
+    assert server._receive_transfers[fid] is old_receive
+    assert not recovery["active"] and set(recovery["pending"]) == set(addresses)
+    assert not streams
+    cleaned.set()
+    assert wait_until(lambda: len(streams) == 2 and all(stream["entered"].is_set() for stream in streams.values()),
+                      timeout=20)
+    assert set(recovery["active"]) == set(addresses) and not recovery["pending"]
+    assert fid not in server._receive_transfers
+    replacements = [server._receive_transfers[(address, fid)]["owner"] for address in addresses]
+    assert replacements[0] is not replacements[1]
+    assert all(replacement["route"] is route and set(replacement["controls"]) == {address}
+               for address, replacement in zip(addresses, replacements))
+    new_sender = source._transfer_controls._legs[sender["key"]]
+    assert set(new_sender["owners"]) == set(streams)
+    assert replacements[0]["upstream"] is replacements[1]["upstream"]
+    assert len(replacements[0]["upstream"]["owners"]) == 2
+    slow["socket"] = source._active_transfer_sockets[(first, fid)]
+    assert source._transfer_controls.release(sender) is False
+    connect_tcp._release_receive(server, fid, old_receive)
+    assert all(server._receive_transfers[(address, fid)]["owner"] is replacement
+               for address, replacement in zip(addresses, replacements))
+    receiver_states = [target._transfer_controls._legs[
+        ((source.host, source.port), route["targets"][address], 1, 1)]
+        for target, address in zip(targets, addresses)]
+    states = (new_sender, *(replacement["upstream"] for replacement in replacements),
+              *(replacement["controls"][address] for address, replacement in zip(addresses, replacements)),
+              *receiver_states)
+    _confirmed(states, False)
+    assert _control(targets[0], receiver_states[0], True)
+    _confirmed(states, True)
+    for stream in streams.values():
+        stream["gate"].set()
+    assert all(stream["blocked"].wait(timeout=10) for stream in streams.values())
+    assert all(not stream["passed"].is_set() and not stream["writes"] for stream in streams.values())
+    assert _control(targets[1], receiver_states[1], False)
+    assert slow_entered.wait(timeout=15)
+    assert wait_until(lambda: second in route["completed"]
+                      and (second, fid) not in source._active_transfer_sockets
+                      and (second, fid) not in source._resume_sends
+                      and (second, fid) not in server._receive_transfers, timeout=20)
+    assert first not in route["completed"]
+    assert source._transfer_controls._legs[sender["key"]] is new_sender
+    assert new_sender["owners"] == {slow["socket"]} and new_sender["owner"] is slow["socket"]
+    assert server._receive_transfers[(first, fid)]["owner"] is replacements[0]
+    assert server._transfer_controls._legs[replacements[0]["upstream"]["key"]] is replacements[0]["upstream"]
+    assert len(replacements[0]["upstream"]["owners"]) == 1
+    slow_release.set()
+    assert all(stream["written"].wait(timeout=15) for stream in streams.values())
+    assert all(stream["passed"].is_set() and stream["writes"][0] == payload[1024:2048]
+               for stream in streams.values())
+    assert wait_until(lambda: not server._relay_recoveries and not server._forward_relays and all(
+        not owner._transfer_controls._legs and not owner._transfer_pause
+        and not owner._active_transfer_sockets and not owner._receive_transfers
+        and not owner._resume_sends for owner in (server, source, *targets)), timeout=20)
+    assert not server._fid_routes and not server._fid_route_index
+    assert all((Path(target.file_transfer_dir) / "relay.bin").read_bytes() == payload for target in targets)
 
 
 @pytest.mark.parametrize("fault", ["source", "stop"])
@@ -997,9 +1190,10 @@ def test_relay_offline_source_replays_stable_route_or_stops_cleanly(
         return
     assert output.read_bytes() == payload[:1024]
     request_control = server.clients[first]["socket"]
-    assert server._resume_request(request_control, first, child, 0, origin, first) is False
-    assert server._resume_request(request_control, first, child, 1024, origin, first) is False
-    assert server._pending_originator_resumes == {origin: {(fid, first): 1024}}
+    assert server._resume_request(request_control, first, child, 1024, origin, first) is True
+    recovery = server._relay_recoveries[fid]
+    assert recovery["pending"] == {first: (request_control, 1024)}
+    assert recovery["route"] is route and not recovery["active"]
     calls, real_forward = [], source._forward_one
 
     def forward(*args, **kwargs):
@@ -1023,10 +1217,11 @@ def test_relay_offline_source_replays_stable_route_or_stops_cleanly(
     server._transfer_controls.discard_socket(old_server)
     connect_tcp._release_receive(server, fid, old_receive)
     connect_tcp._release_receive(targets[0], child, old_target_receive)
-    assert server._receive_transfers[fid]["owner"] is replacement
+    assert server._receive_transfers[(first, fid)]["owner"] is replacement
     assert child in targets[0]._receive_transfers and source._transfer_controls._legs[sender["key"]] is new_sender
     assert server._flush_pending_originator_resumes(origin) == 0
     assert source.resume_trans(first, fid, 1024) is False
+    assert first in recovery["active"] and not recovery["pending"]
     finish.set()
     assert wait_until(lambda: calls == [(fid, 1024, True)], timeout=20)
     assert output.read_bytes() == payload and not server._fid_routes and not server._fid_route_index
@@ -1034,7 +1229,7 @@ def test_relay_offline_source_replays_stable_route_or_stops_cleanly(
         not owner._transfer_controls._legs and not owner._transfer_pause
         and not owner._active_transfer_sockets and not owner._receive_transfers
         and not owner._resume_sends for owner in (server, source, *targets)))
-    assert not server._pending_originator_resumes
+    assert not server._relay_recoveries
 
 
 def test_reconnect_keeps_delayed_forward_resume_on_its_old_session(channel, tmp_path, monkeypatch):
@@ -1060,6 +1255,8 @@ def test_reconnect_keeps_delayed_forward_resume_on_its_old_session(channel, tmp_
     monkeypatch.setattr(client, "_forward_one", delayed)
     assert client.resume_trans(target, fid, 0)
     assert entered.wait(10)
+    assert set(client._resume_sends) == {(target, fid)}
+    assert client._resume_sends[(target, fid)]["control_socket"] is old_control
     assert client.connect(), "new control reader must not wait for the old worker"
     new_control = client.client_socket
     assert new_control is not old_control

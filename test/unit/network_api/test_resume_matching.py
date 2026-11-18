@@ -80,6 +80,31 @@ def test_resume_command_preserves_shell_quoted_endpoint_identity():
 
 
 @pytest.mark.parametrize("line", [
+    "/resume_trans 304 ? '(\"host\", 5)' '(\"target\", 6)'",
+    "/resume_trans 304 ? '(\"host\", 5)' '(\"target\", 6)' extra",
+    "/resume_trans 304 ?? '(\"host\", 5)' '(\"target\", 6)'",
+])
+def test_resume_rejects_non_numeric_or_ambiguous_offsets(line):
+    assert parse_resume_command(line) is None
+
+
+def test_resume_formatter_preserves_zero_and_numeric_offsets():
+    origin, target = ("source", 1), ("target", 2)
+    assert parse_resume_command(format_resume_line(0, 0, origin, target)) == (
+        0, 0, origin, target
+    )
+
+
+@pytest.mark.parametrize("line", [
+    "/resume_trans -1 0 '(\"host\", 5)' '(\"target\", 6)'",
+    "/resume_trans 304 -1 '(\"host\", 5)' '(\"target\", 6)'",
+])
+def test_resume_numeric_bounds_remain_rejected(line):
+    assert parse_resume_command(line) is None
+
+
+
+@pytest.mark.parametrize("line", [
     "/resume_trans 304 1",
     "/forward_resume '(\"host\", 5)' 304 1",
     "/resume_trans 304 -1 '(\"host\", 5)' '(\"target\", 6)'",

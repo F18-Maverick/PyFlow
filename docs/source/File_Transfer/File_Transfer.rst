@@ -944,8 +944,8 @@ keep ``relays`` empty; nonempty older client relay metadata is rejected and its
 file preserved, including on shutdown. Five-item upload/download values remain
 unchanged. The source recovers a forwarded file from its upload path alone;
 directory/destination metadata is not duplicated because the target retains
-its full receive path. Per-upload locks and in-flight target sets are transient
-and released after use, not persisted.
+its full receive path. Per-Target recovery owners and stream progress are
+transient; the task upload row and relay snapshot schema remain unchanged.
 
 Targets accepted after reachability filtering remain in the mapping even if
 their listener or start handshake fails. A successful target loses its reverse
@@ -960,17 +960,50 @@ timeout or a lost ACK conservatively retains the source upload progress,
 even if the server completed delivery. No separate receipt or retry
 protocol is used. If a target cannot send its final ACK, its receive entry
 survives even when the disk file is complete; an EOF replay with the same fid
-can confirm it without retransmitting the body. A shared upstream fid admits
-one recovery owner at a time. Running, paused, negotiating or finalizing
-source/relay owners reject another request without queueing or tearing down
-the live relay. A disconnected target must request again after that owner
-exits; one skipped request does not promise eventual automatic replay.
-Completed targets are not replayed. If the source is offline and no relay is
-live, the server retains the latest offset per upstream fid/target. Reconnect
-revalidates and reserves one eligible replay through the secure control path;
-failed writes retain pending requests, and completed or missing routes are
-pruned. Other independent fids remain eligible. Receive requests/listeners
-retain per-object ownership through final cleanup, including tracking off.
+can confirm it without retransmitting the body.
+
+A validated forwarded receive request carries a nonnegative numeric offset
+read from the actual file after its old receive owner, including ``finally``,
+has exited and closed the file. Server validates the actual Target control
+socket, origin, target and child route, and retains that socket and offset.
+There is no Server offset query, ``?`` offset or ``offset=None`` value.
+
+If the original route still has an upstream/downstream data leg, listener,
+negotiation, reader/writer or finalizing owner, Server only queues the request.
+It does not tear down live legs or release user pause. Recovery starts after
+all original route owners, including final resource cleanup, have naturally
+finished; a closed socket alone is not that boundary. The wait is route-scoped
+and off the control reader/event loop, without holding a global lock. Healthy
+control sessions and unrelated fids continue.
+
+After that boundary, each unfinished Target has its own numeric offset,
+Source-to-Server-to-Target stream, runtime progress, resource ownership and
+failure handling. Original upstream/child fids and full receive paths stay
+stable; old relay queues are not reused. Recovery bodies run concurrently:
+a late Target can start while another is sending a large body or waiting for
+its final ACK. Only port negotiation on the same actual control socket plus
+fid is briefly serialized; that lock never covers body transfer or final ACK.
+Duplicate requests cannot create two active owners for the same Target.
+
+Source remains the global user pause/start arbiter across these streams.
+Their task control state stays alive until its last owner exits. Server
+writers drain buffered bytes during pause, and user start cannot bypass local
+backpressure. A Target's real final ACK updates only that Target's completion;
+it cannot synthesize a whole-route ACK. The Source upload row and Server route
+remain until all accepted Targets have real ACK evidence and the existing
+final upstream ACK succeeds. Already-confirmed Targets are not replayed.
+
+An offline Source leaves valid requests pending. A disconnected Target loses
+requests bound to its old control socket; after reconnect it waits for old
+receive cleanup and submits a fresh actual disk offset on its new socket.
+No stale request is borrowed by a replacement session. One stream's failure
+does not cancel siblings or start an automatic retry loop. Existing retained
+rows can recover with tracking off, but no new recovery rows are fabricated.
+
+All-Target completion followed by a failed upstream ACK remains retained;
+the separate EOF reconfirmation lifecycle stage is not implemented here.
+Delayed pause/start across same-session, same-fid data-leg replacement is
+also explicitly deferred; no generation-isolation guarantee is added.
 Fids no longer encode a plain/relay kind: the reserved low bit is always zero,
 and diagnostics use ``e<epoch>.<counter>``. Ordinary senders own their FIDs;
 the relay source owns the upstream FID and the Server allocates one child FID
@@ -981,9 +1014,9 @@ ACK.
 After reconnect, the server requests that peer's eligible interrupted downloads,
 and the client runs the same per-object request pass. Manual recovery can use
 the existing control connection; a data-only failure does not start a new retry
-loop. There is no wildcard-FID or public resume-all command. Existing owners
-finish cleanup before automatic recovery; busy shared relays follow the skip
-rule above rather than promising completion from one reconnect request.
+loop. There is no wildcard-FID or public resume-all command. Ordinary owners
+must finish cleanup before recovery; forwarded requests wait for the original
+route's complete old-owner cleanup, then use independent parallel streams above.
 
 .. _related-apis:
 

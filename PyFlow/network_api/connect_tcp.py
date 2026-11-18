@@ -624,7 +624,9 @@ def _delete_config(instance, config_name, *, is_list_config):
             raise RuntimeError("stop the instance and finish active transfers before deletion")
         if hasattr(instance, "_forward_relays"):
             with instance._forward_relays_lock:
-                if instance._forward_relays:
+                if instance._forward_relays or any(
+                    state["active"] for state in instance._relay_recoveries.values()
+                ):
                     raise RuntimeError("finish active relays before deletion")
         with ExitStack() as locks:
             for store in stores:
@@ -668,11 +670,7 @@ def _resume_offset_for(entry):
 
 
 def parse_resume_command(command):
-    """Parse ``/resume_trans <fid> <offset> <origin> <target>`` or return None.
-
-    Addresses are shell-quoted two-item tuple literals. Return the integer
-    fid/offset and two endpoint tuples; routing validates their actual owners.
-    """
+    """Parse the numeric-offset resume command, or return None."""
     try:
         parts = shlex.split(command)
         if len(parts) != 5 or parts[0].lower() != RESUME_LINE:
@@ -747,12 +745,14 @@ def _claim_receive(instance, fid, control_socket, owner=None):
                 return None
             if owner is not None and record["control_socket"] is control_socket:
                 record["owner"] = owner
+                instance._transfer_progress_changed.notify_all()
                 return record
             if record["deadline"] > time.monotonic():
                 return None
         record = {"control_socket": control_socket, "owner": owner,
                   "deadline": time.monotonic() + RESUME_ACCEPT_TIMEOUT}
         instance._receive_transfers[fid] = record
+        instance._transfer_progress_changed.notify_all()
         return record
 
 
@@ -790,6 +790,17 @@ def _retire_transfer_session(instance, control_socket):
     instance._transfer_handshakes.cancel_socket(control_socket)
     instance._transfer_controls.discard_socket(control_socket)
     _discard_receive_requests(instance, control_socket)
+    if hasattr(instance, "_relay_recoveries"):
+        with instance._transfer_progress_changed, instance._forward_relays_lock:
+            for fid, state in instance._relay_recoveries.items():
+                for target, (sock, _) in list(state["pending"].items()):
+                    if sock is control_socket:
+                        del state["pending"][target]
+                for target, reservation in state["active"].items():
+                    record = reservation["record"]
+                    if reservation["target_socket"] is control_socket and record["owner"] is None:
+                        _release_receive(instance, (target, fid), record)
+            instance._transfer_progress_changed.notify_all()
     with instance._transfer_progress_lock:
         sends = [(key, state) for key, state in instance._resume_sends.items()
                  if state.get("control_socket") is control_socket]
@@ -811,24 +822,36 @@ def _wait_transfer_session(instance, retired):
                   for fid, record in receives))
 
 
-def _start_resume_send(instance, key, target, send, *, control_socket):
-    """Atomically reserve one recovery worker; busy objects are never queued."""
+def _start_resume_send(instance, key, target, send, *, control_socket, forward=False):
+    """Reserve one ordinary owner or an independent forwarded Target owner."""
+    owner_key = (target, key[1]) if forward else key
     with instance._transfer_progress_lock:
         if instance._progress_discarded or key not in instance.file_upload_progress:
             return False
         if (control_socket.fileno() < 0 or instance._transfer_handshakes.closed(control_socket)
-                or _transfer_busy(instance, key, control_socket)):
+                or not forward and _transfer_busy(instance, key, control_socket)):
             return False
-        state = instance._resume_sends.get(key)
+        state = instance._resume_sends.get(owner_key)
         if state is None:
             state = {"lock": threading.RLock(), "users": 0, "targets": set(),
                      "control_socket": control_socket}
-            instance._resume_sends[key] = state
+            instance._resume_sends[owner_key] = state
+        if target in state["targets"] or state["control_socket"] is not control_socket:
+            return False
         state["targets"].add(target)
 
     def run():
         try:
-            with _sending_transfer(instance, key, control_socket=control_socket):
+            with _sending_transfer(instance, owner_key, control_socket=control_socket):
+                if forward:
+                    with instance._transfer_progress_changed:
+                        instance._transfer_progress_changed.wait_for(lambda:
+                            (key not in instance._active_transfer_sockets
+                             and key not in instance._active_transfer_fids
+                             and key not in instance._resume_sends)
+                            or instance._transfer_handshakes.closed(control_socket))
+                    if instance._transfer_handshakes.closed(control_socket):
+                        return
                 entry = instance.file_upload_progress.get(key)
                 if entry is not None:
                     send(entry)
@@ -836,7 +859,7 @@ def _start_resume_send(instance, key, target, send, *, control_socket):
             with instance._transfer_progress_changed:
                 state["targets"].discard(target)
                 if not state["users"] and not state["targets"]:
-                    instance._resume_sends.pop(key, None)
+                    instance._resume_sends.pop(owner_key, None)
                 instance._transfer_progress_changed.notify_all()
 
     threading.Thread(target=run, daemon=True).start()
@@ -901,15 +924,19 @@ class _TransferControlRegistry:
         self._legs = {}
         self._instance = instance
 
-    def register(self, key, control_socket, owner, *, relay=None):
+    def register(self, key, control_socket, owner, *, relay=None, shared=False):
         """Bind an unclaimed identity, adopting only its sender's preset pause."""
         if control_socket is None or owner is None:
             raise ValueError("a control socket and leg owner are required")
         with self._condition:
             state = self._legs.get(key)
             if state is not None:
-                return state if (state["control_socket"] is control_socket
-                                 and state["owner"] is owner) else None
+                if state["control_socket"] is not control_socket:
+                    return None
+                if owner not in state["owners"] and not (shared and state["shared"]):
+                    return None
+                state["owners"].add(owner)
+                return state
             paused = key[3] == 0 and self._paused.get(key, False)
             if relay is not None and key[3] == 0:
                 if paused:
@@ -918,6 +945,7 @@ class _TransferControlRegistry:
                 self._paused.pop(key, None)
             state = {
                 "key": key, "control_socket": control_socket, "owner": owner,
+                "owners": {owner}, "shared": shared,
                 "lock": threading.RLock(), "confirmed_state": paused,
                 "last_requested_state": False, "initial_notification": paused,
                 "ready": self._instance is None or key[3] == 1,
@@ -970,7 +998,7 @@ class _TransferControlRegistry:
         """Decide a sender state or submit a receiver intent, deduplicating both."""
         with self._condition:
             state = self._legs.get(key)
-            if owner is not None and (state is None or state["owner"] is not owner):
+            if owner is not None and (state is None or owner not in state["owners"]):
                 return False
             if state is None:
                 if key[3] == 0:
@@ -985,7 +1013,7 @@ class _TransferControlRegistry:
         with state["lock"]:
             if not self._live(state):
                 return False
-            if owner is not None and state["owner"] is not owner:
+            if owner is not None and owner not in state["owners"]:
                 return False
             if key[3] == 0:
                 if state["confirmed_state"] == paused:
@@ -1025,17 +1053,15 @@ class _TransferControlRegistry:
             with state["lock"]:
                 if (not self._live(state)
                         or control_socket is not None and state["control_socket"] is not control_socket
-                        or owner is not None and state["owner"] is not owner):
+                        or owner is not None and owner not in state["owners"]):
                     return False
             if control_socket is None or state["key"][3] == 0:
                 state["last_requested_state"] = paused
                 upstream = relay.get("upstream")
-                if upstream is None:
+                if upstream is None or not self._live(upstream):
                     relay["requested"] = paused
                     return True
                 with upstream["lock"]:
-                    if not self._live(upstream):
-                        return False
                     upstream["last_requested_state"] = paused
                     return self._send(upstream, paused, send)
             # Only a notification on the actual upstream session confirms state.
@@ -1048,13 +1074,21 @@ class _TransferControlRegistry:
                         self._send(child, paused, send)
             return True
 
-    def release(self, state):
-        """Retire only this owner, clear control intent and wake paused senders."""
+    def release(self, state, *, owner=None):
+        """Release one data owner; the last one retires shared task control."""
         with state["lock"]:
             with self._condition:
                 key = state["key"]
                 if self._legs.get(key) is not state:
                     return False
+                if owner is not None:
+                    if owner not in state["owners"]:
+                        return False
+                    state["owners"].remove(owner)
+                    if state["owners"]:
+                        state["owner"] = next(iter(state["owners"]))
+                        return True
+                state["owners"].clear()
                 del self._legs[key]
                 self._paused.pop(key, None)
                 if "outbox" in state:
@@ -1121,9 +1155,9 @@ class _TransferControlRegistry:
 
     def release_owner(self, owner):
         with self._condition:
-            states = [state for state in self._legs.values() if state["owner"] is owner]
+            states = [state for state in self._legs.values() if owner in state["owners"]]
         for state in states:
-            self.release(state)
+            self.release(state, owner=owner)
 
 
 def _control_peer(instance, peer):
@@ -1178,12 +1212,13 @@ def _receive_transfer_control(instance, sock, peer, command):
         instance._transfer_controls.receive(key, sock, paused)
 
 
-def _bind_transfer_control(instance, fid, sock, owner, trans_type, direction, *, relay=None):
+def _bind_transfer_control(instance, fid, sock, owner, trans_type, direction, *, relay=None, shared=False):
     if fid is None or sock is None:
         return None  # public-key legs and standalone transfer sockets
     peer = _control_peer(instance, _socket_peer_endpoint(sock))
     state = instance._transfer_controls.register(
-        _transfer_control_key(peer, fid, trans_type, direction), sock, owner, relay=relay
+        _transfer_control_key(peer, fid, trans_type, direction), sock, owner,
+        relay=relay, shared=shared,
     )
     if state is None:
         raise RuntimeError("transfer control identity already owned")
@@ -1782,6 +1817,21 @@ class _TransferHandshakeRegistry:
         self._unresolved = set()
         self._closed = weakref.WeakSet()
         self._resources = {}
+        self._negotiating = set()
+
+    @contextmanager
+    def serialized(self, control_socket, fid):
+        """Serialize only request/port pairs, not their data or ACK lifetimes."""
+        key = (control_socket, fid)
+        with self._changed:
+            self._changed.wait_for(lambda: key not in self._negotiating)
+            self._negotiating.add(key)
+        try:
+            yield
+        finally:
+            with self._changed:
+                self._negotiating.remove(key)
+                self._changed.notify_all()
 
     def register(self, control_socket, fid):
         key = (control_socket, fid)
@@ -2830,9 +2880,7 @@ class TCP_Server_Base:  # TCP server class
         # One route per local upstream fid; downstream keys point to that fid.
         self._fid_routes = {}
         self._fid_route_index = {}  # (receiver, downstream fid) -> upstream fid
-        # Resume requests that arrived before the originator reconnected:
-        # originator -> {(upstream fid, target): latest disk offset}.
-        self._pending_originator_resumes = {}
+        self._relay_recoveries = {}  # route requests and independent Target owners
         # Transfer ids for the legs this instance sends (see `_FidAllocator`).
         # Inbound ids use local integer keys; outbound ids use (receiver, fid).
         # Equal numbers cannot share progress, pause state or sockets.
@@ -3181,6 +3229,7 @@ class TCP_Server_Base:  # TCP server class
             if self._fid_routes.get(fid) is not route:
                 return False
             del self._fid_routes[fid]
+            self._relay_recoveries.pop(fid, None)
             for target, child in route["targets"].items():
                 key = (target, child)
                 if self._fid_route_index.get(key) == fid:
@@ -5540,11 +5589,7 @@ class TCP_Server_Base:  # TCP server class
         elif shlex.split(command.lower())[0] == RESUME_LINE:
             parsed = parse_resume_command(command)
             if parsed is not None:
-                threading.Thread(
-                    target=self._resume_request,
-                    args=(client_socket, client_address, *parsed),
-                    daemon=True,
-                ).start()
+                self._resume_request(client_socket, client_address, *parsed)
             return None
         elif (
             self.is_enable_encrypto
@@ -6865,12 +6910,7 @@ class TCP_Server_Base:  # TCP server class
         return started
 
     def resume_trans(self, peer_addr, fid, offset):
-        """Queue direct or forwarded recovery from the existing upload row.
-
-        The unified request has validated origin, target and route before this
-        method. Direct recovery sends ``/file``; forwarded replay keeps the
-        stable upstream fid and uses ``/forward_item`` with ``fid=`` and
-        ``resume=``.
+        """Reserve ordinary recovery from this receiver's existing upload row.
 
         Args:
             peer_addr (tuple | None): Receiver ``(ip, port)`` for this upload.
@@ -6883,6 +6923,14 @@ class TCP_Server_Base:  # TCP server class
         if peer_addr is None:
             return False
         peer_addr = tuple(peer_addr)
+        with self.client_lock:
+            info = self.clients.get(peer_addr)
+        if info is None:
+            return False
+        return self._resume_on_socket(peer_addr, fid, offset, info["socket"])
+
+    def _resume_on_socket(self, peer_addr, fid, offset, control_socket):
+        """Use the validated receiver session, not a replacement at the same peer."""
         key = (peer_addr, fid)
         entry = self.file_upload_progress.get(key)
         if entry is None or entry[4] is None or tuple(entry[4]) != peer_addr:
@@ -6890,11 +6938,11 @@ class TCP_Server_Base:  # TCP server class
             return False
         with self.client_lock:
             info = self.clients.get(peer_addr)
-        if info is None:
+        if info is None or info["socket"] is not control_socket:
             return False
 
         def send(entry):
-            with _transfer_handshake(self, info["socket"], fid) as handshake:
+            with _transfer_handshake(self, control_socket, fid) as handshake:
                 command = f"/file {shlex.quote(os.path.basename(str(entry[3])))} {fid}"
                 if not _send_transfer_request(self, handshake, command):
                     return
@@ -6907,13 +6955,13 @@ class TCP_Server_Base:  # TCP server class
                 try:
                     self.file_transfer_mode(
                         entry[3], peer_addr[0], port, client_port,
-                        control_socket=info["socket"], crypto=stamp, fid=fid,
+                        control_socket=control_socket, crypto=stamp, fid=fid,
                         peer=peer_addr, resume_offset=offset,
                     )
                 finally:
                     self.pfree(client_port)
 
-        return _start_resume_send(self, key, peer_addr, send, control_socket=info["socket"])
+        return _start_resume_send(self, key, peer_addr, send, control_socket=control_socket)
 
 
     def _is_control_local_endpoint(self, endpoint, sock):
@@ -6951,98 +6999,123 @@ class TCP_Server_Base:  # TCP server class
         return _socket_local_endpoint(sock) or (self.host, self.port)
 
     def _resume_request(self, client_socket, client_address, fid, offset, origin, target):
-        """Validate requester, origin, target and scoped route before recovery.
-
-        ``client_socket`` is the requester's control socket (or its peer address
-        when a caller drives the method directly); it names the local side the
-        origin must match.
-        """
+        """Validate the actual requester before registering background recovery."""
         client_address, origin, target = tuple(client_address), tuple(origin), tuple(target)
-        if target != client_address:
+        with self.client_lock:
+            info = self.clients.get(client_address)
+        if (target != client_address or type(offset) is not int or offset < 0
+                or info is None or info["socket"] is not client_socket):
             return False
         if self._is_control_local_endpoint(origin, client_socket):
-            return self.resume_trans(client_address, fid, offset)
+            return self._resume_on_socket(client_address, fid, offset, client_socket)
         found = self._lookup_fid_route(client_address, fid)
         if found is not None:
             upstream, route = found
             if route["originator"] == origin:
-                return self._queue_resume_to_originator(upstream, route, target, offset)
+                return self._queue_resume_to_originator(
+                    upstream, route, target, offset, control_socket=client_socket)
             return False
         self._log(f"resume: transfer {format_fid(fid)} has no matching origin/target route")
         return False
 
-    def _relay_resume_busy(self, fid):
-        """Called under progress/route locks; include setup and finalizing owners."""
-        record = self._receive_transfers.get(fid)
-        return (_transfer_busy(self, fid, None)
-                or any(relay["fid"] == fid for relay in self._forward_relays.values())
-                or record is not None and (
-                    record["owner"] is not None or record["deadline"] > time.monotonic()
-                ))
-
-    def _queue_resume_to_originator(self, originator_fid, route, target_addr, offset):
-        """Keep the latest target offset until its originator accepts the request."""
-        originator, target = route["originator"], tuple(target_addr)
-        with self._transfer_progress_lock, self._forward_relays_lock:
-            if (self._fid_routes.get(originator_fid) is not route
-                    or target not in route["targets"] or target in route["completed"]
-                    or self._relay_resume_busy(originator_fid)):
-                return False
-            self._pending_originator_resumes.setdefault(originator, {})[
-                (originator_fid, target)
-            ] = offset
-        return self._flush_pending_originator_resumes(originator) > 0
-
-    def _flush_pending_originator_resumes(self, client_address, *, control_socket=None):
-        """Send queued requests through the secure control path without early removal."""
-        client_address = tuple(client_address)
-        with self._forward_relays_lock:
-            pending = list(self._pending_originator_resumes.get(client_address, {}).items())
+    def _queue_resume_to_originator(self, fid, route, target_addr, offset, *, control_socket):
+        """Retain one receiver's numeric request without interrupting its route."""
+        target = tuple(target_addr)
         with self.client_lock:
-            info = self.clients.get(client_address)
-        if (not pending or info is None
-                or control_socket is not None and info["socket"] is not control_socket
-                or not self._wait_control_secure(info["socket"])):
+            info = self.clients.get(target)
+        with self._transfer_progress_lock, self._forward_relays_lock:
+            if (self._progress_discarded or self._fid_routes.get(fid) is not route
+                    or target not in route["targets"] or target in route["completed"]
+                    or type(offset) is not int or offset < 0 or info is None
+                    or info["socket"] is not control_socket):
+                return False
+            state = self._relay_recoveries.get(fid)
+            if state is None:
+                state = {"route": route, "pending": {}, "active": {},
+                         "control": {"control_lock": threading.RLock(),
+                                     "requested": None, "controls": {}}}
+                self._relay_recoveries[fid] = state
+            active = state["active"].get(target)
+            if (active is not None and active["target_socket"] is control_socket
+                    or state["pending"].get(target) == (control_socket, offset)):
+                return False
+            state["pending"][target] = (control_socket, offset)
+        self._flush_pending_originator_resumes(route["originator"])
+        return True
+
+    def _flush_pending_originator_resumes(self, peer, *, control_socket=None):
+        """Admit every ready Target after the original route's last owner exits."""
+        peer = tuple(peer)
+        with self.client_lock:
+            online = dict(self.clients)
+        if control_socket is not None and online.get(peer, {}).get("socket") is not control_socket:
             return 0
-        sent = 0
-        for (fid, target), offset in pending:
+        workers = []
+        with self._transfer_progress_lock, self._forward_relays_lock:
+            if not self.running or self._progress_discarded:
+                return 0
+            for fid, state in self._relay_recoveries.items():
+                route = state["route"]
+                if (self._fid_routes.get(fid) is not route
+                        or peer != route["originator"] and peer not in route["targets"]
+                        or fid in self._receive_transfers):
+                    continue
+                source = online.get(route["originator"])
+                for target, (sock, offset) in list(state["pending"].items()):
+                    if (target in route["completed"]
+                            or online.get(target, {}).get("socket") is not sock
+                            or sock.fileno() < 0 or self._transfer_handshakes.closed(sock)):
+                        del state["pending"][target]
+                        continue
+                    if (target in state["active"] or source is None
+                            or self._transfer_handshakes.closed(source["socket"])):
+                        continue
+                    record = _claim_receive(self, (target, fid), source["socket"])
+                    if record is None:
+                        continue
+                    reservation = {"record": record, "source_socket": source["socket"],
+                                   "target_socket": sock, "offset": offset}
+                    state["active"][target] = reservation
+                    del state["pending"][target]
+                    workers.append((fid, state, target, reservation))
+        for args in workers:
+            threading.Thread(target=self._run_relay_recovery, args=args, daemon=True).start()
+        return len(workers)
+
+    def _run_relay_recovery(self, fid, state, target, reservation):
+        """One Target's port setup/cleanup cannot wait for a sibling's body."""
+        source, target_socket = reservation["source_socket"], reservation["target_socket"]
+        record, key = reservation["record"], (target, fid)
+        try:
+            if not self._wait_control_secure(source) or not self._wait_control_secure(target_socket):
+                return
+            with self.client_lock:
+                if (self.clients.get(state["route"]["originator"], {}).get("socket") is not source
+                        or self.clients.get(target, {}).get("socket") is not target_socket):
+                    return
+            if not self.send_message(source, format_resume_line(
+                fid, reservation["offset"], state["route"]["originator"], target
+            )):
+                return
+            with self._transfer_progress_changed:
+                self._transfer_progress_changed.wait_for(lambda:
+                    self._receive_transfers.get(key) is not record or record["owner"] is not None
+                    or not self.running or self._transfer_handshakes.closed(source)
+                    or self._transfer_handshakes.closed(target_socket),
+                    timeout=RESUME_ACCEPT_TIMEOUT)
+        except (OSError, RuntimeError) as exc:
+            self._log(f"forward: recovery {fid} to {target} interrupted: {exc}")
+        finally:
+            with self._transfer_progress_changed:
+                if record["owner"] is not None:
+                    self._transfer_progress_changed.wait_for(lambda:
+                        self._receive_transfers.get(key) is not record)
+                _release_receive(self, key, record)
             with self._transfer_progress_lock, self._forward_relays_lock:
-                waiting = self._pending_originator_resumes.get(client_address, {})
-                if waiting.get((fid, target)) != offset:
-                    continue
-                route = self._fid_routes.get(fid)
-                valid = (route is not None and route["originator"] == client_address
-                         and target in route["targets"] and target not in route["completed"])
-                if not valid:
-                    waiting.pop((fid, target), None)
-                    if not waiting:
-                        self._pending_originator_resumes.pop(client_address, None)
-                    continue
-                if self._relay_resume_busy(fid):
-                    continue
-                record = _claim_receive(self, fid, info["socket"])
-                if record is None:
-                    continue
-            sent_request = False
-            try:
-                sent_request = self.send_message(
-                    info["socket"], format_resume_line(fid, offset, client_address, target)
-                )
-            except OSError:
-                pass
-            finally:
-                if not sent_request:
-                    _release_receive(self, fid, record)
-            if not sent_request:
-                continue
-            sent += 1
-            with self._forward_relays_lock:
-                waiting = self._pending_originator_resumes.get(client_address, {})
-                if waiting.get((fid, target)) == offset:
-                    waiting.pop((fid, target), None)
-                if not waiting:
-                    self._pending_originator_resumes.pop(client_address, None)
-        return sent
+                if state["active"].get(target) is reservation:
+                    del state["active"][target]
+                self._transfer_progress_changed.notify_all()
+            self._flush_pending_originator_resumes(state["route"]["originator"])
 
     def _resume_after_connect(self, client_address, control_socket, retired):
         """Drain only captured old owners, then resume through the admitted socket."""
@@ -7273,12 +7346,18 @@ class TCP_Server_Base:  # TCP server class
         if fid is None:
             self._log("forward: rejected relay without an upstream FID")
             return
+        recovery = reservation = None
         if resume_requested:
             with self._forward_relays_lock:
                 route = self._fid_routes.get(fid)
+                recovery = self._relay_recoveries.get(fid)
+                reservation = recovery["active"].get(targets[0]) if recovery and len(targets) == 1 else None
                 if (route is None or route["originator"] != tuple(originator_addr)
-                        or not targets or any(target not in route["targets"] for target in targets)
-                        or any(target in route["completed"] for target in targets)):
+                        or len(targets) != 1 or targets[0] not in route["targets"]
+                        or targets[0] in route["completed"]
+                        or reservation is not None and (
+                            reservation["offset"] != resume_offset
+                            or reservation["source_socket"] is not forwarder_sock)):
                     self._forward_notify_error(
                         forwarder_sock, "no pending relay target for this sender", fid
                     )
@@ -7294,34 +7373,53 @@ class TCP_Server_Base:  # TCP server class
                 forwarder_sock, "relay fid is already in use", fid
             )
             return
+        manual_recovery = resume_requested and reservation is None
         relay = {
             "cond": threading.Condition(),
             "control_lock": threading.RLock(), "requested": None,
+            "done": threading.Event(),
+            "sockets": [], "handshakes": {},
             "controls": {},
             "route": route,
             "fid": fid,
         }
         relay_keys = [(target, tfid) for target, tfid in zip(targets, tfids)]
+        receive_key = (targets[0], fid) if resume_requested else fid
         receive_record = None
         with self._transfer_progress_lock, self._forward_relays_lock:
             if (self._fid_routes.get(fid) is route
-                    and not any(relay["fid"] == fid for relay in self._forward_relays.values())
+                    and (resume_requested and fid not in self._receive_transfers
+                         or not resume_requested and not any(
+                             candidate["fid"] == fid for candidate in self._forward_relays.values()))
+                    and (reservation is None
+                         or self._receive_transfers.get(receive_key) is reservation["record"])
                     and not any(key in self._forward_relays for key in relay_keys)):
-                receive_record = _claim_receive(self, fid, forwarder_sock, relay)
+                receive_record = _claim_receive(self, receive_key, forwarder_sock, relay)
                 if receive_record is not None:
                     for key in relay_keys:
                         self._forward_relays[key] = relay
+                    if resume_requested and recovery is None:
+                        recovery = {"route": route, "pending": {}, "active": {},
+                                    "control": {"control_lock": threading.RLock(),
+                                                "requested": None, "controls": {}}}
+                        self._relay_recoveries[fid] = recovery
+                    if manual_recovery:
+                        reservation = {"record": receive_record, "source_socket": forwarder_sock,
+                                       "target_socket": self.clients.get(targets[0], {}).get("socket"),
+                                       "offset": resume_offset}
+                        recovery["active"][targets[0]] = reservation
         if receive_record is None:
             self._forward_notify_error(forwarder_sock, "relay source is already active", fid)
             return
+        control_group = recovery["control"] if resume_requested else relay
         if os.path.exists(self.file_trans_progress_file):
             self._persist_transfer_progress()
         target_conns = []
         up_sock = up_client = None
         sport = None
         allocated_sport = None
-        target_handshakes = {}
-        owned_sockets = []
+        target_handshakes = relay["handshakes"]
+        owned_sockets = relay["sockets"]
         terminal_sent = False
 
         def fail(message):
@@ -7331,24 +7429,35 @@ class TCP_Server_Base:  # TCP server class
                 self._forward_notify_error(forwarder_sock, message, fid)
 
         def own(control, transfer):
-            if not self._transfer_handshakes.track_socket(control, transfer):
-                return False
-            owned_sockets.append((control, transfer))
-            return True
+            with relay["cond"]:
+                if not self._transfer_handshakes.track_socket(control, transfer):
+                    return False
+                owned_sockets.append((control, transfer))
+                if (reservation is not None and control is forwarder_sock
+                        and reservation["target_socket"] is not control):
+                    target_control = reservation["target_socket"]
+                    if not self._transfer_handshakes.track_socket(target_control, transfer):
+                        return False
+                    owned_sockets.append((target_control, transfer))
+                return True
 
         try:
             for target, tfid in zip(targets, tfids):
-                target_control = self.clients.get(target, {}).get("socket")
-                handshake = (self._transfer_handshakes.register(target_control, tfid)
-                             if target_control is not None else None)
+                with relay["cond"]:
+                    target_control = (reservation["target_socket"] if reservation is not None
+                                      else self.clients.get(target, {}).get("socket"))
+                    handshake = (self._transfer_handshakes.register(target_control, tfid)
+                                 if target_control is not None else None)
+                    if handshake is not None:
+                        target_handshakes[(target, tfid)] = handshake
                 if handshake is None:
                     fail(f"target {target} has no available listener negotiation")
                     return
-                target_handshakes[(target, tfid)] = handshake
             for target, tfid in zip(targets, tfids):
-                if not self.forward_item_to(
-                    target, kind, rel_dir, fname, originator_addr, tfid, destination_path,
-                ):
+                with relay["cond"]:
+                    sent = self.forward_item_to(
+                        target, kind, rel_dir, fname, originator_addr, tfid, destination_path)
+                if not sent:
                     fail(f"could not request a listener from {target}")
                     return
             results = self._transfer_handshakes.wait_many(
@@ -7371,8 +7480,10 @@ class TCP_Server_Base:  # TCP server class
                 target_control = target_handshakes[(target, tfid)]["key"][0]
                 if not own(target_control, sock) or not own(forwarder_sock, sock):
                     return
-                control = _bind_transfer_control(self, tfid, target_control, sock, 1, 0, relay=relay)
-                relay["controls"][target] = control
+                with control_group["control_lock"]:
+                    control = _bind_transfer_control(self, tfid, target_control, sock, 1, 0, relay=control_group)
+                    relay["controls"][target] = control
+                    control_group["controls"][target] = control
                 try:
                     sock.connect((target[0], tport))
                 except Exception as e:
@@ -7395,6 +7506,13 @@ class TCP_Server_Base:  # TCP server class
                 target_conns.append((tfid, target, sock))
                 # The target's start sign proves its receiving leg is registered.
                 _announce_transfer_control(self, control)
+                with control_group["control_lock"]:
+                    upstream = control_group.get("upstream")
+                    if upstream is not None and self._transfer_controls._live(upstream):
+                        with control["lock"]:
+                            paused = upstream["confirmed_state"]
+                            self._transfer_controls._confirm(control, paused)
+                            self._transfer_controls._send(control, paused, None)
             if not target_conns:
                 fail("no target accepted the transfer")
                 return
@@ -7424,12 +7542,14 @@ class TCP_Server_Base:  # TCP server class
             if not own(forwarder_sock, up_client):
                 return
             self._crypto_attach_transfer_in(up_client, forwarder_sock, up_stamp)
-            with relay["control_lock"]:
+            with control_group["control_lock"]:
                 relay["upstream"] = _bind_transfer_control(
-                    self, fid, forwarder_sock, up_client, 1, 1, relay=relay
+                    self, fid, forwarder_sock, up_client, 1, 1,
+                    relay=control_group, shared=resume_requested,
                 )
-                if relay["requested"] is not None:
-                    self._transfer_controls.local(relay["upstream"]["key"], relay.pop("requested"))
+                control_group["upstream"] = relay["upstream"]
+                if control_group.get("requested") is not None:
+                    self._transfer_controls.local(relay["upstream"]["key"], control_group.pop("requested"))
             self.send_message(up_client, self.server_start_file_transfer_sign)
             self._forward_pump(
                 up_client, target_conns, forwarder_sock, fid, fname, relay, resume_offset
@@ -7452,9 +7572,24 @@ class TCP_Server_Base:  # TCP server class
                 for key in relay_keys:
                     if self._forward_relays.get(key) is relay:
                         del self._forward_relays[key]
-            _release_receive(self, fid, receive_record)
             for control, transfer in owned_sockets:
                 self._transfer_handshakes.release_socket(control, transfer)
+            with relay["cond"]:
+                owned_sockets.clear()
+                target_handshakes.clear()
+                relay["done"].set()
+            if resume_requested:
+                with control_group["control_lock"]:
+                    for target, control in relay["controls"].items():
+                        if control_group["controls"].get(target) is control:
+                            del control_group["controls"][target]
+            _release_receive(self, receive_key, receive_record)
+            if manual_recovery:
+                with self._transfer_progress_lock, self._forward_relays_lock:
+                    if recovery["active"].get(targets[0]) is reservation:
+                        del recovery["active"][targets[0]]
+                    self._transfer_progress_changed.notify_all()
+            self._flush_pending_originator_resumes(tuple(originator_addr))
 
     def _forward_pump(
         self, up_sock, target_conns, forwarder_sock, fid, fname, relay, resume_offset=0
@@ -10467,10 +10602,10 @@ class TCP_Client_Base:  # TCP client class
             )
         elif shlex.split(command.lower())[0] == RESUME_LINE:
             parsed = parse_resume_command(command)
-            if parsed is not None and self.client_socket is not None:
+            if parsed is not None and control_socket is not None:
                 fid, offset, origin, target = parsed
-                if origin == self.client_socket.getsockname():
-                    self.resume_trans(target, fid, offset)
+                if origin == control_socket.getsockname():
+                    self._resume_on_socket(target, fid, offset, control_socket, forward_request=True)
         elif shlex.split(command.lower())[0] == "/forward_error":
             try:
                 parts = shlex.split(command)
@@ -10867,7 +11002,7 @@ class TCP_Client_Base:  # TCP client class
             self._log_exc()
             self._log("invalid command, please use '/file <filename>'")
 
-    def file_transfer_mode(  # noqa: PLR0911 - peer-close and timeout exits are distinct outcomes
+    def file_transfer_mode(
         self,
         filename,
         server_address,
@@ -10897,8 +11032,19 @@ class TCP_Client_Base:  # TCP client class
         Returns:
             bool: True only after the receiver's final data ACK; otherwise False.
         """
+        return self._send_file(
+            filename, server_address, server_port, client_port, control_socket,
+            crypto, fid, peer, resume_offset, trans_type,
+        )
+
+    def _send_file(  # noqa: PLR0911 - peer-close and timeout exits are distinct outcomes
+        self, filename, server_address, server_port, client_port,
+        control_socket=None, crypto=None, fid=None, peer=None, resume_offset=0,
+        trans_type=0, *, forward_stream=None,
+    ):
+        """Send a file with either ordinary progress or independent relay progress."""
         self._log(f"start to send file: {filename}")
-        transfer_key = ((self.host, self.port), fid) if fid is not None else None
+        transfer_key = ((peer if forward_stream is not None else (self.host, self.port)), fid) if fid is not None else None
         client_file_socket = None
         reset_time = 0
         control = None
@@ -10918,7 +11064,8 @@ class TCP_Client_Base:  # TCP client class
                 if not self._transfer_handshakes.track_socket(control_socket, client_file_socket):
                     return False
                 control = _bind_transfer_control(
-                    self, fid, control_socket, client_file_socket, trans_type, 0
+                    self, fid, control_socket, client_file_socket, trans_type, 0,
+                    shared=forward_stream is not None,
                 )
                 client_file_socket.bind((self.client_host, client_port))
                 client_file_socket.connect((server_address, server_port))
@@ -11033,14 +11180,18 @@ class TCP_Client_Base:  # TCP client class
             self.send_message(client_file_socket, file_size.to_bytes(8, "big"))
             if resume_offset < 0 or resume_offset > file_size:
                 resume_offset = 0  # not this file's offset any more: send it whole
-            progress = self._file_progress_start(
-                self.file_upload_progress, transfer_key, file_size, filename,
-                peer=peer, initial=resume_offset,
-            )
-            if progress is None:
-                progress = self.file_upload_progress.get(transfer_key)
-                if progress is not None:
-                    progress[0] = resume_offset
+            if forward_stream is not None:
+                progress = [resume_offset, file_size, None, str(filename), peer]
+                forward_stream["progress"] = progress
+            else:
+                progress = self._file_progress_start(
+                    self.file_upload_progress, transfer_key, file_size, filename,
+                    peer=peer, initial=resume_offset,
+                )
+                if progress is None:
+                    progress = self.file_upload_progress.get(transfer_key)
+                    if progress is not None:
+                        progress[0] = resume_offset
             with open(filename, "rb") as f:
                 if resume_offset:
                     f.seek(resume_offset)
@@ -11115,15 +11266,17 @@ class TCP_Client_Base:  # TCP client class
             self._log(f"send error: {e}")
             return False
         finally:
-            self._file_progress_finish(
-                self.file_upload_progress, transfer_key, progress,
-                keep=(
-                    not file_sent
-                    and not source_missing
-                    and progress is not None
-                    and progress[4] is not None
-                ),
-            )
+            if forward_stream is None:
+                self._file_progress_finish(
+                    self.file_upload_progress, transfer_key, progress,
+                    keep=(not file_sent and not source_missing and progress is not None
+                          and progress[4] is not None),
+                )
+            elif file_sent:
+                self._file_progress_finish(
+                    self.file_upload_progress, forward_stream["task_key"],
+                    forward_stream["task_entry"],
+                )
             self._release_transfer_socket(transfer_key, client_file_socket)
             self._transfer_handshakes.release_socket(control_socket, client_file_socket)
 
@@ -11172,8 +11325,8 @@ class TCP_Client_Base:  # TCP client class
         Server-bound uploads answer with ``/file``; other final targets replay
         through the server with the stable upstream fid. The retained upload
         path is sufficient because the receiver owns its full destination path.
-        Recovery skips any live, paused, negotiating or finalizing source owner,
-        including a relay upstream shared by several final targets.
+        Live, negotiating and finalizing owners remain busy for public calls.
+        Only a Server-directed relay replay waits for the old sender's cleanup.
 
         Args:
             peer_addr (tuple | None): Final receiver; None selects the server.
@@ -11183,9 +11336,12 @@ class TCP_Client_Base:  # TCP client class
         Returns:
             bool: True for a newly reserved recovery worker; False when busy.
         """
+        return self._resume_on_socket(peer_addr, fid, offset, self.client_socket)
+
+    def _resume_on_socket(self, peer_addr, fid, offset, control_socket, *, forward_request=False):
+        """Pin a recovery to its admitted Server session, never a replacement."""
         server_peer = (self.host, self.port)
-        control_socket = self.client_socket
-        if not self.running or control_socket is None:
+        if not self.running or control_socket is None or self.client_socket is not control_socket:
             return False
         # The server names itself with the concrete endpoint of this control
         # connection; the configured address is accepted too so a peer using
@@ -11226,8 +11382,13 @@ class TCP_Client_Base:  # TCP client class
                 finally:
                     self.pfree(client_port)
 
+        if not is_direct and not forward_request:
+            with self._transfer_progress_lock:
+                if (_transfer_busy(self, key, control_socket)
+                        or any(owner_key[1] == fid for owner_key in self._resume_sends)):
+                    return False
         return _start_resume_send(
-            self, key, target, send, control_socket=control_socket
+            self, key, target, send, control_socket=control_socket, forward=not is_direct,
         )
 
 
@@ -11400,9 +11561,10 @@ class TCP_Client_Base:  # TCP client class
         if control_socket is None:
             control_socket = self.client_socket
         is_resume = upstream_fid is not None
+        targets = [(_peer_from_json(target) or (target[0], int(target[1]))) for target in addrs]
         if is_resume:
             key = (server_peer, upstream_fid)
-            if key not in self.file_upload_progress:
+            if len(targets) != 1 or key not in self.file_upload_progress:
                 return False
         else:
             upstream_fid = self._fid_alloc.alloc(receiver=server_peer)
@@ -11413,8 +11575,12 @@ class TCP_Client_Base:  # TCP client class
                     (_peer_from_json(addrs[0]) or tuple(addrs[0])) if addrs else None,
                 ]
                 self._persist_transfer_progress()
-        with _sending_transfer(self, key, control_socket=control_socket):
-            with _transfer_handshake(self, control_socket, upstream_fid) as handshake:
+        owner_key = (targets[0], upstream_fid) if is_resume else key
+        with _sending_transfer(self, owner_key, control_socket=control_socket) as stream:
+            if is_resume:
+                stream["task_key"], stream["task_entry"] = key, self.file_upload_progress[key]
+            with self._transfer_handshakes.serialized(control_socket, upstream_fid), \
+                    _transfer_handshake(self, control_socket, upstream_fid) as handshake:
                 msg = f"/forward_item {kind} fid={int(upstream_fid)}"
                 if is_resume:
                     msg += f" resume={int(resume_offset)}"
@@ -11438,23 +11604,18 @@ class TCP_Client_Base:  # TCP client class
                 self._log(f"forward: server changed upstream fid for {fname}")
                 return False
             _, fid, sport, stamp = result
-            targets = [
-                (_peer_from_json(target) or (target[0], int(target[1])))
-                for target in addrs
-            ]
             client_port = self.palloc()
             try:
+                if is_resume:
+                    return self._send_file(
+                        abspath, self.host, sport, client_port,
+                        control_socket=control_socket, crypto=stamp, fid=fid, peer=targets[0],
+                        resume_offset=resume_offset, trans_type=1, forward_stream=stream,
+                    )
                 return self.file_transfer_mode(
-                    abspath,
-                    self.host,
-                    sport,
-                    client_port,
-                    control_socket=control_socket,
-                    crypto=stamp,
-                    fid=fid,
-                    peer=targets[0] if targets else None,
-                    resume_offset=resume_offset,
-                    trans_type=1,
+                    abspath, self.host, sport, client_port,
+                    control_socket=control_socket, crypto=stamp, fid=fid,
+                    peer=targets[0] if targets else None, resume_offset=resume_offset, trans_type=1,
                 )
             finally:
                 self.pfree(client_port)

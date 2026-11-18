@@ -46,6 +46,13 @@ def server(tmp_path):
         instance.stop()
 
 
+def _install_client(server, address):
+    """Install a real control owner while retaining its peer for cleanup."""
+    control, peer = socket.socketpair()
+    server.clients[address] = {"socket": control}
+    return control, peer
+
+
 def test_lookup_returns_the_same_authoritative_route_from_upstream_and_targets(server):
     route = server._register_fid_route(
         303,
@@ -386,135 +393,216 @@ def test_canonical_snapshot_without_completed_has_no_acknowledged_targets(tmp_pa
 
 
 @pytest.mark.parametrize("downstream", [304, 305])
-def test_resume_uses_scoped_route_not_id_lowbit_and_rejects_forged_endpoints(server, downstream):
+def test_resume_rejects_forged_or_stale_requesters_before_registration(
+    server, downstream
+):
     route = server._register_fid_route(302, ORIGINATOR, {TARGET_1: downstream})
-    for peer, origin, target, fid in (
-        (TARGET_1, TARGET_2, TARGET_1, downstream),
-        (TARGET_1, ORIGINATOR, TARGET_2, downstream),
-        (TARGET_2, ORIGINATOR, TARGET_2, downstream),
-        (TARGET_1, ORIGINATOR, TARGET_1, downstream + 2),
-    ):
-        assert not server._resume_request(SERVER_LOCAL, peer, fid, 7, origin, target)
-        assert server._pending_originator_resumes == {}
-        assert server._fid_routes[302] is route
-    # Offline is not success, but a verified receiver's request is retained.
-    assert not server._resume_request(SERVER_LOCAL, TARGET_1, downstream, 7, ORIGINATOR, TARGET_1)
-    assert not server._resume_request(SERVER_LOCAL, TARGET_1, downstream, 19, ORIGINATOR, TARGET_1)
-    assert server._pending_originator_resumes == {ORIGINATOR: {(302, TARGET_1): 19}}
-    assert server._fid_route_index == {(TARGET_1, downstream): 302}
-
-
-def test_pending_resume_survives_failed_send_and_prunes_completed_or_missing_routes(server):
-    route = server._register_fid_route(302, ORIGINATOR, {TARGET_1: 304, TARGET_2: 306})
-    for target, child in route["targets"].items():
-        assert not server._resume_request(SERVER_LOCAL, target, child, 13, ORIGINATOR, target)
-    broken, peer = socket.socketpair()
-    peer.close()
-    # A closed peer does not make the next write fail on every platform: Windows
-    # accepts the first send into the local buffer and only reports the reset
-    # later. Shut the writing half down as well, so "the send failed" is a
-    # property of the socket here, not of the platform's timing.
-    broken.shutdown(socket.SHUT_WR)
-    server.running = True
-    server.clients[ORIGINATOR] = {"socket": broken}
+    current, current_peer = _install_client(server, TARGET_1)
+    stale, stale_peer = socket.socketpair()
     try:
-        assert server._flush_pending_originator_resumes(ORIGINATOR) == 0
-        assert server._pending_originator_resumes == {
-            ORIGINATOR: {(302, TARGET_1): 13, (302, TARGET_2): 13}
+        for sock in (stale, current):
+            for origin, target, fid in (
+                (TARGET_2, TARGET_1, downstream),
+                (ORIGINATOR, TARGET_2, downstream),
+                (ORIGINATOR, TARGET_1, downstream + 2),
+                (ORIGINATOR, TARGET_1, downstream),
+            ):
+                if sock is current and (origin, target, fid) == (ORIGINATOR, TARGET_1, downstream):
+                    continue
+                assert not server._resume_request(sock, TARGET_1, fid, 7, origin, target)
+                assert server._relay_recoveries == {}
+                assert server._fid_routes[302] is route
+        assert server._resume_request(
+            current, TARGET_1, downstream, 7, ORIGINATOR, TARGET_1
+        )
+        state = server._relay_recoveries[302]
+        assert state["route"] is route
+        assert state["active"] == {}
+        assert state["pending"] == {TARGET_1: (current, 7)}
+    finally:
+        server.clients.pop(TARGET_1, None)
+        current.close()
+        current_peer.close()
+        stale.close()
+        stale_peer.close()
+
+
+def test_duplicate_registration_keeps_only_the_latest_pending_offset(server):
+    route = server._register_fid_route(302, ORIGINATOR, {TARGET_1: 304})
+    current, peer = _install_client(server, TARGET_1)
+    try:
+        assert server._resume_request(
+            current, TARGET_1, 304, 7, ORIGINATOR, TARGET_1
+        )
+        state = server._relay_recoveries[302]
+        assert server._resume_request(
+            current, TARGET_1, 304, 19, ORIGINATOR, TARGET_1
+        )
+        assert server._relay_recoveries[302] is state
+        assert state["active"] == {}
+        assert state["pending"] == {TARGET_1: (current, 19)}
+        assert not server._resume_request(current, TARGET_1, 304, 19, ORIGINATOR, TARGET_1)
+        assert server._fid_routes[302] is route
+    finally:
+        server.clients.pop(TARGET_1, None)
+        current.close()
+        peer.close()
+
+
+def test_recovery_registration_is_retained_when_source_is_offline(server):
+    route = server._register_fid_route(302, ORIGINATOR, {TARGET_1: 304, TARGET_2: 306})
+    controls = []
+    try:
+        for target, child in route["targets"].items():
+            control, peer = _install_client(server, target)
+            controls.extend((control, peer))
+            assert server._resume_request(
+                control, target, child, 13, ORIGINATOR, target
+            )
+        state = server._relay_recoveries[302]
+        assert state["route"] is route
+        assert state["active"] == {}
+        assert state["pending"] == {
+            target: (server.clients[target]["socket"], 13) for target in route["targets"]
+        }
+        assert server._fid_route_index == {
+            (TARGET_1, 304): 302, (TARGET_2, 306): 302
         }
     finally:
-        assert server._receive_transfers == {}
-        broken.close()
-    assert server._complete_fid_target(302, route, TARGET_1, 304)
-    writer, reader = socket.socketpair()
-    reader.settimeout(2)
-    server.clients[ORIGINATOR] = {"socket": writer}
-    try:
-        assert server._flush_pending_originator_resumes(ORIGINATOR) == 1
-        assert parse_resume_command(reader.recv(4096).decode()) == (
-            302, 13, ORIGINATOR, TARGET_2
-        )
-        assert server._pending_originator_resumes == {}
-        assert not server._resume_request(SERVER_LOCAL, TARGET_1, 304, 0, ORIGINATOR, TARGET_1)
-        # An accepted request must not outlive its owning route.
-        _release_receive(server, 302, server._receive_transfers[302])
-        assert server._queue_resume_to_originator(302, route, TARGET_2, 29)
-        reader.recv(4096)
-        server.clients.pop(ORIGINATOR)
-        _release_receive(server, 302, server._receive_transfers[302])
-        assert not server._queue_resume_to_originator(302, route, TARGET_2, 31)
-        assert server._drop_fid_route(302, route)
-        server.clients[ORIGINATOR] = {"socket": writer}
-        assert server._flush_pending_originator_resumes(ORIGINATOR) == 0
-        assert server._pending_originator_resumes == {}
-    finally:
-        server.running = False
         server.clients.clear()
-        writer.close()
-        reader.close()
+        for control in controls:
+            control.close()
 
 
-@pytest.mark.parametrize("owner", ["request", "receiver", "relay"])
-def test_live_upstream_refuses_recovery_without_pending_other_fids_remain_eligible(server, owner):
-    route = server._register_fid_route(302, ORIGINATOR, {TARGET_1: 304, TARGET_2: 306})
-    server._register_fid_route(402, ORIGINATOR, {TARGET_3: 404})
-    control, peer = socket.socketpair()
-    with control, peer:
-        record = None
-        if owner == "relay":
-            server._forward_relays[(TARGET_1, 304)] = {"fid": 302, "route": route, "upstream": control}
-        else:
-            record = _claim_receive(server, 302, control, None if owner == "request" else control)
+def test_concurrent_relay_requests_reserve_one_real_source_request(server):
+    route = server._register_fid_route(302, ORIGINATOR, {TARGET_1: 304})
+    target, target_peer = _install_client(server, TARGET_1)
+    source, source_peer = _install_client(server, ORIGINATOR)
+    target_peer.settimeout(5)
+    source_peer.settimeout(5)
+    server.running = True
+    barrier, accepted = threading.Barrier(3), []
+
+    def reply():
+        barrier.wait(timeout=5)
+        accepted.append(server._resume_request(target, TARGET_1, 304, 13, ORIGINATOR, TARGET_1))
+
+    contenders = [threading.Thread(target=reply) for _ in range(2)]
+    try:
+        for contender in contenders:
+            contender.start()
+        barrier.wait(timeout=5)
+        for contender in contenders:
+            contender.join(timeout=5)
+            assert not contender.is_alive()
+        assert sorted(accepted) == [False, True]
+        with source_peer.makefile("r") as stream:
+            assert parse_resume_command(stream.readline()) == (302, 13, ORIGINATOR, TARGET_1)
+        record = server._receive_transfers[(TARGET_1, 302)]
+        assert record["control_socket"] is source
+        assert server._relay_recoveries[302]["active"][TARGET_1]["record"] is record
+        assert server._fid_routes[302] is route and not route["completed"]
+    finally:
+        server.stop()
+        with server._transfer_progress_changed:
+            assert server._transfer_progress_changed.wait_for(
+                lambda: not server._relay_recoveries[302]["active"], timeout=5)
+        target_peer.close()
+        source_peer.close()
+
+
+def test_failed_source_request_allows_a_new_explicit_numeric_request(server, monkeypatch):
+    route = server._register_fid_route(302, ORIGINATOR, {TARGET_1: 304})
+    target, target_peer = _install_client(server, TARGET_1)
+    source, source_peer = _install_client(server, ORIGINATOR)
+    source_peer.settimeout(5)
+    server.running = True
+    attempts, real_send = [], server.send_message
+
+    def send(sock, message, is_send_raw=False):
+        attempts.append(message)
+        return False if len(attempts) == 1 else real_send(sock, message, is_send_raw=is_send_raw)
+
+    monkeypatch.setattr(server, "send_message", send)
+    try:
+        assert server._resume_request(target, TARGET_1, 304, 1, ORIGINATOR, TARGET_1)
+        state = server._relay_recoveries[302]
+        with server._transfer_progress_changed:
+            assert server._transfer_progress_changed.wait_for(lambda: not state["active"], timeout=5)
+        assert state["pending"] == {} and state["route"] is route
+        assert server._resume_request(target, TARGET_1, 304, 17, ORIGINATOR, TARGET_1)
+        with source_peer.makefile("r") as stream:
+            assert parse_resume_command(stream.readline()) == (302, 17, ORIGINATOR, TARGET_1)
+        assert server._receive_transfers[(TARGET_1, 302)]["control_socket"] is source
+        assert state["active"][TARGET_1]["offset"] == 17
+        assert server._fid_routes[302] is route and len(attempts) == 2
+    finally:
+        server.stop()
+        with server._transfer_progress_changed:
+            assert server._transfer_progress_changed.wait_for(lambda: not state["active"], timeout=5)
+        target_peer.close()
+        source_peer.close()
+
+
+@pytest.mark.parametrize("replace_session", [False, True], ids=["same-session", "new-target-session"])
+def test_failed_source_write_cannot_release_an_already_adopted_receive_owner(
+    server, monkeypatch, replace_session
+):
+    route = server._register_fid_route(302, ORIGINATOR, {TARGET_1: 304})
+    target, target_peer = _install_client(server, TARGET_1)
+    source, source_peer = _install_client(server, ORIGINATOR)
+    data, data_peer = socket.socketpair()
+    replacement_peer = None
+    source_peer.settimeout(5)
+    server.running = True
+    waiting, adopted = threading.Event(), []
+    real_send, real_wait = server.send_message, server._transfer_progress_changed.wait
+
+    def send(sock, message, is_send_raw=False):
+        sent = real_send(sock, message, is_send_raw=is_send_raw)
+        if not adopted:
+            record = _claim_receive(server, (TARGET_1, 302), source, data)
             assert record is not None
-        try:
-            for target, child in route["targets"].items():
-                assert not server._resume_request(SERVER_LOCAL, target, child, 13, ORIGINATOR, target)
-            assert server._pending_originator_resumes == {}
-            assert not server._resume_request(SERVER_LOCAL, TARGET_3, 404, 19, ORIGINATOR, TARGET_3)
-            assert server._pending_originator_resumes == {ORIGINATOR: {(402, TARGET_3): 19}}
-        finally:
-            server._forward_relays.clear()
-            if record is not None:
-                _release_receive(server, 302, record)
+            adopted.append(record)
+            return False  # A peer may consume a request before local write failure is reported.
+        return sent
 
+    def wait(timeout=None):
+        if adopted and adopted[0]["owner"] is data:
+            waiting.set()
+        return real_wait(timeout)
 
-def test_concurrent_pending_flushes_send_one_real_control_request(server, monkeypatch):
-    server._register_fid_route(302, ORIGINATOR, {TARGET_1: 304, TARGET_2: 306})
-    for target, child in ((TARGET_1, 304), (TARGET_2, 306)):
-        assert not server._resume_request(SERVER_LOCAL, target, child, 13, ORIGINATOR, target)
-    entered, release = threading.Event(), threading.Event()
-    real_send = server.send_message
-
-    def held_send(*args, **kwargs):
-        entered.set()
-        assert release.wait(timeout=5)
-        return real_send(*args, **kwargs)
-
-    monkeypatch.setattr(server, "send_message", held_send)
-    writer, reader = socket.socketpair()
-    with writer, reader:
-        server.running = True
-        server.clients[ORIGINATOR] = {"socket": writer}
-        results = []
-        workers = [threading.Thread(target=lambda: results.append(
-            server._flush_pending_originator_resumes(ORIGINATOR))) for _ in range(2)]
-        try:
-            workers[0].start()
-            assert entered.wait(timeout=5)
-            workers[1].start()
-            workers[1].join(timeout=1)
-        finally:
-            release.set()
-            for worker in workers:
-                if worker.ident is not None:
-                    worker.join(timeout=5)
-            server.running = False
-            server.clients.clear()
-        assert not any(worker.is_alive() for worker in workers)
-        assert sorted(results) == [0, 1]
-        reader.settimeout(1)
-        assert parse_resume_command(reader.recv(4096).decode()) == (302, 13, ORIGINATOR, TARGET_1)
-        with pytest.raises(socket.timeout):
-            reader.recv(4096)
-        assert server._pending_originator_resumes == {ORIGINATOR: {(302, TARGET_2): 13}}
-        _release_receive(server, 302, server._receive_transfers[302])
+    monkeypatch.setattr(server, "send_message", send)
+    monkeypatch.setattr(server._transfer_progress_changed, "wait", wait)
+    try:
+        assert server._resume_request(target, TARGET_1, 304, 7, ORIGINATOR, TARGET_1)
+        assert waiting.wait(timeout=5)
+        with source_peer.makefile("r") as stream:
+            assert parse_resume_command(stream.readline()) == (302, 7, ORIGINATOR, TARGET_1)
+            assert server._receive_transfers[(TARGET_1, 302)] is adopted[0]
+            assert not server._resume_request(target, TARGET_1, 304, 19, ORIGINATOR, TARGET_1)
+            if replace_session:
+                replacement, replacement_peer = _install_client(server, TARGET_1)
+                assert server._resume_request(replacement, TARGET_1, 304, 19, ORIGINATOR, TARGET_1)
+                state = server._relay_recoveries[302]
+                assert state["pending"] == {TARGET_1: (replacement, 19)}
+                assert state["active"][TARGET_1]["record"] is adopted[0]
+            _release_receive(server, (TARGET_1, 302), adopted[0])
+            if not replace_session:
+                with server._transfer_progress_changed:
+                    assert server._transfer_progress_changed.wait_for(
+                        lambda: not server._relay_recoveries[302]["active"], timeout=5)
+                assert server._resume_request(target, TARGET_1, 304, 19, ORIGINATOR, TARGET_1)
+            assert parse_resume_command(stream.readline()) == (302, 19, ORIGINATOR, TARGET_1)
+        assert server._fid_routes[302] is route and not route["completed"]
+    finally:
+        if adopted:
+            _release_receive(server, (TARGET_1, 302), adopted[0])
+        server.stop()
+        with server._transfer_progress_changed:
+            assert server._transfer_progress_changed.wait_for(
+                lambda: not server._relay_recoveries[302]["active"], timeout=5)
+        if replacement_peer is not None:
+            replacement_peer.close()
+        for sock in (target, target_peer, source_peer, data, data_peer):
+            sock.close()

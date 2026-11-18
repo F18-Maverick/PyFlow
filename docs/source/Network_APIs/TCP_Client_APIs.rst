@@ -310,13 +310,30 @@ commands sent by the server, such as:
   supplies the source path; a non-server target is replayed through the server
   with its stable upstream fid. The receiver's retained full path handles folder
   items without copying directory or destination metadata at the source.
-  Both direct and relay uploads recover only when no live, paused, negotiating
-  or finalizing source owner holds that object. ``resume_trans`` returns ``True``
-  for a newly reserved worker; busy and duplicate calls return ``False`` without
-  closing or queueing. A shared upstream FID cannot replay for a second target
-  until its previous owner exits; the skipped request must be issued again.
-  Another file or opposite direction does not prevent recovery. A paused live
-  connection continues through ``start_trans`` instead.
+  Public ``resume_trans`` calls return ``True`` for a newly reserved worker;
+  busy and duplicate calls return ``False`` without closing the owner. Use
+  ``start_trans`` for a paused live connection. Receiver requests wait for old
+  receive cleanup, including ``finally`` and file closure, then read the actual
+  disk size. Offsets are nonnegative integers only; there is no ``?`` query or
+  ``None`` parser/formatter offset.
+  For forwarded recovery, Server first waits for every old owner of the
+  original route to finish naturally, without forced teardown. It then directs
+  independent per-Target Source-to-Server-to-Target streams using each actual
+  offset. Each has its own progress, resources and failure handling; one body
+  or final ACK cannot block another Target, including a late arrival. Only
+  port negotiation on the same actual Server socket plus fid is briefly
+  serialized, not body transfer or final ACK. Workers retain their admitted
+  control socket; stable fids, paths and persistence schema do not change.
+  Source arbitrates global pause/start for all live task owners; the final
+  owner releases shared control state. A real Target ACK marks only that
+  Target; no intermediate stream fabricates a whole-route ACK or deletes the
+  Source task row. All accepted Targets must really acknowledge for task
+  success. Source disconnection leaves requests queued at Server; Target
+  disconnection discards its old-socket request and requires a new actual disk
+  offset after reconnect. There is no automatic retry, and one Target's failure
+  does not cancel siblings. Strict same-session/fid generation isolation is
+  deferred; all-Target upstream EOF reconfirmation (C4), self-target rejection
+  (C5) and combined acceptance (C6) are not implemented by this revision.
 
 For a new relay upload, the source client allocates the upstream FID before it
 sends ``/forward_item ... fid=<fid>``. The server returns that same upstream FID
