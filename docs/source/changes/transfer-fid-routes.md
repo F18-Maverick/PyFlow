@@ -7,6 +7,24 @@
 > `docs/plans/transfer-pause-start-direction-report.md`; those historical
 > results are not verification of the current lifecycle revision.
 
+## Lifecycle revision C5: refuse native self-target file forwarding
+
+- Filter the Source's complete control endpoint in the shared Client per-file
+  entry before FID allocation, progress creation or relay negotiation. Match
+  the captured socket's actual IP/port; configured hosts must resolve to that
+  IP, except wildcard, which aliases the actual port.
+  An unused configured source IP after no bind or port fallback is not self.
+- Self-only forwarding logs a refusal and returns no delivery. Mixed lists
+  retain only legal peers, including same-IP/different-port and
+  different-IP/same-port Clients; the upload row and wire use that same list.
+- Native console, nested folder entries, Web forwarding and retained-row
+  replay share the check. Rejected replay preserves its existing recovery row;
+  the public resume boolean still reports worker reservation, not delivery.
+- No signature, wire, persistence schema, dependency or CI changes. Message
+  forwarding and the separate disk-forward extension retain their contracts.
+  C6 combined acceptance and strict same-session/FID generation isolation are
+  not implemented here. Actual evidence is in the lifecycle report.
+
 ## Lifecycle revision C4: explicit all-Target EOF reconfirmation
 
 - After every accepted Target's real ACK, an upstream final-ACK write returning

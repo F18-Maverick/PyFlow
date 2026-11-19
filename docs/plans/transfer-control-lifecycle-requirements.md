@@ -1,6 +1,6 @@
 # 传输控制生命周期与转发恢复 — 需求卡
 
-状态：**C4 实现、局部验收与双轴审查完成；最终窄组合 58 passed，完整测试及类型检查限制见报告**。复用既有 fid route/completed 和 Source 共享任务上传行，仅补全部 Target 已完成后的显式 EOF 最终确认；不新增完成表、完成字段、Server 转发字节进度行或快照格式。C1/C2/C3 保留，撤回的查询/强制 teardown/串行恢复不恢复；C5/C6 不自动推进。
+状态：**C5 实现、真实运行验证与双轴审查完成：最终完整 pytest 994 passed、1 skipped，八项专项及三组独立程序通过**。拒绝同 IP 且同端口的自身目标，合法目标仍传输；审查发现的配置 IP 与实际源 IP 不同时误拒已修复。C1–C4 保留，不改 fid、wire、公开签名或持久化模型；类型检查仍有 37 条改动范围外诊断，C6 不自动推进。
 
 本轮命令、实际结果、失败修正及明确未覆盖项见[实施报告](transfer-control-lifecycle-report.md)。旧历史结果不作为 C4 通过证据。用户通过 `/skill:implement` 授权实现、检查、审查及提交当前分支；不合并或推送。
 
@@ -23,7 +23,7 @@
 3. 流式转发采用全 route 的用户暂停：任意 Source、Server、Target 可请求 pause/start，Source 作最终仲裁。一个 Target 暂停，所有 Target 停止获得新的源数据。Server 已接收的数据继续排空到 Target；保留数据 socket，不做 seek 或重握手。
 4. 不采用“每个 Target 持有独立暂停锁、必须本人解除”的规则。任意端的 start 仍可经 Source 仲裁解除用户暂停。自动背压的内存硬门槛不被用户 start 清除。
 5. 有效转发恢复请求由 Receiver 在其旧接收 owner/文件收尾后，带实际数值 offset 提交 Server。Server 按 child fid/实际会话定位原 route；原 route 的数据腿、listener、握手、reader/writer 或 finalizing owner 尚未全部结束时只保存请求，不主动中断。全部旧 owner（含 finally）收尾后，按每个 Target 自己的 offset 独立转交 Source、建流；不复用旧 relay 内存、不更换 fid、不查询其他 Target 的 offset。
-6. 后续 C5 目标为 Client 转发入口拒绝自身完整控制端点、允许同 host 不同端口；C5 本轮未实现，不作本轮完成项。
+6. C5 在 Client 原生文件/目录统一入口拒绝自身完整控制端点；同 IP 不同端口和不同 IP 同端口仍允许，混合列表只剔除自身。拒绝先于 fid/新进度/握手，console、Web、目录条目和保留行恢复共用；拒绝恢复不删旧行。配置主机必须解析为捕获 socket 的实际 IP 才作为别名，wildcard 仅别名实际端口；未绑定/端口回退后未使用的配置 IP 不能认作自身。
 7. 保留真实最终 ACK 判成功规则：每个 Target 的真实 ACK 只更新其完成集合，累计所有 accepted Target 的真实 ACK 才能使整任务成功；中间 Target 成功不伪造整 route ACK。Source 的共享上传行保留到全部目标完成且收到最终 ACK。C4 已实现复用已有完整完成集合补最终确认，不将 offset==size 单独当作任务完成证据；运行证据与限制见实施报告。
 8. 多个 Target 恢复各有独立 offset、Source→Server→Target 数据流、进度、资源及失败结果，正文并行。晚到 Target 不等待已有恢复流的大文件正文或 ACK；同一实际控制 socket+fid 仅端口握手短串行，不锁正文或最终 ACK。
 
@@ -118,4 +118,4 @@
 
 ## 下一阶段闸门
 
-C4 已按用户 `/skill:implement` 指令完成实现、局部验收与审查，模型及单一原子拆分不变；用户另批准唯一旧背压测试的契约迁移。证据与未覆盖项见[报告](transfer-control-lifecycle-report.md)。本轮提交当前分支，不合并或推送；C5/C6 须另获批准。
+C4 的实现、验收与旧背压迁移已提交。用户已明确批准 C5 开始，实施及验证严格对照[计划](transfer-control-lifecycle-plan.md) 2.2 节，实际证据见[报告](transfer-control-lifecycle-report.md)。C5 仅提交当前分支，不合并或推送；C6 须另获批准。

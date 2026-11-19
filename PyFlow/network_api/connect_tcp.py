@@ -11603,7 +11603,23 @@ class TCP_Client_Base:  # TCP client class
         if control_socket is None:
             control_socket = self.client_socket
         is_resume = upstream_fid is not None
-        targets = [(_peer_from_json(target) or (target[0], int(target[1]))) for target in addrs]
+        local_endpoint = _socket_local_endpoint(control_socket) or (self.client_host, self.client_port)
+        configured_endpoint = (self.client_host, local_endpoint[1])
+        targets = []
+        for address in addrs:
+            target = _peer_from_json(address) or (address[0], int(address[1]))
+            is_self = _is_control_endpoint(target, configured_endpoint, local_endpoint)
+            if is_self and target != local_endpoint and self.client_host != "0.0.0.0":
+                try:
+                    is_self = socket.gethostbyname(self.client_host) == local_endpoint[0]
+                except OSError:
+                    is_self = False
+            if is_self:
+                self._log(f"forward: refusing own control endpoint {target}, skipped")
+            else:
+                targets.append(target)
+        if not targets:
+            return False
         if is_resume:
             key = (server_peer, upstream_fid)
             if len(targets) != 1 or key not in self.file_upload_progress:
@@ -11614,7 +11630,7 @@ class TCP_Client_Base:  # TCP client class
             if self.is_enable_file_transfer_progress_bar:
                 self.file_upload_progress[key] = [
                     0, os.path.getsize(abspath), None, str(abspath),
-                    (_peer_from_json(addrs[0]) or tuple(addrs[0])) if addrs else None,
+                    targets[0],
                 ]
                 self._persist_transfer_progress()
         owner_key = (targets[0], upstream_fid) if is_resume else key
@@ -11629,7 +11645,7 @@ class TCP_Client_Base:  # TCP client class
                 if kind == "folder":
                     msg += f" {shlex.quote(rel_dir)}"
                 msg += f" {shlex.quote(fname)} " + " ".join(
-                    shlex.quote(str(address)) for address in addrs
+                    shlex.quote(str(address)) for address in targets
                 )
                 if destination_path:
                     msg += f" {shlex.quote(destination_path)}"

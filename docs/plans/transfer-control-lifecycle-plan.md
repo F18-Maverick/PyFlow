@@ -1,6 +1,6 @@
 # 传输控制生命周期、全局转发暂停与独立并行恢复 — 更改计划
 
-状态：**C4 实现、局部验收与双轴审查完成：核心六组及两组边界真实程序通过，最后窄组合 58 passed；完整测试曾 984 passed/1 failed/1 skipped，唯一旧契约失败按用户批准迁移后窄重验通过；类型检查仍有 37 条改动范围外诊断**。复用既有 fid route/completed 和 Source 任务上传行，不新增完成表、完成位、Server 转发字节进度行或快照格式；不拆改 Source 发送函数。C1/C2/C3 保留，C5/C6 未实施；本轮提交当前分支，不合并或推送，完整证据与限制见报告。
+状态：**C5 实现、局部/完整验证与双轴审查完成：最终 pytest 994 passed、1 skipped；最终八项专项、V5 和三组 S6 程序的证据见报告**。已关闭配置 IP 与实际源 IP 不同时误拒合法目标的 P2。C1–C4 保留；C5 仅在 Client 原生转发入口拒绝自身，不改协议、进度模型或 Source 发送算法。类型检查仍有 37 条改动范围外诊断；C6 未实施，仅提交当前分支，不合并或推送。
 
 需求依据：[需求卡](transfer-control-lifecycle-requirements.md)。历史实现依据：[上一轮计划](transfer-pause-start-direction-plan.md)及其报告；它们的历史验证结果不作为本轮验证结果。
 
@@ -9,7 +9,7 @@
 ### 1.1 本轮范围与保留/后续边界
 
 1. **问题四/五**：按实际控制 socket 管理旧会话资源，删除按 peer 扫描进度表关闭当前 socket 的重复机制；旧 worker 不借用新控制连接。
-2. **问题六**：自身完整控制端点拒绝为后续 C5 目标，同 host 不同端口仍可互传；C5 未实现，不混入本轮 C3。
+2. **问题六**：C5 拒绝 Client 自身完整控制端点（同 IP 且同端口），混合只剔除自身，其他合法目标仍传输；已获本轮实施批准，不混 C6。
 3. **问题七**：Source 是 route 的唯一用户控制仲裁者；任意端 pause/start 控制整个转发任务。暂停源端新增块，已有字节继续排空，数据 socket 不断开。
 4. **问题八**：8A 的 C3 独立并行恢复已实现，查询/强制 teardown/FIFO 单轮方案已撤回。8B 的 C4 已实现复用原 fid route/completed 和 Source 共享上传行，补全目标完成后的显式 EOF 最终确认；路径与边界见 6.1，实际证据见报告。
 
@@ -44,7 +44,7 @@
 | 修改单测 | `test/unit/network_api/test_TCP_client.py`、`test_TCP_server.py` | 控制会话替换及资源生命周期必要回归 |
 | 修改集成测试 | `test/integration/network_api/test_tcp_transfer_control.py` | 普通双端控制回归、全局暂停、旧会话清理及多恢复 owner 的共享控制 |
 | 修改集成测试 | `test/integration/network_api/test_tcp_transfer_resume.py` | 普通/转发同 fid、新旧 owner 边界、不同 offset 并行恢复、晚来目标、单流失败、真实 ACK、重连与持久化 |
-| 迁移受影响断言 | `test/integration/network_api/test_tcp_file_transfer.py`、`test_crypto_tcp.py`、`test_tcp_async_server.py`、`test/integration/test_forward_extension.py`、`test_forward_msg_attribution.py` | 仅涉及现有恢复/全局暂停的真实消费者；C5 自目标路径仍为未实现后续阶段，不做端口或控制协议迁移 |
+| 迁移受影响断言 | `test/integration/network_api/test_tcp_file_transfer.py`、`test_crypto_tcp.py`、`test_tcp_async_server.py`、`test/integration/test_forward_extension.py`、`test_forward_msg_attribution.py` | 保留既有恢复/全局暂停消费者；C5 自目标回归另见第 2.2 节，不做端口或控制协议迁移 |
 | 修改使用文档 | `docs/source/File_Transfer/File_Transfer.rst`、`docs/source/Network_APIs/TCP_Server_APIs.rst`、`TCP_Client_APIs.rst` | 数值 offset、原 route 收尾、独立流、全局暂停及暂缓边界 |
 | 修改变更记录 | `docs/source/changes/transfer-fid-routes.md` | 保留稳定恢复 fid，取代独立 writer 暂停及 busy 恢复等旧契约；明确问题二暂缓 |
 | 计划载体 | 本文件、`transfer-control-lifecycle-requirements.md` | 已批准的新方案与旧 C3 撤回边界 |
@@ -72,6 +72,15 @@ Web 的 `client_backend.py` 已知通过 Client 的文件/文件夹转发入口�
 `GLOSSARY.md` 已在本轮澄清领域术语，不定义新的实现记录；C4 实施不以此为新增表的依据。`test_resume_matching.py`、`test_transfer_control.py`、`test_transfer_handshakes.py` 仅作为既有契约回归，不计划修改。若必须扩大文件或 Source 发送实现范围，先修订计划并获批准，不在实现中顺手扩展。
 
 完整 pytest 实际为 984 passed、1 failed、1 skipped；唯一失败仍要求旧自动背压控制帧。用户已选择 `migrate_contract`，批准上述单函数迁移及窄重验，不再次运行全套。C4 审查另定位到旧恢复 tuple owner 在 route 已删除后的 finally 窗口：不同 Target 的新 route 复用同值 fid 时，不应被该旧 Target owner 误判 busy；修正限于既定 C4 准入及同文件真实恢复回归，不改 Source 或扩大生产范围。
+
+### 2.2 本次 C5 实施清单（用户已批准开始）
+
+- **单一意图**：原生 Client 文件/目录转发拒绝自身完整控制端点；混合目标只剔除自身，保留同 IP 不同端口及同端口不同 IP 的合法目标。自身比较使用 worker 捕获的实际控制 socket；配置主机仅在解析为实际 IP 时作为别名，wildcard 仅别名实际端口。未绑定/本地端口回退后未使用的配置 IP 不能被拼接为自身身份。
+- **文件**：生产仅改 `connect_tcp.py::_forward_one`，在 fid/上传行/握手创建之前统一筛选目标；同一筛选结果用于进度 peer、线上目标及最终发送。`test_tcp_transfer_resume.py` 补 self-only/mixed/恢复的真实 socket 契约；既有 Web 与 console/driver 适配调用同一入口，Web 后端不改。使用文档限 File_Transfer、TCP_Client_APIs 和变更记录，需求/本计划/本报告同步。
+- **数据流/全集**：console file、console folder（含各嵌套条目）、Web file/folder、已有行显式恢复 → 原 driver/`_forward_one` → 目标规范化/自身过滤 → 无目标则记录拒绝并返回 False，不发请求/不分配 fid/不建新进度；有合法目标则走原 port/header/body/真实 ACK。恢复公开 bool 仍表示 worker 预留，拒绝保留旧行，不伪造完成或删除既有数据。
+- **验收**：窄真实消费者回归检查拒绝文本、无新增 route/child/进度/握手及恢复旧行不变；mixed 路径完整内容与 Source 实际 ACK、进度 peer 不能残留自身。S6 另用一次性真实程序验证明文/加密、thread/async、别名/wildcard、实际同机不同端口、Web 适配、恢复与资源收尾，结束删除。V5 受影响回归只运行一次；不把未运行的参数笛卡尔积或 C6 算通过。
+- **提交**：一个 C5 原子变更，预计生产约 20 行、回归约 150 行及必要文档；不混 C6，不改公开签名/wire/schema/CI/依赖/Source 发送算法。仅原生文件/目录转发，不改变消息转发、独立磁盘转发扩展或 Server 自地址跳过的既有契约，不将手工绕过 Client 构造命令当作鉴权问题一并处理。
+
 
 
 ## 3. 接口与线上契约（用户已批准）
@@ -267,7 +276,7 @@ flowchart TD
 | 旧 C3a/C3b | 已撤回历史：offset 查询、强制 teardown、单活跃 FIFO 轮次，不再实施或验收该契约 | 旧结果不作为本轮证据 |
 | 本轮 C3 | 已实现：仅数值请求；原 route 旧 owner 全收尾；每 Target 独立流/进度/资源/失败，正文并行；socket+fid 仅端口短串行；保留 C1/C2 和累计真实 ACK | 分次局部回归与 3 组独立程序实际结果见实施报告；未扩大为 V6/C6 总验收 |
 | C4 | 已批准并实现：复用既有 fid route/completed，不新增记录/字段；Source 显式 EOF 补最终确认，单一原子变更 | C4-P01–P10；实际运行矩阵、局部与完整测试及未覆盖项见报告，不把计划命令当运行结果 |
-| C5 | 未实现：Client 自身完整控制端点拒绝 | V5，S6；须单独推进 |
+| C5 | 已批准并实现：Client 原生文件/目录在统一入口拒绝自身完整控制端点，合法目标照常传输，拒绝恢复保留旧行 | 六参数回归通过；V5、S6、审查及未跑矩阵以报告实际证据为准 |
 | C6 | 未实现：合并回归、全路径总体验收与最终报告 | V6；须单独推进 |
 
 本轮不是 C6 总验收声明。实施不新增 wire、依赖、CI、自动重试或身份迁移；用户实施指令授权提交当前分支，不授权合并或推送。旧 C3 历史拆分及授权不作为新实现通过证据。
@@ -317,4 +326,4 @@ flowchart TD
 - **规则沉淀**：实际会话取消、数值实际 offset、原 owner/finally barrier、不同 offset 独立并行、晚来目标不等正文/ACK、全局 pause 与真实 ACK 聚合成为本轮回归路径；不新增源码字符串断言或严格代次隔离承诺。
 - **文档/报告**：最终报告逐 P01–P20 给结论，单列问题二暂缓；每个原子变更含意图、范围、数据流、局部命令、未覆盖项、风险；文档随变更完成，不留“以后补”。
 
-C3/C4 实现与实际证据见[实施报告](transfer-control-lifecycle-report.md)。C4 保持已批准的路径、文件范围、单原子拆分及记录模型；未执行参数不列覆盖。C5/C6 不自动推进，合并与推送仍须人工确认。
+C3/C4 历史实现与本轮 C5 实际证据见[实施报告](transfer-control-lifecycle-report.md)。C5 保持第 2.2 节的单原子意图、文件范围及原生转发边界；不修改独立磁盘扩展/消息转发契约。C6、合并与推送仍须人工确认。

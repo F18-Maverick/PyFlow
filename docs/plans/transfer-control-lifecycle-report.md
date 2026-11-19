@@ -1,5 +1,86 @@
 # 传输控制生命周期实施报告
 
+## C5：原生文件与目录转发自拒绝
+
+**意图与授权**：用户确认“同 IP 且同端口”属于自身，并明确要求开始 C5。混合列表只剔除自身，同 IP 不同端口及不同 IP 同端口仍合法。本次单原子变更不推进 C6，不合并或推送；C1–C4 的历史输出不作为本轮证据。
+
+### 更改路径与数据流
+
+- `PyFlow/network_api/connect_tcp.py::_forward_one`：复用 `_socket_local_endpoint` 和 `_is_control_endpoint`，使用准入 worker 捕获的实际控制 socket。配置主机仅在确实解析为该实际 IP 时匹配，wildcard 仅别名实际端口；不会把未绑定/端口回退后未使用的配置 IP 拼成自身。仅命中配置候选才做解析，实际端点及普通不同目标无需解析。过滤在新 fid、上传行和握手之前；纯自身记录拒绝并返回 False。有合法目标时，进度 peer、wire 和发送路径共用过滤后的规范化列表。
+- `test/integration/network_api/test_tcp_transfer_resume.py`：六参数（file/folder × 127.0.0.1/localhost/0.0.0.0）真实 console 回归，证明无分配/新记录/请求/回环文件、mixed 的 Source ACK=True、保留行自恢复失败且原对象仍在；另加两参数，实际无 bind 和 EADDRINUSE 回退后，其他 IP/同端口目标仍真实收到，实际自身仍拒绝。
+- File_Transfer、TCP_Client_APIs、变更记录和既有需求/计划/本报告同步。Web 适配和 Server 未改；沿用原安全发送、port/header/body/ACK、owning 清理，不新增协议、接口、schema、CI、依赖或抽象。
+
+数据流：console/Web file/folder/保留行恢复 → 原 driver 或恢复 worker → `_forward_one` 规范化与自目标过滤 → 无合法目标则拒绝并停止；否则原流式转发 → 全部合法 Target 真实 ACK → 既有成功清理。目录逐文件检查，恢复公开 bool 仍是 worker 预留，拒绝不等于自动删除原恢复记录。
+
+### 已执行检查与错误处理
+
+| 实际命令/范围 | 结果 |
+|---|---|
+| 新测试 `[127.0.0.1-file]`，实现前 | 1 failed，4.87 秒，退出 1；实际转发自身并返回 True，期望 False，精确复现缺失的拒绝 |
+| `test_forward_self_target_is_rejected_but_other_ports_still_receive` | **6 passed，18.85 秒，退出 0** |
+| 审查 P2 未绑定/端口冲突回退的真实复现，修复前 | 2 failed，1.89 秒；合法 127.0.0.2:same-port 被配置主机误判自身，均返回 False |
+| 上述两参数 + 原六参数，最终实现 | **8 passed，29.70 秒，退出 0** |
+| V5 四份集成文件 `-k 'forward or relay or self_target'` | **66 passed、83 deselected，299.37 秒，退出 0** |
+| resume 集成 `-k 'forward or eof_confirmation'` | **32 passed、42 deselected，147.14 秒，退出 0** |
+| `uv tool run ty check PyFlow/network_api/connect_tcp.py --output-format concise` | 退出 1，37 条诊断，均在本次生产修改范围外；不声称通过 |
+| 六份相关文档的相对文件链接 | 9 个链接、0 缺失，仅机械检查 |
+| 最终完整 `.venv/bin/python -m pytest -q --tb=short`，仅一次 | **994 passed、1 skipped，1209.22 秒，退出 0**；运行版本包含最后的配置别名收窄与八项新增回归 |
+
+```bash
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_file_transfer.py test/integration/test_forward_extension.py test/integration/test_forward_msg_attribution.py test/integration/network_api/test_tcp_transfer_control.py -k 'forward or relay or self_target' -q --tb=short
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_transfer_resume.py -k 'forward or eof_confirmation' -q --tb=short
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_transfer_resume.py::test_forward_different_ip_same_port_survives_a_different_configured_host test/integration/network_api/test_tcp_transfer_resume.py::test_forward_self_target_is_rejected_but_other_ports_still_receive -q --tb=short
+```
+
+V5/resume 批次与三组独立程序先于配置别名的最后收窄；该收窄由上述 8 项最终回归及最后完整 pytest 验证，不冒充之后重跑过独立程序。完整 pytest 仅运行一次，994 passed、1 skipped，无失败；不以 C4 历史结果替代。最终类型检查仍有 37 条改动范围外诊断，不能宣称所有检查全绿。完整套件通过不替代 C6 的全路径总验收，C6 未自动推进。
+
+### S6：独立真实运行证据
+
+一次性 `/tmp/pyflow-transfer-lifecycle-smoke.py --case self-target` 不调用 pytest 测试函数，不 mock 文件、网络或加密。仅透传记录日志、原发送结果与 socket owner。每组验证 console 文件、含非空/空文件的嵌套目录、真实 Flask `/api/send_file` 和 `/api/send_folder` 到原 TCP 路径，以及保留行恢复；Web HTTP 200/ok 仍表示异步受理，**不是成功送达或 UI 拒绝状态**，本次不改变 HTTP/UI 契约。
+
+| 实际参数 | Source 控制端点 | 合法目标端点 | workers / 最终存活 |
+|---|---|---|---|
+| 明文 thread、localhost、Server wildcard 双 IP 监听 | 127.0.0.1:40233 | 127.0.0.1:44151；127.0.0.2:40233 | 68 / 0 |
+| 加密 thread | 127.0.0.1:43811 | 127.0.0.1:38663 | 80 / 0 |
+| 加密 async、wildcard、tracking off | 127.0.0.1:35589 | 127.0.0.1:41345 | 81 / 0 |
+
+三组以 `&&` 执行，批命令退出 0，42.18 秒。每组 5 个自身文件条目结果均 False，且不分配新 fid、无上传行/Server route/握手/数据连接或回环文件；显式恢复 fid=591 结果 False，原五项上传行对象及快照仍在。mixed 和 Web 合法投递各组共 5 个真实 Source ACK=True；仅发送 5 条合法 `/forward_item`，其中不再带自身，跟踪开启时新上传 peer 只指合法目标。未删除手动保留的旧行，完成后 Server route/index 与合法 Target 接收进度均清空。
+
+非空文件 65806 字节，目标及 Source 原文件 byte-for-byte 一致，SHA-256 `d844b5d8544c48d85fb6b05a2bbf1a9538c88deb1b96b913024edce44acf0296`；目录中的零长文件也取得真实 ACK。每组五条上游数据 socket 都记录实际控制 owner；加密组 channel.secure=True，明文组无加密 channel。Source 实际控制 socket 全程保持。观察到拒绝日志 `forward: refusing own control endpoint ('127.0.0.1', 40233), skipped`，别名与 wildcard 亦有对应拒绝。
+
+```bash
+PYTHONPATH="$PWD" .venv/bin/python /tmp/pyflow-transfer-lifecycle-smoke.py --case self-target --alias --same-port-target
+PYTHONPATH="$PWD" .venv/bin/python /tmp/pyflow-transfer-lifecycle-smoke.py --case self-target --encrypted
+PYTHONPATH="$PWD" .venv/bin/python /tmp/pyflow-transfer-lifecycle-smoke.py --case self-target --encrypted --async-server --wildcard --untracked
+```
+
+首次双 IP 程序为 127.0.0.2 Target 仍配置 127.0.0.1 Server 接口，既有 Client 数据 listener 使用其配置 host，故无法在 .2 接收，目标内容断言失败。程序改为 Server wildcard 监听、该 Target 通过 .2 接口连接并监听，生产收发未改；最终上述双 IP/同端口真实内容与 ACK 通过，不把地址不通的首次结果冒充自拒绝缺陷。
+
+一次性程序已删除，真实传输文件、上传暂存及隔离日志/进度/密钥目录均由 TemporaryDirectory 清理；未遗留永久验收脚本。
+
+### 路径对照与边界
+
+| C5 路径 | 实际证据 / 未覆盖 |
+|---|---|
+| 自身 same-IP/port、mixed、合法 same-IP/different-port | 六参数 console 回归与三组独立真实程序，合法目标内容/真实 ACK |
+| 不同 IP/同端口 | 明文真实双接口程序，127.0.0.2:40233 完整收到且 Source ACK=True；不是只按端口拒绝 |
+| console file/folder/嵌套/空文件 | 六参数回归及每组独立程序的非空/空条目，逐条真实结果 |
+| Web 文件/目录 | 真实 Flask multipart 请求沿原 adapter 到 TCP，self False、合法 True；未更改或验证浏览器拒绝提示 |
+| 恢复旧行、tracking off | self 恢复 worker 退出、旧行/快照保留、无新请求；async 程序在 tracking off 下完成合法投递 |
+| 别名/wildcard、实际 socket | localhost、0.0.0.0、动态端口已验证；最终两参数额外覆盖无 bind 和真实 EADDRINUSE 取消 bind 后仍允许不同 IP/同端口；EACCES、重连中的地址变化未单独验证 |
+| C1–C4、消息与磁盘扩展 | 既有受影响回归结果单列，不将 C5 扩为 Server 鉴权或磁盘扩展自拒绝；旧会话及中途 rekey 不扩大声明 |
+
+只保证原生 Client 文件/目录入口，不阻止手工构造 wire 绕过 Client，不是新增 Server 鉴权策略。NAT/身份迁移、native Windows、其他 Python 版本及全部参数笛卡尔积未覆盖。问题二严格代次隔离继续暂缓，C6 未实施。规则沉淀为上述真实消费者回归；Python LSP capabilities 仍仅 Ruff，不支持 references/definition，未虚称符号引用分析完成。
+
+### Standards
+
+发现 0 项。未发现削弱既有测试、重复实现、安全 I/O 旁路、非 owning 清理或未经批准扩围；Fowler 独立启发式 0 项。生产仅统一入口，未改 Server、Web UI 或 Source 文件发送算法。
+
+### Spec
+
+发现 1 个 P2，已真实复现并修复：`client_host=127.0.0.2` 但未绑定或配置端口冲突后，实际 Source 为 `127.0.0.1:q`，另一 Client `127.0.0.2:q` 是合法目标；最初无条件配置别名会误拒。修正为配置候选仅在解析为实际 IP 时才认作自身（wildcard 除外）；两条真实路径修复前失败，最终八参数通过。无生产越界；无未修复的实现发现。审查未运行检查，运行结果均由父代理记录。
+
+
 ## C4：复用既有 route 的显式 EOF 补最终确认
 
 **提交意图**：全部 accepted Target 已真实 ACK、上游最终 ACK 明确 False/异常后，由 Source 显式补最终确认，不重新交付文件。用户 `/skill:implement` 已授权本单一原子变更、验证、审查及提交当前分支；不推进 C5/C6，不合并或推送。此前任务迁移、独立终态表及 C4a/C4b 拆分均撤回。

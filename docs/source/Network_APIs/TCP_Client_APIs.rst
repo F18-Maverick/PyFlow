@@ -675,9 +675,18 @@ Built-in client console commands (user-typed) include:
   client to server, preserving the directory structure.
 - ``/multiple_file_folder <folder1> <folder2> ...``: sends multiple 
   folders from client to server.
-- ``/forward_file``, ``/forward_folder``, ``/forward_send_msg``: the
-  forwarding extension's console commands (client-only; the server refuses
-  them).
+- ``/forward_file``, ``/forward_folder``: native Client-only streamed forwarding.
+  Their shared per-file entry refuses the Client's own complete control
+  endpoint before creating an upload row, allocating a FID or sending a relay
+  request. Mixed lists skip only self; same IP/different port and different
+  IP/same port remain valid. The actual control socket identifies self; a
+  configured host alias must resolve to that IP (wildcard aliases its actual
+  port). A configured IP not used after no bind or bind fallback is not self.
+  Web file/folder forwarding and retained-row replay use the same check;
+  rejected replay keeps the existing row, and a resume boolean remains worker
+  registration rather than success. Server console use is refused.
+- ``/forward_send_msg``: native Client-only message forwarding; its existing
+  target rules are unchanged by the file/folder self-target guard.
 
 Ctrl-C and EOF close the connection, send a final ``/quit`` and wait
 0.5 seconds before the process ends.

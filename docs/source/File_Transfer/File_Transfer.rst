@@ -494,6 +494,22 @@ are unreachable
 itself are skipped and
 the remaining targets are still served.
 
+The native Client also refuses its own complete control endpoint: both IP
+and port must match. Same-IP Clients on different ports, and different-IP
+Clients on the same port, remain valid destinations. Comparison uses the
+captured control socket's actual local endpoint; a configured hostname is
+accepted only when it resolves to that actual IP, and a wildcard host aliases
+the actual port. An unused configured IP after no bind or source-port fallback
+cannot identify self. OS-assigned ports do not make other local Clients self.
+
+Self-only requests log a refusal before allocating a FID, creating upload
+progress or contacting the Server. Mixed requests remove only self, and use
+the remaining targets for both the wire command and the retained upload peer.
+Console files, nested folder entries, Web forwarding and retained-row replay
+share this check. A rejected replay preserves its old row; ``resume_trans``
+still reports worker reservation, not successful delivery. This rule does not
+change message forwarding or the separate disk-based forwarding extension.
+
 Like every transfer family, both commands accept an
 optional trailing
 ``destination_file_path`` that replaces the default save

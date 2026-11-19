@@ -121,6 +121,164 @@ def _close_socket_workers(server, clients, workers):
     )
 
 
+@pytest.mark.parametrize("kind", ["file", "folder"])
+@pytest.mark.parametrize("bind_host", ["127.0.0.1", "localhost", "0.0.0.0"])
+def test_forward_self_target_is_rejected_but_other_ports_still_receive(
+    tmp_path, monkeypatch, kind, bind_host
+):
+    """Console forwarding rejects itself before allocation and keeps legal peers."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    try:
+        source = TCP_Client_Base(
+            host="127.0.0.1", port=server.port, client_host=bind_host, client_port=0,
+            is_extend_command=True, is_input_command_in_console=False,
+            is_enable_encrypto=False,
+        )
+        _isolate(source, tmp_path, "self_source")
+        source_dir = tmp_path / "self_receive"
+        source_dir.mkdir()
+        source.file_transfer_dir = str(source_dir)
+        clients.append(source)
+        assert source.connect()
+        peer = source.client_socket.getsockname()
+        assert wait_until(lambda: peer in server.clients)
+        source._resume_thread.join(timeout=10)
+        directory = tmp_path / "bundle" / "nested"
+        directory.mkdir(parents=True)
+        path = directory / "payload.bin"
+        payload = os.urandom(8192 + 17)
+        path.write_bytes(payload)
+        item = directory.parent if kind == "folder" else path
+        command = source.forward_folder_console if kind == "folder" else source.forward_file_console
+        outcomes, sent, rows = [], [], []
+        real_forward, real_send = source._forward_one, source.send_message
+        source_counter = source._fid_alloc._counter
+        server_counter = server._fid_alloc._counter
+
+        def forward(*args, **kwargs):
+            result = real_forward(*args, **kwargs)
+            outcomes.append(result)
+            return result
+
+        def send(sock, message, is_send_raw=False):
+            if isinstance(message, str) and message.startswith("/forward_item "):
+                sent.append(message)
+                rows.append([list(row) for row in source.file_upload_progress.values()])
+            return real_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(source, "_forward_one", forward)
+        monkeypatch.setattr(source, "send_message", send)
+        own_alias = (bind_host, peer[1])
+        command(f"/forward_{kind} {shlex.quote(str(item))} {shlex.quote(str(own_alias))}")
+        assert wait_until(lambda: outcomes, timeout=15)
+        assert outcomes == [False]
+        assert sent == []
+        assert source._fid_alloc._counter == source_counter
+        assert server._fid_alloc._counter == server_counter
+        assert not source.file_upload_progress and not source.file_recv_progress
+        assert not server._fid_routes and not server._fid_route_index
+        assert not server._forward_relays and not server._receive_transfers
+        assert list(source_dir.rglob("*")) == []
+
+        target_dir = tmp_path / "other_receive"
+        target_dir.mkdir()
+        target = _start_client(tmp_path, server, name="other_target", recv_dir=target_dir)
+        clients.append(target)
+        target_peer = target.client_socket.getsockname()
+        assert target_peer[0] == peer[0] and target_peer[1] != peer[1]
+        assert wait_until(lambda: target_peer in server.clients)
+        command(f"/forward_{kind} {shlex.quote(str(item))} "
+                f"{shlex.quote(str(peer))} {shlex.quote(str(target_peer))}")
+        assert wait_until(lambda: len(outcomes) == 2, timeout=15)
+        assert outcomes == [False, True]
+        assert len(sent) == 1
+        assert rows[0][0][4] == target_peer
+        tokens = shlex.split(sent[0])
+        assert str(target_peer) in tokens and str(peer) not in tokens
+        output = target_dir / ("bundle/nested/payload.bin" if kind == "folder" else path.name)
+        assert output.read_bytes() == payload
+        assert list(source_dir.rglob("*")) == []
+        assert path.read_bytes() == payload
+        assert wait_until(lambda: not server._forward_relays and not server._receive_transfers)
+        assert not source.file_upload_progress and not target.file_recv_progress
+        assert not server._fid_routes and not server._fid_route_index
+
+        # A retained row from an older self-forward remains available; rejecting
+        # its replay must neither contact the Server nor mark it complete.
+        fid = 531
+        key = ((source.host, source.port), fid)
+        row = source.file_upload_progress[key] = [len(payload), len(payload), None, str(path), peer]
+        source._persist_transfer_progress()
+        assert source.resume_trans(peer, fid, len(payload))
+        assert wait_until(lambda: len(outcomes) == 3 and not source._resume_sends)
+        assert outcomes[-1] is False and len(sent) == 1
+        assert source.file_upload_progress[key] is row
+        assert source._fid_alloc._counter == source_counter + 1
+        assert server._fid_alloc._counter == server_counter + 1
+        assert not server._fid_routes and not server._receive_transfers
+    finally:
+        _close_socket_workers(server, clients, workers)
+
+
+@pytest.mark.parametrize("occupied_port", [False, True], ids=["unbound", "bind-fallback"])
+def test_forward_different_ip_same_port_survives_a_different_configured_host(
+    tmp_path, monkeypatch, occupied_port
+):
+    """An unused configured IP is not an alias for the actual control socket."""
+    workers = _track_socket_workers(monkeypatch)
+    server = TCP_Server_Base(
+        host="0.0.0.0", port=free_port(), is_extend_command=True,
+        is_input_command_in_console=False, is_enable_encrypto=False,
+    )
+    _isolate(server, tmp_path, "wildcard_server")
+    clients = []
+    blocker = socket.socket()
+    try:
+        threading.Thread(target=server.start_TCP_Server, daemon=True).start()
+        assert server_ready(server)
+        blocker.bind(("127.0.0.2", 0))
+        source = TCP_Client_Base(
+            host="127.0.0.1", port=server.port, client_host="127.0.0.2",
+            client_port=blocker.getsockname()[1] if occupied_port else None,
+            is_extend_command=True, is_input_command_in_console=False,
+            is_enable_encrypto=False,
+        )
+        _isolate(source, tmp_path, "unbound_source")
+        clients.append(source)
+        assert source.connect()
+        actual = source.client_socket.getsockname()
+        assert actual[0] == "127.0.0.1" and source.local_address is None
+        blocker.close()
+        directory = tmp_path / "other_ip"
+        directory.mkdir()
+        target = TCP_Client_Base(
+            host="127.0.0.2", port=server.port, client_host="127.0.0.2",
+            client_port=actual[1], is_extend_command=True,
+            is_input_command_in_console=False, is_enable_encrypto=False,
+        )
+        _isolate(target, tmp_path, "other_ip_target")
+        target.file_transfer_dir = str(directory)
+        clients.append(target)
+        assert target.connect()
+        peer = target.client_socket.getsockname()
+        assert peer == ("127.0.0.2", actual[1])
+        assert wait_until(lambda: actual in server.clients and peer in server.clients)
+        source._resume_thread.join(timeout=10)
+        path = tmp_path / "same_port.bin"
+        payload = b"different actual IP, same actual port"
+        path.write_bytes(payload)
+        assert source._forward_one("file", "", path.name, str(path), [peer]) is True
+        assert (directory / path.name).read_bytes() == payload
+        assert source._forward_one("file", "", path.name, str(path), [actual]) is False
+        assert wait_until(lambda: not server._forward_relays and not server._receive_transfers)
+        assert not source.file_upload_progress and not target.file_recv_progress
+    finally:
+        blocker.close()
+        _close_socket_workers(server, clients, workers)
+
+
 def test_progress_entries_round_trip_through_the_progress_file(tmp_path):
     """Both stores are written with their peer tuples and read back intact."""
     server = _start_server(tmp_path)
