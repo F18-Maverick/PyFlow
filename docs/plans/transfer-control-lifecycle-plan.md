@@ -1,6 +1,6 @@
 # 传输控制生命周期、全局转发暂停与独立并行恢复 — 更改计划
 
-状态：**用户批准的数值 offset、原 route 旧 owner 全收尾、每 Target 独立并行恢复已实现；本轮局部验证和真实传输证据已记录，待人工审查**。旧 C3a/C3b 的查询/强制 teardown/单活跃轮次仅作撤回历史。C1/C2 保留；C4–C6 未实现，不自动推进，不自动提交、合并或推送。
+状态：**C4 实现、局部验收与双轴审查完成：核心六组及两组边界真实程序通过，最后窄组合 58 passed；完整测试曾 984 passed/1 failed/1 skipped，唯一旧契约失败按用户批准迁移后窄重验通过；类型检查仍有 37 条改动范围外诊断**。复用既有 fid route/completed 和 Source 任务上传行，不新增完成表、完成位、Server 转发字节进度行或快照格式；不拆改 Source 发送函数。C1/C2/C3 保留，C5/C6 未实施；本轮提交当前分支，不合并或推送，完整证据与限制见报告。
 
 需求依据：[需求卡](transfer-control-lifecycle-requirements.md)。历史实现依据：[上一轮计划](transfer-pause-start-direction-plan.md)及其报告；它们的历史验证结果不作为本轮验证结果。
 
@@ -11,7 +11,7 @@
 1. **问题四/五**：按实际控制 socket 管理旧会话资源，删除按 peer 扫描进度表关闭当前 socket 的重复机制；旧 worker 不借用新控制连接。
 2. **问题六**：自身完整控制端点拒绝为后续 C5 目标，同 host 不同端口仍可互传；C5 未实现，不混入本轮 C3。
 3. **问题七**：Source 是 route 的唯一用户控制仲裁者；任意端 pause/start 控制整个转发任务。暂停源端新增块，已有字节继续排空，数据 socket 不断开。
-4. **问题八**：本轮 8A 撤回 offset 查询、强制 teardown 及 FIFO 单轮调度；Receiver 提交实际数值 offset，Server 等原 route 全部旧 owner（含 finally）自然收尾，再按 Target 独立建流，正文并行。8B 全 Target 已完成后的上游 EOF 再确认仍为未实现 C4，不顺带实施。
+4. **问题八**：8A 的 C3 独立并行恢复已实现，查询/强制 teardown/FIFO 单轮方案已撤回。8B 的 C4 已实现复用原 fid route/completed 和 Source 共享上传行，补全目标完成后的显式 EOF 最终确认；路径与边界见 6.1，实际证据见报告。
 
 ### 1.2 明确排除
 
@@ -53,6 +53,26 @@
 Web 的 `client_backend.py` 已知通过 Client 的文件/文件夹转发入口调用，不直接构造恢复消息；计划不修改该文件，统一入口必须覆盖 Web 调用。若实施发现额外真实消费者须修改，先更新文件清单，不扩大成 UI 功能。
 
 当前 LSP 只有 Ruff，不支持 definition/references；本轮按现有声明和文本调用点定位。实施前重新检查导航能力；支持 references 时，改公开符号前必须查询引用，不声称 Ruff 已完成引用分析。
+
+### 2.1 本次 C4 限定文件（已获实施批准）
+
+上表为整个生命周期任务的总清单，不代表 C4 可以顺带修改所有文件。本次仅限下列文件，不新增生产模块或测试文件，不删除文件：
+
+| 文件 | C4 修改点 |
+|---|---|
+| `PyFlow/network_api/connect_tcp.py` | Server `_forward_item_handler` 的终态准入、`_forward_relay` 的仅上游建流、`_forward_pump` 的 EOF/最终 ACK 分支；复用资源 registry、握手和 `_drop_fid_route`，不另写发送协议 |
+| `test/unit/network_api/test_fid_routes.py` | 既有完成集合、原目标成员、实际 Source 会话、原 route 对象、重载与同任务 owner 排他契约 |
+| `test/integration/network_api/test_tcp_transfer_resume.py` | 扩展既有 `test_forward_ack_write_failure_retains_source_and_completed_route` 等真实 ACK 测试；补重复失败、显式成功、Target 离线、零正文、错误请求及 finally 交叉 |
+| `test/integration/network_api/test_tcp_file_transfer.py` | 用户在完整测试出现唯一旧契约失败后明确批准：仅迁移背压测试，从旧自动 pause/start 消息计数改为本地 reader 阻塞/释放、完整内容和真实 ACK；不改生产背压 |
+| `docs/source/File_Transfer/File_Transfer.rst` | 记录所属端、EOF 与交付完成的区别、显式触发和清理时点 |
+| `docs/source/Network_APIs/TCP_Server_APIs.rst`、`TCP_Client_APIs.rst` | C4 支持范围、`resume_trans` 登记语义、Target 离线及失败保留边界 |
+| `docs/source/changes/transfer-fid-routes.md` | 本次行为变化及保留契约 |
+| `docs/plans/transfer-control-lifecycle-requirements.md`、本计划、`transfer-control-lifecycle-report.md` | 需求/计划状态、逐路径实际证据、风险与人工审查；历史结果不覆盖 C4 |
+
+`GLOSSARY.md` 已在本轮澄清领域术语，不定义新的实现记录；C4 实施不以此为新增表的依据。`test_resume_matching.py`、`test_transfer_control.py`、`test_transfer_handshakes.py` 仅作为既有契约回归，不计划修改。若必须扩大文件或 Source 发送实现范围，先修订计划并获批准，不在实现中顺手扩展。
+
+完整 pytest 实际为 984 passed、1 failed、1 skipped；唯一失败仍要求旧自动背压控制帧。用户已选择 `migrate_contract`，批准上述单函数迁移及窄重验，不再次运行全套。C4 审查另定位到旧恢复 tuple owner 在 route 已删除后的 finally 窗口：不同 Target 的新 route 复用同值 fid 时，不应被该旧 Target owner 误判 busy；修正限于既定 C4 准入及同文件真实恢复回归，不改 Source 或扩大生产范围。
+
 
 ## 3. 接口与线上契约（用户已批准）
 
@@ -155,7 +175,55 @@ flowchart TD
 - Source 多 sender 共享 upstream 任务控制状态和 owners 集合，`owner` 始终指向 live owner；仅最后一个 owner 退出才释放。任意参与者 pause/start 仍由 Source 仲裁，作用于所有恢复正文流；Server writers 继续排空，用户 start 不清本地背压。
 - pending Source 离线时保留，合法回连/后续触发再处理；Target 断线则丢旧 socket 请求，等待新实际会话和新实际 offset 重发。每 Target 请求去重，单流失败仅收尾该流并保留恢复依据，不打断兄弟、不自动重试。
 - 单 Target 真实 ACK 仅更新该 Target completed；中间成功不得伪造整 route ACK，Source 上传行/Server route 保留。累计全部 accepted Target 的真实 ACK 才能经既有最终 ACK 使整任务成功。零 offset、空文件、Target EOF 恢复仍需真实 ACK。
-- C4 全 Target 已完成、仅上游 ACK 明确失败的 EOF 再确认未实现；不借本轮数值 EOF 路径声称已完成 C4，不新增 ACK-of-ACK 或结果通道。
+- C4 已实现全 Target 完成、仅上游 ACK 明确失败后的显式 EOF 补确认，复用下节既有 route/completed；不新增终态表、ACK-of-ACK 或结果通道。
+
+### 6.1 C4：既有 fid 路由上的显式 EOF 补最终确认
+
+#### 6.1.1 意图、现状与不变量
+
+- **单一意图**：所有原 accepted Target 已真实确认、Server 向 Source 写最终 ACK 返回 False/异常时，允许 Source 显式零正文再确认并完成所属记录清理；不是重新交付文件。
+- **记录所属端**：Source 以 `(Server, upstream_fid)` 保存一条共享任务上传行；Target 各自保存接收行；Server 原生流式转发没有逐目标 upload/download 字节进度行，已有 `_fid_routes[fid]` 持有 `originator/targets/completed`，快照写入 `relays`。
+- **部分完成不变**：A 成功后清 A 的接收行、反向 child 索引和数据资源；B 未完成时保留其恢复关联和 Source 共享上传行。原 `targets` 中保留 A 属于任务成员证据，不等于仍向 A 传输。不因 Source 已发送到 total 就删共享恢复依据。
+- **判成功的两个条件分开**：原 route 的 `completed` 完整覆盖非空 `targets` 证明任务交付完成；`resume_offset == 本次文件头 size` 只证明零正文。缺少任一条件都不能通过 C4 回成功 ACK。
+- **记录格式不变**：不新增完成表、完成位、Server 字节进度、route total、文件名/hash、快照 version 或迁移器；不把任务元数据迁到 Source。终态直接复用原 route，补确认成功后删除，无第二份成功历史。
+
+#### 6.1.2 入口 → 准入 → 文件头 → ACK → 清理
+
+1. **Source 显式入口**：原上传行仍存在时调用 `resume_trans(原 Target, upstream_fid, 原上传行 total)`。仍只预留 worker，不把返回 True 当作完成；原文件存在且未改变是既有恢复前提。普通传输、Target 驱动的未完成恢复和 C3 并行模型不变。
+2. **既有线上请求**：复用 Source `_forward_one` 发出的 `/forward_item ... fid=<fid> resume=<offset>`，不新增终态标志或完成消息。一次请求只选择一个原 Target，沿用 Source 现有 EOF 文件发送；不拆改 `file_transfer_mode/_send_file`，不新增绕过现有公开入口的调用。
+3. **Server 先判合法终态，再做在线过滤**：`_forward_item_handler` 校验实际 Source socket 仍是当前会话、originator、原 upstream fid、请求目标成员及完整完成集合。只有这一分支允许目标离线；不能先把离线但已完成的 Target 过滤掉。未知/旧 Source、错误 fid/成员/多目标请求无终态副作用；普通及未完成转发保持既有在线目标处理。
+4. **所有权准入**：`_forward_relay` 复核同一 route 对象与会话；原始及各独立恢复的 receive/data/listener/握手/finalizing owner 未全部退出时不准入。该显式终态路径不排自动重试队列，忙/重复按既有占用/失败规则拒绝；不得只检查 socket 已关闭。复用现有接收预留，使同一 upstream 任务最多一个确认 owner；不持全局锁等待网络，不阻塞控制 reader/event loop。
+5. **仅建立上游数据腿**：复用原端口回复、listener、加密 stamp、track_socket、控制登记和 owning finally。终态分支不分配 child fid、不调用 `forward_item_to`，不创建 Target 握手或数据连接；Target 无须在线，原目标文件不读取、不重开、不改写。未完成 route 仍走 C3，不以空 Target 列表模拟完成。
+6. **完整文件头与严格 EOF**：读取现有 name-length/name/size 头，不增加字段。只有请求 offset 与该 size 相等才按 C4 完成；合法空文件为 offset=size=0。头截断、offset 小于/大于 size 均失败，不吞正文、不把非法 offset 重置成零后补成功 ACK。有效 EOF 路径的正文读写均为零。
+7. **最终 ACK**：在本次头完整、会话/route 对象仍有效、原完成集合仍完整的条件下，通过既有 `send_message` 发送原最终数据 ACK 标记。它确认已由 Target 真实 ACK 证明的任务，不由 EOF 请求虚构成功；复用既有最终 ACK 成功/失败和 `_drop_fid_route` 清理入口，不新增 receipt/ACK-of-ACK。
+8. **各端 owning 清理**：ACK 写入成功后 Server 才按原 route 对象清 route/index/recovery；Source 只有实际消费最终 ACK 才通过现有路径清自己的共享上传行。端口/连接/文件头/ACK False 或异常均清本次资源、保留原任务依据；旧 finally 不删新 owner/无关 fid。Source 或 Server 的记录重载后仍由 Source 显式操作，不从 connect 自动发起 C4。
+
+#### 6.1.3 C4 路径全集与验收证据
+
+| 编号 | 执行路径 | 必须观察的证据 |
+|---|---|---|
+| C4-P01 | 原始扇出全部 Target ACK；上游 ACK False/异常 | 所有目标真实内容/ACK，Source 返回失败并保留共享行，原 route 完整 completed 保留，目标反向索引已清 |
+| C4-P02 | C3 最后一条独立恢复完成后，上游最终 ACK 失败 | 不重发此前已完成目标，任务行仍在；同一 C4 路径可补确认，不只支持首次扇出 |
+| C4-P03 | Source 显式同 fid EOF；文件/文件夹条目/空文件 | 原 port/header/ACK 流，Source 真实消费成功；零正文、无 Target 命令/新 socket/新 fid，原完整路径内容/hash 不变 |
+| C4-P04 | 补确认的 ACK 再次 False/异常后显式重做 | 每次失败保留原 route/行并清本次 owner；最终成功只清所属记录，不伪造自动重试 |
+| C4-P05 | 一个或全部原 Target 已离线 | 正确 Source 可确认，Target 不在线不阻止终态；未完成离线目标不可借此跳过 |
+| C4-P06 | 完成 route + Source 行从旧规范快照重载、原端点回连 | 无新字段/迁移器；Server 不自动触发 C4；显式再确认后快照 owning 清理，Target 无须回连 |
+| C4-P07 | 部分完成、未知/错误 fid、Source/成员、旧 socket、多目标、缺失/截断头、非 EOF | 不得仅凭 EOF 直接回 C4 成功或清共享行/route；非法请求不触碰目标文件。合法未完成目标仍可按 C3 真实恢复，实际全部 ACK 后的正常成功不受限制 |
+| C4-P08 | 原 owner 仍在 finally、两个并发确认、迟到旧清理 | 不出现第二 owner，不抢占；旧资源和握手均收尾后可再次显式操作，新 owner/无关任务保留 |
+| C4-P09 | 控制或数据连接中断、stop、加密就绪窗口 | 沿统一安全 I/O 失败关闭，不明文回退；无死锁或 worker 泄漏，保留可恢复依据 |
+| C4-P10 | tracking off 的既有保留行、别名/wildcard、无关普通 fid 活跃 | 不凭空造行、不改变五字段/scoped key；实际 owner 会话正确、其他 fid 仍有内容/真实 ACK |
+
+明文/加密、thread/async 为对应路径参数；文件/文件夹、零长/非零长、False/异常与同会话/原端点重连需要在报告逐项注明实际运行组合，未跑项不能称覆盖。已有普通 EOF 和 Target ACK-loss EOF 测试继续保留，不把它们等同于 C4。
+
+#### 6.1.4 单一原子变更、验证与风险
+
+- **拆分固定**：一个 C4 原子变更“复用既有路由的显式终态 EOF 补确认”，包含 Server 分支、对应 unit/真实 socket 测试和使用文档，不再分 C4a/C4b，不混 C5/C6。计划总变更约 300–500 行；这只是审查规模预估，不是硬凑行数。若实现必须超出该规模/文件范围或触碰 Source 发送函数，先回计划阶段，不边写边拆。
+- **局部命令**：完成该变更后一次运行下节 V4；失败以输出定位后只重验修正路径，不靠重复尝试碰通过。集成测试优先扩展既有上游 ACK 失败场景，补充能捕获真实错误的准入/错误路径，不添加源码字符串、wiring 或只看文件存在的断言。
+- **独立运行证据**：实施完成后创建并删除临时 `/tmp/pyflow-transfer-lifecycle-smoke.py --case eof-confirm`，不调用 pytest 测试函数，不 mock 文件/网络/加密主路径；只在最终 ACK 发送点注入 False/异常、用事件固定时序。记录稳定 fid、实际 socket owner、零正文/无 Target 建连、内容/hash、ACK、失败后快照及最终 worker 数；不留永久验收脚本或新协议。
+- **资源代价**：失败且未再操作的原 route 仍可长期保留；本次不增加 TTL/后台清理或有界存储保证。ACK 本地 write 成功后 Server 删除，但对端应用是否收到仍不确定；不以永久成功历史或 ACK-of-ACK 掩盖。
+- **元数据限制**：旧 route 不保存历史 name/size/hash；本次 EOF 只与本次头比较，不证明源文件未改变，不把原文件缺失或修改问题纳入本次修复。
+- **接口/安全影响**：不改公开签名、wire、Source 行或 Server 快照格式；所有新分支走既有 secure/send/receive/owner 入口。高风险审查聚焦实际会话、已完成集合、旧 finally 和清理身份；native Windows、其他 Python 版本及未运行矩阵明确未覆盖。无 CI、依赖、测试策略或阈值修改。
+
 
 ## 7. 数据流与所有路径验收映射
 
@@ -183,7 +251,7 @@ flowchart TD
 | P14 多 Target 不同 offset/部分完成/晚到目标 | 独立流/进度/资源；A 正文或 ACK 阻塞时 B 可传输；仅端口短串行；已完成目标不重传 | 本轮 C3；V3b，S4 |
 | P15 Source/Target 离线及单流失败 | Source pending 保留；Target 旧 socket pending 丢弃，新会话新 offset 重发；兄弟继续，无自动重试 | 本轮 C3；V3b，S4 |
 | P16 零 offset/空文件/EOF | 不新建全目标任务；不重发已收正文；必须真实 ACK | C1/C3/C4；V1/V3/V4，S1/S4/S5 |
-| P17 所有目标完成、上游 ACK False/异常 | 保留可确认终态；同 fid EOF 补 ACK；不重开 Target；再次失败仍可确认 | C4；V4，S5 |
+| P17 所有目标完成、上游 ACK False/异常 | 复用原 route/completed；Source 显式同 fid EOF；无 Target 重开/正文；再次失败保留，收到真实 ACK 后清所属共享行；详见 C4-P01–P10 | C4；V4，S5 |
 | P18 Client 自目标/混合目标/同机不同端口 | 自目标不建腿、不建行；混合只拒自身；其他合法目标内容/ACK 正确 | C5；V5，S6 |
 | P19 tracking off/原保留行/query/delete/stop | 无凭空新进度；原 fid/query/快照 schema 不变；关闭后才能删 | C1/C3；V1/V3/V6，S1/S4 |
 | P20 加密开关/rekey/线程式及 async/别名和 wildcard | 统一安全 I/O、不明文降级、不阻塞密钥接收；真实内容/ACK/owner 清理 | C1–C5；相应 V/S 的参数矩阵，V6 |
@@ -198,11 +266,11 @@ flowchart TD
 | C2 | 已保留：Source 仲裁全局暂停、writer 排空与独立背压 | V2，S3；历史证据见报告 |
 | 旧 C3a/C3b | 已撤回历史：offset 查询、强制 teardown、单活跃 FIFO 轮次，不再实施或验收该契约 | 旧结果不作为本轮证据 |
 | 本轮 C3 | 已实现：仅数值请求；原 route 旧 owner 全收尾；每 Target 独立流/进度/资源/失败，正文并行；socket+fid 仅端口短串行；保留 C1/C2 和累计真实 ACK | 分次局部回归与 3 组独立程序实际结果见实施报告；未扩大为 V6/C6 总验收 |
-| C4 | 未实现：所有 Target 已完成、上游 ACK 明确失败后的 EOF 再确认 | V4，S5；须单独推进 |
+| C4 | 已批准并实现：复用既有 fid route/completed，不新增记录/字段；Source 显式 EOF 补最终确认，单一原子变更 | C4-P01–P10；实际运行矩阵、局部与完整测试及未覆盖项见报告，不把计划命令当运行结果 |
 | C5 | 未实现：Client 自身完整控制端点拒绝 | V5，S6；须单独推进 |
 | C6 | 未实现：合并回归、全路径总体验收与最终报告 | V6；须单独推进 |
 
-本轮文档同步不是 C6 完成声明。实施不新增 wire、依赖、CI、自动重试或身份迁移；不创建 git 提交。旧 C3 的历史拆分及授权不作为新实现通过证据。
+本轮不是 C6 总验收声明。实施不新增 wire、依赖、CI、自动重试或身份迁移；用户实施指令授权提交当前分支，不授权合并或推送。旧 C3 历史拆分及授权不作为新实现通过证据。
 
 ## 9. 验收命令和证据格式（计划约定；实际执行见实施报告）
 
@@ -217,8 +285,9 @@ flowchart TD
 .venv/bin/python -m pytest test/unit/network_api/test_resume_matching.py -q
 # V3b — 本轮 C3 原 route 收尾及独立并行恢复（非旧查询/串行契约）
 .venv/bin/python -m pytest test/unit/network_api/test_fid_routes.py test/integration/network_api/test_tcp_transfer_resume.py test/integration/network_api/test_tcp_transfer_control.py -k 'forward or relay' -q
-# V4 — C4 EOF 与最终 ACK
-.venv/bin/python -m pytest test/unit/network_api/test_resume_matching.py test/integration/network_api/test_tcp_transfer_resume.py -k 'ack or eof' -q
+# V4 — C4 已有路由与显式 EOF 最终确认；实际执行结果见报告
+.venv/bin/python -m pytest test/unit/network_api/test_fid_routes.py test/unit/network_api/test_resume_matching.py test/unit/network_api/test_transfer_control.py test/unit/network_api/test_transfer_handshakes.py -q
+.venv/bin/python -m pytest test/integration/network_api/test_tcp_transfer_resume.py test/integration/network_api/test_tcp_transfer_control.py -k 'ack or eof or forward or relay or parallel_recoveries' -q
 # V5 — C5 转发入口
 .venv/bin/python -m pytest test/integration/network_api/test_tcp_file_transfer.py test/integration/test_forward_extension.py test/integration/test_forward_msg_attribution.py test/integration/network_api/test_tcp_transfer_control.py -k 'forward or relay or self_target' -q
 # V6 — 最终一次受影响范围合并回归，不扩为项目全套
@@ -231,7 +300,7 @@ flowchart TD
 - **S2** `--case relay-leg`：稳定 upstream/child、完成集合及旧 worker/旧控制会话交叉；证明旧任务不借新控制 socket。
 - **S3** `--case global-pause`：至少两个 Target，逐一发请求，确认后 Source 不新增块、旧块排空、同 socket start、压力硬门槛。
 - **S4** `--case parallel-recovery`：不同实际 offset；原 route 在线/暂停/EOF/握手/finally barrier；A 正文与 ACK 分别阻塞时 B 及晚到 Target 仍建流并传输；Source 离线排队、Target 断线丢旧请求并以新 offset 重发、单流失败与无关 fid。观察每流内容/资源、共享全局 pause、累计真实 ACK；不复用旧 serial-recovery 结论。
-- **S5** `--case eof-confirm`：真实目标 ACK 后定向注入上游 ACK False/异常，再做同 fid 零正文确认，验证再次失败和重启。
+- **S5** `--case eof-confirm`：复用原 route/completed，真实 Target ACK 后注入上游 ACK False/异常，再由 Source 显式同 fid 零正文确认；证明 Target 离线也无需重开、重复失败保留、旧规范记录重载后仍可显式确认，最终 ACK/内容/owner 清理符合 C4-P01–P10。
 - **S6** `--case self-target`：自身、混合目标和本机不同端口，保留合法目标传输结果。
 
 每个 case 参数矩阵覆盖明文/加密，以及 thread/async 的对应实际分派；原端点重连覆盖配置别名、wildcard。用 Event/Barrier 固定顺序，计时只用于失败截止，不靠 sleep 碰运气。
@@ -243,9 +312,9 @@ flowchart TD
 - **公共契约/协议影响**：公开签名、稳定 fid/child、文件/转发命令、pause/start、端口响应及持久化 schema 不变，不新增 wire。撤回 `?`/`None` 查询；恢复行为改为数值请求等待原 route 全收尾，再每 Target 独立并行流。
 - **持久化模型不变**：保留五项文件行、scoped key 和 relay schema，不新增版本、route total 或腿编号；独立流进度只在运行时，整任务行不得被单流提前清理。
 - **并发风险**：禁止持全局锁等 I/O/线程；原 route barrier 必须涵盖 finally，后续独立恢复流不相互充当 barrier；端口短锁不得覆盖正文/ACK。共享控制 owners 最后释放、旧 finally 按身份清理。问题二严格代次隔离继续暂缓。
-- **完成/失败语义**：单 Target 真实 ACK 不伪造整体成功；累计全部真实 Target ACK 后才整任务成功。单流失败不得取消兄弟或自动重试；Source 离线保留请求，Target 断线丢旧 socket 请求并等待新 offset。C4 全完成后的上游 EOF 再确认未实现。
+- **完成/失败语义**：单 Target 真实 ACK 不伪造整体成功；A 成功清 A 所属接收行/反向索引/资源，B 未完成保留 B 恢复关联和 Source 共享上传行。C4 只在已有完整完成集合上显式 EOF 补 ACK，复用原记录；不新增终态表/完成位/Server 字节进度，不更改 C3 并行模型。ACK 写成功与对端收到的不确定性仍不解决。
 - **平台边界**：运行环境能验证的 Linux 结果不代替 native Windows；Windows/其他 Python 版本如未实际运行，报告明确未覆盖。不得通过改 CI 或阈值规避。
 - **规则沉淀**：实际会话取消、数值实际 offset、原 owner/finally barrier、不同 offset 独立并行、晚来目标不等正文/ACK、全局 pause 与真实 ACK 聚合成为本轮回归路径；不新增源码字符串断言或严格代次隔离承诺。
 - **文档/报告**：最终报告逐 P01–P20 给结论，单列问题二暂缓；每个原子变更含意图、范围、数据流、局部命令、未覆盖项、风险；文档随变更完成，不留“以后补”。
 
-本轮实现和局部证据已交付[实施报告](transfer-control-lifecycle-report.md)，等待人工审查。旧 C3a/C3b 查询/强制 teardown/串行轮次及其结果仅保留为撤回历史。C4–C6 未实现，不自动推进，不自动提交、合并或推送。
+C3/C4 实现与实际证据见[实施报告](transfer-control-lifecycle-report.md)。C4 保持已批准的路径、文件范围、单原子拆分及记录模型；未执行参数不列覆盖。C5/C6 不自动推进，合并与推送仍须人工确认。

@@ -919,8 +919,9 @@ The temporary connections of a transfer are resumed after a disconnect:
   zero. The source owns the upstream FID and the Server allocates one child FID
   per target. Every listener replies through the same four-token
   ``/server_file_transfer_port <port> <fid> <stamp>`` line; the server validates
-  the sender and unresolved target and reuses the upstream and child FIDs. Stale
-  or mismatched responses cannot satisfy another request. The receiver matches
+  the original sender and accepted target and reuses the upstream and child FIDs.
+  Completed targets are eligible only for the all-Target reconfirmation below.
+  Stale or mismatched responses cannot satisfy another request. The receiver matches
   fid, original sender, basename
   and total size, then writes its retained full path, including nested folder
   items. A size mismatch preserves the partial file. No new-ID/path alias or old
@@ -952,13 +953,13 @@ their listener or start handshake fails. A successful target loses its reverse
 index immediately, but the accepted mapping remains until the current input
 stream is fully read and every accepted target has acknowledged. The server
 then forwards the existing final data-ACK marker upstream using the normal
-per-hop send path (encrypted when enabled). It drops the route only after that
-ACK write succeeds; an unsuccessful write leaves the completed route available
-for recovery. The source's original final-ACK wait is 30 seconds plus 10 seconds
-per 100 MiB. A long pause or slow downstream delivery can outlast that wait;
-timeout or a lost ACK conservatively retains the source upload progress,
-even if the server completed delivery. No separate receipt or retry
-protocol is used. If a target cannot send its final ACK, its receive entry
+per-hop send path (encrypted when enabled). Only the owning route is removed
+after that ACK write succeeds; a ``False`` result or exception retains it.
+The source's original final-ACK wait is 30 seconds plus 10 seconds per 100 MiB.
+A long pause or slow downstream delivery can outlast that wait; timeout or a
+lost ACK conservatively retains the shared source upload row even if delivery
+completed. No separate receipt or automatic retry protocol is used.
+If a target cannot send its final ACK, its receive entry
 survives even when the disk file is complete; an EOF replay with the same fid
 can confirm it without retransmitting the body.
 
@@ -1000,10 +1001,38 @@ No stale request is borrowed by a replacement session. One stream's failure
 does not cancel siblings or start an automatic retry loop. Existing retained
 rows can recover with tracking off, but no new recovery rows are fabricated.
 
-All-Target completion followed by a failed upstream ACK remains retained;
-the separate EOF reconfirmation lifecycle stage is not implemented here.
-Delayed pause/start across same-session, same-fid data-leg replacement is
-also explicitly deferred; no generation-isolation guarantee is added.
+When every accepted Target has really ACKed but the upstream ACK write returned
+``False`` or raised, Source can explicitly call
+``resume_trans(original_target, upstream_fid, total)`` (C4). Use an original
+accepted Target and the existing shared Source upload row; ``True`` means only
+worker registration, not completion. A live, paused, negotiating or finalizing
+owner, including ``finally`` cleanup, rejects the explicit operation as busy
+without closing or queueing it; it can be repeated after owners finish.
+
+This opens only a Source-to-Server data connection using the existing port
+reply and complete filename/size header. The requested offset must equal the
+size in this attempt's header exactly. It sends zero body bytes and waits for
+the existing final ACK; no Target connection, new Target leg or body replay is
+needed, so Targets may be offline. Server validates the original Source and
+accepted Target against the existing route's ``originator``/``targets`` and
+requires all its ``completed`` evidence. It does not validate historical
+filename, size or hash. No Server byte-progress or terminal-state table, field,
+snapshot schema or wire change is introduced.
+
+Another ``False``/exception leaves the route and Source row for another explicit
+attempt. Success removes only the owning route after its ACK write succeeds;
+Source removes its shared row only after observing the final ACK. Existing
+route/completion and upload snapshots reload with the same explicit recovery
+requirement, not an automatic retry or TTL. This cannot resolve a successful
+Server ACK write that Source never receives: the route may already be gone.
+Ordinary transfers, C3 unfinished-Target recovery and global pause/start are
+unchanged. These are control-layer extension points; Source
+``file_transfer_mode`` and ``_send_file`` are unchanged.
+
+Delayed pause/start across same-session, same-fid data-leg replacement remains
+deferred; no generation-isolation guarantee is added. Self-target rejection
+(C5) and combined acceptance (C6) remain later stages.
+
 Fids no longer encode a plain/relay kind: the reserved low bit is always zero,
 and diagnostics use ``e<epoch>.<counter>``. Ordinary senders own their FIDs;
 the relay source owns the upstream FID and the Server allocates one child FID

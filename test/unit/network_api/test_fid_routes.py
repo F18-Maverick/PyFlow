@@ -354,6 +354,74 @@ def test_completed_targets_survive_reload_without_recreating_their_indexes(tmp_p
         second.stop()
 
 
+def test_fully_completed_snapshot_restores_route_without_indexes_or_progress_rows(tmp_path):
+    instance = _server(tmp_path)
+    snapshot = {"upload": {}, "download": {}, "relays": {"303": {
+        "originator": list(ORIGINATOR),
+        "targets": [[list(TARGET_1), 305], [list(TARGET_2), 306]],
+        "completed": [list(TARGET_1), list(TARGET_2)],
+    }}}
+    with open(instance.file_trans_progress_file, "w", encoding="utf-8") as stream:
+        json.dump(snapshot, stream)
+    try:
+        assert instance._load_transfer_progress() == 1
+        route = instance._lookup_fid_route(None, 303)[1]
+        assert route["originator"] == ORIGINATOR
+        assert route["targets"] == {TARGET_1: 305, TARGET_2: 306}
+        assert route["completed"] == {TARGET_1, TARGET_2}
+        assert instance._fid_route_index == {}
+        assert instance._lookup_fid_route(TARGET_1, 305) is None
+        assert instance._lookup_fid_route(TARGET_2, 306) is None
+        assert instance.file_upload_progress == {}
+        assert instance.file_recv_progress == {}
+    finally:
+        instance.stop()
+
+
+@pytest.mark.parametrize("case", [
+    "wrong-source-address", "stale-source-socket", "wrong-member",
+    "multiple-targets", "partially-completed",
+])
+def test_terminal_resume_rejects_invalid_source_or_target_on_control_socket(server, case):
+    completed = {TARGET_1} if case == "partially-completed" else {TARGET_1, TARGET_2}
+    route = server._register_fid_route(
+        303, ORIGINATOR, {TARGET_1: 305, TARGET_2: 306}, completed,
+    )
+    assert route is not None
+    server.running = True
+    sockets = []
+    try:
+        for address in (ORIGINATOR, TARGET_1, TARGET_2, TARGET_3):
+            sockets.extend(_install_client(server, address))
+        control, peer = sockets[:2]
+        requester = ORIGINATOR
+        if case == "wrong-source-address":
+            control, peer = sockets[-2:]
+            requester = TARGET_3
+        elif case == "stale-source-socket":
+            control, peer = socket.socketpair()
+            sockets.extend((control, peer))
+        targets = [TARGET_3] if case == "wrong-member" else [TARGET_1]
+        if case == "multiple-targets":
+            targets.append(TARGET_2)
+        target_tokens = " ".join(f'"{target!r}"' for target in targets)
+        peer.settimeout(5)
+        server.handle_command(
+            control, requester,
+            f"/forward_item file fid=303 resume=7 payload.bin {target_tokens}",
+        )
+        with peer.makefile("r") as stream:
+            assert stream.readline().startswith("/forward_error 303 ")
+        assert server._lookup_fid_route(None, 303) == (303, route)
+        assert route["completed"] == completed
+        assert server.file_upload_progress == {}
+        assert server.file_recv_progress == {}
+    finally:
+        server.clients.clear()
+        for sock in sockets:
+            sock.close()
+
+
 @pytest.mark.parametrize("completed", [None, [list(TARGET_2)], [list(TARGET_1)] * 2])
 def test_invalid_completed_snapshot_is_preserved_on_load_write_and_stop(tmp_path, completed):
     instance = _server(tmp_path)

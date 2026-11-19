@@ -726,15 +726,26 @@ Built-in client commands include:
   offset after old receive cleanup. One stream's failure does not cancel
   siblings or automatically retry. A real Target ACK updates only its own
   completion; intermediate success cannot fabricate an overall route ACK.
-  Strict same-session/fid generation isolation remains deferred. C4 all-Target
-  upstream EOF reconfirmation, C5 self-target rejection and C6 combined
-  acceptance are not implemented by this revision.
-- Forwarded transfers return the existing final data-ACK marker upstream only
-  after the current input stream is complete and every accepted target has
-  acknowledged. The normal send path reframes the marker for the upstream hop;
-  the route is dropped only after the ACK write succeeds. A failed write keeps
-  the completed route for recovery. This does not change ordinary sender or
-  server receive-ACK behavior.
+  Strict same-session/fid generation isolation remains deferred; C5 self-target
+  rejection and C6 combined acceptance remain later stages.
+- After all accepted Targets really ACK, a ``False``/exception writing the
+  upstream final ACK retains the existing route for C4 reconfirmation. Source
+  explicitly calls ``resume_trans(original_target, upstream_fid, total)``;
+  ``True`` reserves a worker, not completion. Live owners, including ``finally``,
+  reject this explicit operation as busy; retry explicitly after cleanup.
+  Server validates the original Source and accepted Target using the existing
+  ``originator``/``targets``/``completed`` route. Only a Source-to-Server data
+  connection is opened: the normal port reply and full header are required,
+  with offset exactly equal to this header's size, zero body bytes and the
+  existing final ACK. No new Target leg is opened; Targets may be offline.
+  Another false/exception retains route and Source shared upload row. Success
+  removes only the owning route after the ACK write; Source removes its row
+  only on observing the ACK. Existing snapshots still require explicit recovery,
+  without automatic retry, TTL, new Server byte-progress/terminal table or
+  schema/wire fields. Historical name/size/hash are not validated; a successful
+  ACK write lost before Source receives it remains ambiguous. Ordinary transfers, C3
+  and global pause/start are unchanged, as are Source ``file_transfer_mode``
+  and ``_send_file``. See :ref:`transfer-pause-and-reconnect` for details.
 - ``/server_file_transfer_port <port> <fid> <stamp>``: the four-token listener
   reply for ordinary, public-key and relay legs. Replies match the actual control
   socket and FID (the source-provided upstream FID for relay upload). Each

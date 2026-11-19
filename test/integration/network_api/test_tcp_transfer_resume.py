@@ -1699,11 +1699,13 @@ def test_forward_ack_loss_retains_state_and_resumes_original_ids(
         _close_socket_workers(server, clients, workers)
 
 
+@pytest.mark.parametrize("kind,empty", [("file", False), ("folder", False), ("file", True)],
+                         ids=["file", "folder", "empty"])
 @pytest.mark.parametrize("ack_failure", ["false", "exception"])
 def test_forward_ack_write_failure_retains_source_and_completed_route(
-    tmp_path, monkeypatch, ack_failure
+    tmp_path, monkeypatch, ack_failure, kind, empty
 ):
-    """A failed original ACK write keeps the source upload and the Server route."""
+    """Failed upstream ACKs can be explicitly reconfirmed without reopening Targets."""
     workers = _track_socket_workers(monkeypatch)
     server = _start_server(tmp_path)
     clients = []
@@ -1717,8 +1719,10 @@ def test_forward_ack_write_failure_retains_source_and_completed_route(
         target_addr = target.client_socket.getsockname()
         assert wait_until(lambda: target_addr in server.clients)
         src = tmp_path / "ack_write_failure.bin"
-        payload = os.urandom(64 * 1024 + 37)
+        payload = b"" if empty else os.urandom(64 * 1024 + 37)
         src.write_bytes(payload)
+        rel_dir = "bundle/nested" if kind == "folder" else ""
+        output = recv_dir / rel_dir / src.name
         failed_writes = []
         real_send = server.send_message
 
@@ -1726,16 +1730,17 @@ def test_forward_ack_write_failure_retains_source_and_completed_route(
             marker = message.encode("utf-8") if isinstance(message, str) else message
             if marker == server.server_received_file_data_sign.encode("utf-8"):
                 failed_writes.append(sock)
-                if ack_failure == "exception":
-                    raise ConnectionError("injected upstream final ACK write failure")
-                return False
+                if len(failed_writes) <= 2:
+                    if ack_failure == "exception":
+                        raise ConnectionError("injected upstream final ACK write failure")
+                    return False
             return real_send(sock, message, is_send_raw=is_send_raw)
 
         monkeypatch.setattr(server, "send_message", fail_upstream_ack)
-        assert source._forward_one("file", "", src.name, str(src), [target_addr]) is False
+        assert source._forward_one(kind, rel_dir, src.name, str(src), [target_addr]) is False
         assert len(failed_writes) == 1
-        assert wait_until(lambda: not server._forward_relays, timeout=10)
-        assert (recv_dir / src.name).read_bytes() == payload
+        assert wait_until(lambda: not server._forward_relays and not server._receive_transfers, timeout=10)
+        assert output.read_bytes() == payload
         assert wait_until(lambda: not target.file_recv_progress, timeout=10)
         assert len(source.file_upload_progress) == 1
         upload_key, upload = next(iter(source.file_upload_progress.items()))
@@ -1768,8 +1773,216 @@ def test_forward_ack_write_failure_retains_source_and_completed_route(
         finally:
             reloaded.file_trans_progress_file = str(tmp_path / "inspection_progress.json")
             reloaded.close()
+
+        target.close()
+        assert wait_until(lambda: target_addr not in server.clients)
+        outcomes, headers = [], []
+        real_forward, real_source_send = source._forward_one, source.send_message
+
+        def forward(*args, **kwargs):
+            result = real_forward(*args, **kwargs)
+            outcomes.append(result)
+            return result
+
+        def observe_header(sock, message, is_send_raw=False):
+            if isinstance(message, bytes):
+                headers.append(message)
+            return real_source_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(source, "_forward_one", forward)
+        monkeypatch.setattr(source, "send_message", observe_header)
+        assert source.resume_trans(target_addr, fid, len(payload)) is True
+        assert wait_until(lambda: outcomes == [False] and not source._resume_sends, timeout=15)
+        assert len(failed_writes) == 2
+        assert server._fid_routes[fid] is route
+        assert source.file_upload_progress[upload_key] is upload
+        assert source.resume_trans(target_addr, fid, len(payload)) is True
+        assert wait_until(lambda: outcomes == [False, True] and not source._resume_sends, timeout=15)
+        assert len(failed_writes) == 3
+        expected = [len(src.name.encode()).to_bytes(4, "big"), src.name.encode(),
+                    len(payload).to_bytes(8, "big")]
+        assert headers == expected * 2  # Both attempts sent a header and zero body bytes.
+        assert output.read_bytes() == payload
+        if kind == "folder":
+            assert not (recv_dir / src.name).exists()
+        assert not server._fid_routes and not server._fid_route_index
+        assert not source.file_upload_progress
+        assert wait_until(lambda: not server._receive_transfers and not server._forward_relays)
+        with open(server.file_trans_progress_file, encoding="utf-8") as stream:
+            assert json.load(stream)["relays"] == {}
+        with open(source.file_trans_progress_file, encoding="utf-8") as stream:
+            assert json.load(stream)["upload"] == {}
     finally:
         _close_socket_workers(server, clients, workers)
+
+
+def test_eof_confirmation_ignores_old_recovery_owner_for_another_target(tmp_path, monkeypatch):
+    """A completed prior route's scoped finally cannot block a different Target."""
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    held, release = threading.Event(), threading.Event()
+    try:
+        old_source = _start_client(tmp_path, server, name="old_source")
+        clients.append(old_source)
+        old_dir = tmp_path / "old_target"
+        old_dir.mkdir()
+        old_target = _start_client(tmp_path, server, name="old_target", recv_dir=old_dir)
+        clients.append(old_target)
+        old_peer = old_target.client_socket.getsockname()
+        path = tmp_path / "scoped_confirmation.bin"
+        payload = b"confirmed by two separate routes"
+        path.write_bytes(payload)
+        target_acks = []
+        real_target_send = old_target.send_message
+
+        def target_send(sock, message, is_send_raw=False):
+            if message == old_target.server_received_file_data_sign:
+                target_acks.append(sock)
+                if len(target_acks) == 1:
+                    return False
+            return real_target_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(old_target, "send_message", target_send)
+        assert old_source._forward_one("file", "", path.name, str(path), [old_peer]) is False
+        fid = next(iter(server._fid_routes))
+        assert wait_until(lambda: not server._forward_relays and not server._receive_transfers)
+        assert wait_until(lambda: not old_target._receive_transfers)
+        real_release = connect_tcp._release_receive
+
+        def release_receive(instance, key, record):
+            if instance is server and key == (old_peer, fid):
+                held.set()
+                assert release.wait(timeout=30)
+            return real_release(instance, key, record)
+
+        monkeypatch.setattr(connect_tcp, "_release_receive", release_receive)
+        assert old_target._request_resumes() == 1
+        assert held.wait(timeout=15)
+        assert fid not in server._fid_routes
+        old_record = server._receive_transfers[(old_peer, fid)]
+        assert wait_until(lambda: not old_source._resume_sends)
+
+        source = _start_client(tmp_path, server, name="new_source")
+        clients.append(source)
+        new_dir = tmp_path / "new_target"
+        new_dir.mkdir()
+        target = _start_client(tmp_path, server, name="new_target", recv_dir=new_dir)
+        clients.append(target)
+        peer = target.client_socket.getsockname()
+        control = server.clients[source.client_socket.getsockname()]["socket"]
+        # Independent Source allocators can choose the same value after the
+        # previous route has been dropped; the live key is still Target-scoped.
+        monkeypatch.setattr(source._fid_alloc, "alloc", lambda **kwargs: fid)
+        failures = []
+        real_send = server.send_message
+
+        def server_send(sock, message, is_send_raw=False):
+            record = server._receive_transfers.get(fid)
+            if (message == server.server_received_file_data_sign and not failures
+                    and record is not None and record["control_socket"] is control):
+                failures.append(sock)
+                return False
+            return real_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(server, "send_message", server_send)
+        assert source._forward_one("file", "", path.name, str(path), [peer]) is False
+        assert len(failures) == 1
+        assert wait_until(lambda: fid not in server._receive_transfers and not server._forward_relays)
+        assert server._fid_routes[fid]["completed"] == {peer}
+        outcomes = []
+        real_forward = source._forward_one
+
+        def forward(*args, **kwargs):
+            result = real_forward(*args, **kwargs)
+            outcomes.append(result)
+            return result
+
+        monkeypatch.setattr(source, "_forward_one", forward)
+        assert source.resume_trans(peer, fid, len(payload))
+        assert wait_until(lambda: not source._resume_sends, timeout=10)
+        assert outcomes == [True]
+        assert server._receive_transfers[(old_peer, fid)] is old_record
+        assert not release.is_set(), "unrelated finally was needed for confirmation"
+        assert fid not in server._fid_routes and not server._fid_route_index
+        assert not source.file_upload_progress and not old_source.file_upload_progress
+        assert (old_dir / path.name).read_bytes() == payload
+        assert (new_dir / path.name).read_bytes() == payload
+        release.set()
+        assert wait_until(lambda: not server._receive_transfers)
+    finally:
+        release.set()
+        _close_socket_workers(server, clients, workers)
+
+
+def test_eof_confirmation_rejects_bad_headers_and_waits_for_finally(tmp_path, monkeypatch):
+    """An EOF request cannot bypass header validation or a finalizing owner."""
+    from PyFlow.network_api.connect_tcp import _send_transfer_request
+
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    source = _start_client(tmp_path, server)
+    released, cleaning = threading.Event(), threading.Event()
+    sockets = []
+    fid, target = 713, ("127.0.0.1", free_port())
+    try:
+        source._resume_thread.join(timeout=10)
+        origin, control = source.client_socket.getsockname(), source.client_socket
+        route = server._register_fid_route(fid, origin, {target: 714}, (target,))
+        path = tmp_path / "confirmed.bin"
+        path.write_bytes(b"abc")
+        key = ((source.host, source.port), fid)
+        row = source.file_upload_progress[key] = [3, 3, None, str(path), target]
+        source._persist_transfer_progress()
+        real_release = connect_tcp._release_receive
+
+        def release(instance, identity, record):
+            if instance is server and identity == fid and not released.is_set():
+                cleaning.set()
+                assert released.wait(timeout=20)
+            return real_release(instance, identity, record)
+
+        def request(offset):
+            with _transfer_handshake(source, control, fid) as handshake:
+                command = (f"/forward_item file fid={fid} resume={offset} "
+                           f"confirmed.bin {shlex.quote(repr(target))}")
+                assert _send_transfer_request(source, handshake, command)
+                return source._transfer_handshakes.wait(handshake, 5)
+
+        header = (len(path.name).to_bytes(4, "big") + path.name.encode()
+                  + (3).to_bytes(8, "big"))
+        for offset, body in [(2, header), (4, header), (3, header[:-1])]:
+            result = request(offset)
+            assert result is not None and result[0] == "port"
+            data = socket.create_connection((source.host, result[2]), timeout=5)
+            sockets.append(data)
+            assert server._forward_read_sign(data, server.server_start_file_transfer_sign)
+            if not cleaning.is_set():
+                monkeypatch.setattr(connect_tcp, "_release_receive", release)
+            data.sendall(body)
+            data.shutdown(socket.SHUT_WR)
+            with data.makefile("rb") as stream:
+                reply = stream.read()
+            assert reply == (server.error_sign + "\n").encode()
+            if not released.is_set():
+                assert cleaning.wait(timeout=5)
+                blocked = request(3)
+                assert blocked is not None and blocked[0] == "error"
+                assert server._receive_transfers[fid]["owner"] is not None
+                released.set()
+            assert wait_until(lambda: not server._receive_transfers and not server._forward_relays)
+            assert server._fid_routes[fid] is route and route["completed"] == {target}
+            assert source.file_upload_progress[key] is row
+            data.close()
+        assert source.resume_trans(target, fid, 3)
+        assert wait_until(lambda: key not in source.file_upload_progress, timeout=10)
+        assert wait_until(lambda: not server._fid_routes and not server._receive_transfers)
+        assert not server.file_upload_progress and not server.file_recv_progress
+    finally:
+        released.set()
+        for data in sockets:
+            data.close()
+        _close_socket_workers(server, [source], workers)
 
 
 def test_forward_waits_for_last_target_ack_before_upstream_ack(tmp_path, monkeypatch):
@@ -2606,7 +2819,13 @@ def test_forward_recovery_waits_for_old_finally_and_runs_targets_independently(
             handled.append((peer, child, offset, result))
             return result
 
+        final_ack_failed = []
+
         def server_send(sock, message, is_send_raw=False):
+            if (late_second_request and message == server.server_received_file_data_sign
+                    and not final_ack_failed):
+                final_ack_failed.append(sock)
+                return False
             result = real_server_send(sock, message, is_send_raw=is_send_raw)
             if result and message == server.server_received_file_data_sign:
                 upstream_acks.append(sock)
@@ -2728,7 +2947,15 @@ def test_forward_recovery_waits_for_old_finally_and_runs_targets_independently(
             fail_first_again = False
             assert receivers[0]._request_resumes() == 1
         assert wait_until(lambda: route["completed"] == set(targets), timeout=20)
-        assert wait_until(lambda: (targets[0], offsets[0], True) in outcomes, timeout=15)
+        if late_second_request:
+            assert wait_until(lambda: final_ack_failed and not server._forward_relays
+                              and not server._receive_transfers and not source._resume_sends)
+            assert (targets[0], offsets[0], False) in outcomes
+            assert upstream_acks == [] and source.file_upload_progress[upload_key] is upload
+            assert server._fid_routes[fid] is route
+            assert source.resume_trans(targets[0], fid, len(payload))
+        assert wait_until(lambda: (targets[0], len(payload) if late_second_request else offsets[0], True)
+                          in outcomes, timeout=15)
         assert next(start for stream, start, _ in reads if stream == (targets[0], offsets[0])) == offsets[0]
         assert sum(count for stream, _, count in reads if stream == (targets[0], offsets[0])) == len(payload) - offsets[0]
         assert target_acks == [1, 0]

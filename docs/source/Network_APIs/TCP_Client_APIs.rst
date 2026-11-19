@@ -331,9 +331,27 @@ commands sent by the server, such as:
   success. Source disconnection leaves requests queued at Server; Target
   disconnection discards its old-socket request and requires a new actual disk
   offset after reconnect. There is no automatic retry, and one Target's failure
-  does not cancel siblings. Strict same-session/fid generation isolation is
-  deferred; all-Target upstream EOF reconfirmation (C4), self-target rejection
-  (C5) and combined acceptance (C6) are not implemented by this revision.
+  does not cancel siblings. Strict same-session/fid generation isolation remains
+  deferred; C5 self-target rejection and C6 combined acceptance are later stages.
+
+After all Targets really ACK, a ``False``/exception writing the upstream ACK
+retains the Server route and Source's shared upload row. For C4, Source calls
+``resume_trans(original_target, upstream_fid, total)`` explicitly. ``True`` means
+worker registration, not completion; a live owner, including ``finally`` cleanup,
+returns busy without closing or queueing, so repeat explicitly after it exits.
+Only Source connects to Server, exchanging the existing port reply, complete
+filename/size header and final ACK with zero body bytes. Offset must equal the
+size in this attempt's header exactly. No Target leg or body replay is created;
+the original Target may be offline. Server uses its existing
+``originator``/``targets``/``completed`` route, not historical name/size/hash
+validation or a new byte-progress/terminal-state table. False/exception retains
+state; successful ACK write removes only the owning route, and Source removes
+its shared row only when it observes that ACK. Reloading existing snapshots
+still requires this explicit action, without automatic retry, TTL or schema/wire
+changes. A successful Server ACK write lost before Source receives it remains
+ambiguous. Ordinary transfers, C3 and global pause/start are unchanged. The
+control-layer extension leaves Source ``file_transfer_mode`` and ``_send_file``
+unchanged; see :ref:`transfer-pause-and-reconnect`.
 
 For a new relay upload, the source client allocates the upstream FID before it
 sends ``/forward_item ... fid=<fid>``. The server returns that same upstream FID

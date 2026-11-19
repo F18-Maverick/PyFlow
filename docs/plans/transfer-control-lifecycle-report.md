@@ -1,5 +1,102 @@
 # 传输控制生命周期实施报告
 
+## C4：复用既有 route 的显式 EOF 补最终确认
+
+**提交意图**：全部 accepted Target 已真实 ACK、上游最终 ACK 明确 False/异常后，由 Source 显式补最终确认，不重新交付文件。用户 `/skill:implement` 已授权本单一原子变更、验证、审查及提交当前分支；不推进 C5/C6，不合并或推送。此前任务迁移、独立终态表及 C4a/C4b 拆分均撤回。
+
+### 更改路径、解决的问题与数据流
+
+- `PyFlow/network_api/connect_tcp.py`：`_forward_item_handler` 在在线目标过滤前识别既有完整 completed route，校验当前实际 Source socket、originator 和单个原目标；`_forward_relay` 复核 route 对象并复用 receive reservation，原始/独立恢复 owner 或 finally 仍在时拒绝，终态仅建上游数据腿；`_forward_pump` 完整读取既有头、严格要求 offset=size，零正文后按完整完成集合发原最终 ACK，写成功才调用 `_drop_fid_route`。
+- `test/unit/network_api/test_fid_routes.py`：旧 schema 完整完成快照重载、无反向索引/字节进度行；实际控制分派拒绝错误 Source、旧 socket、错误成员、多目标及部分完成伪终态。
+- `test/integration/network_api/test_tcp_transfer_resume.py`：扩展原上游 ACK 失败场景到 file/folder/empty、False/异常、目标离线、再次失败与显式成功；加入非法头/非 EOF/finally busy；扩展 C3 独立恢复最后一流 ACK 失败后的补确认，保留兄弟内容、独立 offset、真实 ACK 与 owning 清理断言。
+- 四份使用/变更文档、需求卡、计划、本报告同步；`GLOSSARY.md` 为用户规划阶段已澄清的领域术语。Source `file_transfer_mode/_send_file`、公开签名、wire、五项行、scoped key、relay schema、依赖、CI、coverage 均不变。
+
+数据流：`Source.resume_trans(原 Target, fid, total)` 预留 worker → 原 `/forward_item ... fid=... resume=...` → 实际会话/成员/完整完成集合/owner 准入 → 原 port/stamp/Source→Server 数据连接 → 完整 name-length/name/size 且 offset=size → 原最终 ACK → Server 按 route 身份删除，Source 实际消费 ACK 后清共享上传行。任一失败只收尾本次资源并保留原依据；bool=True 不是完成证据。
+
+### 本轮实际检查（不借 C1–C3 历史通过数）
+
+| 实际命令/范围 | 结果 |
+|---|---|
+| `test_fid_routes.py` + 上游 ACK 失败及非法头/finally 两个集成函数 | 52 passed，32.23 秒，退出 0 |
+| `test_forward_recovery_waits_for_old_finally_and_runs_targets_independently` 四参数 | 4 passed，23.51 秒，退出 0 |
+| `uv tool run ty check PyFlow/network_api/connect_tcp.py --output-format concise` | 退出 1，最终 37 条诊断，全部位于本次生产修改范围外；不声明类型检查通过 |
+| 完整 `.venv/bin/python -m pytest -q --tb=short`，仅一次 | 984 passed、1 failed、1 skipped，1369.13 秒，退出 1；唯一失败为旧自动背压消息契约 |
+| 新 scoped-owner 真实复现 + 获批背压迁移（修复前） | 1 failed、1 passed，11.55 秒；前者实际 `/forward_error ... 'relay source is already active'`、Source False，证实审查 P2 |
+| 最后窄组合：fid_routes、上游 ACK/非法头/finally、独立恢复、scoped owner、背压 | **58 passed，72.94 秒，退出 0**；包含最后生产修正与迁移测试 |
+
+```bash
+.venv/bin/python -m pytest test/unit/network_api/test_fid_routes.py test/integration/network_api/test_tcp_transfer_resume.py::test_forward_ack_write_failure_retains_source_and_completed_route test/integration/network_api/test_tcp_transfer_resume.py::test_eof_confirmation_ignores_old_recovery_owner_for_another_target test/integration/network_api/test_tcp_transfer_resume.py::test_eof_confirmation_rejects_bad_headers_and_waits_for_finally test/integration/network_api/test_tcp_transfer_resume.py::test_forward_recovery_waits_for_old_finally_and_runs_targets_independently test/integration/network_api/test_tcp_file_transfer.py::test_forward_flow_control_pauses_uploader -q --tb=short
+```
+
+完整 pytest 的唯一失败 `test_tcp_file_transfer.py::test_forward_flow_control_pauses_uploader` 仍要求自动 `/pause_trans`、`/start_trans`，与已批准 C2 的本地 reader 高低水位门槛相反。用户已明确选择 `migrate_contract`，扩大计划仅迁移该函数：Event 固定慢 writer，证明 reader 真正等待、峰值不超过 high_water+单次扇出、排空解除、真实 Source ACK=True 及完整内容；不改生产背压。修正后按批准仅运行上述 58 项窄组合，**没有重跑完整套件，不能写最终全套全绿**。V4 启动作业在宿主重置后无可取回结果，不计通过数；完整 pytest 也不等于 C6 路径总验收。
+
+最初 EOF 专项的五个拒绝案例因 Server 夹具未标 `running=True` 而不分派；非法头案例误用 `_forward_read_sign(error_sign)`，该 helper 对错误标记本就返回 None。修正夹具并实读精确 `/FER\n` 后，6 passed；随后上述 52 passed。未删/skip 用例、弱化内容/ACK/所有权断言或修改阈值。类型检查的新增 `None.decode` 诊断通过局部 ACK 变量显式收窄消除，不压制诊断或修改配置。
+
+### S5：独立真实程序核心六组与边界补充
+
+一次性 `/tmp/pyflow-transfer-lifecycle-smoke.py --case eof-confirm` 不调用 pytest 函数、不 mock 文件/socket/加密主路径。仅在最终 ACK 发送点注入 False/异常，其他钩子透传观测；无关普通 fid 在自己的最终 ACK Event 内保持活跃。每组先有两个真实 Target ACK，再失败一次补确认，最后显式成功；重载组使用原进度快照和同一 Source 实际控制端点，Target 不必回连。
+
+| 实际参数 | upstream fid | 原 child fid（A / B） | workers / 最终存活 |
+|---|---:|---|---|
+| 明文 thread、localhost、folder、一个 Target 离线 | 7921691084 | 8074621898 / 12369589194 | 37 / 0 |
+| 加密 thread、ACK 异常、Server/Source 快照重载、全部 Target 离线 | 11969814140 | 20188156416 / 24483123712 | 91 / 0 |
+| 加密 async、wildcard、tracking off 既有行、空文件 | 8971573408 | 19441350896 / 23736318192 | 77 / 0 |
+| 加密 thread、补确认头中断 data socket | 11110766478 | 18854031844 / 23148999140 | 74 / 0 |
+| 加密 async、补确认头中断 control socket、原端点重载 | 8664377964 | 19983341822 / 24278309118 | 94 / 0 |
+| 加密 async、补确认头中 stop、原端点重载 | 11276679026 | 19617231540 / 23912198836 | 96 / 0 |
+| 加密 thread、一个有效确认等头时另一个同 fid 有效请求被拒，再中断/显式完成 | 9056271540 | 19920162170 / 24215129466 | 76 / 0 |
+| 加密 thread、原端点重载后 ECDH 公钥发布延迟、前置确认 ACK False 后继续显式完成 | 10989437228 | 20366252022 / 24661219318 | 95 / 0 |
+
+六组各退出 0；前三组批命令 34.42 秒，后三组 39.23 秒。上游 ACK 尝试均为 False→False→True，两个显式 Source 结果 False→True。两次确认逐字节仅发送原三段文件头，正文为 0；Target 命令/数据建连仍只有最初两份，原 child fid 不变，目标 inode/mtime/完整内容不变。非空内容为 131335 字节，SHA-256 `8dd07ed5180fd145d6805a4c2e20aa622b00a18770417c0c5372cc31c6f7fff9`；空文件 SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`。两个无关普通传输均在补确认后才放行，实际 ACK=True、内容一致。
+
+每组记录两条不同数据 socket 与同一实际控制 owner；加密组真实 channel.secure=True，明文组无加密 channel。失败快照只有原 `upload/download/relays` 类别和 `originator/targets/completed` 字段；最终 route/index/recovery/所属行及快照清空。未抓包，不扩大为全部加密连接安全审计。首次明文程序在已完成传输后因仅观测 `_crypto_attach_transfer_out`（明文不会调用）失败；改在通用 socket 登记边界透传观测后通过，未修改生产实现。
+
+另两组边界程序分别验证同 fid 有效确认竞争（表第七行）与密钥窗口（第八行，`PYTHONPATH="$PWD" .venv/bin/python /tmp/pyflow-c4-ready-window.py`，17.35 秒，退出 0）。密钥窗口用 Event 延迟真实 ECDH 公钥发布；此时 RSA 控制通道已安全发送请求，实际 request_secure=[True]，上游 stamp 为加密，Source owner 仍在、未收到 ACK；放行密钥后真实数据通道完成，额外注入 ACK False 仍保留原行，再走显式 False→True。该窗口不要求错误地等待 `_wait_control_secure` 调用次数。该程序曾在旧实例停机顺序、重复加载返回计数及错误的 RSA/ECDH 阶段假设处失败；改为显式关闭待重载实例、核验真实行及实际加密通道后通过，没有改生产握手、放行明文或压制异常。密钥未就绪窗口为 thread 组，未扩大为 async/rekey 全矩阵。
+
+两个一次性程序均已删除；所有传输文件、隔离进度与密钥目录由 TemporaryDirectory 清理。上述独立程序先于最后的 scoped-owner 范围修正；最终修正以 58 项窄组合中的真实新旧 route/finally 回归为证据，不冒充之后重跑过全部独立程序。
+
+```bash
+export PYTHONPATH="$PWD"
+.venv/bin/python /tmp/pyflow-transfer-lifecycle-smoke.py --case eof-confirm --alias --kind folder --offline one
+.venv/bin/python /tmp/pyflow-transfer-lifecycle-smoke.py --case eof-confirm --encrypted --ack-failure exception --reload
+.venv/bin/python /tmp/pyflow-transfer-lifecycle-smoke.py --case eof-confirm --encrypted --async-server --wildcard --untracked --empty
+.venv/bin/python /tmp/pyflow-transfer-lifecycle-smoke.py --case eof-confirm --encrypted --fault-path data
+.venv/bin/python /tmp/pyflow-transfer-lifecycle-smoke.py --case eof-confirm --encrypted --async-server --fault-path control
+.venv/bin/python /tmp/pyflow-transfer-lifecycle-smoke.py --case eof-confirm --encrypted --async-server --fault-path stop
+```
+
+### C4 路径逐项对照及风险
+
+| 路径 | 实际覆盖 / 明确限制 |
+|---|---|
+| C4-P01 原始全部 ACK 后上游失败 | 专项 file/folder/empty × False/异常及六组双 Target 真实内容/ACK/保留证据 |
+| C4-P02 最后一条 C3 恢复流失败 | 四参数独立恢复，late-target 两参数注入最后 ACK False，再显式 EOF；已完成兄弟不重放 |
+| C4-P03 零正文/无 Target 重开 | 专项三种条目及六组 header/内容/hash/Target 命令/实际数据连接观测 |
+| C4-P04 再失败、显式重做 | False 与异常两种专项、六组 False→False→True；每次失败保留原对象/快照 |
+| C4-P05 一个/全部 Target 离线 | 明文一目标离线，其余组全部离线；部分完成不能借 EOF 成功另有拒绝案例 |
+| C4-P06 旧规范快照重载 | unit 完整完成 route、Source 行重载；加密 thread 同实际端点重建 Server/Source 后显式成功 |
+| C4-P07 非法请求/头/非 EOF | 实际控制五种身份/成员拒绝，offset 小/大于 size、截断头；中断程序只发送两字节头，失败保留 |
+| C4-P08 独占和 finally | 同任务 finalizing owner 与有效确认竞争均拒绝；新增同值 fid、不同 Source/Target 的真实新旧 route/finally 交叉，新任务在旧 finally 未放行时补确认成功、旧 record 身份保持；未专门强制同 key 对象被替换后的 C4 清理交叉 |
+| C4-P09 中断/stop/安全入口 | 三组真实 data/control/stop 中断后清本次资源并显式完成；另有 RSA 控制已安全/ECDH 尚未发布的 thread 窗口，加密 stamp 与 ACK 失败保留；不声明 async/rekey 完整矩阵 |
+| C4-P10 tracking off/别名/wildcard/无关 fid | 两组无关普通 fid 保持活跃并最终真实 ACK；tracking off 只复用既有行，别名及 wildcard 分组运行，不声称全部组合 |
+
+高风险审查关注实际会话、已完成集合、finally barrier 和对象身份清理。未运行 native Windows、其他 Python 版本、完整参数笛卡尔积、NAT/端点迁移或断电耐久性。失败且未再操作的原 route 可长期保留，本次不加 TTL；ACK 本地写成功但 Source 未收到的歧义不解决；本次 EOF 头不验证历史 name/size/hash，源文件须保持可用且未变。问题二严格代次隔离继续暂缓，C5/C6 未实施。
+
+文档机械检查：上述八份需求/计划/报告/术语及使用文档，9 个相对文件链接，缺失目标 0；仅检查链接，不代替功能验收。
+
+规则沉淀为真实消费者契约：EOF 不等于交付完成、完整 Target 完成集合与严格 EOF 缺一不可、busy/finally 不抢占、ACK 失败保留且显式成功 owning 清理。工具限制：Python LSP 仍仅 Ruff，definition 请求返回 Unknown request，未声称已完成符号引用分析。
+
+### Standards
+
+发现 1 个 P2，已复现并修复：旧 route 在真实 ACK 成功后已删除，但独立恢复的 `(旧 Target, fid)` 接收 owner 尚在 finally；另一 Source/Target 此时合法复用同值 fid，其 C4 被全表 fid 扫描误拒。`confirmation_busy` 现只将当前 route Target 集合内的 tuple key 计为冲突，整型任务 key 仍排他。回归通过真实两条 route 和 Event 固定旧 finally，修复前 Source False、修复后 True；最终 58 项组合通过。未发现删减/跳过测试、安全 I/O 旁路、非 owning 清理、未经批准扩围等硬规则违规；Fowler 独立启发式 0 项。
+
+### Spec
+
+实现缺陷 0 项、生产越界 0 项。审查时提示的多 Target、全部离线、两端快照重载、再次失败、有效确认竞争、无关 fid 及密钥窗口证据，已由上表和逐路径记录分别补齐或注明实际运行范围；未把全部参数笛卡尔积、未知 fid 的专用 S5 场景、native Windows 或所有 rekey 交叉冒充已验证。用户批准的单函数测试迁移不恢复旧自动控制协议。
+
+本次保留一个 C4 原子提交，不拆 C4a/C4b。生产与测试之外同步了较长的需求/计划/报告及先前术语澄清，整体审查规模超过最初 300–500 行预估；不将文档拆名冒充多个已审的小提交。提交仅包括本代理与子代理的选定行，分支提交不等于人工合并批准，不推送。
+
+
 ## 本轮 C3 替代方案：已实现，局部运行证据如下
 
 **当前状态：用户批准的数值请求、原 owner 收尾、独立并行恢复已实现并取得局部运行证据。** C1/C2 保留。最终四份 unit 文件 228 passed；转发集成整批 52 passed、3 个旧内部断言失败，迁移后专项 3 passed；新全局控制专项 3 passed，独立程序 3 组真实传输通过。上述是分次运行，不伪称最终单次整批全绿，不声明全部矩阵或 C6 总验收通过。旧 C3a/C3b 查询/强制 teardown/串行轮次仅为撤回历史；C4–C6 未实现。

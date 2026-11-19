@@ -7203,18 +7203,33 @@ class TCP_Server_Base:  # TCP server class
             destination_path = rest[-1]
             rest = rest[:-1]
         items, addrs = self._forward_parse_items_addrs(rest)
-        valid_targets = []
-        for target in addrs:
-            if target == (self.host, self.port):
-                self._log(f"forward: target {target} is the server itself, skipped")
-                continue
-            if target not in self.clients:
-                self._log(f"forward: target {target} is unreachable, skipped")
-                continue
-            valid_targets.append(target)
-        if not valid_targets:
-            self._forward_notify_error(sock, "no reachable targets to forward to", upstream_fid)
-            return
+        confirmation_route = None
+        with self._forward_relays_lock:
+            route = self._fid_routes.get(upstream_fid)
+            if (resume_requested and route is not None and route["targets"]
+                    and route["completed"] == route["targets"].keys()):
+                confirmation_route = route
+        if confirmation_route is not None:
+            with self.client_lock:
+                current = self.clients.get(tuple(addr), {}).get("socket") is sock
+            if (not current or confirmation_route["originator"] != tuple(addr)
+                    or len(addrs) != 1 or addrs[0] not in confirmation_route["targets"]):
+                self._forward_notify_error(sock, "invalid completed relay owner or target", upstream_fid)
+                return
+            valid_targets = addrs  # Completed Targets need not still be connected.
+        else:
+            valid_targets = []
+            for target in addrs:
+                if target == (self.host, self.port):
+                    self._log(f"forward: target {target} is the server itself, skipped")
+                    continue
+                if target not in self.clients:
+                    self._log(f"forward: target {target} is unreachable, skipped")
+                    continue
+                valid_targets.append(target)
+            if not valid_targets:
+                self._forward_notify_error(sock, "no reachable targets to forward to", upstream_fid)
+                return
         if kind == "file":
             if not items:
                 self._forward_notify_error(sock, "missing file name", upstream_fid)
@@ -7234,6 +7249,7 @@ class TCP_Server_Base:  # TCP server class
             kwargs={
                 "upstream_fid": upstream_fid,
                 "resume_requested": resume_requested,
+                "expected_route": confirmation_route,
             },
             daemon=True,
         ).start()
@@ -7322,6 +7338,7 @@ class TCP_Server_Base:  # TCP server class
         resume_offset=0,
         upstream_fid=None,
         resume_requested=False,
+        expected_route=None,
     ):
         """Relay one file/folder item to every target, streaming from the
 
@@ -7346,15 +7363,23 @@ class TCP_Server_Base:  # TCP server class
         if fid is None:
             self._log("forward: rejected relay without an upstream FID")
             return
-        recovery = reservation = None
+        recovery: dict | None = None
+        reservation = None
+        eof_confirmation = False
+        with self.client_lock:
+            current_source = self.clients.get(tuple(originator_addr), {}).get("socket") is forwarder_sock
         if resume_requested:
             with self._forward_relays_lock:
                 route = self._fid_routes.get(fid)
                 recovery = self._relay_recoveries.get(fid)
                 reservation = recovery["active"].get(targets[0]) if recovery and len(targets) == 1 else None
+                eof_confirmation = bool(route and route["targets"]
+                                        and route["completed"] == route["targets"].keys())
                 if (route is None or route["originator"] != tuple(originator_addr)
                         or len(targets) != 1 or targets[0] not in route["targets"]
-                        or targets[0] in route["completed"]
+                        or targets[0] in route["completed"] and not eof_confirmation
+                        or expected_route is not None and route is not expected_route
+                        or eof_confirmation and not current_source
                         or reservation is not None and (
                             reservation["offset"] != resume_offset
                             or reservation["source_socket"] is not forwarder_sock)):
@@ -7373,8 +7398,8 @@ class TCP_Server_Base:  # TCP server class
                 forwarder_sock, "relay fid is already in use", fid
             )
             return
-        manual_recovery = resume_requested and reservation is None
-        relay = {
+        manual_recovery = resume_requested and reservation is None and not eof_confirmation
+        relay: dict = {
             "cond": threading.Condition(),
             "control_lock": threading.RLock(), "requested": None,
             "done": threading.Event(),
@@ -7382,12 +7407,20 @@ class TCP_Server_Base:  # TCP server class
             "controls": {},
             "route": route,
             "fid": fid,
+            "confirm_eof": eof_confirmation,
         }
         relay_keys = [(target, tfid) for target, tfid in zip(targets, tfids)]
-        receive_key = (targets[0], fid) if resume_requested else fid
+        receive_key = (targets[0], fid) if resume_requested and not eof_confirmation else fid
         receive_record = None
         with self._transfer_progress_lock, self._forward_relays_lock:
+            confirmation_busy = eof_confirmation and (
+                any(key == fid or isinstance(key, tuple) and key[1] == fid
+                    and key[0] in route["targets"] for key in self._receive_transfers)
+                or any(candidate["fid"] == fid for candidate in self._forward_relays.values())
+                or recovery is not None and bool(recovery["active"])
+            )
             if (self._fid_routes.get(fid) is route
+                    and not confirmation_busy
                     and (resume_requested and fid not in self._receive_transfers
                          or not resume_requested and not any(
                              candidate["fid"] == fid for candidate in self._forward_relays.values()))
@@ -7398,12 +7431,12 @@ class TCP_Server_Base:  # TCP server class
                 if receive_record is not None:
                     for key in relay_keys:
                         self._forward_relays[key] = relay
-                    if resume_requested and recovery is None:
+                    if resume_requested and recovery is None and not eof_confirmation:
                         recovery = {"route": route, "pending": {}, "active": {},
                                     "control": {"control_lock": threading.RLock(),
                                                 "requested": None, "controls": {}}}
                         self._relay_recoveries[fid] = recovery
-                    if manual_recovery:
+                    if manual_recovery and recovery is not None:
                         reservation = {"record": receive_record, "source_socket": forwarder_sock,
                                        "target_socket": self.clients.get(targets[0], {}).get("socket"),
                                        "offset": resume_offset}
@@ -7411,7 +7444,7 @@ class TCP_Server_Base:  # TCP server class
         if receive_record is None:
             self._forward_notify_error(forwarder_sock, "relay source is already active", fid)
             return
-        control_group = recovery["control"] if resume_requested else relay
+        control_group: dict = recovery["control"] if recovery is not None and not eof_confirmation else relay
         if os.path.exists(self.file_trans_progress_file):
             self._persist_transfer_progress()
         target_conns = []
@@ -7421,6 +7454,7 @@ class TCP_Server_Base:  # TCP server class
         target_handshakes = relay["handshakes"]
         owned_sockets = relay["sockets"]
         terminal_sent = False
+        relay_targets = [] if eof_confirmation else list(zip(targets, tfids))
 
         def fail(message):
             nonlocal terminal_sent
@@ -7442,7 +7476,7 @@ class TCP_Server_Base:  # TCP server class
                 return True
 
         try:
-            for target, tfid in zip(targets, tfids):
+            for target, tfid in relay_targets:
                 with relay["cond"]:
                     target_control = (reservation["target_socket"] if reservation is not None
                                       else self.clients.get(target, {}).get("socket"))
@@ -7453,7 +7487,7 @@ class TCP_Server_Base:  # TCP server class
                 if handshake is None:
                     fail(f"target {target} has no available listener negotiation")
                     return
-            for target, tfid in zip(targets, tfids):
+            for target, tfid in relay_targets:
                 with relay["cond"]:
                     sent = self.forward_item_to(
                         target, kind, rel_dir, fname, originator_addr, tfid, destination_path)
@@ -7467,14 +7501,14 @@ class TCP_Server_Base:  # TCP server class
                 fail("target port setup timed out")
                 return
             ports = {}
-            for target, tfid in zip(targets, tfids):
+            for target, tfid in relay_targets:
                 result = results[target_handshakes[(target, tfid)]["key"]]
                 if result[0] != "port":
                     fail(f"target {target} rejected its listener")
                     return
                 ports[(target, tfid)] = (result[2], result[3])
             # connect to each target and wait for its start sign
-            for target, tfid in zip(targets, tfids):
+            for target, tfid in relay_targets:
                 tport, stamp = ports[(target, tfid)]
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 target_control = target_handshakes[(target, tfid)]["key"][0]
@@ -7513,7 +7547,7 @@ class TCP_Server_Base:  # TCP server class
                             paused = upstream["confirmed_state"]
                             self._transfer_controls._confirm(control, paused)
                             self._transfer_controls._send(control, paused, None)
-            if not target_conns:
+            if not target_conns and not eof_confirmation:
                 fail("no target accepted the transfer")
                 return
             # open the upload listener and hand it to the forwarder
@@ -7578,13 +7612,13 @@ class TCP_Server_Base:  # TCP server class
                 owned_sockets.clear()
                 target_handshakes.clear()
                 relay["done"].set()
-            if resume_requested:
+            if resume_requested and not eof_confirmation:
                 with control_group["control_lock"]:
                     for target, control in relay["controls"].items():
                         if control_group["controls"].get(target) is control:
                             del control_group["controls"][target]
             _release_receive(self, receive_key, receive_record)
-            if manual_recovery:
+            if manual_recovery and recovery is not None:
                 with self._transfer_progress_lock, self._forward_relays_lock:
                     if recovery["active"].get(targets[0]) is reservation:
                         del recovery["active"][targets[0]]
@@ -7622,7 +7656,7 @@ class TCP_Server_Base:  # TCP server class
         }
         queues = {(target, tfid): queue.Queue() for tfid, target, _ in target_conns}
         END = object()
-        result = {"ok": 0, "ack": None}
+        result: dict = {"ok": 0, "ack": None}
 
         def release_buffered(byte_count):
             """Called under cond; failed writers also release upstream backpressure."""
@@ -7690,6 +7724,8 @@ class TCP_Server_Base:  # TCP server class
                 file_size = int.from_bytes(size_b, "big")
                 if not 0 <= resume_offset <= file_size:
                     raise ValueError("resume offset exceeds the forwarded file")
+                if relay.get("confirm_eof") and resume_offset != file_size:
+                    raise ValueError("completed relay confirmation requires an EOF offset")
                 for chunk in (name_len_b, name_b, size_b):
                     enqueue(chunk)
                 remaining = file_size - resume_offset
@@ -7732,16 +7768,22 @@ class TCP_Server_Base:  # TCP server class
                 state["complete"]
                 and self._fid_routes.get(fid) is route
                 and route["completed"] == route["targets"].keys()
-                and result["ack"] is not None
+                and (result["ack"] is not None or relay.get("confirm_eof", False))
             )
+        if relay.get("confirm_eof"):
+            with self.client_lock:
+                complete = complete and self.clients.get(tuple(route["originator"]), {}).get("socket") is forwarder_sock
+            complete = complete and not self._transfer_handshakes.closed(forwarder_sock)
         try:
-            # A target's existing ACK is the only success marker. Never confirm
-            # upstream receipt independently of the full accepted target set.
+            # Live delivery forwards a real Target ACK. EOF reconfirmation uses
+            # that route's retained, entirely acknowledged completion set.
             # Send it as a protocol line: send_message adds no newline to bytes.
-            written = self.send_message(
-                up_sock,
-                result["ack"].decode("ascii") if complete else self.error_sign,
-            )
+            ack = result["ack"]
+            if relay.get("confirm_eof"):
+                ack = self.server_received_file_data_sign
+            elif ack is not None:
+                ack = ack.decode("ascii")
+            written = self.send_message(up_sock, ack if complete else self.error_sign)
             if complete and written:
                 self._drop_fid_route(fid, route)
         except Exception as exc:

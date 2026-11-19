@@ -7,6 +7,32 @@
 > `docs/plans/transfer-pause-start-direction-report.md`; those historical
 > results are not verification of the current lifecycle revision.
 
+## Lifecycle revision C4: explicit all-Target EOF reconfirmation
+
+- After every accepted Target's real ACK, an upstream final-ACK write returning
+  `False` or raising retains the existing Server route and Source shared upload
+  row. Source explicitly calls `resume_trans(original_target, upstream_fid, total)`;
+  its boolean reports worker registration, not completion. Live owners, including
+  `finally`, reject this explicit operation as busy without closing or queueing;
+  it can be repeated after cleanup.
+- Reuse `_fid_routes[fid]` with `originator`, full `targets` and `completed`, and
+  Source's existing upload row. Only Source→Server port negotiation, the complete
+  existing filename/size header and final ACK are exchanged. Offset must equal
+  this header's size exactly; there are zero body bytes, no new Target leg and
+  no retransmission. Targets may be offline. No Server byte-progress or terminal
+  table, field, snapshot schema or wire change is added.
+- Another false/exception retains state. Only the owning route is removed after
+  its successful ACK write; Source removes its shared row only on observing the
+  ACK. Existing route/completion and upload snapshots reload with the same
+  explicit recovery requirement, not automatic retries or TTL. This does not
+  resolve a successful Server ACK write lost before Source receives it, and
+  does not validate historical name/size/hash.
+- Ordinary transfers, C3 unfinished-Target recovery and global pause/start stay
+  unchanged. This extends transfer control without changing Source
+  `file_transfer_mode` or `_send_file`. Strict same-session/fid generation
+  isolation remains deferred; C5 self-target rejection and C6 combined acceptance
+  remain later stages. No verification results are claimed in this entry.
+
 ## Lifecycle revision C3: numeric offsets and independent parallel recovery
 
 - The user approved the revised requirements and plan. Old C3a/C3b offset
@@ -37,8 +63,9 @@
   requests; reconnect requires a fresh actual disk offset on the new session.
   Individual failure does not cancel siblings or start automatic retries.
 - Strict same-session/fid generation isolation remains deferred. C4 all-Target
-  upstream EOF reconfirmation, C5 self-target rejection and C6 combined acceptance
-  are not implemented. No new wire, schema, dependencies or CI changes.
+  upstream EOF reconfirmation is documented above; C5 self-target rejection and
+  C6 combined acceptance remain later stages. No new wire, schema, dependencies
+  or CI changes.
 - This round is **pending unified verification**. Old C3a/C3b pass counts do not
   verify this replacement. Paths, risks and historical evidence are recorded in
   `docs/plans/transfer-control-lifecycle-report.md`.

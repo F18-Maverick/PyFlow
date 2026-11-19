@@ -1,8 +1,8 @@
 # 传输控制生命周期与转发恢复 — 需求卡
 
-状态：**用户批准的数值 offset、每 Target 独立并行恢复已实现并取得局部运行证据，详见实施报告**。已撤回旧 C3 的 `/resume_trans ... ? ...`、`offset=None`、强制 teardown 和单活跃 Target/FIFO 轮次。Receiver 提交实际落盘数值 offset；Server 等同一原 route 的旧 owner（含 finally）全部收尾后，为每个 Target 独立建立 Source→Server→Target 流，正文并行。C1/C2 保留；C4–C6 未实现，不自动推进。
+状态：**C4 实现、局部验收与双轴审查完成；最终窄组合 58 passed，完整测试及类型检查限制见报告**。复用既有 fid route/completed 和 Source 共享任务上传行，仅补全部 Target 已完成后的显式 EOF 最终确认；不新增完成表、完成字段、Server 转发字节进度行或快照格式。C1/C2/C3 保留，撤回的查询/强制 teardown/串行恢复不恢复；C5/C6 不自动推进。
 
-本轮命令、实际结果、失败修正及明确未覆盖项见[实施报告](transfer-control-lifecycle-report.md)。旧 C3a/C3b 仅为已撤回方案的历史证据，不作为本轮通过结果；不自动提交、合并或推送。
+本轮命令、实际结果、失败修正及明确未覆盖项见[实施报告](transfer-control-lifecycle-report.md)。旧历史结果不作为 C4 通过证据。用户通过 `/skill:implement` 授权实现、检查、审查及提交当前分支；不合并或推送。
 
 计划编写阶段的文档机械检查通过：3 份文档、6 个相对链接、21 个计划涉及的既有文件路径、14 个验收命令引用路径、20 条验收路径、6 个原子阶段及命令组、6 个拟定运行场景，错误数为 0。当时实施报告尚未创建；这份历史检查不代表功能验收通过，当前实现证据另见实施报告。
 
@@ -24,7 +24,7 @@
 4. 不采用“每个 Target 持有独立暂停锁、必须本人解除”的规则。任意端的 start 仍可经 Source 仲裁解除用户暂停。自动背压的内存硬门槛不被用户 start 清除。
 5. 有效转发恢复请求由 Receiver 在其旧接收 owner/文件收尾后，带实际数值 offset 提交 Server。Server 按 child fid/实际会话定位原 route；原 route 的数据腿、listener、握手、reader/writer 或 finalizing owner 尚未全部结束时只保存请求，不主动中断。全部旧 owner（含 finally）收尾后，按每个 Target 自己的 offset 独立转交 Source、建流；不复用旧 relay 内存、不更换 fid、不查询其他 Target 的 offset。
 6. 后续 C5 目标为 Client 转发入口拒绝自身完整控制端点、允许同 host 不同端口；C5 本轮未实现，不作本轮完成项。
-7. 保留真实最终 ACK 判成功规则：每个 Target 的真实 ACK 只更新其完成集合，累计所有 accepted Target 的真实 ACK 才能使整任务成功；中间 Target 成功不伪造整 route ACK，Source 上传行及未完成 route 继续保留。Target 的数值 EOF 恢复仍需真实 ACK；C4“所有 Target 已完成、仅上游 ACK 明确失败”的再确认未实现。
+7. 保留真实最终 ACK 判成功规则：每个 Target 的真实 ACK 只更新其完成集合，累计所有 accepted Target 的真实 ACK 才能使整任务成功；中间 Target 成功不伪造整 route ACK。Source 的共享上传行保留到全部目标完成且收到最终 ACK。C4 已实现复用已有完整完成集合补最终确认，不将 offset==size 单独当作任务完成证据；运行证据与限制见实施报告。
 8. 多个 Target 恢复各有独立 offset、Source→Server→Target 数据流、进度、资源及失败结果，正文并行。晚到 Target 不等待已有恢复流的大文件正文或 ACK；同一实际控制 socket+fid 仅端口握手短串行，不锁正文或最终 ACK。
 
 ### 非目标
@@ -71,6 +71,21 @@
 
 代价与风险：原 route 尚有活跃传输、用户暂停或未结束的 ACK/finally 时，首次恢复继续等，不增加强制关闭、超时抢占或自动重试。旧 owner 全部收尾后的独立恢复流不互相等待正文/ACK。运行时 pending/active 不扩展持久化 schema，重启后仍由原接收记录重新请求；同 socket+fid 迟到控制消息的严格代次隔离仍暂缓。
 
+### D9：C4 复用现有 fid 路由与共享上传行（已批准并实现）
+
+- **目标**：所有已接受 Target 均已真实 ACK、Server 上游最终 ACK 返回 False/异常后，允许 Source 以原 upstream fid 和 EOF offset 显式再确认；不重发正文、不重开 Target，成功后清理所属记录，再次失败仍可显式操作。
+- **当前记录职责**：Source 只有一条以 `(Server, upstream_fid)` 为键的共享任务上传行；Target 各有接收进度；原生流式转发的 Server 不创建逐 Target upload/download 字节进度行，持久化的是 `relays` 下的 fid route。A 成功时其接收行、反向 child 索引和数据资源可清理，但 B 尚未完成时不能删 Source 共享上传行。
+- **完成依据**：复用 `_fid_routes[fid]` 的原 Source、完整目标映射及 `completed`；只在已接受目标非空且全部真实确认时允许终态分支。`offset == 本次文件头 size` 只判定零正文，不能生成缺失的目标完成事实。
+- **准入**：校验当前实际 Source 控制 socket、原 originator/upstream fid、请求目标属于原映射及当前 route 对象；不依赖已完成目标的反向索引。只在同任务旧 owner（含 finally）已退出后准入，忙/重复沿既有失败或占用规则拒绝，不抢占、不阻塞控制 reader/event loop。
+- **触发与路径**：仅 Source 显式 `resume_trans(原 Target, upstream_fid, 原上传记录 total)`；公开 bool 仍只是 worker 预留。重载原记录/原端点回连后仍显式发起；不增加重连自动补发或失败重试循环。Server 只开 Source→Server 数据腿，仍读取现有完整文件头并校验 EOF，不连接 Target、不要求其在线、不改写目标文件。
+- **清理与重启**：Server 仅在现有最终 ACK 写入成功后按 route 对象身份删除；Source 仅在实际消费该 ACK 后清所属共享行。失败保留原 route 和上传行，旧规范快照可直接按既有格式重载；不增加新的迁移器或持久化类别。
+- **影响范围**：生产仅调整 `connect_tcp.py` 的 Server 转发分派/建流/最终 ACK 分支，复用 Source 现有 EOF 发送及 owning 清理。对应测试、文档、路径全集和命令见[更改计划](transfer-control-lifecycle-plan.md)的 C4 章节。
+- **非目标/禁止项**：不把任务信息迁到 Source，不改五字段上传/下载行、route schema、公开签名或 wire；不新增完成表/完成位/Server 逐目标字节进度，不再拆 `file_transfer_mode/_send_file`，不混 C5/C6、CI、依赖或测试策略修改。
+- **风险与上限**：待补确认的旧 route 可能长期保留，本轮不增加 TTL 或自动清理；不承诺有界待确认任务数。上游本地 ACK 写成功但对端是否收到的歧义、源文件改变后的内容复核、NAT/端点迁移及断电耐久性仍不在保证内。风险等级高，必须真实 socket 与事件证明。
+
+此前讨论的“取消所有 Server route、迁移到 Source”“新增 completed_relays 小终态表”“按 C4a/C4b 分拆压缩与确认”均已撤回；不进入当前实施清单。[术语表](../../GLOSSARY.md)只定义领域概念，不作为新增数据结构的授权。
+
+
 ## 路径全集与验收证据要求
 
 | 路径 | 必须证明的行为 |
@@ -90,7 +105,7 @@
 | Client 自转发与本机不同 Client | 拒绝自身完整控制端点，允许同 host 不同端口；统一入口覆盖 console/Web/文件夹/恢复 |
 | 加密、密钥交换窗口、线程式/async Server | 统一 send/receive 路径；无明文降级；不阻塞密钥接收线程；真实内容、ACK、资源收尾 |
 
-验收须使用事件固定时序的真实本机 socket 传输，记录稳定 fid、实际 owner/socket、文件内容和最终 ACK；不能仅断言文件存在或测试没有抛错。问题二明确列为暂缓，不计入覆盖或通过声明。具体文件、协议、原子拆分及每条路径的验收命令见更改计划，均为待执行而非通过声明。
+验收须使用真实本机 socket 传输，记录稳定 fid、实际 owner/socket、文件内容和最终 ACK；交叉时序用事件固定，不能仅断言文件存在或测试没有抛错。问题二明确列为暂缓，不计入覆盖或通过声明。约定命令见更改计划，已执行结果仅以实施报告为准。
 
 ## 数据、安全和范围约束
 
@@ -99,8 +114,8 @@
 - 恢复入队不关闭任何活跃数据腿、健康控制连接或其他 fid，不删除接收文件；仅自然结束的旧 owner 做原有定向收尾。
 - 不把 socket 仍打开或 offset 等于 size 单独作为成功证据。
 - pause/start、端口响应、公开 Python 签名及持久化模型不变；不新增 wire 字段、leg_id 或恢复换新 fid。恢复 parser/formatter 只接受数值 offset；调度改为等待原 route 旧 owner 全收尾、每 Target 独立并行恢复。
-- 风险等级：高（多 owner 并发、全局控制共享、文件完整性和真实 ACK 聚合）。本轮实施及分次局部验证已记录；不宣称 C6 总验收通过，不自动提交、合并或推送。
+- 风险等级：高（多 owner 并发、全局控制共享、文件完整性和真实 ACK 聚合）。本轮实施及局部验证单列；不宣称 C6 总验收通过。按用户实施指令提交当前分支，不合并或推送。
 
 ## 下一阶段闸门
 
-本轮 C3 替代方案的实现、局部命令及真实传输证据已交付[实施报告](transfer-control-lifecycle-report.md)，等待人工审查。C1/C2 保留；旧 C3a/C3b 查询/强制 teardown/串行轮次仅作撤回历史。C4 EOF 再确认、C5 自目标拒绝及 C6 总体验收未实现，不因本轮完成自动推进。
+C4 已按用户 `/skill:implement` 指令完成实现、局部验收与审查，模型及单一原子拆分不变；用户另批准唯一旧背压测试的契约迁移。证据与未覆盖项见[报告](transfer-control-lifecycle-report.md)。本轮提交当前分支，不合并或推送；C5/C6 须另获批准。
