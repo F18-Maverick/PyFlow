@@ -1,8 +1,8 @@
 # 传输控制生命周期与转发恢复 — 需求卡
 
-状态：**C5 实现、真实运行验证与双轴审查完成：最终完整 pytest 994 passed、1 skipped，八项专项及三组独立程序通过**。拒绝同 IP 且同端口的自身目标，合法目标仍传输；审查发现的配置 IP 与实际源 IP 不同时误拒已修复。C1–C4 保留，不改 fid、wire、公开签名或持久化模型；类型检查仍有 37 条改动范围外诊断，C6 不自动推进。
+状态：**C6 本轮验收与总体报告已交付，待人工接受部分覆盖和明确边界**。唯一一次 V6 实际 **692 passed、1 skipped**；P01–P20 当前证据、失败观察器修正和未覆盖项见报告，不以 C5 的 994 passed 或旧阶段结果替代。本轮仅修改四份验收文档，未改生产行为、测试、协议/公开签名/持久化模型、CI 或依赖；已知 37 条类型诊断未重跑、未计通过。
 
-本轮命令、实际结果、失败修正及明确未覆盖项见[实施报告](transfer-control-lifecycle-report.md)。旧历史结果不作为 C4 通过证据。用户通过 `/skill:implement` 授权实现、检查、审查及提交当前分支；不合并或推送。
+本轮命令、实际结果、验收程序修正及明确未覆盖项见[实施报告 C6](transfer-control-lifecycle-report.md#c6总体报告与总验收)。旧历史结果不作为当前通过证据。用户通过 `/skill:implement` 授权检查、审查及提交当前分支；不合并或推送，不代表人工总验收已通过。
 
 计划编写阶段的文档机械检查通过：3 份文档、6 个相对链接、21 个计划涉及的既有文件路径、14 个验收命令引用路径、20 条验收路径、6 个原子阶段及命令组、6 个拟定运行场景，错误数为 0。当时实施报告尚未创建；这份历史检查不代表功能验收通过，当前实现证据另见实施报告。
 
@@ -67,7 +67,7 @@
 7. 同一实际控制 socket+fid 的端口握手短串行以关联既有四 token 回复；锁只覆盖登记/发送/取得端口结果，不覆盖正文、最终 ACK 或整任务。A 已开始正文或等待 ACK 时，B（含晚到 Target）可独立建流和传输，不等 A 完成；不同 offset 不共享正文过滤或旧队列。
 8. Source 离线时保留 pending，合法回连/后续触发后处理。Target 断线即丢弃绑定旧实际 socket 的 pending 请求；不把旧请求借给新 socket，重连后由 Receiver 等旧 owner 收尾、读取新实际 offset 重新请求。离线/失败 Target 不阻塞可服务兄弟目标，活跃流失败仅收尾自身，不启动自动重试。
 9. Source 仍仲裁全 route 用户 pause/start；多个恢复 sender 共享该任务控制状态，最后一个 owner 退出才释放，任一 Target 的 pause 使所有 Source 流停止新增正文。Server 已收字节继续排空，本地背压与用户 start 独立。
-10. 每个真实 Target ACK 只记该 Target 完成；其他 Target 未完成时不发整 route 成功 ACK，Source 上传行及 Server route 保留。offset 为零、空文件和 EOF 均沿用数值恢复；offset==size 不等于成功。C4 全完成后的上游 EOF 再确认仍未实现。
+10. 每个真实 Target ACK 只记该 Target 完成；其他 Target 未完成时不发整 route 成功 ACK，Source 上传行及 Server route 保留。offset 为零、空文件和 EOF 均沿用数值恢复；offset==size 不等于成功。全部 Target 完成后的上游 EOF 再确认已由 C4 实现，验收必须区分 Target EOF 恢复与该终态补确认。
 
 代价与风险：原 route 尚有活跃传输、用户暂停或未结束的 ACK/finally 时，首次恢复继续等，不增加强制关闭、超时抢占或自动重试。旧 owner 全部收尾后的独立恢复流不互相等待正文/ACK。运行时 pending/active 不扩展持久化 schema，重启后仍由原接收记录重新请求；同 socket+fid 迟到控制消息的严格代次隔离仍暂缓。
 
@@ -114,8 +114,8 @@
 - 恢复入队不关闭任何活跃数据腿、健康控制连接或其他 fid，不删除接收文件；仅自然结束的旧 owner 做原有定向收尾。
 - 不把 socket 仍打开或 offset 等于 size 单独作为成功证据。
 - pause/start、端口响应、公开 Python 签名及持久化模型不变；不新增 wire 字段、leg_id 或恢复换新 fid。恢复 parser/formatter 只接受数值 offset；调度改为等待原 route 旧 owner 全收尾、每 Target 独立并行恢复。
-- 风险等级：高（多 owner 并发、全局控制共享、文件完整性和真实 ACK 聚合）。本轮实施及局部验证单列；不宣称 C6 总验收通过。按用户实施指令提交当前分支，不合并或推送。
+- 风险等级：高（多 owner 并发、全局控制共享、文件完整性和真实 ACK 聚合）。本轮证据与限制已交付；P05/P11/P13/P17/P20 仍有部分覆盖，人工接受前不宣称人工总验收通过；仅提交当前分支，不合并或推送。
 
 ## 下一阶段闸门
 
-C4 的实现、验收与旧背压迁移已提交。用户已明确批准 C5 开始，实施及验证严格对照[计划](transfer-control-lifecycle-plan.md) 2.2 节，实际证据见[报告](transfer-control-lifecycle-report.md)。C5 仅提交当前分支，不合并或推送；C6 须另获批准。
+C1–C5 现行实现与本轮 C6 证据已汇总，按[计划](transfer-control-lifecycle-plan.md) 2.3 节单原子收尾和第 9 节完成一次 V6。[总体报告](transfer-control-lifecycle-report.md#c6总体报告与总验收)列明实际覆盖与部分覆盖，旧阶段记录保留其历史状态。下一闸门是人工接受明确边界并决定合并/远端；最终确认前不合并或推送。

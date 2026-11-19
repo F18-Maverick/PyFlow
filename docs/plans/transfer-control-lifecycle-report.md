@@ -1,5 +1,161 @@
 # 传输控制生命周期实施报告
 
+## C6：总体报告与总验收
+
+**当前状态**：用户已批准 C6；本轮首次 V6 合并回归实际为 **692 passed、1 skipped，1028.13s**，退出 0。独立真实场景按下文记录。以下 C1–C5 章节是各阶段交付时的历史记录，不代表其旧“未实现/待验证”文字仍为当前状态；撤回的旧 C3a/C3b 不作为当前验收依据。本节只统计本轮实际输出，不借 C5 的 994 passed 冒充 C6 结果。
+
+### Standards
+
+**硬违规 0、阻塞 0、Fowler 判断项 0；correct，置信度 0.96。** 只读审查确认逐路径内容/ACK/owner 与测试数分开、五项部分覆盖清楚，四文档单原子范围与候选一致，未修改生产/测试/CI/依赖/公共接口；当前 C6 入口与历史状态、人工接受/合并/推送闸门明确。未编辑、运行 git 或执行检查。
+
+### Spec
+
+**0 个阻塞，correct，置信度 0.94。** 只读审查确认 C6 保持四文档范围，本轮结果与历史结果分开；P05/P11/P13/P17/P20 部分覆盖已披露，与独立运行证据及抽查消费者契约相符。tracking-off 实际组合、owner 样本、实例重建/手工 self 行/Flask test client 和人工闸门未冒称额外覆盖。未运行 git、测试或其他检查。
+
+### 范围与总体数据流
+
+- 基线 `b0e2783008`；C6 仅修改需求卡、计划、当前总体报告和变更记录。本轮未修改生产代码、测试或 CI，不增加 wire、公开签名、依赖、五项进度行或 relay 快照字段。
+- 普通恢复仍由实际 Receiver 在旧文件关闭后请求磁盘 offset，同 fid/原路径建新数据腿；运行/暂停/握手/finally 占用不能被恢复抢占。资源由实际控制 socket 的 registry 所有，旧清理不按 peer 扫新连接。
+- 转发由 Source 仲裁全任务用户 pause/start；Server writers 排空在途/已收字节，reader 高低水位仅由本地缓冲变化解除，不把自动背压变成用户 start。
+- 恢复请求经过实际会话/route/child 校验，仅登记每 Target 数值 offset；等原 route 全部旧 owner（含 finally），再各自独立数据流/进度/失败。单 Target ACK 只完成该 Target，累计真实 ACK 后才允许整任务成功。
+- 全目标完成后的显式 EOF 仅复用原 completed 证据，无正文、无 Target 重开；原最终 ACK 写成功后 Server 按 route 身份清理，Source 实际收到 ACK 后清所属上传行。原生自目标拒绝位于 Client 统一入口；mixed 合法目标仍走同一真实传输链。
+
+### 当前完成的独立运行证据
+
+下面参数缩写只用于本节：**M**=明文 thread/localhost；**E**=加密 thread；**A**=加密 async/wildcard。A 中 S1/S2/S4/S5 的恢复组合在真实保留行产生后关闭 tracking；无恢复的 S3 及普通边界补充仍开启 tracking，S6 replay 是手工构造的旧规范 self 行，均不能冒称真实 tracking-off 恢复证据。临时程序不调用 pytest 测试函数，不替换文件/网络/加密主路径；Event 仅固定交叉或明确 ACK 故障。worker 计数含本程序记录到的控制/加密/数据线程，0 存活来自实际 owning 收尾和 join。
+
+| 场景/组合 | fid / 控制身份 | 实际证据 | worker / 最终存活 |
+|---|---|---|---|
+| S1 双向普通恢复 M | upload=802、download=804 | 双向实际 offset=65536，原嵌套路径、完整内容/hash、真实 Source ACK=True、所属进度清空 | 22 / 0 |
+| S1 双向普通恢复 E | 同上稳定 fid | 同上，两条加密业务腿 | 35 / 0 |
+| S1 双向普通恢复 A | 同上稳定 fid | 同上，保留行 tracking off 恢复 | 37 / 0 |
+| 普通握手/finally/空文件 M | 1802/1806；EOF=4112/0 | 同 fid 握手预留及 socket 已释放的 finally 仍拒绝第二恢复；另一 fid 实际 ACK；显式再做才清原行 | 36 / 0 |
+| 普通握手/finally/空文件 E | 同上稳定 fid | 两次明确业务 ACK False 后一次 True；真实内容/hash，不凭 size 或文件存在认定完成 | 49 / 0 |
+| 普通握手/finally/空文件 A | 同上稳定 fid | async/wildcard，tracking 仍开启；该程序 JSON 的 untracked 仅参数回显，不算关闭 tracking | 50 / 0 |
+| S2 旧 worker/新会话 M | 4493891096→新普通 4494091096 | 原 ACK False 留行；旧 worker 仍用旧 control 并返回 False；新连接实际消息/新文件 ACK True，旧行同对象 | 26 / 0 |
+| S2 旧 worker/新会话 E | 10125171026→10125371026 | 同上，按实际业务 upstream socket 注入 ACK False | 65 / 0 |
+| S2 旧 worker/新会话 A | 10265569570→10265769570 | 同上，tracking off 后保留旧 forward 行，旧 worker 收尾 | 65 / 0 |
+| S3 全局暂停 M | 8531060282 | Source/Server upstream/每 Target 操作后状态收敛；两 Target 排空 1024 字节；同 socket start | 80 / 0 |
+| S3 全局暂停 E | 9463323652 | 同上，reader 重入压力门无新增读取，排空不撤用户 pause | 119 / 0 |
+| S3 全局暂停 A | 10419783064 | 再覆盖 Server child；队列 peak=2090≤64+2048，buffer 最终 0，完整内容及真实 ACK | 129 / 0 |
+| S4 不同 offset/晚到目标 M | 8567571254；8192/24576 | A 正文门阻塞时 B 晚到、独立 socket/正文/Target ACK；此前无整任务 ACK，A 后完成 | 49 / 0 |
+| S4 不同 offset/晚到目标 E | 11740498306；8192/24576 | A Target ACK 门阻塞时 B 完成；累计 B、A 真实 ACK 后整任务才 ACK | 88 / 0 |
+| S4 不同 offset/晚到目标 A | 12248869122；8192/24576 | 原 live/paused/finally 只 pending；最后旧 owner 退出后建独立流；实际保留行 tracking off | 88 / 0 |
+| S4 离线/新会话/单流失败 M | 4429802526；初始 16384/8192→A 新 24576 | Source 离线 pending 保留；A 断线丢旧请求，原端点新会话重发；A 再断腿不动 B，另 fid 真 ACK，显式 A 再恢复才整体 ACK | 64 / 0 |
+| S4 离线/新会话/单流失败 E | 10150322048；8192/8192→A 新 16384 | 同上，真实加密与新实际 control socket；未自动重试 A | 129 / 0 |
+| S4 离线/新会话/单流失败 A | 12168513906；8192/8192→A 新 16384 | 同上，原始保留行 tracking off，兄弟 owner 原对象保留，最终内容/hash/索引归零 | 128 / 0 |
+| S5 终态再确认 M | 4799102086 | 两 Target 真实 ACK 后首次最终 ACK False；双端实际实例重建/原端点回连；再次异常保留、显式成功，零正文 | 59 / 0 |
+| S5 终态再确认 E | 11454431374 | 同上，加密实际数据 channel；9 类错误/并发/坏头请求拒绝 | 124 / 0 |
+| S5 终态再确认 A | 10253682156 | 同上，快照原 schema、保留行 tracking off；query 无行、运行时删除拒绝、关闭后删除不被再次 close 重建 | 126 / 0 |
+| S6 自目标 M | Source=127.0.0.1:38647 | 6 次 self/replay False，5 次合法 Source ACK=True；另目标 127.0.0.2:38647 同端口不同 IP 真实收件 | 68 / 0 |
+| S6 自目标 E | Source=127.0.0.1:44199 | console/Web file/folder、嵌套空文件，合法内容和 ACK；旧 self 上传行保留 | 80 / 0 |
+| S6 自目标 A | Source=127.0.0.1:42569 | 同上，wildcard、tracking off；拒绝前无 fid/新行/请求/数据腿 | 80 / 0 |
+| 原 route 握手期 M | 7504141324 | Target 实际控制会话发 child/offset=0 请求，只 pending、不拆原握手；原任务完成后无重复重放 | 26 / 0 |
+| 原 route 握手期 E | 9342026838 | 同上，控制 reader 在握手 Event 中仍接收实际消息 | 65 / 0 |
+| 原 route 握手期 A | 12610350206 | 同上，资源/final owner 全结束、真实 Target 内容与整任务 ACK | 66 / 0 |
+| 原 route EOF 等待 M | 7844326422 | A 最终 ACK 明确失败，B ACK 被 Event 挂起时 A 请求 offset=65802，只 pending；旧 owner 结束后 A 零正文恢复 | 34 / 0 |
+| 原 route EOF 等待 E | 10035117130 | 同上，原尝试 False→同 fid 恢复 True；完成 B 不重传 | 73 / 0 |
+| 原 route EOF 等待 A | 11256552678 | 同上，旧 owner 保持到放行；pending 期间控制消息仍送达 | 73 / 0 |
+
+S5 三组实际 child fid 分别为 `8383925712/12678893008`、`19702615484/23997582780`、`17607792216/21902759512`；全部 Target 已离线仍可确认。非空文件 65802 字节，SHA-256 `e0d362d4ab08c66b550e9ba59b456d2dd652e987d0f5921a94ad4acdb342bfa2`，两次确认仅三段原头；原目标 inode/mtime/内容不变。实际拒绝 unknown fid、错误成员、多目标、错误 Source、有效确认重复、finally 重复、非 EOF、offset 过大及截断头；失败保留同一原 route/行，最终 route/index/recovery/快照清空。
+
+S6 文件 33031 字节，SHA-256 `52c984d43140724ae6a08aee355df7bd6a5f92e1d389eb299e731c21d1b46038`；自拒绝日志可见，每组仅 5 条合法请求，手工构造的旧 self 恢复 fid=619 行对象保留。Web 使用 Flask **test client** multipart `/api/send_file`/`/api/send_folder` 驱动真实后端与 TCP，不是监听 HTTP 端口或浏览器/UI 验收；HTTP 200 仍是异步受理，不是完成或新增 UI 拒绝提示。握手/EOF 窗口内容 SHA-256 `60fc47cfdeb525fd8cbe7a8226c3f7472c645a086e9dbfad195d9c1af4d5c736`，EOF 等待场景保持稳定 child 与原 offset，原尝试 False、后续 True；不把协议零 offset 请求说成已落盘非零恢复。
+
+S1 Advanced 另跑明文 alias 与加密 async/wildcard/tracking-off 两组：同一接收根的 `bundle/a/same.bin`、`bundle/b/same.bin` 内容/hash 均正确；fid=902 两次真实断腿的实际 offset 为 65536、131072，paused busy 返回 False 并保留原 socket，另一 fid=904 独立完成真实 ACK。五字段快照关闭并重建 Server **实例**后从 131072 恢复到最终 ACK；worker 分别 29/59，最终存活均 0。不是进程重启。S2 Advanced 同两组在新会话另完成原生 forward 新 fid `10457927960`、`19838860184`，Target 完整 hash、Source 返回 True，worker 32/71、最终 0；不是把新普通文件误称成新 forward。
+
+S3 首两组在 socket 收尾后才采端点，JSON `owners=[]`，不作为已记录端点声明；socket 身份保持、内容、暂停和 ACK 断言确实通过，第三组记录实际双向端点。S4 三组真正重建各 Target 原 child、保留 `original/nested/relay.bin`，原 Target 请求通过 Receiver 的 `_request_resumes()` 发送；原 Server finally 挂起时没有 active，A 阻塞时 B 先确认不清共享 Source 行。非最后恢复流的返回 False 表示整任务未完成，不是 Target 内容失败。
+
+S4 故障补充不是预置恢复行：原两 Target 首次真实落盘后关数据腿；Source 实际离线，Receiver 原入口发送数值请求。A 实际控制连接关闭会删除只绑定旧 socket 的 pending，B 不丢；Source 原端点回连先服务 B，A 原端点新会话自动从磁盘重发。A 第一次恢复新增一块后再次关自身数据腿，Source 返回 False；共享控制仅留下 B owner，B 与无关普通 fid=1702 的内容/真实 ACK 不受影响。A 无自动重发；B 已完成仍保留 route/Source 共享行，A 显式以新实际 offset 重做后才有一个上游成功 ACK。三组 Source 结果均为原任务 False、A 失败 False、B 整体未完成 False、最后 A True；末尾 route/index/recoveries/进度清理，并由 owning cleanup 收尾所有 worker。
+
+实际 owner 记录样本（同一行左右为该 socket 的 local/peer，均为 `127.0.0.1`；只列输出中取得的样本，不补猜已关闭 socket 端点）：S1 M control `34107↔37493`，上传旧 data `58711↔37559`、下载旧 data `44867↔45505`；S2 M 旧 control `43143↔51703`、新 `33079↔51703`；S3 A Source data `40375↔45897`、两 child data `37856↔40149`/`50458↔43689`；S4 M 原 Source data `48709↔42993`，独立 A/B data `60813↔38531`/`56751↔37819`，Target control 为 `34655`/`39629`。S4 故障 A 的 Source control 对象 `134456782269856→134456782271008`、Target control `134456772529120→134456772811104`，新请求按实际新 socket 被接纳，B receive owner 全程同对象；不是只比较 peer 端点猜 owner。
+
+### 已记录的验收程序修正
+
+- 两条加密 S1 的首轮失败来自临时跨方向 gate 未恢复，旧闭包影响第二方向；恢复原透传方法后只重跑失败参数通过，不修改生产发送。
+- 初次加密 S5 的 ACK 观测仅按标记计数，误把密钥传输 ACK 当业务 ACK，实际显式确认先成功；诊断输出 `expected=[False], observed=[True], ack_attempts=3`。改为同时匹配原 route originator 与实际业务数据 socket 后，仅重跑受影响的加密参数通过，不修改生产加密或 ACK 协议。
+- 原 EOF 窗口首轮已取得 False→True，但临时程序硬钉两个并发 Target ACK 回调的先后顺序；改为每 Target 的真实尝试次数和最后 A 恢复 ACK，保留全部内容、pending、owning 及结果断言，仅重验失败场景。握手已通过参数未重跑碰数。
+- S2 初次三组 ACK 观察只按消息内容筛选，存在误命中公钥传输的风险；不计入有效 S2。修为同时限定业务 fid、实际 control 和 upstream data socket 后重验三组通过。Advanced 首轮 gate 把同一已关闭 socket 的尾部发送误当第二条腿而阻塞；改为仅不同 socket 固定事件后只重验失败两组通过。
+- S3/S4 临时程序在批次运行期间被编辑导致四组 IndentationError，修复后只重验失败四组。S4 透传闭包晚绑定，明文一次表面 exit 0 也不计有效，加密两组等待正文门失败；固定 Server 原方法绑定并按业务 fid/socket 记录 ACK 后仅重验无效/失败三组通过。未修改产品 I/O、加密或协议。
+- S4 故障补充的两次明文首轮失败来自临时程序硬钉 `file.write` 必须恰好 8192；诊断实际两文件为 24576/8192，TCP 接收允许合并写块。改为首个真实正写入后固定 Event、从已关闭文件/保留行读取各自实际 offset，不手工截断或改内容，再运行失败明文及此前未运行的两组加密均通过。未把正文发送块边界当接收写边界。
+- 普通边界补充首轮临时观察器读取不存在的握手 `fid` 字段，尚未发业务就 KeyError；移除字段假设后又发现直接调用 `file_transfer_mode` 不经过外层 `_sending_transfer`，因此 finally Event 不到。改为观察真实 `resume_trans` worker 的外层 finally，只重验失败明文及未运行加密组合通过：业务 ACK 序列 False、False、True，busy 阶段无第二 worker。这里不是新增产品修复。
+
+### P01–P20 本轮对照
+
+“覆盖”只表示所列路径和实际参数有运行时/机械证据，不表示所有平台或所有排列已验收；“部分”列出本轮未独立证明的窗口。V6 集成路径是真实 socket 消费者，unit 的预置 registry/进度不是独立端到端场景。以下引用的测试均包含在本轮唯一一次 V6 中，未为填表重跑。
+
+| 路径 | 结论 | 本轮证据与限制 |
+|---|---|---|
+| P01 普通上传 | 覆盖 | S1 双向中的上传；关闭文件后实际 offset、同 fid、原路径/hash/真实 ACK，M/E/A |
+| P02 普通下载 | 覆盖 | S1 双向中的下载，M/E/A；不把上传证据代替下载 |
+| P03 文件夹/同名不同目录 | 覆盖 | S1 Advanced 同接收根 `bundle/a`/`bundle/b`；S6 原生 folder 枚举、嵌套空文件及 Web 文件夹适配 |
+| P04 普通 live/paused/握手/finally | 覆盖 | S1 Advanced paused/live busy、其他 fid；普通边界补充握手及 socket 已释放 finally 保留同 owner、`resume_trans=False`，后续真 ACK；独立程序后两窗口为上传方向 |
+| P05 换腿再断线/重启 | 部分 | S1 Advanced 同 fid 两次断线、实际 65536→131072、Server 实例重建/原端点回连；未运行独立进程重启 |
+| P06 实际会话/迟到清理 | 覆盖 | S2 旧 worker 固定旧 control/new 可用；V6 `test_relay_offline_source_replays_stable_route_or_stops_cleanly` 在新 owner 活跃时再次释放旧资源，原对象仍在且有最终内容/ACK |
+| P07 旧 worker/connect | 覆盖 | S2 挂起 worker 与 connect 交叉，旧 socket False、旧行同对象、新消息/普通新 fid/原生新 forward 真 ACK；不是靠等待 30s 判定 |
+| P08 各参与者 pause/start | 覆盖 | S3 + V6 五 issuer 参数（Source、Server upstream/alias、两个 Target）；已确认状态收敛、另一端 start、完整内容 |
+| P09 未确认反向/交叉/重复 | 覆盖 | V6 `test_relay_cross_target_start_and_unconfirmed_reverse_intent_reach_source` 用 Event 固定 Source pause 通知，未确认时两 Target 反向 start，最后全状态 False/内容 ACK；普通双向亦有对应交叉契约 |
+| P10 在途/排队排空 | 覆盖 | S3 两 Target 在 pause 时各写入 1024 字节，Source 下一块等待、同 socket start，真实 ACK；V6 双向普通排空 |
+| P11 本地压力与 start | 部分 | S3/V6 reader 重入时读数不变、用户 start 不开压力门、drain 不撤用户 pause、peak≤high+max；未独立负断言自动压力绝不发送控制帧，不声明进程总内存上限 |
+| P12 原 route 各 owner 窗口 | 覆盖 | S4 live/paused/finally、六组握手/EOF 等待补充：只 pending、不关旧 owner、结束后才恢复；控制消息和另一 fid 仍实际完成 |
+| P13 错路由/去重/旧会话 | 部分 | V6 `test_resume_rejects_forged_or_stale_requesters_before_registration`、`test_duplicate_registration_keeps_only_the_latest_pending_offset` 为 unit 准入/去重；S4 故障为真实旧 socket pending 丢弃/新会话重发；未把所有非法 wire 请求独立透过控制 reader 重放 |
+| P14 不同 offset/独立并行 | 覆盖 | S4 8192/24576、晚到 B；A 正文门/Target ACK 门各一种组合时 B 真实完成，最后累计 Target ACK 才整任务 ACK；V6 多 owner 共享 pause 与迟到旧释放 |
+| P15 离线/单流失败 | 覆盖 | S4 故障三组：离线 Source pending，Target 旧请求丢弃、新 socket 重发，A 新实际 offset 重做；B owner/内容/ACK 和无关 fid=1702 保留，无自动重试；V6 Source/stop 两分支 |
+| P16 零 offset/空文件/EOF | 覆盖 | 普通边界补充真实空文件 offset=0/EOF=4112，S4 Target EOF、S5 终态 EOF；V6 `test_forward_resume_with_zero_offset_reuses_existing_route` 通过真实原 wire/ACK 验证预置空文件 route 无新分配，明确它不是实际断腿产生的行 |
+| P17 全目标完成补最终确认 | 部分 | S5 三组 Target 已真实 ACK、首上游 False、再次异常、显式成功、原记录重载、目标离线、坏头/并发/finally、零正文/无 Target 新命令；V6 C4 契约补充最后独立恢复后的 ACK 失败；未独立对 C4 组合 stop/中途 rekey/无关活跃 fid 全部交叉 |
+| P18 自目标/混合/同机端点 | 覆盖 | S6 三组 self/replay False 且无新 fid/行/腿，mixed 真内容/ACK；M 另运行同端口不同 IP；Web 只验后端适配，非 UI |
+| P19 tracking/query/delete/stop | 覆盖 | S1/S4 真实保留行后关闭 tracking；S5 query detached、运行删除拒绝、关闭删除后再次 close 不重建，原五字段行及 upload/download/relays schema；V6 删除/快照契约，无凭空新进度 |
+| P20 安全 I/O/模式矩阵 | 部分 | M/E/A 各有真实内容、ACK、安全 channel/owner；V6 两个加密 rekey 参数实际 key reader 继续接收，帧有 FRAME_MAGIC、无明文 pause/start、无 raw 绕过；未覆盖 relay/终态中途 rekey、完整笛卡尔积及其他平台 |
+
+### 本轮命令与机械结果
+
+运行平台：Linux x86_64，`.venv/bin/python` **3.10.20**。合并回归仅执行下面一次，未重新执行 C5 项目全套、未重跑已知 37 条类型诊断。
+
+```bash
+set -o pipefail
+.venv/bin/python -m pytest test/unit/network_api test/integration/network_api/test_tcp_transfer_control.py test/integration/network_api/test_tcp_file_transfer.py test/integration/network_api/test_tcp_transfer_resume.py test/integration/network_api/test_crypto_tcp.py test/integration/network_api/test_tcp_async_server.py test/integration/test_forward_extension.py test/integration/test_forward_msg_attribution.py -q --tb=short 2>&1 | tee local://c6-v6-pytest.log
+```
+
+实际：**692 passed、1 skipped，1028.13s，exit 0**。明文 rekey 参数在测试中显式 skip（`re-key requires the encrypted fixture variants`），本轮未新增 skip；不把 skip 或已知类型诊断计通过。
+
+独立程序下列参数组均实际 exit 0；表中 `M/E/A` 分别展开为 `--alias`、`--encrypted`、`--encrypted --async-server --wildcard --untracked`，均使用前缀 `PYTHONPATH="$PWD:/tmp" .venv/bin/python`。命令是本轮历史执行记录，不作为删除临时程序后的长期入口；可持续复验入口是 V6 内已有契约测试。
+
+| 程序 | 实际参数组 |
+|---|---|
+| `/tmp/pyflow_c6_direct.py` | `--case direct-leg` M/E/A；`--case relay-leg` M/E/A |
+| 同上 Advanced | `--case direct-leg --gate ack` M/A；`--case relay-leg --gate ack` M/A（此处 ack 是 Advanced 选择，不是 ACK 注入） |
+| `/tmp/pyflow_c6_relay.py` | `--case global-pause` M/E/A；`--case parallel-recovery --gate body` M/A；`--case parallel-recovery --gate ack` E |
+| `/tmp/pyflow-transfer-lifecycle-smoke.py` | `--case parallel-recovery --window handshake` M/E/A；`--case parallel-recovery --window eof` M/E/A |
+| 同上终态/自拒绝 | `--case eof-confirm` M/E/A；`--case self-target` M/E/A |
+| `/tmp/pyflow_c6_faults.py` | `--case parallel-recovery` M/E/A |
+| `/tmp/pyflow_c6_edges.py` | `--case direct-leg` M/E/A；该 A 的 tracking 参数未应用，不能据 JSON 参数回显声称 tracking off |
+
+文档机械检查另实际运行一次：**4 份文档、11 个相对链接、P01–P20 恰好 20 行且顺序一致，15 项覆盖/5 项部分，错误 0，exit 0**。这只证明文档路径/链接和矩阵完整，不增加功能或全局属性通过声明。
+
+本节结果来自实际独立程序输出与 V6 日志；八个临时程序/辅助模块均已删除，不保留第二套永久测试框架。没有新增或删除测试、放松断言、coverage、CI 或依赖；新采集过程只修临时观察器，不更改已验证的产品路径。
+
+### 原子变更与影响
+
+| 阶段 | 原子意图/当前状态 | 主要更改路径与公共影响 |
+|---|---|---|
+| C1 | 实际控制会话取消及旧 owner 收尾，已实现 | `connect_tcp.py` registry、会话定向取消、worker 固定 control；同 fid/进度格式不变 |
+| C2 | Source 仲裁任务级控制、排空与本地背压，已实现 | 同模块控制 registry/relay readers/writers；pause/start 原签名/wire，转发语义改为任务级 |
+| 旧 C3a/C3b | 已撤回，不作为现行方案 | `?`/None 查询、强制拆腿及单活跃 FIFO 是历史，不作为本轮契约或通过依据 |
+| 本轮 C3 | 数值 offset + 原 owner barrier + 每 Target 独立恢复，已实现 | 同模块 parser/Receiver/route/调度；移除查询，不加 wire/schema 字段，各流正文/ACK 可并行 |
+| C4 | 原 route/completed 上显式 EOF 补最终确认，已实现 | 同模块准入/header/最终 ACK/owning 清理；无新 Target 正文、终态表或 Source 行字段 |
+| C5 | Client 原生统一入口拒绝自身完整控制端点，已实现 | `_forward_one` 及对应使用文档/契约；console/folder/Web 后端复用，消息/独立扩展不改 |
+| C6 | 本次单原子验收与报告收尾 | 仅本报告、需求卡、计划及 `docs/source/changes/transfer-fid-routes.md`；未改生产/测试策略/CI/依赖/公开签名 |
+
+### 明确边界与人工闸门
+
+- native Windows、其他 Python、IPv6/NAT/端点迁移、独立进程重启、全部参数排列均未运行；实例重建不等于进程重启，Flask test client 不等于浏览器验收。
+- 同一控制会话/同 fid 新旧数据腿迟到 pause/start 的严格代次隔离（问题二）继续暂缓；本轮会话定向清理不解决它。不引入 leg_id、换新 fid、自动重试或超时抢占。
+- Server ACK 写成功但 Source 未收到的不确定性继续存在；不新增 ACK-of-ACK、终态证明或自动补偿。EOF 只在已完成集合上补确认，不证明历史文件名/大小/hash。
+- 全局属性的覆盖依据是上述具体 socket 路径、帧检查和 owner/内容/ACK，不把“692 passed”单独当作全局安全证明；P05/P11/P13/P17/P20 的部分覆盖不隐藏。
+- 已知 37 条类型诊断仍保留，未重复运行、未修或计通过。未改 CI、coverage、依赖、wire/schema，未合并、推送或变更保护策略。
+- 规则沉淀复用已存在的消费者契约和本节路径矩阵：实际 socket ownership、finally barrier、每 Target 独立流/实际 offset、累计真实 ACK 和 self 统一入口。C6 没有以新增源码字符串断言替代运行证据。
+- C6 可作为当前分支的验收文档提交；**不声明人工总验收已通过**。人工仍须接受本节部分覆盖与平台/协议边界后决定合并/远端；未接受项保持明确未覆盖，不借历史通过数覆盖。
+
+
 ## C5：原生文件与目录转发自拒绝
 
 **意图与授权**：用户确认“同 IP 且同端口”属于自身，并明确要求开始 C5。混合列表只剔除自身，同 IP 不同端口及不同 IP 同端口仍合法。本次单原子变更不推进 C6，不合并或推送；C1–C4 的历史输出不作为本轮证据。

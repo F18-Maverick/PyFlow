@@ -7,6 +7,25 @@
 > `docs/plans/transfer-pause-start-direction-report.md`; those historical
 > results are not verification of the current lifecycle revision.
 
+## Lifecycle revision C6: combined acceptance evidence
+
+- The affected-scope V6 run completed with **692 passed, 1 skipped** on Linux
+  x86_64 / Python 3.10.20. The skip is the plaintext rekey variant; encrypted
+  rekey variants exercised the real key reader and framed control channel.
+- Independent real-socket scenarios cover ordinary bidirectional recovery,
+  old-session ownership, global pause/drain/pressure, independent Target flows,
+  offline/new-session recovery, per-stream failure, explicit EOF confirmation
+  and native self-target rejection. Content, actual ACKs and owner cleanup are
+  recorded per scenario in the current report, not inferred from test counts.
+- P05/P11/P13/P17/P20 retain explicit partial coverage. Native Windows, other
+  Python versions, process restart, relay/terminal rekey and browser UI were
+  not verified. Flask test-client requests exercised the Web backend and TCP,
+  not a listening HTTP server or browser. Same-session/FID generation isolation
+  and a successful final-ACK write lost before Source receives it stay deferred.
+- This stage changes acceptance documents only: no production, tests, protocol,
+  schema, dependencies or CI changes. Known 37 type diagnostics remain unrerun;
+  results do not imply human final acceptance, merge or push approval.
+
 ## Lifecycle revision C5: refuse native self-target file forwarding
 
 - Filter the Source's complete control endpoint in the shared Client per-file
