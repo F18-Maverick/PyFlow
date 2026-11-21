@@ -3788,9 +3788,16 @@ def test_paused_leg_is_released_by_session_retirement(tmp_path, monkeypatch, sen
 
         assert not _start_resume_send(sender, key, target, lambda row: pytest.fail("retired owner"),
                                       control_socket=control)
-        client.client_socket.shutdown(socket.SHUT_RDWR)
-        assert wait_until(lambda: not client.running and peer not in server.clients)
+        # Let the server send FIN first: an active close on the client can leave
+        # its fixed port in TIME_WAIT on Windows, changing the resume identity.
+        server.clients[peer]["socket"].shutdown(socket.SHUT_WR)
+        client.receive_thread.join(timeout=10)
+        assert not client.receive_thread.is_alive()
+        assert not client.running
+        client._release_client_socket()
+        assert wait_until(lambda: peer not in server.clients)
         assert client.connect()
+        assert client.client_socket.getsockname() == peer, "client endpoint changed on reconnect"
         output = (client_recv if receiver is client else server_recv) / src.name
         assert wait_until(lambda: key not in sender.file_upload_progress
                           and fid not in receiver.file_recv_progress, timeout=20)

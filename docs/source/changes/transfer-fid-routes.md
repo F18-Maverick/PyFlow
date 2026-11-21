@@ -690,4 +690,9 @@ C4a retains ownership until final cleanup and rejects active resume requests.
   worker-exit assertions. An intermediate immediate-close attempt failed the
   async unregister check; that result remains in the report. Windows native
   verification is still pending.
+- The ordinary paused-leg retirement test now uses the same server-first FIN
+  for either sender and checks the client's original endpoint before waiting
+  for final ACK cleanup. A fallback port is valid for a new connection but
+  does not identify the old transfer. Both directions passed on Linux CPython
+  3.10.20; Windows port reuse still needs native CI verification.
 
