@@ -7,6 +7,24 @@
 > `docs/plans/transfer-pause-start-direction-report.md`; those historical
 > results are not verification of the current lifecycle revision.
 
+## Resume requests require framing when encryption is enabled
+
+- **Core logic:** The normal Client and Server `send_message` path treats
+  `/resume_trans` like `/pause_trans` and `/start_trans`. If no secure channel
+  is available, the write fails without entering the plaintext writer or
+  reporting a sent message. With encryption disabled the wire is unchanged.
+- **Modules and interactions:** Ordinary receivers and Server relay recovery
+  still use `format_resume_line` and the same send path. After selecting a
+  framed channel, `require_secure=True` rechecks framing under the channel's
+  final write lock; a write error keeps its existing Client/Server behavior.
+- **Assumptions:** A successful `_wait_control_secure` is not a reservation:
+  rekey can start before the write. Keep the rejection on the plaintext path,
+  not before a second, independently changing `channel.secure` check.
+- **Maintenance:** This does not change the raw handshake/port announcements,
+  the receive-side plaintext whitelist, other business commands or the retry
+  policy. The recovery tests observe incoming control bytes, decoded offsets
+  and final ACKs; the rekey test also covers the async Server.
+
 ## New relay admission: reserve the upstream FID before publishing a route
 
 - **Core logic:** A waiting ordinary listener owns its FID even before it has

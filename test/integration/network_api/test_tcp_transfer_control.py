@@ -360,6 +360,7 @@ def test_receiver_pause_start_waits_for_real_rekey_without_blocking_key_reader(
     releases.append(key_release)
     real_push = server._crypto_push_pub_to_client
     wire, control_writes, notifications = [], [], []
+    incoming = [bytearray() for _ in channels]
 
     def hold_key(sock, address):
         key_held.set()
@@ -367,7 +368,7 @@ def test_receiver_pause_start_waits_for_real_rekey_without_blocking_key_reader(
         return real_push(sock, address)
 
     monkeypatch.setattr(server, "_crypto_push_pub_to_client", hold_key)
-    for secure in channels:
+    for secure, raw in zip(channels, incoming):
         real_sendall = secure._sendall
 
         def observe_frame(data, sendall=real_sendall):
@@ -375,6 +376,12 @@ def test_receiver_pause_start_waits_for_real_rekey_without_blocking_key_reader(
             return sendall(data)
 
         monkeypatch.setattr(secure, "_sendall", observe_frame)
+
+        def observe_input(data, feed=secure.feed, capture=raw):
+            capture.extend(data)  # actual incoming bytes, including any unframed writes
+            return feed(data)
+
+        monkeypatch.setattr(secure, "feed", observe_input)
     for owner in (server, client):
         real_send = owner.send_message
 
@@ -385,11 +392,20 @@ def test_receiver_pause_start_waits_for_real_rekey_without_blocking_key_reader(
 
         monkeypatch.setattr(owner, "send_message", observe_control)
     receiver.add_message_listener(lambda _peer, message: notifications.append(message))
+    assert client._wait_control_secure(client.client_socket) and server._wait_control_secure(control)
     exchange = threading.Thread(target=client._crypto_exchange_thread,
                                 kwargs={"force": True}, daemon=True)
     exchange.start()
     assert key_held.wait(timeout=10)
-    assert wait_until(lambda: all(not secure.frames_allowed.is_set() for secure in channels))
+    assert wait_until(lambda: all(not ch.secure and not ch.frames_allowed.is_set()
+                                  for ch in channels))
+    # Both readiness checks passed before rekey. A resume write on either
+    # control socket must now fail rather than report a plaintext send.
+    server_peer = client.client_socket.getpeername()
+    download = connect_tcp.format_resume_line(808, 7, server_peer, peer)
+    upload = connect_tcp.format_resume_line(810, 9, peer, server_peer)
+    assert client.send_message(client.client_socket, download) is False
+    assert server.send_message(control, upload) is False
     results = []
 
     def request_both():
@@ -416,6 +432,7 @@ def test_receiver_pause_start_waits_for_real_rekey_without_blocking_key_reader(
     assert control_writes and not any(raw for _line, raw in control_writes)
     assert wire and all(data.startswith(connect_tcp.FRAME_MAGIC) for data in wire)
     assert not any(b"/pause_trans" in data or b"/start_trans" in data for data in wire)
+    assert all(data and b"/resume_trans" not in data for data in incoming)
     _complete(leg)
 
 

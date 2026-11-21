@@ -2634,13 +2634,29 @@ def test_pause_and_start_trans_control_a_plain_transfer(tmp_path):
         server.stop()
 
 
-def test_download_resumes_over_the_encrypted_channel(tmp_path):
-    """The resume exchange travels on the framed channel like any transfer line.
+def _watch_resume_request(monkeypatch, receiver, control):
+    """Observe the bytes entering this control decoder and the resulting resume line."""
+    wire, requests = bytearray(), []
+    channel = receiver._channels[control]
+    feed = channel.feed
 
-    With encryption enabled the resume drive waits for the handshake to finish
-    before it writes ``/resume_trans``, so the request and the resumed leg
-    both speak frames.
-    """
+    def observe_bytes(data):
+        wire.extend(data)
+        return feed(data)
+
+    def observe_line(_peer, message):
+        if isinstance(message, str) and message.startswith("/resume_trans "):
+            requests.append(connect_tcp.parse_resume_command(message))
+
+    monkeypatch.setattr(channel, "feed", observe_bytes)
+    receiver.add_message_listener(observe_line)
+    return wire, requests
+
+
+@pytest.mark.parametrize("forwarded", [False, True], ids=["ordinary", "relay"])
+def test_download_resumes_over_the_encrypted_channel(tmp_path, monkeypatch, forwarded):
+    """Each hop delivers the exact numeric request in a frame, through the final ACK."""
+    workers = _track_socket_workers(monkeypatch)
     ssh_dir = tmp_path / "ssh"
     ssh_dir.mkdir()
     port = free_port()
@@ -2653,13 +2669,15 @@ def test_download_resumes_over_the_encrypted_channel(tmp_path):
     )
     _isolate(server, tmp_path, "server")
     _redirect_crypto(server.crypto, tmp_path, ssh_dir, "pub_key")
+    server_recv = tmp_path / "server_recv"
+    server_recv.mkdir()
+    server.file_transfer_dir = str(server_recv)
     threading.Thread(target=server.start_TCP_Server, daemon=True).start()
     assert server_ready(server), "server did not start"
-    client = None
-    try:
-        recv_dir = tmp_path / "client_recv"
-        recv_dir.mkdir()
-        client = TCP_Client_Base(
+    clients = []
+
+    def connect_peer(name, recv_dir):
+        peer = TCP_Client_Base(
             host="127.0.0.1",
             port=port,
             client_host="127.0.0.1",
@@ -2667,48 +2685,73 @@ def test_download_resumes_over_the_encrypted_channel(tmp_path):
             is_input_command_in_console=False,
             is_enable_encrypto=True,
         )
-        _isolate(client, tmp_path, "client")
-        _redirect_crypto(client.crypto, tmp_path, ssh_dir, "pub_key_client")
-        client.file_transfer_dir = str(recv_dir)
-        assert client.connect()
-        assert wait_until(lambda: client.client_socket in client._encrypted_sockets, timeout=15), (
-            "the channel never flipped to frames"
-        )
+        clients.append(peer)
+        _isolate(peer, tmp_path, name)
+        _redirect_crypto(peer.crypto, tmp_path / name, ssh_dir)
+        recv_dir.mkdir()
+        peer.file_transfer_dir = str(recv_dir)
+        assert peer.connect()
+        peer._resume_thread.join(timeout=20)  # finish the initial empty reconnect scan
+        assert not peer._resume_thread.is_alive()
+        control = peer.client_socket
+        assert wait_until(lambda: control in peer._encrypted_sockets, timeout=15)
+        assert peer._wait_control_secure(control)
+        assert server._wait_control_secure(server.clients[control.getsockname()]["socket"])
+        return peer
+
+    try:
+        recv_dir = tmp_path / "client_recv"
+        client = connect_peer("receiver", recv_dir)
+        target = client.client_socket.getsockname()
+        sender = connect_peer("source", tmp_path / "source_recv") if forwarded else server
+        server_peer = (server.host, server.port)
+        origin = sender.client_socket.getsockname() if forwarded else server_peer
 
         src = tmp_path / "download.bin"
         payload = os.urandom(64 * 1024)
         src.write_bytes(payload)
-        fid = 908  # even low bit: a plain leg's id
+        fid = 908  # ID on the receiver's leg
         partial = recv_dir / "download.bin"
         with open(partial, "wb") as f:
             f.write(payload[:1024])
-        client.file_recv_progress[fid] = [
-            1024,
-            len(payload),
-            None,
-            str(partial),
-            (server.host, server.port),
-        ]
-        upload_key = (client.client_socket.getsockname(), fid)
-        server.file_upload_progress[upload_key] = [
-            0,
-            len(payload),
-            None,
-            str(src),
-            client.client_socket.getsockname(),
-        ]
+        client.file_recv_progress[fid] = [1024, len(payload), None, str(partial), origin]
+        downstream = _watch_resume_request(monkeypatch, server, server.clients[target]["socket"])
+        probes = [(downstream, fid)]
+        if forwarded:
+            upstream = 906
+            assert server._register_fid_route(upstream, origin, {target: fid}) is not None
+            source_probe = _watch_resume_request(monkeypatch, sender, sender.client_socket)
+            probes.append((source_probe, upstream))
+            upload_key = (server_peer, upstream)
+            send_method = "_forward_one"
+        else:
+            upload_key = (target, fid)
+            send_method = "file_transfer_mode"
+        sender.file_upload_progress[upload_key] = [0, len(payload), None, str(src), target]
 
-        client._request_resumes()  # the same call connect() dispatches on reconnect
+        send = getattr(sender, send_method)
+        completed = []
+
+        def observe_ack(*args, **kwargs):
+            result = send(*args, **kwargs)
+            completed.append((kwargs["resume_offset"], result))
+            return result
+
+        monkeypatch.setattr(sender, send_method, observe_ack)
+        assert client._request_resumes() == 1
         assert wait_until(lambda: partial.stat().st_size == len(payload), timeout=20), (
             "the encrypted resume did not finish"
         )
         assert partial.read_bytes() == payload
         assert wait_until(lambda: fid not in client.file_recv_progress, timeout=10)
-        assert wait_until(lambda: upload_key not in server.file_upload_progress, timeout=10)
+        assert wait_until(lambda: upload_key not in sender.file_upload_progress, timeout=10)
+        assert wait_until(lambda: completed, timeout=10)
+        assert completed == [(1024, True)]
+        for (wire, requests), request_fid in probes:
+            assert requests == [(request_fid, 1024, origin, target)]
+            assert connect_tcp.FRAME_MAGIC in wire and b"/resume_trans" not in wire
     finally:
-        if client is not None:
-            client.close()
-        server.stop()
+        _close_socket_workers(server, clients, workers)
 
 
 def test_client_connects_when_its_configured_port_is_taken(tmp_path):

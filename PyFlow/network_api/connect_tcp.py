@@ -196,10 +196,19 @@ NETWORK_SPEED_MIN_SPAN = 0.1  # seconds floor, so one short burst is not extrapo
 # drops (see _persist_transfer_progress). After a reconnect the receiver asks
 # the sender to continue from the bytes it already holds (/resume_trans).
 RESUME_LINE = "/resume_trans"  # receiver -> sender: continue this transfer from an offset
+_SECURE_TRANSFER_COMMANDS = ("/pause_trans", "/start_trans", RESUME_LINE)
 RESUME_ACCEPT_TIMEOUT = 20.0  # seconds a resumed transfer waits for the sender to connect
 RESUME_PORT_TIMEOUT = 20.0  # seconds a resumed sender waits for the receiver's transfer port
 RESUME_SECURE_TIMEOUT = 10.0  # seconds a resume drive waits for the framed control channel
 FILE_COMMAND_TOKENS = 3  # a ``/file <name> <fid>`` line carries this many tokens
+
+
+def _requires_secure_transfer_frame(message):
+    """Identify transfer-control text, not transfer body bytes or same-prefix commands."""
+    if not isinstance(message, str):
+        return False
+    parts = message.split(maxsplit=1)
+    return bool(parts) and parts[0].lower() in _SECURE_TRANSFER_COMMANDS
 
 
 def _wait_writable(client_socket, timeout):
@@ -3514,10 +3523,8 @@ class TCP_Server_Base:  # TCP server class
     def _wait_control_secure(self, control_socket, timeout=RESUME_SECURE_TIMEOUT):
         """Wait until a control channel may carry framed protocol lines.
 
-        The reconnect flows run right after a session is established, when the
-                crypto handshake may still be completing; a resume line sent then would
-                travel plaintext and be dropped by the peer's framing guard. Without
-                encryption there is nothing to wait for.
+        A reconnect may precede the end of the handshake. Wait before issuing
+        the request; the writer still enforces framing if rekey begins later.
 
         Args:
             control_socket (socket.socket): Value used by the operation.
@@ -4521,8 +4528,8 @@ class TCP_Server_Base:  # TCP server class
                 is encrypted; only for the crypto handshake and transfer coordination lines.
 
         Returns:
-            bool: True when the payload was written, False for an unsupported
-                payload type.
+            bool: True when written; False for an unsupported payload or a transfer
+                control line with no secure channel while encryption is enabled.
 
         Raises:
             RuntimeError: If the server is not running or no socket was passed.
@@ -4542,21 +4549,17 @@ class TCP_Server_Base:  # TCP server class
         return written
 
     def _write_message(self, client_socket, message):
-        """Write one payload: encrypted when the channel is up, plaintext otherwise.
+        """Write one payload; protected transfer commands may not fall back to plaintext.
 
         Returns:
-            bool: True when written, False for an unsupported payload type.
+            bool: True when written, False if unsupported or required framing is unavailable.
         """
         if not self.running or not client_socket:
             self._log("disable the connect to server")
             raise RuntimeError("connection error")
         with self._crypto_lock:
             channel = self._channels.get(client_socket)
-        control_frame = (self.is_enable_encrypto and self.crypto is not None
-                         and isinstance(message, str)
-                         and message.split(maxsplit=1)[:1] in (["/pause_trans"], ["/start_trans"]))
-        if control_frame and (channel is None or not channel.secure):
-            return False
+        control_frame = self.is_enable_encrypto and _requires_secure_transfer_frame(message)
         if channel is not None and channel.secure:
             try:
                 if not isinstance(message, (str, bytes)):
@@ -4573,6 +4576,8 @@ class TCP_Server_Base:  # TCP server class
                     self._log(f"send msg error: {e}")
                     self._log_exc()
                 raise
+        if control_frame:
+            return False  # never enter the plaintext writer, including during rekey
         with self._crypto_get_send_lock(client_socket):  # plaintext writes stay ordered per socket
             try:  # add newline character for server to distinguish messages
                 if isinstance(message, str):
@@ -9270,10 +9275,8 @@ class TCP_Client_Base:  # TCP client class
     def _wait_control_secure(self, control_socket, timeout=RESUME_SECURE_TIMEOUT):
         """Wait until a control channel may carry framed protocol lines.
 
-        The reconnect flows run right after a session is established, when the
-                crypto handshake may still be completing; a resume line sent then would
-                travel plaintext and be dropped by the peer's framing guard. Without
-                encryption there is nothing to wait for.
+        A reconnect may precede the end of the handshake. Wait before issuing
+        the request; the writer still enforces framing if rekey begins later.
 
         Args:
             control_socket (socket.socket): Value used by the operation.
@@ -9890,8 +9893,8 @@ class TCP_Client_Base:  # TCP client class
                 is encrypted; only for the crypto handshake and transfer coordination lines.
 
         Returns:
-            bool: True when the payload was written; False when the client is not
-                running, no socket was passed, or the payload type is unsupported.
+            bool: True when written; False if the client is disconnected, the payload
+                is unsupported, or required transfer-control framing is unavailable.
         """
         if is_send_raw:
             deal_msg = message.strip()
@@ -9907,22 +9910,17 @@ class TCP_Client_Base:  # TCP client class
         return written
 
     def _write_message(self, client_socket, message):  # noqa: PLR0911 - same exits as the old send_message body
-        """Write one line: encrypted when the channel is up, plaintext otherwise.
+        """Write one payload; protected transfer commands may not fall back to plaintext.
 
         Returns:
-            bool: True when written; False when the client is not running, no
-                socket was passed, or the payload type is unsupported.
+            bool: True when written; False if disconnected, unsupported, or unable to frame.
         """
         if not self.running or not self.client_socket:
             self._log("disable the connect to server")
             return False
         with self._crypto_lock:
             channel = self._channels.get(client_socket)
-        control_frame = (self.is_enable_encrypto and self.crypto is not None
-                         and isinstance(message, str)
-                         and message.split(maxsplit=1)[:1] in (["/pause_trans"], ["/start_trans"]))
-        if control_frame and (channel is None or not channel.secure):
-            return False
+        control_frame = self.is_enable_encrypto and _requires_secure_transfer_frame(message)
         if channel is not None and channel.secure:
             try:
                 if not isinstance(message, (str, bytes)):
@@ -9937,6 +9935,8 @@ class TCP_Client_Base:  # TCP client class
                     self._log(f"send msg error: {e}")
                     self._log_exc()
                 return False
+        if control_frame:
+            return False  # never enter the plaintext writer, including during rekey
         with self._crypto_send_lock:  # plaintext writes stay ordered (no-GIL safe)
             try:  # add newline character for server to distinguish messages
                 if isinstance(message, str):
