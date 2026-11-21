@@ -698,7 +698,22 @@ def parse_resume_command(command):
 
 
 def format_resume_line(fid, offset, origin, target):
-    """Format the only resume wire command, preserving both endpoint identities."""
+    """Format a resume command with the required nonnegative integer offset.
+
+    Args:
+        fid (int): Stable transfer identifier.
+        offset (int): Bytes already present at the receiver; must be a nonnegative integer.
+        origin (tuple): Source endpoint identity.
+        target (tuple): Receiver endpoint identity.
+
+    Returns:
+        str: The five-token numeric resume command.
+
+    Raises:
+        ValueError: If ``offset`` is not an integer or is negative.
+    """
+    if type(offset) is not int or offset < 0:
+        raise ValueError("resume offset must be a nonnegative integer")
     return (f"{RESUME_LINE} {fid} {offset} "
             f"{shlex.quote(repr(tuple(origin)))} {shlex.quote(repr(tuple(target)))}")
 

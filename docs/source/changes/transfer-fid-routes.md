@@ -7,6 +7,20 @@
 > `docs/plans/transfer-pause-start-direction-report.md`; those historical
 > results are not verification of the current lifecycle revision.
 
+## Resume formatter rejects invalid offsets
+
+- **Core logic:** `format_resume_line()` accepts only a nonnegative Python
+  integer offset, including zero. It raises `ValueError` before producing wire
+  text for `None`, query markers, numeric strings, booleans, floats or negatives.
+- **Modules and interactions:** Ordinary and relay recovery still format the
+  same five-token `/resume_trans` line and use their existing `send_message`
+  path. The parser, endpoint identities, FIDs and serialized progress are
+  unchanged.
+- **Assumptions:** The formatter must not silently coerce its argument: its
+  output must be accepted by the numeric-offset parser.
+- **Maintenance:** Resume offset validation belongs at the formatter boundary;
+  no recovery retry, wire migration or sender/file-transfer behavior is added.
+
 ## Resume requests require framing when encryption is enabled
 
 - **Core logic:** The normal Client and Server `send_message` path treats

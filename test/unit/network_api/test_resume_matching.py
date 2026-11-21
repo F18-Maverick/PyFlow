@@ -95,6 +95,12 @@ def test_resume_formatter_preserves_zero_and_numeric_offsets():
     )
 
 
+@pytest.mark.parametrize("offset", [None, "?", "7", -1, True, 1.5])
+def test_resume_formatter_rejects_offsets_outside_the_nonnegative_integer_contract(offset):
+    with pytest.raises(ValueError, match="offset"):
+        format_resume_line(304, offset, ("source", 1), ("target", 2))
+
+
 @pytest.mark.parametrize("line", [
     "/resume_trans -1 0 '(\"host\", 5)' '(\"target\", 6)'",
     "/resume_trans 304 -1 '(\"host\", 5)' '(\"target\", 6)'",
