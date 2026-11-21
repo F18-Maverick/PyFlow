@@ -7,6 +7,23 @@
 > `docs/plans/transfer-pause-start-direction-report.md`; those historical
 > results are not verification of the current lifecycle revision.
 
+## New relay admission: reserve the upstream FID before publishing a route
+
+- **Core logic:** A waiting ordinary listener owns its FID even before it has
+  a progress row or data socket. A new relay must win a fresh receive
+  reservation; it cannot adopt a pending ordinary request on the same session.
+- **Modules and interactions:** Server `_forward_relay` claims the FID, then
+  `_register_fid_route` checks the exact reservation before publishing the route
+  and child indexes. Snapshot restore has no reservation and requires a free
+  receive slot. Existing-route recovery still adopts its own reserved leg.
+- **Assumptions:** Child FIDs are allocated outside the progress lock. Fresh
+  admission holds that lock through live-leg registration, not through target
+  negotiation or I/O. A rejected registration releases only its own record.
+- **Maintenance:** Do not publish and then roll back: reconnect can observe a
+  transient route and skip an ordinary partial file. Failure *after* admission
+  (e.g. a refused target listener) still retains a recoverable route. The
+  listener-first and competing-relay cases live in `test_tcp_transfer_resume.py`.
+
 ## Lifecycle revision C6: combined acceptance evidence
 
 - The affected-scope V6 run completed with **692 passed, 1 skipped** on Linux

@@ -3,6 +3,7 @@
 import json
 import socket
 import threading
+from unittest.mock import Mock
 
 import pytest
 
@@ -131,6 +132,39 @@ def test_registration_collision_is_atomic_for_primary_and_downstream_indexes(ser
     assert server._register_fid_route(304, TARGET_3, {TARGET_2: 306, TARGET_3: 308}) is None
     assert server._fid_routes == primary_before
     assert server._fid_route_index == index_before
+
+
+def test_route_publication_requires_the_current_receive_reservation(server):
+    fid, targets = 303, {TARGET_1: 305}
+    record = _claim_receive(server, fid, object(), owner={})
+    assert record is not None
+
+    # Snapshot reload has no reservation; an equal copy is not the owner either.
+    assert server._register_fid_route(fid, ORIGINATOR, targets) is None
+    assert server._register_fid_route(fid, ORIGINATOR, targets, receive_record=dict(record)) is None
+    assert not server._fid_routes and not server._fid_route_index
+    assert server._receive_transfers[fid] is record
+
+    route = server._register_fid_route(fid, ORIGINATOR, targets, receive_record=record)
+    assert route is not None and server._lookup_fid_route(TARGET_1, 305) == (fid, route)
+
+
+@pytest.mark.parametrize("prior_request", [False, True], ids=["retired-session", "pending-resume"])
+def test_new_relay_cannot_publish_without_a_fresh_receive_claim(server, prior_request):
+    fid, control = 303, Mock(spec=socket.socket)
+    if prior_request:
+        record = _claim_receive(server, fid, control)
+        assert record is not None
+    else:
+        server._transfer_handshakes.cancel_socket(control)
+
+    server._forward_relay(control, ORIGINATOR, "file", "", "new.bin", [TARGET_1], upstream_fid=fid)
+
+    assert not server._fid_routes and not server._fid_route_index and not server._forward_relays
+    if prior_request:
+        assert server._receive_transfers[fid] is record and record["owner"] is None
+    else:
+        assert not server._receive_transfers
 
 
 @pytest.mark.parametrize(

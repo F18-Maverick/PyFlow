@@ -3171,13 +3171,15 @@ class TCP_Server_Base:  # TCP server class
             # a transfer that ended must not be resumed on a later reconnect
             self._persist_transfer_progress()
 
-    def _register_fid_route(self, fid, originator, targets, completed=()):
-        """Register a route only when its upstream and target legs are unclaimed."""
+    def _register_fid_route(self, fid, originator, targets, completed=(), *, receive_record=None):
+        """Publish a route for a free FID (restore) or its exact receive reservation."""
         targets = {tuple(target): child for target, child in targets.items()}
         completed = {tuple(target) for target in completed}
         route = {"originator": tuple(originator), "targets": targets, "completed": completed}
         upstream_leg_keys = {(target, fid) for target in targets}
         with self._transfer_progress_lock:
+            if self._receive_transfers.get(fid) is not receive_record:
+                return None
             active_collision = (
                 fid in self._active_transfer_fids
                 or fid in self._active_transfer_sockets
@@ -3210,11 +3212,41 @@ class TCP_Server_Base:  # TCP server class
                         )
                     ):
                         return None
+                    if receive_record is not None and (
+                        any(key in self._forward_relays for key in targets.items())
+                        or any(leg["fid"] == fid for leg in self._forward_relays.values())
+                    ):
+                        return None
                     self._fid_routes[fid] = route
                     for target, child in targets.items():
                         if target not in completed:
                             self._fid_route_index[(target, child)] = fid
         return route
+
+    def _admit_new_relay(self, relay, control_socket, originator, target_fids):
+        """Reserve the upstream FID before making the new relay discoverable."""
+        fid = relay["fid"]
+        with self._transfer_progress_lock:
+            # Unlike recovery, a new relay must not adopt an ordinary resume
+            # request even if it came from the same control socket.
+            if fid in self._receive_transfers:
+                return None
+            record = _claim_receive(self, fid, control_socket, owner=relay)
+            if record is None:
+                return None
+            try:
+                relay["route"] = self._register_fid_route(
+                    fid, originator, target_fids, receive_record=record
+                )
+            finally:
+                if relay["route"] is None:
+                    _release_receive(self, fid, record)
+            if relay["route"] is None:
+                return None
+            with self._forward_relays_lock:
+                for key in target_fids.items():
+                    self._forward_relays[key] = relay
+            return record
 
     def _lookup_fid_route(self, peer, fid):
         """Find a local upstream or an exactly scoped downstream relay leg."""
@@ -7390,14 +7422,7 @@ class TCP_Server_Base:  # TCP server class
                 tfids = [route["targets"][target] for target in targets]
         else:
             tfids = [self._fid_alloc.alloc(receiver=target) for target in targets]
-            route = self._register_fid_route(
-                fid, originator_addr, dict(zip(targets, tfids))
-            )
-        if route is None:
-            self._forward_notify_error(
-                forwarder_sock, "relay fid is already in use", fid
-            )
-            return
+            route = None  # assigned to the relay only after receive admission
         manual_recovery = resume_requested and reservation is None and not eof_confirmation
         relay: dict = {
             "cond": threading.Condition(),
@@ -7412,37 +7437,43 @@ class TCP_Server_Base:  # TCP server class
         relay_keys = [(target, tfid) for target, tfid in zip(targets, tfids)]
         receive_key = (targets[0], fid) if resume_requested and not eof_confirmation else fid
         receive_record = None
-        with self._transfer_progress_lock, self._forward_relays_lock:
-            confirmation_busy = eof_confirmation and (
-                any(key == fid or isinstance(key, tuple) and key[1] == fid
-                    and key[0] in route["targets"] for key in self._receive_transfers)
-                or any(candidate["fid"] == fid for candidate in self._forward_relays.values())
-                or recovery is not None and bool(recovery["active"])
+        if route is None:  # only new relays reach admission without a route
+            receive_record = self._admit_new_relay(
+                relay, forwarder_sock, originator_addr, dict(relay_keys)
             )
-            if (self._fid_routes.get(fid) is route
-                    and not confirmation_busy
-                    and (resume_requested and fid not in self._receive_transfers
-                         or not resume_requested and not any(
-                             candidate["fid"] == fid for candidate in self._forward_relays.values()))
-                    and (reservation is None
-                         or self._receive_transfers.get(receive_key) is reservation["record"])
-                    and not any(key in self._forward_relays for key in relay_keys)):
-                receive_record = _claim_receive(self, receive_key, forwarder_sock, relay)
-                if receive_record is not None:
-                    for key in relay_keys:
-                        self._forward_relays[key] = relay
-                    if resume_requested and recovery is None and not eof_confirmation:
-                        recovery = {"route": route, "pending": {}, "active": {},
-                                    "control": {"control_lock": threading.RLock(),
-                                                "requested": None, "controls": {}}}
-                        self._relay_recoveries[fid] = recovery
-                    if manual_recovery and recovery is not None:
-                        reservation = {"record": receive_record, "source_socket": forwarder_sock,
-                                       "target_socket": self.clients.get(targets[0], {}).get("socket"),
-                                       "offset": resume_offset}
-                        recovery["active"][targets[0]] = reservation
+        else:
+            with self._transfer_progress_lock, self._forward_relays_lock:
+                confirmation_busy = eof_confirmation and (
+                    any(key == fid or isinstance(key, tuple) and key[1] == fid
+                        and key[0] in route["targets"] for key in self._receive_transfers)
+                    or any(candidate["fid"] == fid for candidate in self._forward_relays.values())
+                    or recovery is not None and bool(recovery["active"])
+                )
+                if (self._fid_routes.get(fid) is route
+                        and not confirmation_busy and fid not in self._receive_transfers
+                        and (reservation is None
+                             or self._receive_transfers.get(receive_key) is reservation["record"])
+                        and not any(key in self._forward_relays for key in relay_keys)):
+                    receive_record = _claim_receive(self, receive_key, forwarder_sock, relay)
+                    if receive_record is not None:
+                        for key in relay_keys:
+                            self._forward_relays[key] = relay
+                        if recovery is None and not eof_confirmation:
+                            recovery = {"route": route, "pending": {}, "active": {},
+                                        "control": {"control_lock": threading.RLock(),
+                                                    "requested": None, "controls": {}}}
+                            self._relay_recoveries[fid] = recovery
+                        if manual_recovery and recovery is not None:
+                            reservation = {
+                                "record": receive_record, "source_socket": forwarder_sock,
+                                "target_socket": self.clients.get(targets[0], {}).get("socket"),
+                                "offset": resume_offset,
+                            }
+                            recovery["active"][targets[0]] = reservation
         if receive_record is None:
-            self._forward_notify_error(forwarder_sock, "relay source is already active", fid)
+            reason = ("relay source is already active" if resume_requested
+                      else "relay fid is already in use")
+            self._forward_notify_error(forwarder_sock, reason, fid)
             return
         control_group: dict = recovery["control"] if recovery is not None and not eof_confirmation else relay
         if os.path.exists(self.file_trans_progress_file):

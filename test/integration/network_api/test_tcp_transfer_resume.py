@@ -1370,9 +1370,9 @@ def test_sender_owned_fids_to_distinct_targets_survive_out_of_order_replies(
         monkeypatch.setattr(source._transfer_handshakes, "wait", observe_wait)
         real_register = server._register_fid_route
 
-        def capture_route(fid, originator, route_targets, completed=()):
+        def capture_route(fid, originator, route_targets, completed=(), **kwargs):
             route_registrations.append((fid, tuple(originator), dict(route_targets)))
-            return real_register(fid, originator, route_targets, completed)
+            return real_register(fid, originator, route_targets, completed, **kwargs)
 
         monkeypatch.setattr(server, "_register_fid_route", capture_route)
         real_allocate = server._fid_alloc.alloc
@@ -1516,9 +1516,9 @@ def test_forward_resume_with_zero_offset_reuses_existing_route(tmp_path, monkeyp
         registrations = []
         real_register = server._register_fid_route
 
-        def observe_registration(fid, originator, route_targets, completed=()):
+        def observe_registration(fid, originator, route_targets, completed=(), **kwargs):
             registrations.append(fid)
-            return real_register(fid, originator, route_targets, completed)
+            return real_register(fid, originator, route_targets, completed, **kwargs)
 
         monkeypatch.setattr(server, "_register_fid_route", observe_registration)
         dropped_routes = []
@@ -1554,6 +1554,154 @@ def test_forward_resume_with_zero_offset_reuses_existing_route(tmp_path, monkeyp
         assert upload_key not in source.file_upload_progress
         assert child_fid not in target.file_recv_progress
     finally:
+        _close_socket_workers(server, clients, workers)
+
+
+def test_waiting_ordinary_listener_keeps_its_fid_and_resumes_after_relay_collision(
+    tmp_path, monkeypatch
+):
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    try:
+        recv_dir = tmp_path / "ordinary_receive"
+        recv_dir.mkdir()
+        server.file_transfer_dir = str(recv_dir)
+        prefix, tail = b"A partial file prefix\n", b"remaining body\n"
+        src = tmp_path / "ordinary.bin"
+        src.write_bytes(prefix + tail)
+        uploader = _start_client(tmp_path, server, file_transfer_chunk_len=len(prefix))
+        clients.append(uploader)
+        forwarder = _start_client(tmp_path, server, name="forwarder")
+        clients.append(forwarder)
+        peer = uploader.client_socket.getsockname()
+        server_peer = (server.host, server.port)
+        fid = 606
+
+        port, stamp = request_transfer_listener(uploader, server, f"/file {src.name} {fid}")
+        record = server._receive_transfers[fid]
+        assert record["owner"].getsockname()[1] == port
+        assert fid not in server.file_recv_progress and fid not in server._active_transfer_sockets
+        monkeypatch.setattr(forwarder._fid_alloc, "alloc", lambda *, receiver: fid)
+        assert not forwarder._forward_one("file", "", src.name, str(src), [peer])
+        assert server._receive_transfers[fid] is record and record["owner"].fileno() >= 0
+        assert not server._fid_routes and not server._fid_route_index and not server._forward_relays
+
+        # Use that same listener. Close just the data leg after the first chunk,
+        # so the real receiver (rather than the test) creates the partial row.
+        send = uploader.send_message
+
+        def interrupt_tail(sock, message, is_send_raw=False):
+            if message == tail:
+                sock.shutdown(socket.SHUT_WR)
+                return False
+            return send(sock, message, is_send_raw=is_send_raw)
+
+        with monkeypatch.context() as fault:
+            fault.setattr(uploader, "send_message", interrupt_tail)
+            assert not uploader.file_transfer_mode(
+                str(src), server.host, port, 0, control_socket=uploader.client_socket,
+                crypto=stamp, fid=fid, peer=server_peer,
+            )
+        assert wait_until(lambda: fid not in server._receive_transfers)
+        output = recv_dir / src.name
+        assert output.read_bytes() == prefix
+        assert server.file_recv_progress[fid][0] == len(prefix)
+        assert (server_peer, fid) in uploader.file_upload_progress
+
+        completed = []
+        transfer = uploader.file_transfer_mode
+
+        def observe_ack(*args, **kwargs):
+            result = transfer(*args, **kwargs)  # True only after consuming the final ACK
+            completed.append((kwargs["fid"], kwargs["resume_offset"], result))
+            return result
+
+        monkeypatch.setattr(uploader, "file_transfer_mode", observe_ack)
+        assert server._request_resumes(peer) == 1
+        assert wait_until(lambda: completed, timeout=15)
+        assert completed == [(fid, len(prefix), True)]
+        assert output.read_bytes() == prefix + tail
+        assert wait_until(lambda: not server.file_recv_progress and not server._receive_transfers)
+        assert (server_peer, fid) not in uploader.file_upload_progress
+    finally:
+        _close_socket_workers(server, clients, workers)
+
+
+def test_concurrent_new_relays_keep_one_owner_and_exclude_a_late_listener(tmp_path, monkeypatch):
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path)
+    clients = []
+    release = threading.Event()
+    try:
+        recv_dir = tmp_path / "target_receive"
+        recv_dir.mkdir()
+        target = _start_client(tmp_path, server, name="target", recv_dir=recv_dir)
+        clients.append(target)
+        target_peer = target.client_socket.getsockname()
+        fid = 606
+        src = tmp_path / "relay.bin"
+        src.write_bytes(b"only the admitted relay reaches the target")
+        ready, refused = threading.Event(), threading.Event()
+        start = threading.Barrier(2)
+        outcomes = {}
+        push = server.forward_item_to
+
+        def hold_before_target_request(*args, **kwargs):
+            ready.set()
+            assert release.wait(timeout=15)
+            return push(*args, **kwargs)
+
+        def forward(source):
+            start.wait(timeout=10)
+            result = source._forward_one("file", "", src.name, str(src), [target_peer])
+            outcomes[source.client_socket.getsockname()] = result
+            if not result:
+                refused.set()
+
+        monkeypatch.setattr(server, "forward_item_to", hold_before_target_request)
+        for name in ("first", "second"):
+            source = _start_client(tmp_path, server, name=name)
+            clients.append(source)
+            monkeypatch.setattr(source._fid_alloc, "alloc", lambda *, receiver: fid)
+        peers = {client.client_socket.getsockname() for client in clients}
+        assert wait_until(lambda: peers.issubset(server.clients))
+        for source in clients[1:]:
+            threading.Thread(target=forward, args=(source,), daemon=True).start()
+        assert ready.wait(timeout=10) and refused.wait(timeout=10)
+        assert set(server._fid_routes) == set(server._receive_transfers) == {fid}
+        route, record = server._fid_routes[fid], server._receive_transfers[fid]
+        child = (target_peer, route["targets"][target_peer])
+        assert server._fid_route_index == {child: fid}
+        assert set(server._forward_relays) == {child}
+        assert server._forward_relays[child] is record["owner"]
+        assert record["control_socket"] is server.clients[route["originator"]]["socket"]
+
+        # Drive the ordinary command while the relay still owns the FID. Its
+        # listener setup must return without advertising a port or handing off.
+        returned = threading.Event()
+        receive = server.file_transfer_mode_recv
+
+        def observe_listener(*args, **kwargs):
+            receive(*args, **kwargs)
+            returned.set()
+
+        monkeypatch.setattr(server, "file_transfer_mode_recv", observe_listener)
+        with _transfer_handshake(target, target.client_socket, fid) as request:
+            assert connect_tcp._send_transfer_request(target, request, f"/file ordinary.bin {fid}")
+            assert returned.wait(timeout=5)
+            assert target._transfer_handshakes.wait(request, 0) is None
+        assert server._receive_transfers[fid] is record and server._fid_routes[fid] is route
+        assert fid not in server._active_transfer_sockets and not server.file_recv_progress
+
+        release.set()
+        assert wait_until(lambda: len(outcomes) == 2, timeout=15)
+        assert sorted(outcomes.values()) == [False, True] and outcomes[route["originator"]]
+        assert (recv_dir / src.name).read_bytes() == src.read_bytes()
+        assert wait_until(lambda: not server._receive_transfers and not server._forward_relays)
+        assert not server._fid_routes and not server._fid_route_index
+    finally:
+        release.set()
         _close_socket_workers(server, clients, workers)
 
 
@@ -1624,6 +1772,7 @@ def test_duplicate_upstream_fid_is_rejected_without_replacing_existing_route(
         ]
         assert target.file_recv_progress == {}
         assert not server._forward_relays
+        assert not server._receive_transfers  # failed registration released only its fresh claim
         assert duplicate_addr != source_addr
     finally:
         _close_socket_workers(server, clients, workers)
