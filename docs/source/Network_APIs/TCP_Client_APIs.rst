@@ -297,15 +297,61 @@ commands sent by the server, such as:
   ``/crypto_key_exchange_ack``, ``/crypto_reject``,
   ``/crypto_pub_key``, ``/crypto_ready``: the encrypted-channel
   handshake messages; a ``/crypto_mode`` mismatch closes the connection.
-- ``/pause_trans``, ``/start_trans`` and ``/forward_error <fid> <reason>``:
-  transfer control and FID-scoped forwarding failures. Forward uploads use
-  the common ``/server_file_transfer_port`` reply; no ``/forward_upload`` line.
+- ``/pause_trans <fid> <type> <issuer_role>``,
+  ``/start_trans <fid> <type> <issuer_role>`` and
+  ``/forward_error <fid> <reason>``: typed transfer control and FID-scoped
+  forwarding failures. The control lines require exactly four tokens. Type is
+  ``0`` for ordinary transfers or ``1`` for relay legs; issuer role is ``0``
+  for the data sender or ``1`` for the data receiver. Forward uploads use the
+  common ``/server_file_transfer_port`` reply; no ``/forward_upload`` line.
 - ``/resume_trans <fid> <offset> <origin> <target>``: the sole resume command,
   with shell-quoted tuple endpoints. Only an origin matching this control
   connection's own identity may resume a local upload. The existing upload row
   supplies the source path; a non-server target is replayed through the server
   with its stable upstream fid. The receiver's retained full path handles folder
   items without copying directory or destination metadata at the source.
+  Public ``resume_trans`` calls return ``True`` for a newly reserved worker;
+  busy and duplicate calls return ``False`` without closing the owner. Use
+  ``start_trans`` for a paused live connection. Receiver requests wait for old
+  receive cleanup, including ``finally`` and file closure, then read the actual
+  disk size. Offsets are nonnegative integers only; there is no ``?`` query or
+  ``None`` parser/formatter offset.
+  For forwarded recovery, Server first waits for every old owner of the
+  original route to finish naturally, without forced teardown. It then directs
+  independent per-Target Source-to-Server-to-Target streams using each actual
+  offset. Each has its own progress, resources and failure handling; one body
+  or final ACK cannot block another Target, including a late arrival. Only
+  port negotiation on the same actual Server socket plus fid is briefly
+  serialized, not body transfer or final ACK. Workers retain their admitted
+  control socket; stable fids, paths and persistence schema do not change.
+  Source arbitrates global pause/start for all live task owners; the final
+  owner releases shared control state. A real Target ACK marks only that
+  Target; no intermediate stream fabricates a whole-route ACK or deletes the
+  Source task row. All accepted Targets must really acknowledge for task
+  success. Source disconnection leaves requests queued at Server; Target
+  disconnection discards its old-socket request and requires a new actual disk
+  offset after reconnect. There is no automatic retry, and one Target's failure
+  does not cancel siblings. Strict same-session/fid generation isolation remains
+  deferred; C5 self-target rejection and C6 combined acceptance are later stages.
+
+After all Targets really ACK, a ``False``/exception writing the upstream ACK
+retains the Server route and Source's shared upload row. For C4, Source calls
+``resume_trans(original_target, upstream_fid, total)`` explicitly. ``True`` means
+worker registration, not completion; a live owner, including ``finally`` cleanup,
+returns busy without closing or queueing, so repeat explicitly after it exits.
+Only Source connects to Server, exchanging the existing port reply, complete
+filename/size header and final ACK with zero body bytes. Offset must equal the
+size in this attempt's header exactly. No Target leg or body replay is created;
+the original Target may be offline. Server uses its existing
+``originator``/``targets``/``completed`` route, not historical name/size/hash
+validation or a new byte-progress/terminal-state table. False/exception retains
+state; successful ACK write removes only the owning route, and Source removes
+its shared row only when it observes that ACK. Reloading existing snapshots
+still requires this explicit action, without automatic retry, TTL or schema/wire
+changes. A successful Server ACK write lost before Source receives it remains
+ambiguous. Ordinary transfers, C3 and global pause/start are unchanged. The
+control-layer extension leaves Source ``file_transfer_mode`` and ``_send_file``
+unchanged; see :ref:`transfer-pause-and-reconnect`.
 
 For a new relay upload, the source client allocates the upstream FID before it
 sends ``/forward_item ... fid=<fid>``. The server returns that same upstream FID
@@ -629,9 +675,18 @@ Built-in client console commands (user-typed) include:
   client to server, preserving the directory structure.
 - ``/multiple_file_folder <folder1> <folder2> ...``: sends multiple 
   folders from client to server.
-- ``/forward_file``, ``/forward_folder``, ``/forward_send_msg``: the
-  forwarding extension's console commands (client-only; the server refuses
-  them).
+- ``/forward_file``, ``/forward_folder``: native Client-only streamed forwarding.
+  Their shared per-file entry refuses the Client's own complete control
+  endpoint before creating an upload row, allocating a FID or sending a relay
+  request. Mixed lists skip only self; same IP/different port and different
+  IP/same port remain valid. The actual control socket identifies self; a
+  configured host alias must resolve to that IP (wildcard aliases its actual
+  port). A configured IP not used after no bind or bind fallback is not self.
+  Web file/folder forwarding and retained-row replay use the same check;
+  rejected replay keeps the existing row, and a resume boolean remains worker
+  registration rather than success. Server console use is refused.
+- ``/forward_send_msg``: native Client-only message forwarding; its existing
+  target rules are unchanged by the file/folder self-target guard.
 
 Ctrl-C and EOF close the connection, send a final ``/quit`` and wait
 0.5 seconds before the process ends.
@@ -840,13 +895,33 @@ And the low-level send mode function is:
 
     def file_transfer_mode(
         self, filename, server_address, server_port, client_port,
-        control_socket=None, crypto=None, fid=None, peer=None, resume_offset=0)
+        control_socket=None, crypto=None, fid=None, peer=None, resume_offset=0,
+        trans_type=0)
 
-``((host, port), fid)`` keys the leg in ``file_upload_progress``. The
-``/pause_trans`` / ``/start_trans`` lines and local methods address that server
-scope; an explicit local ``peer`` must be the server, not the logical target.
-The value's ``peer`` is the original receiver; ``resume_offset`` continues
-the interrupted file from the byte the receiver already holds.
+``((host, port), fid)`` keys the leg in ``file_upload_progress``. Ordinary
+senders use ``trans_type=0``; forwarding callers pass ``trans_type=1``.
+``pause_trans(fid, peer=None, *, trans_type, direction)`` and
+``start_trans(fid, peer=None, *, trans_type, direction)`` require both keyword
+arguments. ``direction`` describes the local data role: ``0`` sender or ``1``
+receiver. These methods apply local control and notify the server. An omitted
+``peer`` selects the current server; an explicit peer may use its configured
+address or concrete control endpoint, not the logical forwarded target. Control
+identity is canonicalized to ``((client.host, client.port), fid, trans_type,
+local_role)`` independently of the progress row's logical receiver.
+
+The ordinary sender, or the relay Source, owns confirmed pause state. Target
+requests travel through Server to Source and affect the whole route; any
+participant can request start. Notifications are asynchronous and ordered per
+leg. Server-buffered bytes and Target disk writes continue while user-paused.
+Start cannot bypass Server's pressure gate and uses
+the same data socket without a new handshake or seek. A registered sender
+change or receiver request returns ``True``, not a peer ACK. Known duplicates
+return ``False`` for ordinary legs; relay receiver requests may repeat because
+another participant's opposite request can still be in flight. A preset
+sender pause returns ``False`` before registration. Pause is runtime-only. See
+:ref:`transfer-pause-and-reconnect` for details. The upload value's ``peer``
+is the original receiver; ``resume_offset`` continues the interrupted file from
+the byte the receiver already holds.
 
 For a forwarded upload, the server forwards the existing final data-ACK marker
 after the full input stream and all accepted target ACKs complete. The source
@@ -855,9 +930,9 @@ marker. The wait is 30 seconds plus 10 seconds per 100 MiB; a long pause or
 slow delivery can outlast it, and a lost ACK conservatively retains state. No
 separate receipt or retry protocol is used. Direct transfer and public-key
 confirmation remain data-ACK based. The server retains the upstream/child IDs
-and full target mapping. Transient source locks serialize different target
-requests on one upload and coalesce concurrent duplicates; they hold no file
-metadata and are released after the last in-flight request.
+and full target mapping. Transient ownership admits one recovery per upstream
+FID; another target's request is rejected while that source is live or reserved.
+After cleanup it must be requested again; no active-source queue is retained.
 
 We recommend that for client-to-server file transfers, 
 you use the console commands (``/file``, ``/file_folder``, 
@@ -992,8 +1067,8 @@ is as follows:
 
 5.1. The transfer pause and reconnect APIs (see
   :ref:`transfer-pause-and-reconnect`):
-    - `pause_trans` / `start_trans`
-    - `pause_trans_remote` / `start_trans_remote`
+    - `pause_trans(fid, peer=None, *, trans_type, direction)` /
+      `start_trans(fid, peer=None, *, trans_type, direction)`
     - `resume_trans`
 
 6. The client console commands (interactive mode):

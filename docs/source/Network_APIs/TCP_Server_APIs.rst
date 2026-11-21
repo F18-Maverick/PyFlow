@@ -59,9 +59,10 @@ The parameters of the ``__init__`` method are as follows:
   user-supplied RSA keys. Both files must exist, parse as PEM, and pair
   with each other; an invalid pair is silently ignored and the default
   key lookup is used instead (``None`` keeps the default lookup).
-- ``max_mem_buff``: The in-memory buffering ceiling of the forward pump,
-  given in MiB and stored as bytes (``self.max_mem_buff``); past it the
-  uploading peer is told to pause. The default is 2048.
+- ``max_mem_buff``: The forward pump's queued-byte high-water mark, in MiB and
+  stored as bytes. The reader waits for low-water drain, applying TCP flow
+  control independently of user pause/start. One fan-out enqueue may overshoot;
+  it is not a total process RAM ceiling. The default is 2048.
 - ``recv_messages_chunk_len``: The number of bytes read per receive on the
   control connection, covering commands and messages. The default is 4096.
 - ``file_transfer_chunk_len``: The chunk size in bytes for streaming a file
@@ -672,10 +673,21 @@ Built-in client commands include:
 - ``/crypto_mode <0|1>``, ``/crypto_pub_key``, ``/crypto_pub_key_request``:
   internal handshake messages of the encrypted channel.
 - ``/forward_item``, ``/forward_send_msg``, ``/pause_trans``, ``/start_trans``:
-  internal forwarding/transfer-control messages. ``/pause_trans <fid>`` and
-  ``/start_trans <fid>`` hold and release the outbound transfer to the requesting
-  peer. Local calls require ``pause_trans(fid, peer)`` / ``start_trans(fid, peer)``;
-  the receiver scope is required even when arming a future transfer.
+  internal forwarding/transfer-control messages. Control lines are strictly
+  ``/pause_trans <fid> <type> <issuer_role>`` and
+  ``/start_trans <fid> <type> <issuer_role>``. Local calls require
+  ``pause_trans(fid, peer, *, trans_type, direction)`` /
+  ``start_trans(fid, peer, *, trans_type, direction)``. ``trans_type`` is
+  ``0`` for ordinary transfers or ``1`` for relay legs; ``direction`` is the
+  local data role (``0`` sender, ``1`` receiver). The wire role describes the
+  issuer. Ordinary senders decide their leg state; relay Source decides the
+  whole route. Server calls are requests, and Source notifications are projected
+  onto child fids. Buffered bytes keep draining to Targets during user pause.
+  Start uses the same sockets and cannot bypass the local pressure gate.
+  ``True`` means registration, not peer ACK; relay requests may repeat.
+  Known duplicates on ordinary legs return ``False``. A preset
+  sender pause returns ``False`` before registration. ``peer`` is required.
+  See :ref:`transfer-pause-and-reconnect` for control identity and cleanup.
   Forwarded requests carry a source-allocated ``fid=<upstream fid>``. A new
   upload omits ``resume=``; replay includes ``resume=<offset>``, including zero,
   and must match an existing route before the Server reuses its upstream and
@@ -688,12 +700,52 @@ Built-in client commands include:
   sender, translates to the stable upstream fid, and forwards the same command.
   Unknown or mismatched identities never fall back to another route
   (see :ref:`transfer-pause-and-reconnect`). No fid kind selects this branch.
-- Forwarded transfers return the existing final data-ACK marker upstream only
-  after the current input stream is complete and every accepted target has
-  acknowledged. The normal send path reframes the marker for the upstream hop;
-  the route is dropped only after the ACK write succeeds. A failed write keeps
-  the completed route for recovery. This does not change ordinary sender or
-  server receive-ACK behavior.
+  Ordinary local uploads recover only when no live, paused, negotiating or
+  finalizing owner holds that scoped object. ``resume_trans`` returns ``True``
+  for a newly reserved worker; busy and duplicate calls return ``False`` without
+  closing or queueing. Other objects remain independent. Use ``start_trans``
+  to continue an existing paused connection.
+  A valid forwarded receive request instead records the actual Target control
+  socket and nonnegative numeric disk offset, read after its old receive owner
+  and file have closed. No ``?`` query or ``None`` offset is supported.
+  Server waits for all old owners of that original route, including listeners,
+  negotiations, reader/writers and ``finally``, to finish naturally. It does
+  not force teardown, start a paused route, wait on unrelated fids or block the
+  control reader/event loop while holding a global lock.
+  It then opens an independent Source-to-Server-to-Target stream per Target,
+  preserving upstream/child fids, full paths and persistence schema. Offsets,
+  runtime progress, resources and failures are independent. Bodies run in
+  parallel; a late Target does not wait for another body or final ACK. Only
+  port negotiation on the same actual control socket plus fid is briefly
+  serialized, never the body or ACK wait. One Target has at most one active
+  recovery owner; completed Targets are not resent.
+  Source remains the global pause/start arbiter; shared control state is
+  released only by its last owner. Backpressure remains independent of user
+  start. Offline Source requests stay pending. A Target disconnect drops its
+  old-socket pending request; its new session must submit a fresh actual disk
+  offset after old receive cleanup. One stream's failure does not cancel
+  siblings or automatically retry. A real Target ACK updates only its own
+  completion; intermediate success cannot fabricate an overall route ACK.
+  Strict same-session/fid generation isolation remains deferred; C5 self-target
+  rejection and C6 combined acceptance remain later stages.
+- After all accepted Targets really ACK, a ``False``/exception writing the
+  upstream final ACK retains the existing route for C4 reconfirmation. Source
+  explicitly calls ``resume_trans(original_target, upstream_fid, total)``;
+  ``True`` reserves a worker, not completion. Live owners, including ``finally``,
+  reject this explicit operation as busy; retry explicitly after cleanup.
+  Server validates the original Source and accepted Target using the existing
+  ``originator``/``targets``/``completed`` route. Only a Source-to-Server data
+  connection is opened: the normal port reply and full header are required,
+  with offset exactly equal to this header's size, zero body bytes and the
+  existing final ACK. No new Target leg is opened; Targets may be offline.
+  Another false/exception retains route and Source shared upload row. Success
+  removes only the owning route after the ACK write; Source removes its row
+  only on observing the ACK. Existing snapshots still require explicit recovery,
+  without automatic retry, TTL, new Server byte-progress/terminal table or
+  schema/wire fields. Historical name/size/hash are not validated; a successful
+  ACK write lost before Source receives it remains ambiguous. Ordinary transfers, C3
+  and global pause/start are unchanged, as are Source ``file_transfer_mode``
+  and ``_send_file``. See :ref:`transfer-pause-and-reconnect` for details.
 - ``/server_file_transfer_port <port> <fid> <stamp>``: the four-token listener
   reply for ordinary, public-key and relay legs. Replies match the actual control
   socket and FID (the source-provided upstream FID for relay upload). Each
@@ -1175,8 +1227,8 @@ are as follows:
 
 5.1. The transfer pause and reconnect APIs (see
   :ref:`transfer-pause-and-reconnect`):
-    - `pause_trans` / `start_trans`
-    - `pause_trans_remote` / `start_trans_remote`
+    - `pause_trans(fid, peer, *, trans_type, direction)` /
+      `start_trans(fid, peer, *, trans_type, direction)`
     - `resume_trans`
 
 6. The server console commands:

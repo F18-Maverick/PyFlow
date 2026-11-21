@@ -29,6 +29,8 @@ def instance(request, tmp_path):
 
 
 def test_scoped_rows_keep_all_local_states_separate(instance):
+    if isinstance(instance, TCP_Client_Base):
+        instance.host, instance.port = PEER_A
     instance.file_upload_progress.update({
         (PEER_A, 8): [4, 10, 2.0, "/send/a.bin", ORIGIN],
         (PEER_B, 8): [10, 10, None, "/send/b.bin", PEER_B],
@@ -36,7 +38,10 @@ def test_scoped_rows_keep_all_local_states_separate(instance):
     instance.file_recv_progress[8] = [3, 20, None, "/recv/a.bin", PEER_A]
     instance._active_transfer_fids.add((PEER_A, 8))
     instance._active_transfer_sockets[8] = object()
-    instance._transfer_pause[(PEER_A, 8)] = True
+    control_peer = PEER_A if isinstance(instance, TCP_Server_Base) else (instance.host, instance.port)
+    control_key = (control_peer, 8, 0, 0)
+    instance._transfer_controls.local(control_key, True, lambda *_: True)
+    instance._transfer_controls.register(control_key, object(), object())
     view = instance.get_transfer_progress(include_persisted=False)
     rows = {tuple(row["receiver"]): row for row in view["memory"]["uploading"]}
     assert set(rows) == {PEER_A, PEER_B}

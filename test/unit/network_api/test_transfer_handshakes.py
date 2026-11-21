@@ -1,12 +1,19 @@
 """Contract tests for transient transfer-handshake correlation."""
 
 import socket
+from contextlib import contextmanager
+from types import SimpleNamespace
+from unittest.mock import Mock, PropertyMock
 
 import pytest
 
 from PyFlow.network_api.connect_tcp import (
+    TCP_Client_Base,
+    TCP_Server_Base,
+    _SecureChannel,
     _TransferHandshakeRegistry,
     _parse_transfer_port_announcement,
+    format_resume_line,
 )
 
 
@@ -21,6 +28,8 @@ def test_port_replies_match_socket_and_fid_independently_of_order():
     control, other_control = _Control(), _Control()
     first, second = registry.register(control, 17), registry.register(control, 18)
     assert first["key"] == (control, 17)
+    assert registry.occupied(control, 17)
+    assert not registry.occupied(other_control, 17)
     assert second["key"] == (control, 18)
     assert registry.mark_sent(first)
     assert not registry.mark_sent(first)
@@ -36,6 +45,7 @@ def test_port_replies_match_socket_and_fid_independently_of_order():
     }
     assert not registry.resolve_port(control, 17, 41003, "enc:late")
     assert registry._pending == {}
+    assert not registry.occupied(control, 17)
 
 
 def test_pre_send_cancellation_does_not_make_fid_unresolved():
@@ -58,6 +68,7 @@ def test_sent_cancellation_and_timeout_leave_fid_unresolved_until_disconnect():
     assert registry.mark_sent(cancelled)
     registry.cancel(cancelled)
     assert registry.register(control, 17) is None
+    assert registry.occupied(control, 17)
     assert not registry.resolve_port(control, 17, 42001, "plain")
 
     timed_out = registry.register(control, 18)
@@ -68,6 +79,7 @@ def test_sent_cancellation_and_timeout_leave_fid_unresolved_until_disconnect():
     registry.cancel_socket(control)
     assert (control, 17) not in registry._unresolved
     assert (control, 18) not in registry._unresolved
+    assert not registry.occupied(control, 17)
     assert registry.register(control, 17) is None
 
 
@@ -124,6 +136,19 @@ def test_disconnect_cancels_only_its_socket_requests_and_resources():
     assert registry.resolve_port(new_control, 17, 43002, "plain")
     assert registry.wait(first, 0) is None
     assert registry.wait(second, 0) == ("port", 17, 43002, "plain")
+    replacement, replacement_wire = socket.socketpair()
+    try:
+        assert registry.track_socket(new_control, replacement)
+        registry.release_socket(old_control, left)
+        registry.cancel_socket(old_control)  # delayed teardown, after new ownership
+        registry.wait_socket(old_control)
+        replacement.sendall(b"new session survives")
+        assert replacement_wire.recv(64) == b"new session survives"
+        assert registry.closed(old_control) and not registry.closed(new_control)
+    finally:
+        registry.release_socket(new_control, replacement)
+        replacement.close()
+        replacement_wire.close()
 
 
 def test_reconnect_socket_allows_same_fid_after_old_session_is_retired():
@@ -156,3 +181,71 @@ def test_port_announcement_keeps_port_and_stamp_pair():
 ])
 def test_old_or_malformed_listener_replies_are_rejected(line):
     assert _parse_transfer_port_announcement(line) is None
+
+
+@pytest.fixture(params=[TCP_Client_Base, TCP_Server_Base], ids=["client", "server"])
+def encrypted_writer(request):
+    endpoint = request.param(
+        host="127.0.0.1", is_extend_command=True, is_enable_encrypto=True, is_print_log=False,
+    )
+    sock = Mock(spec=socket.socket)
+    sock.getpeername.return_value = ("127.0.0.1", 5000)
+    if isinstance(endpoint, TCP_Client_Base):
+        endpoint.client_socket = sock
+    endpoint.running = True
+    return endpoint, sock
+
+
+@pytest.mark.parametrize("has_channel", [False, True], ids=["no-channel", "not-secure"])
+def test_resume_is_not_written_or_reported_without_a_secure_channel(encrypted_writer, has_channel):
+    endpoint, sock = encrypted_writer
+    if has_channel:
+        endpoint._channels[sock] = SimpleNamespace(secure=False)
+    notifications = []
+    endpoint.add_send_message_listener(lambda peer, message: notifications.append(message))
+    line = format_resume_line(17, 7, ("source", 1), ("target", 2))
+
+    assert endpoint.send_message(sock, line) is False
+    sock.sendall.assert_not_called()
+    assert not notifications
+
+
+def test_rekey_after_framing_selection_cannot_reenter_plaintext(encrypted_writer):
+    endpoint, sock = encrypted_writer
+    # The selected channel stops being secure before the writer can use it.
+    channel = Mock()
+    readiness = iter([True])
+    type(channel).secure = PropertyMock(side_effect=lambda: next(readiness, False))
+    channel.send.side_effect = RuntimeError("channel rekeyed")
+    endpoint._channels[sock] = channel
+    line = format_resume_line(17, 7, ("source", 1), ("target", 2))
+
+    try:
+        assert endpoint.send_message(sock, line) is False
+    except RuntimeError:
+        assert isinstance(endpoint, TCP_Server_Base)  # server preserves write exceptions
+    sock.sendall.assert_not_called()
+
+
+def test_resume_rechecks_framing_at_the_final_write_lock(encrypted_writer):
+    endpoint, sock = encrypted_writer
+    session = Mock()
+    session.rsa.encrypt_for_peer.return_value = "test-ciphertext"
+
+    @contextmanager
+    def rekey_before_write():
+        channel.disable()  # readiness passed, but the writer has only just acquired the lock
+        yield
+
+    channel = _SecureChannel(sock, session, log=None, debug=None, send_lock=rekey_before_write())
+    channel.enable("local", "peer")
+    channel.note_peer_frames_ready()
+    endpoint._channels[sock] = channel
+    line = format_resume_line(17, 7, ("source", 1), ("target", 2))
+
+    if isinstance(endpoint, TCP_Server_Base):
+        with pytest.raises(RuntimeError, match="framing changed"):
+            endpoint.send_message(sock, line)
+    else:
+        assert endpoint.send_message(sock, line) is False
+    sock.sendall.assert_not_called()

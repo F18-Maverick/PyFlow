@@ -751,42 +751,68 @@ def test_forward_skips_unreachable_and_server_targets(pair, tmp_path):
 
 
 def test_forward_flow_control_pauses_uploader(pair, tmp_path, monkeypatch):
-    """When the server's in-memory buffer exceeds max_mem_buff it pauses the
-    uploader with /pause_trans and resumes it with /start_trans; the file is
-    still delivered intact."""
+    """Local backpressure bounds queued bytes without changing user pause state."""
     server, target, recv_dir = pair
-    # strictly below one 64 KiB relay chunk, so every chunk overflows the
-    # buffer and a /pause_trans -> /start_trans cycle is guaranteed (a limit
-    # of exactly one chunk sits at the > comparison boundary and makes the
-    # pause depend on thread scheduling)
     server.max_mem_buff = 32 * 1024
     src = tmp_path / "big.bin"
     payload = os.urandom(300 * 1024)
     src.write_bytes(payload)
     forwarder = _forward_client(server, tmp_path / "fwd")
+    writer_held, release_writer, reader_waiting = (
+        threading.Event(), threading.Event(), threading.Event()
+    )
+    relays, controls, acknowledgements = [], [], []
+    real_send, real_pump = server.send_message, server._forward_pump
+    real_wait = threading.Condition.wait
+    real_transfer = forwarder.file_transfer_mode
 
-    sent = []
-    real_send = server.send_message
+    def pump(up_sock, target_conns, control, fid, fname, relay, resume_offset=0):
+        relays.append(relay)
+        return real_pump(up_sock, target_conns, control, fid, fname, relay, resume_offset)
 
-    def spy(sock, message, is_send_raw=False):
-        sent.append(message if isinstance(message, str) else "")
+    def send(sock, message, is_send_raw=False):
+        if isinstance(message, bytes) and len(message) > server.max_mem_buff:
+            writer_held.set()
+            assert release_writer.wait(timeout=15)
+        if isinstance(message, str) and message.startswith(("/pause_trans", "/start_trans")):
+            controls.append(message)
         return real_send(sock, message, is_send_raw=is_send_raw)
 
-    monkeypatch.setattr(server, "send_message", spy)
-    a = target.client_socket.getsockname()
-    cmd = '/forward_file "{}" "({}, {})"'.format(src, repr(a[0]), a[1])
-    forwarder.forward_file_console(cmd)
+    def wait(condition, *args, **kwargs):
+        if (relays and condition is relays[0]["cond"]
+                and relays[0]["buffer"]["backpressured"]):
+            reader_waiting.set()
+        return real_wait(condition, *args, **kwargs)
 
-    def got(path):
-        return path.exists() and path.stat().st_size == len(payload)
+    def transfer(*args, **kwargs):
+        result = real_transfer(*args, **kwargs)
+        acknowledgements.append(result)
+        return result
 
-    assert wait_until(lambda: got(recv_dir / "big.bin"), timeout=25), (
-        "forwarded file was not received"
-    )
-    assert (recv_dir / "big.bin").read_bytes() == payload
-    assert any(str(m).startswith("/pause_trans") for m in sent), "expected a /pause_trans"
-    assert any(str(m).startswith("/start_trans") for m in sent), "expected a /start_trans"
-    forwarder.close()
+    monkeypatch.setattr(server, "_forward_pump", pump)
+    monkeypatch.setattr(server, "send_message", send)
+    monkeypatch.setattr(threading.Condition, "wait", wait)
+    monkeypatch.setattr(forwarder, "file_transfer_mode", transfer)
+    try:
+        peer = target.client_socket.getsockname()
+        cmd = '/forward_file "{}" "({}, {})"'.format(src, repr(peer[0]), peer[1])
+        forwarder.forward_file_console(cmd)
+        assert writer_held.wait(timeout=10) and reader_waiting.wait(timeout=10)
+        state = relays[0]["buffer"]
+        with relays[0]["cond"]:
+            assert state["backpressured"] and state["buffered"] > state["high_water"]
+            assert state["peak"] <= state["high_water"] + state["max_enqueue"]
+        assert acknowledgements == []
+        release_writer.set()
+        assert wait_until(lambda: acknowledgements == [True], timeout=15)
+        assert (recv_dir / "big.bin").read_bytes() == payload
+        assert wait_until(lambda: not server._forward_relays and not server._receive_transfers)
+        assert not state["backpressured"] and state["buffered"] == 0
+        assert state["peak"] <= state["high_water"] + state["max_enqueue"]
+        assert controls == [], "automatic pressure must not send user pause/start"
+    finally:
+        release_writer.set()
+        forwarder.close()
 
 
 def test_forward_file_with_destination(pair, tmp_path):
@@ -904,11 +930,12 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
 
     server_port, _stamp = request_transfer_listener(client, server, f"/file {src} {fid}")
 
-    assert client.pause_trans(fid) is False  # armed before the leg exists
+    assert client.pause_trans(fid, trans_type=0, direction=0) is False  # armed before the leg exists
     sender = threading.Thread(
         target=client.file_transfer_mode,
         args=(str(src), "127.0.0.1", server_port, 0),
-        kwargs={"fid": fid, "peer": (server.host, server.port)},
+        kwargs={"fid": fid, "peer": (server.host, server.port),
+                "control_socket": client.client_socket, "crypto": _stamp},
         daemon=True,
     )
     sender.start()
@@ -929,7 +956,7 @@ def test_file_progress_and_speed_are_tracked(pair, tmp_path):
         assert recv_entry[4] == client.client_socket.getsockname()
         assert upload_entry[4] == (server.host, server.port)
     finally:
-        client.start_trans(fid)
+        client.start_trans(fid, trans_type=0, direction=0)
         sender.join(timeout=15)
     assert not sender.is_alive(), "the upload did not finish"
 
@@ -966,11 +993,12 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
 
     server_port, _stamp = request_transfer_listener(server, client, f"/file {src} {fid}")
 
-    assert server.pause_trans(fid, receiver) is False  # armed before the leg exists
+    assert server.pause_trans(fid, receiver, trans_type=0, direction=0) is False  # armed before the leg exists
     sender = threading.Thread(
         target=server.file_transfer_mode,
         args=(str(src), "127.0.0.1", server_port, 0),
-        kwargs={"fid": fid, "peer": receiver},
+        kwargs={"fid": fid, "peer": receiver,
+                "control_socket": server.clients[receiver]["socket"], "crypto": _stamp},
         daemon=True,
     )
     sender.start()
@@ -990,7 +1018,7 @@ def test_download_progress_and_speed_are_tracked(pair, tmp_path):
         assert recv_entry[4] == (server.host, server.port)
         assert upload_entry[4] == client.client_socket.getsockname()
     finally:
-        server.start_trans(fid, receiver)
+        server.start_trans(fid, receiver, trans_type=0, direction=0)
         sender.join(timeout=15)
     assert not sender.is_alive(), "the download did not finish"
 
@@ -1047,11 +1075,12 @@ def test_file_progress_and_speed_can_be_disabled(tmp_path):
 
         server_port, _stamp = request_transfer_listener(client, server, f"/file {src} {fid}")
 
-        client.pause_trans(fid)  # the pause works with tracking off too
+        client.pause_trans(fid, trans_type=0, direction=0)  # the pause works with tracking off too
         sender = threading.Thread(
             target=client.file_transfer_mode,
             args=(str(src), "127.0.0.1", server_port, 0),
-            kwargs={"fid": fid, "peer": (server.host, server.port)},
+            kwargs={"fid": fid, "peer": (server.host, server.port),
+                    "control_socket": client.client_socket, "crypto": _stamp},
             daemon=True,
         )
         sender.start()
@@ -1064,7 +1093,7 @@ def test_file_progress_and_speed_can_be_disabled(tmp_path):
             assert server.file_recv_progress == {}
             assert client.file_upload_progress == {}
         finally:
-            client.start_trans(fid)
+            client.start_trans(fid, trans_type=0, direction=0)
             sender.join(timeout=15)
         assert not sender.is_alive(), "the upload did not finish"
 

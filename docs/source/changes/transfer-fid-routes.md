@@ -1,11 +1,186 @@
 # Change note: server FID routes, sender ownership and socket/FID recovery
 
-> Atomic changes 1–4 and supplemental O1–O4 passed human review; their historical
-> reports remain unchanged. Sender-ownership revision R1 and socket/FID revision
-> R2 are implemented and verified, awaiting human review. The final affected suite
-> passed 434 tests; independent plaintext/encrypted runs and the documentation
-> build passed. Known lint/doc warnings and earlier failed runs are disclosed in
-> `docs/plans/transfer-sender-fid-r2-report.md`. No commit, merge or push.
+> Current lifecycle revision evidence is in
+> `docs/plans/transfer-control-lifecycle-report.md`.
+> The chronological entries below preserve earlier implementation history.
+> Previous transfer-control C1–C4b commits and C5 acceptance are documented in
+> `docs/plans/transfer-pause-start-direction-report.md`; those historical
+> results are not verification of the current lifecycle revision.
+
+## Resume formatter rejects invalid offsets
+
+- **Core logic:** `format_resume_line()` accepts only a nonnegative Python
+  integer offset, including zero. It raises `ValueError` before producing wire
+  text for `None`, query markers, numeric strings, booleans, floats or negatives.
+- **Modules and interactions:** Ordinary and relay recovery still format the
+  same five-token `/resume_trans` line and use their existing `send_message`
+  path. The parser, endpoint identities, FIDs and serialized progress are
+  unchanged.
+- **Assumptions:** The formatter must not silently coerce its argument: its
+  output must be accepted by the numeric-offset parser.
+- **Maintenance:** Resume offset validation belongs at the formatter boundary;
+  no recovery retry, wire migration or sender/file-transfer behavior is added.
+
+## Resume requests require framing when encryption is enabled
+
+- **Core logic:** The normal Client and Server `send_message` path treats
+  `/resume_trans` like `/pause_trans` and `/start_trans`. If no secure channel
+  is available, the write fails without entering the plaintext writer or
+  reporting a sent message. With encryption disabled the wire is unchanged.
+- **Modules and interactions:** Ordinary receivers and Server relay recovery
+  still use `format_resume_line` and the same send path. After selecting a
+  framed channel, `require_secure=True` rechecks framing under the channel's
+  final write lock; a write error keeps its existing Client/Server behavior.
+- **Assumptions:** A successful `_wait_control_secure` is not a reservation:
+  rekey can start before the write. Keep the rejection on the plaintext path,
+  not before a second, independently changing `channel.secure` check.
+- **Maintenance:** This does not change the raw handshake/port announcements,
+  the receive-side plaintext whitelist, other business commands or the retry
+  policy. The recovery tests observe incoming control bytes, decoded offsets
+  and final ACKs; the rekey test also covers the async Server.
+
+## New relay admission: reserve the upstream FID before publishing a route
+
+- **Core logic:** A waiting ordinary listener owns its FID even before it has
+  a progress row or data socket. A new relay must win a fresh receive
+  reservation; it cannot adopt a pending ordinary request on the same session.
+- **Modules and interactions:** Server `_forward_relay` claims the FID, then
+  `_register_fid_route` checks the exact reservation before publishing the route
+  and child indexes. Snapshot restore has no reservation and requires a free
+  receive slot. Existing-route recovery still adopts its own reserved leg.
+- **Assumptions:** Child FIDs are allocated outside the progress lock. Fresh
+  admission holds that lock through live-leg registration, not through target
+  negotiation or I/O. A rejected registration releases only its own record.
+- **Maintenance:** Do not publish and then roll back: reconnect can observe a
+  transient route and skip an ordinary partial file. Failure *after* admission
+  (e.g. a refused target listener) still retains a recoverable route. The
+  listener-first and competing-relay cases live in `test_tcp_transfer_resume.py`.
+
+## Lifecycle revision C6: combined acceptance evidence
+
+- The affected-scope V6 run completed with **692 passed, 1 skipped** on Linux
+  x86_64 / Python 3.10.20. The skip is the plaintext rekey variant; encrypted
+  rekey variants exercised the real key reader and framed control channel.
+- Independent real-socket scenarios cover ordinary bidirectional recovery,
+  old-session ownership, global pause/drain/pressure, independent Target flows,
+  offline/new-session recovery, per-stream failure, explicit EOF confirmation
+  and native self-target rejection. Content, actual ACKs and owner cleanup are
+  recorded per scenario in the current report, not inferred from test counts.
+- P05/P11/P13/P17/P20 retain explicit partial coverage. Native Windows, other
+  Python versions, process restart, relay/terminal rekey and browser UI were
+  not verified. Flask test-client requests exercised the Web backend and TCP,
+  not a listening HTTP server or browser. Same-session/FID generation isolation
+  and a successful final-ACK write lost before Source receives it stay deferred.
+- This stage changes acceptance documents only: no production, tests, protocol,
+  schema, dependencies or CI changes. Known 37 type diagnostics remain unrerun;
+  results do not imply human final acceptance, merge or push approval.
+
+## Lifecycle revision C5: refuse native self-target file forwarding
+
+- Filter the Source's complete control endpoint in the shared Client per-file
+  entry before FID allocation, progress creation or relay negotiation. Match
+  the captured socket's actual IP/port; configured hosts must resolve to that
+  IP, except wildcard, which aliases the actual port.
+  An unused configured source IP after no bind or port fallback is not self.
+- Self-only forwarding logs a refusal and returns no delivery. Mixed lists
+  retain only legal peers, including same-IP/different-port and
+  different-IP/same-port Clients; the upload row and wire use that same list.
+- Native console, nested folder entries, Web forwarding and retained-row
+  replay share the check. Rejected replay preserves its existing recovery row;
+  the public resume boolean still reports worker reservation, not delivery.
+- No signature, wire, persistence schema, dependency or CI changes. Message
+  forwarding and the separate disk-forward extension retain their contracts.
+  C6 combined acceptance and strict same-session/FID generation isolation are
+  not implemented here. Actual evidence is in the lifecycle report.
+
+## Lifecycle revision C4: explicit all-Target EOF reconfirmation
+
+- After every accepted Target's real ACK, an upstream final-ACK write returning
+  `False` or raising retains the existing Server route and Source shared upload
+  row. Source explicitly calls `resume_trans(original_target, upstream_fid, total)`;
+  its boolean reports worker registration, not completion. Live owners, including
+  `finally`, reject this explicit operation as busy without closing or queueing;
+  it can be repeated after cleanup.
+- Reuse `_fid_routes[fid]` with `originator`, full `targets` and `completed`, and
+  Source's existing upload row. Only Source→Server port negotiation, the complete
+  existing filename/size header and final ACK are exchanged. Offset must equal
+  this header's size exactly; there are zero body bytes, no new Target leg and
+  no retransmission. Targets may be offline. No Server byte-progress or terminal
+  table, field, snapshot schema or wire change is added.
+- Another false/exception retains state. Only the owning route is removed after
+  its successful ACK write; Source removes its shared row only on observing the
+  ACK. Existing route/completion and upload snapshots reload with the same
+  explicit recovery requirement, not automatic retries or TTL. This does not
+  resolve a successful Server ACK write lost before Source receives it, and
+  does not validate historical name/size/hash.
+- Ordinary transfers, C3 unfinished-Target recovery and global pause/start stay
+  unchanged. This extends transfer control without changing Source
+  `file_transfer_mode` or `_send_file`. Strict same-session/fid generation
+  isolation remains deferred; C5 self-target rejection and C6 combined acceptance
+  remain later stages. No verification results are claimed in this entry.
+
+## Lifecycle revision C3: numeric offsets and independent parallel recovery
+
+- The user approved the revised requirements and plan. Old C3a/C3b offset
+  queries, forced route teardown and one-active-Target/FIFO rounds are withdrawn
+  history, not the current contract or current verification evidence.
+- Receiver waits for its old owner, including final cleanup and file closure,
+  then sends its actual nonnegative numeric disk offset. The sole resume line
+  remains `/resume_trans <fid> <offset> <origin> <target>`; remove `?` queries,
+  `offset=None` and query state/consumers without adding wire fields or commands.
+- Server validates the actual Target socket and stable child route, queues the
+  numeric request and waits for every old owner of the original route, including
+  listeners, negotiations, reader/writers and `finally`, to finish naturally.
+  No forced teardown, automatic start, global-lock wait or control-reader/event-
+  loop blocking; healthy control and unrelated fids continue.
+- Then each Target gets its own offset, Source→Server→Target stream, runtime
+  progress, resources and failure handling. Original upstream/child fids, full
+  paths and persistence schema remain. Bodies run in parallel: late Targets do
+  not wait for an existing large body or ACK. The same actual socket+fid only
+  serializes short port negotiation, never body transfer or final ACK.
+- C1 actual-session ownership and C2 Source-arbitrated global pause/start remain.
+  Shared task control state lives until its last owner exits; buffered bytes
+  drain and user start cannot bypass local backpressure. One stream cannot
+  overwrite sibling progress or prematurely delete the task upload row.
+- Only real Target ACKs update `completed`. All accepted Targets must really
+  acknowledge before task success; an intermediate Target cannot fabricate a
+  whole-route ACK. Completed siblings are not replayed.
+- Offline Source requests stay pending. Target disconnection discards old-socket
+  requests; reconnect requires a fresh actual disk offset on the new session.
+  Individual failure does not cancel siblings or start automatic retries.
+- Strict same-session/fid generation isolation remains deferred. C4 all-Target
+  upstream EOF reconfirmation is documented above; C5 self-target rejection and
+  C6 combined acceptance remain later stages. No new wire, schema, dependencies
+  or CI changes.
+- This round is **pending unified verification**. Old C3a/C3b pass counts do not
+  verify this replacement. Paths, risks and historical evidence are recorded in
+  `docs/plans/transfer-control-lifecycle-report.md`.
+
+## Lifecycle revision C2: Source-arbitrated global relay pause
+
+- Source serializes all user decisions. Server translates validated requests
+  to upstream fid and projects Source notifications onto each live child fid.
+  Relay requests may repeat so an unseen opposite intent is not swallowed.
+- Server writers no longer wait on per-Target user pauses; queued bytes drain
+  on the existing sockets. Source alone stops before its next body block.
+- Backpressure uses the local reader high/low-water gate and TCP flow control,
+  not automatic user pause/start messages. Drain cannot cancel user pause.
+- Stable FIDs, wire fields and real final ACKs remain unchanged. Issue 2 is
+  deferred; route reconstruction and EOF reconfirmation remain later stages.
+- Evidence: `docs/plans/transfer-control-lifecycle-report.md`.
+
+## Lifecycle revision C1: retire actual control sessions
+
+- Session cancellation owns listeners, data sockets and negotiations by actual
+  control socket, independently of progress tracking. Reconnect no longer scans
+  peer progress to close whichever sockets happen to be current.
+- Resource registration remains until worker cleanup; recovery waits for captured
+  old owners off the control reader. Delayed cleanup cannot close a newer session.
+- Recovery workers keep their admitted control socket, including forwarded uploads.
+  Stable FIDs, original paths, wire fields, persistence and real final ACKs remain.
+- This does not isolate delayed pause/start across same-socket, same-FID data-leg
+  replacement (deferred issue 2). Later lifecycle stages are not implemented here.
+- Evidence: `docs/plans/transfer-control-lifecycle-report.md`.
 
 ## Revision R1: sender-owned relay upstream FID
 
@@ -73,7 +248,7 @@ R1 behavior evidence and remaining review items are in
   regeneration or replacement translations are supplied; new source text uses
   English fallback pending translation.
 
-## Atomic change 4: one recovery command and one source of file metadata
+## Historical atomic change 4: one recovery command and one source of file metadata
 
 - The sole resume wire is `/resume_trans <fid> <offset> <origin> <target>`, with
   shell-quoted tuple endpoints. Server checks target against the actual requester,
@@ -304,6 +479,9 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
 
 ## Follow-up: reconnect sweep releases paused legs
 
+This describes the pre-control-registry sweep. C2b replaces its wait helper;
+C4a retains ownership until final cleanup and rejects active resume requests.
+
 - `_drop_stale_transfers` now clears the pause switch of every upload leg it
   sweeps (after closing the socket, outside the progress lock) and wakes the
   pause condition. `_wait_transfer_paused` also takes the leg's own transfer
@@ -318,3 +496,203 @@ file preservation. Runtime evidence and explicit exclusions are recorded in
   still consumed by the existing ACK wait. Wire commands, progress rows,
   public signatures and the pause/start semantics of a live session are
   unchanged.
+
+## Transfer control C1: typed identity and shared endpoint matching
+
+- Private foundations parse four-token pause/start commands and validate a
+  nonnegative integer FID, transfer type (ordinary/forwarded) and local role
+  (sender/receiver). Runtime keys include peer, FID, type and local direction;
+  progress keys and JSON remain unchanged.
+- Server-local and Client resume identity checks share the same exact
+  configured-or-connected endpoint predicate. Wildcard configuration does not
+  admit unrelated addresses with the same port; closed sockets retain the
+  configured fallback. No additional endpoint alias table is introduced.
+- The new parser is not yet used by production dispatch. Existing pause/start
+  wire messages and public APIs remain in use until the separately permitted
+  C2b cutover. C1's targeted run passed 81 tests, including real bidirectional
+  resume with configured aliases and wildcard binds. Evidence and exclusions
+  are in `docs/plans/transfer-pause-start-direction-report.md`.
+
+## Transfer control C2a: sender-authoritative control state
+
+- Server and Client initialize a shared private control-registry implementation.
+  Each typed leg binds its control socket and owner; a per-leg lock serializes
+  state decisions and control writes. Same-state receiver requests still get
+  an actual-state notification; receivers track confirmed and last-requested
+  state separately and never echo notifications.
+- Sender presets are adopted by the matching leg and published once when the
+  peer can locate it. Start removes the pause key. Owner/session release or a
+  failed write clears control intent and wakes waiting senders; stale owners
+  cannot remove a replacement record. Control state stays out of progress JSON.
+- Deterministic FIFO interleavings, blocked-write ordering and lifecycle tests
+  passed with existing progress-query contracts (154 tests). A pytest iterable
+  deprecation was fixed; the affected 64 scheduling cases then passed without
+  warnings. Four plaintext socketpair runs exercised the real send_message
+  paths in both endpoint roles and both transfer types, converging with no
+  pause keys. The implementation report records evidence and limitations.
+- Production leg registration, pause/start API and protocol cutover, secure
+  dispatch, data-loop integration and real-file control remain at the C2b gate.
+
+## Transfer control C2b: unified bidirectional production control
+
+- Public pause/start now require keyword-only `trans_type` (0 ordinary,
+  1 forwarded) and `direction` (0 local sender, 1 local receiver). The wire is
+  strictly `/pause_trans <fid> <type> <issuer_role>` or its start equivalent.
+  The old remote-only APIs and fid-only parser are removed; all production
+  callers and API documentation use the unified entry.
+- Ordinary and relay legs bind actual control sockets and data-socket owners
+  to typed control records independently of progress tracking. Per-leg FIFO
+  control workers wait for peer leg registration and existing crypto readiness
+  before calling `send_message`; control readers never wait for their own key
+  exchange. Control frames cannot fall back to plaintext while encryption is
+  unavailable, including a re-exchange between readiness and frame creation.
+- Send loops inspect their bound pause state before each new block. Receivers
+  continue draining and writing in-flight data. Start retains the same socket;
+  empty files, EOF replay and final ACKs do not wait on a nonexistent next block.
+  Disabled tracking creates no new progress rows; a resumed receiver retains
+  ownership of its existing row so successful EOF confirmation removes it.
+- Relay writers use the same control registry; high/low-water requests use
+  type 1 and the local receiver role. The reader's buffer gate stays separate
+  from control state. Progress queries project active typed sender records onto
+  the existing upload rows, and owner/session cleanup releases controls.
+- Runtime verification covered real upload/download control and encrypted
+  re-exchange. The first targeted run found two untracked EOF cleanup failures;
+  both passed after the ownership fix. Existing affected regressions passed
+  159 tests, and the owner-isolation check passed 134. Full commands, the one
+  plaintext re-key skip and review-size deviation are in the implementation
+  report. Complex multi-target routing/backpressure acceptance and object-level
+  resume eligibility retain their C3/C4 review gates.
+
+## Transfer control C3: scoped relay control and independent backpressure
+
+- Relay control indexes contain only canonical target/child-FID pairs. An
+  exact child takes precedence; an upstream alias resolves only to one live
+  writer for that control peer. Wrong peers, types and roles never fall back
+  to a global FID match. Writer controls are registered before data connect
+  and released on setup failure.
+- Relay receiver state keeps user pause and automatic backpressure as separate
+  intents. Their OR determines upstream requests; low-water release cannot
+  cancel a user pause. Notifications preserve both intents, and an old pump
+  cannot mutate a replacement owner.
+- The reader's high-water gate remains independent of source pause/start.
+  Headers also obey the gate; queued bytes are bounded by the threshold plus
+  one enqueue's fan-out bytes. Each writer pauses before real data, while END
+  and final ACK handling do not wait for a nonexistent next block.
+- Presets, False flags and records without a live data owner do not reserve
+  routes. Actual setup sockets and existing active/progress/route ownership
+  still refuse replacement. Runtime acceptance and remaining limitations are
+  recorded in the C3 implementation report.
+- C3 verification passed 217 control/routing tests (three existing re-key
+  cases deselected) and 20 affected forwarding/resume regressions (73 unrelated
+  cases deselected). New real two-target scenarios cover independent writers,
+  user/pressure crossings, encrypted frames, bounded buffering and target-close
+  failure without a false upstream success ACK. C4 resume eligibility remains
+  outside this change.
+
+## Transfer control C4a: ordinary per-object resume eligibility
+
+- Ordinary resume atomically reserves one recovery worker only after the
+  scoped data owner, negotiation and prior cleanup have finished. Running,
+  paused, negotiating and duplicate requests return False without closing or
+  queueing. Independent files and opposite directions do not block recovery.
+- Receive requests reserve the object before sending; the same session's
+  listener and data owner adopt the reservation. Failed sends, listener
+  failures and session closure release it; pending unanswered requests use the
+  existing accept-timeout window. Reconnect waits for old owner cleanup, while
+  manual busy requests return immediately.
+- A failed data connection can recover on the same live control connection
+  from the receiver's disk offset and original FID. New owners do not inherit
+  pause state. Tracking-off recovery adopts retained progress rows for final
+  cleanup without creating new tracked rows.
+- New eligibility/real-connection checks passed 42 tests; the affected existing
+  run had 139 passes and two obsolete immediate-sweep-release assertions, both
+  passing after migration to final owner release. Reconnect ownership checks
+  passed 34 tests, and the final listener-handoff check passed both directions.
+  Full commands and exclusions are in the C4a report. Relay recovery remains C4b.
+
+## Transfer control C4b: shared-source relay resume eligibility
+
+- Direct and relay recovery share the existing per-object reservation gate.
+  Active, paused, negotiating or finalizing upstream owners reject recovery
+  for any target without queueing or tearing down the live relay. A skipped
+  target request must be issued again after that owner exits; it does not
+  promise eventual automatic replay.
+- Server pending delivery reserves the upstream object before control writes;
+  relay setup adopts that record and releases it after final cleanup. Target
+  receive requests/listeners reuse the same ownership mechanism. Offline-source
+  pending offsets are retained, failed writes release reservations without
+  dropping pending work, and completed/missing routes are revalidated.
+- Real source reconnect reuses upstream/child FIDs and retained route completion,
+  starts new owners running, and ignores late cleanup of old records. Stop
+  releases active ownership before configuration deletion while preserving the
+  existing route snapshot and in-memory deletion semantics.
+- The first targeted run passed 137 tests and found six test-barrier failures;
+  all six passed after placing the barrier after the real first payload write.
+  Existing forwarding/recovery/handshake checks passed 39 tests. Full commands,
+  exclusions and runtime evidence are in the C4b report; combined acceptance
+  remains the C5 review stage.
+
+## Transfer control C5: current contract and combined acceptance
+
+- Current File_Transfer and TCP API documentation now distinguishes sender
+  changes from receiver requests, including unconfirmed duplicate requests.
+  Recovery documentation states the per-object busy rule, no active-source
+  queue, no wildcard resume-all command and no new data-only retry loop.
+- Historical queued/coalesced recovery and immediate sweep-release notes are
+  explicitly superseded by C4a/C4b. The implementation report maps P01–P18 to
+  runtime evidence, records the six implementation commits and retains known
+  limitations rather than treating unit passes as global-property proof.
+- Public signatures and RST transfer targets passed mechanical checks. Sphinx
+  generated the HTML documentation successfully, and the actual control/API
+  pages were inspected in a browser. Existing static-path and docstring
+  warnings are retained in the report; no unrelated configuration was changed.
+- The planned combined regression ran once: 640 passed and one skipped in
+  761.28 seconds. The skip is the plaintext fixture's inapplicable re-key case;
+  encrypted variants ran. C5 changes documentation only; final human acceptance
+  and any commit, merge or push remain separate gates.
+- After C5 verification, the user separately authorized increasing the CI Test
+  job timeout from 10 to 30 minutes. Test commands, matrix and coverage policy
+  are unchanged.
+
+## Transfer control CI follow-up: portable write and connection barriers
+
+- Live receive tests observe the real target write and verify admitted payload
+  bytes instead of treating stat growth on an open buffered file as completion.
+  Python 3.14's larger default buffer can retain the first 64 KiB chunk until
+  close; resumed partial-file contents and offsets are still checked after the
+  old receiver exits, and final content/ACK assertions remain intact.
+- Wildcard scenarios retain the server's 0.0.0.0 bind while clients connect to
+  loopback, which is also valid on Windows. Source-disconnect injection shuts
+  down the actual client socket and still waits for both ends to exit.
+- Production control and persistence behavior, test timeouts, crypto/async
+  coverage, CI configuration and skip policy are unchanged. Native Windows
+  results must come from a subsequent CI run; Linux is not Windows evidence.
+- Verification passed 18 affected cases on Python 3.10 and the full control
+  file on Linux CPython 3.14.4 with coverage: 71 passed, one existing plaintext
+  re-key skip in 331.25 seconds. The subset's coverage is not a full-suite
+  measurement. Native Windows still requires a subsequent Actions run.
+
+## Windows reconnect follow-up: preserve the source's passive close
+
+- The first CI follow-up's client-side shutdown let the source initiate FIN;
+  the next Windows run connected from a fallback port instead of the retained
+  route identity. The relay fault now half-closes the server's write side,
+  waits for source EOF/receive-loop exit, releases the client socket normally,
+  then waits for server unregister. The server reader keeps its own socket
+  until its finally block, including asyncio/Proactor reads.
+- Original endpoint, FID/route, content, ACK and worker-exit checks remain.
+  Teardown failures now name surviving workers instead of reporting a bare
+  boolean. No longer joins, retries, skips or production behavior changes.
+- Linux verification cannot establish Windows port reuse or Proactor cleanup;
+  native Windows Actions must confirm both after this change.
+- Linux CPython 3.14.4 with coverage passed all three affected source-reconnect
+  variants in 27.90 seconds, retaining original endpoint, content/ACK and
+  worker-exit assertions. An intermediate immediate-close attempt failed the
+  async unregister check; that result remains in the report. Windows native
+  verification is still pending.
+- The ordinary paused-leg retirement test now uses the same server-first FIN
+  for either sender and checks the client's original endpoint before waiting
+  for final ACK cleanup. A fallback port is valid for a new connection but
+  does not identify the old transfer. Both directions passed on Linux CPython
+  3.10.20; Windows port reuse still needs native CI verification.
+
