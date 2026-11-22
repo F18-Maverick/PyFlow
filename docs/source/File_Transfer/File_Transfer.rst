@@ -545,16 +545,20 @@ machinery:
 
 ### Memory Bounding and Flow Control
 
-Because uploader, server and targets may have different
-bandwidths, data can
-pile up in the server's memory. ``TCP_Server_Base``
-takes a ``max_mem_buff`` parameter (in MiB, default 2048) for the pump's
-accounted queued bytes. Above the high-water mark, its reader waits until
-writers drain to the low-water mark (half the limit); TCP flow control carries
-the pressure upstream. Automatic pressure does not send user pause/start lines,
-so draining cannot cancel a user pause and user start cannot bypass the gate.
-One enqueue can overshoot by its fan-out bytes. This is not a total process RAM
-ceiling; socket, crypto and in-flight writer buffers are separate.
+``TCP_Server_Base.max_mem_buff`` is one queue budget for **all native forwards
+on that server**, including resumed transfers. The constructor takes MiB
+(default 2048); the effective limit is at least one byte. Each downstream copy
+of the file header and body is charged before it enters its queue and stays
+charged until the writer returns from sending it or discards it. A large
+chunk or fan-out is sent in parts rather than exceeding the limit.
+
+When the budget is full, relay readers wait. Returning credit lets another
+route proceed without waiting for the whole file to finish. TCP carries this
+pressure upstream without sending user pause/start commands: draining a queue
+cannot cancel a user pause, and user start cannot bypass the budget. This is
+not preallocated memory or a process RAM limit. Temporary reads, encryption
+buffers and OS socket buffers are outside the budget. The guarantee requires
+an updated server; the client's setting does not set the server's limit.
 
 .. _concurrency-and-threading:
 

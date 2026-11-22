@@ -812,6 +812,11 @@ def _discard_receive_requests(instance, control_socket):
 def _retire_transfer_session(instance, control_socket):
     """Cancel only this socket's resources and capture its finalizing owners."""
     instance._transfer_handshakes.cancel_socket(control_socket)
+    if hasattr(instance, "_forward_budget"):
+        # cancel_socket closed the owned data sockets. Readers waiting behind
+        # another route must recheck them even if no writer returns credit.
+        with instance._forward_budget.cond:
+            instance._forward_budget.cond.notify_all()
     instance._transfer_controls.discard_socket(control_socket)
     _discard_receive_requests(instance, control_socket)
     if hasattr(instance, "_relay_recoveries"):
@@ -2754,6 +2759,41 @@ def _custom_handler_for(command, handlers):
     return handler
 
 
+class _ForwardBudget:
+    """Plaintext bytes owed to downstream writers across one server's relays.
+
+    The caller holds ``cond`` for publication, return and queue retirement;
+    taking an item out of a queue does not release its credit.
+    """
+
+    def __init__(self):
+        self.cond = threading.Condition()
+        self.used = 0
+        self.peak = 0
+
+    def publish(self, pending, chunk, offset, limit, state):
+        """Publish the prefix that fits to one live queue; zero means wait."""
+        space = max(1, int(limit)) - self.used
+        if space <= 0:
+            return 0
+        part = chunk[offset:offset + space]
+        size = len(part)
+        self.used += size
+        state["buffered"] += size
+        self.peak = max(self.peak, self.used)
+        try:
+            pending.put_nowait(part)
+        except BaseException:
+            self.release(state, size)  # ownership never passed to a writer
+            raise
+        return size
+
+    def release(self, state, size):
+        self.used -= size
+        state["buffered"] -= size
+        self.cond.notify_all()
+
+
 class TCP_Server_Base:  # TCP server class
     """TCP server: accept clients, dispatch commands, relay messages and files.
 
@@ -2845,8 +2885,8 @@ class TCP_Server_Base:  # TCP server class
                 every connection. Defaults to True.
             is_custom_keys (list | None): ``[pub_key_path, pvt_key_path]`` pair used
                 instead of the default key lookup; an invalid pair is ignored.
-            max_mem_buff (int): Buffering ceiling in MiB for the in-memory forward
-                pump; past it the uploader is told to pause. Defaults to 2048.
+            max_mem_buff (int): Shared budget in MiB for queued and in-flight
+                downstream bytes of all native relays. Defaults to 2048.
             recv_messages_chunk_len (int): Bytes read per receive on the control
                 connection, covering commands and messages. Defaults to 4096.
             file_transfer_chunk_len (int): Chunk size in bytes streamed when
@@ -2899,6 +2939,7 @@ class TCP_Server_Base:  # TCP server class
         self._recv_speed_samples = collections.deque()
         self._upload_speed_total = 0  # bytes held in the sample windows
         self._recv_speed_total = 0
+        self._forward_budget = _ForwardBudget()
         self._forward_relays = {}
         self._forward_relays_lock = threading.Lock()
         # One route per local upstream fid; downstream keys point to that fid.
@@ -7681,8 +7722,8 @@ class TCP_Server_Base:  # TCP server class
     ):
         """Pump the uploader's byte stream to every target from memory.
 
-        Queue high/low-water marks bound buffered data, allowing a finite enqueue
-        overshoot. Control start cannot clear the reader's high-water gate.
+        Each downstream copy, including its header, owns server-wide credit
+        until the writer returns from send_message or discards that copy.
 
         Args:
             up_sock (object): Value used by the operation.
@@ -7697,43 +7738,39 @@ class TCP_Server_Base:  # TCP server class
         int: Targets that acknowledged the whole item (they are the ones
                         the relay's resume record can be dropped for).
         """
-        max_bytes = max(1, self.max_mem_buff)
-        low_water = max(1, max_bytes // 2)
-        cond = relay["cond"]
+        budget = self._forward_budget
+        cond = budget.cond
         controls = relay["controls"]
         state = relay["buffer"] = {
             "buffered": 0, "backpressured": False, "complete": False, "failed": False,
-            "high_water": max_bytes, "peak": 0, "max_enqueue": 0,
         }
-        queues = {(target, tfid): queue.Queue() for tfid, target, _ in target_conns}
+        queues = {sock: queue.Queue() for _, _, sock in target_conns}
         END = object()
         result: dict = {"ok": 0, "ack": None}
 
-        def release_buffered(byte_count):
-            """Called under cond; failed writers also release upstream backpressure."""
-            state["buffered"] -= byte_count
-            if state["backpressured"] and state["buffered"] <= low_water:
-                state["backpressured"] = False
-            cond.notify_all()
-
         def enqueue(chunk):
-            with cond:
-                while state["backpressured"]:
-                    if up_sock.fileno() < 0:
-                        raise ConnectionError("uploader control session closed")
-                    cond.wait(timeout=0.5)
-                added = len(chunk) * len(queues)
-                state["buffered"] += added
-                state["peak"] = max(state["peak"], state["buffered"])
-                state["max_enqueue"] = max(state["max_enqueue"], added)
-                for pending in queues.values():
-                    pending.put(chunk)
-                if not state["backpressured"] and state["buffered"] > max_bytes:
-                    state["backpressured"] = True
+            # Never reserve while reading the uploader. Split by both target
+            # and available bytes; even a one-byte budget admits a fan-out.
+            for _, _, sock in target_conns:
+                offset = 0
+                with cond:
+                    while offset < len(chunk):
+                        if self._stopped or up_sock.fileno() < 0:
+                            raise ConnectionError("uploader control session closed")
+                        if sock not in queues or sock.fileno() < 0:
+                            break
+                        count = budget.publish(queues[sock], chunk, offset, self.max_mem_buff, state)
+                        if count:
+                            offset += count
+                        else:
+                            state["backpressured"] = True
+                            try:
+                                cond.wait()
+                            finally:
+                                state["backpressured"] = False
 
         def writer(tfid, target, sock):
-            key = (target, tfid)
-            pending = queues[key]
+            pending = queues[sock]
             try:
                 while True:
                     item = pending.get()
@@ -7744,7 +7781,7 @@ class TCP_Server_Base:  # TCP server class
                             return
                     finally:
                         with cond:
-                            release_buffered(len(item))
+                            budget.release(state, len(item))
                 if state["complete"]:
                     ack = self._forward_read_sign(sock, self.server_received_file_data_sign)
                     if ack is not None and self._complete_fid_target(
@@ -7756,13 +7793,18 @@ class TCP_Server_Base:  # TCP server class
             except Exception as exc:
                 self._log(f"forward: target {target} interrupted: {exc}")
             finally:
-                self._transfer_controls.release_owner(sock)
+                # Detach before draining: a woken reader cannot publish here
+                # again, and no other consumer can take the discarded items.
                 with cond:
-                    queues.pop(key, None)
-                    while not pending.empty():
-                        item = pending.get_nowait()
-                        if item is not END:
-                            release_buffered(len(item))
+                    del queues[sock]
+                discarded = 0
+                while not pending.empty():
+                    item = pending.get_nowait()
+                    if item is not END:
+                        discarded += len(item)
+                with cond:
+                    budget.release(state, discarded)
+                self._transfer_controls.release_owner(sock)
                 self._crypto_drop_channel(sock)
                 sock.close()
 
@@ -7781,11 +7823,6 @@ class TCP_Server_Base:  # TCP server class
                     enqueue(chunk)
                 remaining = file_size - resume_offset
                 while remaining > 0:
-                    with cond:
-                        while state["backpressured"]:
-                            if up_sock.fileno() < 0:
-                                raise ConnectionError("uploader control session closed")
-                            cond.wait(timeout=0.5)
                     chunk = self._forward_recv_exact(
                         up_sock, min(self.file_transfer_chunk_len, remaining)
                     )
@@ -7795,24 +7832,26 @@ class TCP_Server_Base:  # TCP server class
             except Exception as exc:
                 self._log(f"forward: uploader stream interrupted: {exc}")
             finally:
-                with cond:
-                    state["failed"] = not state["complete"]
-                    if state["failed"]:
-                        for control in controls.values():
-                            self._transfer_controls.release(control)
-                    for pending in queues.values():
-                        pending.put(END)
-                    cond.notify_all()
+                state["failed"] = not state["complete"]
+                if state["failed"]:
+                    for control in controls.values():
+                        self._transfer_controls.release(control)
 
         threads = [
             threading.Thread(target=writer, args=(tfid, target, sock), daemon=True)
             for tfid, target, sock in target_conns
         ]
-        for t in threads:
-            t.start()
-        reader()
-        for t in threads:
-            t.join()
+        try:
+            for t in threads:
+                t.start()
+            reader()
+        finally:
+            with cond:
+                for pending in queues.values():
+                    pending.put_nowait(END)
+            for t in threads:
+                if t.ident is not None:
+                    t.join()
         route = relay["route"]
         with self._forward_relays_lock:
             complete = (
