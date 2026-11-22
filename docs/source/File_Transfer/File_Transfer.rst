@@ -521,6 +521,21 @@ its structure under
 omitted the targets
 write to their default ``file_transfer_dir``.
 
+By default a file entry is uploaded once for all accepted targets; it has
+one user pause state and waits for all their final acknowledgements. To send
+independent copies, set ``is_forward_one_to_one=True`` on the **sending
+client**. For example, forwarding ``x`` and ``y`` to B and C schedules
+``x → B``, ``x → C``, ``y → B`` and ``y → C``. Each pair has its own data
+connection, FID and final ACK. Pausing ``x → B`` does not pause the others.
+
+Repeated targets are used once. If two entries in the same command name the
+same destination file, the first wins; different relative directories do not
+collide. A pair waits for one of the client's existing ``max_thread_num``
+file slots **before** opening a connection or recording progress. A paused
+pair keeps its slot. Disconnect cancels pairs still waiting; it does not move
+them to the new session. An interrupted upload with retained progress replays
+the original FID and route, not a new batch. There is no batch ACK.
+
 The data path reuses the protocol's own transfer
 machinery:
 

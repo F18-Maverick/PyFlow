@@ -1,6 +1,6 @@
 # connect_tcp 原生一对一转发 — 更改计划
 
-状态：**需求卡已确认，需求方已授权 A1；A2–A4 未获实施授权**。依据：[需求卡与 P1–P8](forward-one-to-one-requirements.md)、[文件转发词汇表](../../GLOSSARY.md)。下文列计划；已执行的命令和结果另记入[阶段报告](forward-one-to-one-report.md)。
+状态：**A1 已审计放行，需求方已授权 A2；A3–A4 未获实施授权**。依据：[需求卡与 P1–P8](forward-one-to-one-requirements.md)、[文件转发词汇表](../../GLOSSARY.md)。下文列计划；已执行的命令和结果另记入[阶段报告](forward-one-to-one-report.md)。
 
 ## 1. 决策与接口
 
@@ -71,7 +71,7 @@ flowchart TD
 
 ## 5. 可执行验收与证据
 
-下列 V1–V4 是实施后的计划命令。带 `one_to_one` / `shared_budget_across_routes` 的精准节点是拟增加的用例，不能把当前仓库称为已通过它们。
+下列 V1–V4 是各阶段的验收命令。V1、V2 的实际结果见[阶段报告](forward-one-to-one-report.md)；V3、V4 尚未执行，不能将规划中的节点视为已通过。
 
 ```bash
 P=.venv/bin/python
@@ -87,7 +87,7 @@ $P -m pytest -q "$I/test_tcp_transfer_control.py::test_forward_one_to_one_pause_
 $P -m pytest -q test/unit/test_flow_setup.py "$U" test/unit/transfer_web/test_web_transfers.py test/unit/transfer_web/test_file_location.py "$I/test_tcp_file_transfer.py" "$I/test_tcp_transfer_control.py" "$I/test_tcp_transfer_resume.py" "$I/test_crypto_tcp.py" "$I/test_tcp_async_server.py" "$I/test_tcp_broadcast_alloc.py" test/integration/test_forward_extension.py test/integration/test_forward_msg_attribution.py
 ```
 
-现有两处压力测试**要求旧行为越界**：`test_tcp_file_transfer.py:773–804` 用“写出块大于上限”阻塞并断言超水位；`test_tcp_transfer_control.py:679–711` 也要求 `peak > high_water`。A1 将阻塞点改成指定下游 writer 实际尚未完成的发送；保留“确实等额度、控制状态不变、释放后继续、真实内容、ACK、资源归零”证据，并把界限加强为**全实例采样峰值不越界**。不删测试、不靠缩小 payload 逃避背压。
+规划时的两处压力测试**要求旧行为越界**：`test_tcp_file_transfer.py:773–804` 用“写出块大于上限”阻塞并断言超水位；`test_tcp_transfer_control.py:679–711` 也要求 `peak > high_water`（均为规划时行号）。A1 已将阻塞点改成指定下游 writer 实际尚未完成的发送；保留“确实等额度、控制状态不变、释放后继续、真实内容、ACK、资源归零”证据，并把界限加强为**全实例采样峰值不越界**。
 
 实施时用隔离临时目录和本机真实 TCP 实例编写一次性 `/tmp/pyflow-forward-one-to-one-smoke.py`；命令 ` .venv/bin/python /tmp/pyflow-forward-one-to-one-smoke.py --case <case>`（case 取下表名称）。脚本不用 pytest 用例作入口，不 mock 掉握手、加密、文件、端口、数据或 ACK。可用同步闸门稳定安排慢写/乱序并记录计数；超时只用于判失败。实施报告记录实际命令、退出码和所跑环境，再清理临时脚本。
 
@@ -104,4 +104,4 @@ $P -m pytest -q test/unit/test_flow_setup.py "$U" test/unit/transfer_web/test_we
 
 风险集中在：锁顺序与配额归还、同路径不同 FID 的并发快照、突然关闭/重连时的所有权。优先复用 `_transfer_handshakes`、进度锁/原子写入、`palloc/pfree` 和现有加密读写；核对注册/删除与快照的一致性，不借此重构整套 TCP。源文件发送途中被修改、跨进程写同一进度文件、不同命令/不同发送者在接收盘上写到同一实际路径、NAT 或端点变更、同 FID 旧控制消息的代次隔离，均不作新增保证。
 
-实施闸门：本轮只交付 A1 供人工审查。A1 放行并明确授权 A2 后才开始 Client 改动；不自动提交、合并或推送。
+实施闸门：本轮只交付 A2 供人工审查；明确授权后才开始 A3。不自动提交、合并或推送。

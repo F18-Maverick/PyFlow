@@ -78,6 +78,7 @@ CLIENT_DEFAULTS = {
     "file_transfer_chunk_len": 65536,
     "is_debug": False,
     "is_print_log": True,
+    "is_forward_one_to_one": False,
 }
 
 
