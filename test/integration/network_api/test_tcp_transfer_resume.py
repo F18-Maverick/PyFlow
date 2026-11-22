@@ -2615,7 +2615,11 @@ def test_forward_one_to_one_session_recovery(tmp_path, monkeypatch, at_eof):
         else:
             assert 0 < offset < len(payload)
         assert c_output.read_bytes() == payload[:offset]
-        assert c.file_recv_progress[child] == [offset, len(payload), None, str(c_output), origin]
+        row = c.file_recv_progress[child]
+        assert row[:3] == [offset, len(payload), None]
+        # The destination from the wire can retain forward slashes on Windows.
+        assert os.path.normpath(row[3]) == str(c_output)
+        assert row[4:] == [origin]
         finish_b.set()
         assert wait_until(lambda: outcomes == [((cp,), False), ((bp,), True)]
                           and not server._forward_relays, timeout=15)

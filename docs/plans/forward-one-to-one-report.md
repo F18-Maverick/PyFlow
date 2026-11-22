@@ -215,3 +215,9 @@ U=test/unit/network_api; I=test/integration/network_api
 **最终结论：** P1–P7 及 P8 的上述 Linux 组合有运行证据；保留唯一的明文 re-key 不适用项、扩展通用线程池退出行为，以及 A2 报告的同机手动端口冲突边界。未运行原生 Windows、macOS、自由线程解释器、全部配置笛卡尔积或全仓测试；模拟的 Windows 端口异常不算 Windows 验证。没有把这些边界视为已获人工豁免。
 
 A4 工作树交付仅为本报告与计划状态。临时验收脚本、源码副本、测试日志/XML、测试密钥与传输文件已清理。**未创建提交、合并或推送；合并前最后一项为人类接受上述结果与边界。**
+
+### Windows Actions 后续：接收路径断言
+
+Windows Actions 报告 `2 failed, 1022 passed, 3 skipped`：`test_forward_one_to_one_session_recovery` 的 `partial` 与 `before-final-ack` 均已核对落盘内容，失败在接收进度行第 4 个字段的字符串比较。命令中的 `original/nested path` 保留 `/`，而 `str(c_output)` 在 Windows 输出 `\`。测试现按本机路径规则比较完整路径，其余四字段仍精确匹配；未更改持久化格式、传输逻辑、重连断言或 CI。
+
+修正后执行 `.venv/bin/python -m pytest -q test/integration/network_api/test_tcp_transfer_resume.py::test_forward_one_to_one_session_recovery`，Linux 上 `2 passed in 12.48s`。另以 `ntpath` 验证混合分隔符匹配、不同目录不匹配。原生 Windows 修正结果待 Actions 重跑。
