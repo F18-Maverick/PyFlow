@@ -1,6 +1,6 @@
 # 原生 TCP 文件转发 — 分阶段实施报告
 
-**状态：A1、A2 已审计放行。A3 已完成局部验证，待人工审查；本轮未提交、未开始 A4。** [更改计划](forward-one-to-one-plan.md) · [需求卡](forward-one-to-one-requirements.md)
+**状态：A1–A3 已审计放行；A4 已完成计划内的 Linux 总验收，待人工最终确认。** [A4 总体报告与实测证据](#a4总体报告与最终验收) · [更改计划](forward-one-to-one-plan.md) · [需求卡](forward-one-to-one-requirements.md)
 
 ## A1：Server 共享字节预算
 
@@ -131,4 +131,87 @@ Linux x86-64，CPython 3.10.20，隔离临时目录。本轮实际重新执行�
 
 ### 范围与下一闸门
 
-临时脚本已删除。A3 只验本机 Linux 的上述路径；未跑 Windows、macOS、自由线程 Python、手动端口矩阵、Web/消息/落盘扩展或全项目回归。加密配置参与功能验证，不替代抓包审计；本轮未修改加密或资源计账契约。A4 的 V4、全路径总验收及合并前闸门尚未执行，需另行授权。
+临时脚本已删除。A3 只验本机 Linux 的上述路径；未跑 Windows、macOS、自由线程 Python、手动端口矩阵、Web/消息/落盘扩展或全项目回归。加密配置参与功能验证，不替代抓包审计；A3 未修改加密或资源计账契约。后续审查结论：A3 已放行，已授权 A4。
+
+## A4：总体报告与最终验收
+
+### 验收前交付：基线、边界和逐路径清单
+
+验收对象为已放行的 `521361e`（A1：Server 统一额度）、`3e4fa9d`（A2：Client 调度/配置）和 `d219be8`（A3：控制与恢复集成证据）。A4 本身只汇总报告，不调整生产代码、测试、超时、依赖、coverage 或 CI 策略。
+
+原生文件/目录命令（含既有 Web 后端单目标入口）→ 结构化条目和目标 → 缺省每条目一次上行，或在 `is_forward_one_to_one=True` 时按唯一目标取得 Client 文件名额 → 原控制 socket/FID/端口和原数据通道 → 同一 Server 严格计费各下游副本 → 原路由的真实目标 ACK → 源端确认/按所属任务清理。只有发送端公开构造器和 Client 配置增加了末尾可选参数；Server 配置单位、wire、五字段进度和其他传输族保持原有接口。
+
+| 需求路径 | 此前局部证据 / 本轮机械验收点（不是本轮结果） |
+|---|---|
+| P1 缺省、False、单目标 | A2/A3 已见缺省共享 ACK；baseline 直接对照缺省和 False 的上/下行数、子 ACK 和源 ACK。 |
+| P2 输入、目标、目的路径 | A2 已验结构化拆分/落点；baseline 走真实 Web 后端、重复/自身/不可达及嵌套目录；split 复验一对一落点。 |
+| P3 有界并行 | A2/A3 已见独立 FID 和名额；split、session 检查同时在途、等名额无行/端口，以及普通批量共享名额。 |
+| P4 用户控制 | A1–A3 已见资源等待与用户意图独立；baseline/shared 与 split/independent 对照实际暂停等待、兄弟交付和原 socket 继续。 |
+| P5 Server 额度 | A1 已见跨路由、含恢复计费；pressure 检查元信息/正文、在写份额、失败与停服的峰值、等待、归零。 |
+| P6 错误与会话更替 | A2/A3 已验单项断线和乱序；V4 与 session 检查拒绝不串 FID、原会话取消和失去 owner 后的收尾。 |
+| P7 交付与恢复 | A2/A3 已验原路径、原 upstream/child、零正文、切换开关；session 和 V4 对照实际磁盘 offset、五字段快照读回和真实最终确认。 |
+| P8 环境与非目标消费者 | 历史部分覆盖；V4 合并运行普通直传、Web、消息、落盘扩展、线程/asyncio、加密和端口用例；四场景检查内容、临时资源、退出状态。 |
+
+本轮应执行[计划 §5](forward-one-to-one-plan.md#5-可执行验收与证据)的完整 V4（不改选择集）和 `--case baseline|split|pressure|session` 四个独立入口。保留失败/跳过、实测平台及路径边界。全实例队列限额不是 RSS，暂停不等于取消；不保证公平、源文件变更一致性、跨命令目的路径互斥或变更 NAT/端点的恢复。不将 Linux 结果当作其他 OS 通过；合并、提交、推送均需另行人工决定。
+
+### 本轮执行记录
+
+环境：Linux x86-64（内核 `7.0.0-43-generic`）、CPython 3.10.20、pytest 9.1.1。工作树起始干净。为避免测试改写使用者的 `.Flow`、密钥或进度文件，从 `git archive d219be8` 解出私有临时源码目录，复制当前 CPython 3.10 的本地 `_crypto_api` 和 CMake 共享库，使用同一 `.venv` 解释器；V4 的 HOME、TMPDIR 均隔离。运行前确认 `connect_tcp` 来自该目录、原生加密库确实可加载。未重建或升级依赖。
+
+在临时源码根目录执行（`P` 为原工作树 `.venv/bin/python` 的绝对路径，`RUN` 为私有临时目录）。`-ra` 和 JUnit 只用于取证；选择集与 V4 一致，不加重试或失败豁免。
+
+```bash
+U=test/unit/network_api; I=test/integration/network_api
+"$P" -m pytest -q -ra --show-capture=no --tb=short --junitxml="$RUN/v4.xml" \
+  test/unit/test_flow_setup.py "$U" test/unit/transfer_web/test_web_transfers.py \
+  test/unit/transfer_web/test_file_location.py "$I/test_tcp_file_transfer.py" \
+  "$I/test_tcp_transfer_control.py" "$I/test_tcp_transfer_resume.py" "$I/test_crypto_tcp.py" \
+  "$I/test_tcp_async_server.py" "$I/test_tcp_broadcast_alloc.py" \
+  test/integration/test_forward_extension.py test/integration/test_forward_msg_attribution.py
+```
+
+**V4 退出 0：`847 passed, 1 skipped in 847.25s (0:14:07)`**。JUnit 848 项，0 失败、0 错误。唯一跳过：`test_receiver_pause_start_waits_for_real_rekey_without_blocking_key_reader[plain-alias]`，明文配置不适用 re-key；同一用例的 `encrypted`、`encrypted-async-untracked-wildcard` 两组均实际通过，不是缺少加密库。这是计划中的受影响范围合并回归，不是整个仓库的所有测试。
+
+| V4 范围 | 通过 / 跳过 |
+|---|---:|
+| `test_flow_setup`、`unit/network_api` | 85 + 457 / 0 |
+| Web `test_web_transfers`、`test_file_location` | 11 + 10 / 0 |
+| `test_tcp_file_transfer`、`test_tcp_transfer_control`、`test_tcp_transfer_resume` | 37 + 95 + 81 / 1 |
+| `test_crypto_tcp`、`test_tcp_async_server`、`test_tcp_broadcast_alloc` | 22 + 9 + 18 / 0 |
+| `test_forward_extension`、`test_forward_msg_attribution` | 15 + 7 / 0 |
+
+**独立 TCP 场景**：分别执行 `"$P" /tmp/pyflow-forward-one-to-one-smoke.py --case baseline`、`--case split`、`--case pressure`、`--case session`，最终各退出 **0**。不调用 pytest 入口，不代答握手、端口或 ACK；同步闸门只安排真实 I/O 时序，断线通过关闭实际 socket 触发。
+
+| 路径 | 本轮结论与可定位证据 |
+|---|---|
+| P1 覆盖 | `baseline`：缺省和显式 False 分别只产生一个 upstream FID `6396275316`、`6592669000`；每组 1 上行 / 2 下行。B/C 文件均已完整但扣住 C 的 ACK 时，完成集合只有 B，源未成功；放开后各组均为 2 个真实子 ACK、1 个最终 ACK。 |
+| P2 覆盖 | 自身唯一目标未分 FID；混合自身、重复、未连接、Server、同 IP 不同端口和无效文件后只向 B、C 交付。真实回环 HTTP multipart `POST /api/send_file`（False）、`POST /api/send_folder`（True）及 `GET /api/transfers` 均返回 200；扣住 ACK 时 Web 读到对应 FID，收尾后核对嵌套目的路径、4,011 / 9,023 B 内容。HTTP 接单不作为交付成功；未测试浏览器交互。V4 另验目录冲突首项保留及不同相对目录。 |
+| P3 覆盖 | `split`：x→B、x→C 的 upstream FID/数据端口分别为 `8577173170:52143`、`12872140466:34987`。普通批量、目录和另一条转发共用 3 个名额，使用峰值 **3/3**。V4 的第四对在等待时没有 FID、进度行或数据端口。 |
+| P4 覆盖 | `baseline` 中 B 暂停后共享 route 的 6 个角色均确认，源确实进入暂停等待，C 可以继续该任务；`split` 中 x→B 在 1,024 B 确认暂停时另三对均有最终 ACK，B 在原 socket 继续。`pressure` 中显式 start 不能开满额闸门，释放额度未取消用户暂停。 |
+| P5 覆盖 | 见下表。另执行 `"$P" -B /tmp/pyflow-a4-replay-budget.py`（退出 0）：首次共享路由先由 E 确认、D 断线；切换发送端开关后 D 从落盘 **6 B**、原 FID `7388771744` / child `5088227418` 恢复。它与新的单目标及双目标路由**同时**有 3 条上行、4 条下行，在同一预算上等待，各 pump 占用 **0 / 8 / 0 B**，峰值 8/8 B；最终 5 份接收内容相符、3 个源端最终 ACK、余额 0，E 未重新收件。 |
+| P6 覆盖 | V4 对乱序端口应答按实际 socket + FID 匹配。`session` 中等名额的旧命令未借新控制连接；跟踪关闭时拒绝 FID `4466522086`，健康 FID `8761489382` 正常完成。显式关闭时未发起项未建持久行、未开新数据连接。 |
+| P7 覆盖 | 同一文件两份在途，V4 观察 B 的成功不清掉 C 的五字段行，部分文件与 EOF 未确认均按原 child/路径只重放 C。`session` 独立读回快照：原 upstream `5829132394`、child `8229536116` 恢复偏移 8,192 B，不用源已发送的 24,576 B；普通发送占用名额时回复重复请求不多占，完成后余额归零。空文件 FID `14419066986` 的目标已 ACK、源漏最终 ACK 时，仅补最终确认，不多开下游。 |
+| P8 本机范围覆盖，跨平台未验 | V4 及四场景含线程/asyncio、明文/加密、跟踪开/关、系统/手动端口、别名及通配绑定。实际普通直传收到 1 个 ACK；消息由原发送者身份到达；落盘扩展真实上传一次、Server 从磁盘向两个目标推送各获 ACK，三者均未增原生 pump。原生转发时 Server 接收目录无文件。检查了内容、端口、owner、预算和线程；扩展通用线程池在 `stop()` 后的例外见下。 |
+
+**S-pressure 明细（字节）**：每行 2 个不同源、1 单目标和 1 双目标路由，5 个控制连接、5 个数据连接；实测 2 个 reader 均曾等额度。计费含队列及 writer 已取出但未返回的份额。峰值由预留时累计峰值和独立采样核对，所有组最终余额、等待者、活跃 relay、额外端口均为 0。
+
+| 场景 | 限额 / 实测峰值 | 累计预留 / 归还 | 源最终 ACK（两源） | 真实子 ACK |
+|---|---:|---:|---|---:|
+| 用户暂停后排空 | 1 / 1 | 856 / 856 | 是 / 是 | 3 |
+| 加密、asyncio、下游 writer 实际失败 | 512 / 512 | 615023 / 615023 | 否 / 是 | 2 |
+| 手动端口、等额度的源断线 | 256 / 256 | 307220 / 307220 | 是 / 否 | 1 |
+| asyncio、满额停服 | 128 / 128 | 145 / 145 | 否 / 否 | 0 |
+
+**加密与日志边界抽查（P6–P8）：** `"$P" -B /tmp/pyflow-a4-wire.py` 退出 0。手动端口（沿用 A2 隔离实例的不同 `port_add_step`）、加密、两个并发单目标任务；扣住 C 的最终 ACK 并真实断开 C 的控制 socket，原端点重连，再以 EOF **36,867 B** 重放。首发两条 `/forward_item` 和一条恢复请求在控制通道实际写出 3 个完整帧。接收解码边界的首发/重放原始字节流中，三条上行分别解析出 **6、6、3** 个完整帧，对应下行也是 **6、6、3**；未观察到测试正文标记。原 FID/child、内容、ACK 和手动端口归还均核对。普通日志开启、debug 关闭时，在 stdout/stderr 及实际生成的 14 份收发消息/事件日志与进度快照中未检出测试正文标记或两种 PEM 私钥头。没有打印密钥、正文或密文。此证据不等于审计了所有日志字段、debug 模式、握手引导流量、外部代理或 Web 鉴权。
+
+### 中间失败、存量风险及合并前闸门
+
+- `session` 首次退出 1：临时子脚本误把启动器的两行放在目标地址初始化处，解析报 `SyntaxError`，尚未运行协议。恢复初始化语句后原断言通过；未改仓库测试或生产代码。
+- `baseline` 首次退出 1：真实 Web、普通直传、消息、扩展 ACK 和文件均已核对，但将“所有新增进程线程”都当作原生传输线程，停服后断言失败。复测保留传输和最终线程清理断言，并记录扩展任务的真实 `Future`、线程归属和栈：`stop()` 后 **0 个原生传输线程，1 个空闲 Server 通用线程池 worker**，对应扩展任务已成功返回。临时实例的 executor 显式 `shutdown(wait=True)` 后才达到整个 fixture 零新增线程，**不归功于 `stop()`**。
+- 溯源：另从改前 `ddb71c9` 解出 `PyFlow`，真实 Server 调用 `submit_task(threading.current_thread).result()` 后 `stop()`；同样得到 `finished_future=True post_stop_pool_thread_alive=True stack=concurrent.futures.thread._worker`。不是本次转发的在途 owner 泄漏；反复创建/销毁扩展实例的线程池生命周期仍是存量风险，未越权修改。
+- 范围复查（`ddb71c9..d219be8`）：变动 17 个文件；生产仅 `connect_tcp.py` 与 `flow_setup.py`，无 CI、依赖、coverage、Web UI、消息或落盘扩展实现变动。比较两个构造器 AST，旧位置参数及缺省值均保留；只有 Client 追加 `is_forward_one_to_one=False`。6 个已改测试文件的既有 `test_*` 名称无删除、新增 8 个，增量中无新增 skip/xfail/ignore 或容错退出标记；旧压力断言改为真实扣住 writer、严格不越界，不是删背压测试。
+- 规则沉淀：P1–P8 路径清单、V1–V4 精确节点和真实 TCP 回归已入库；双模式 FID/ACK、跨路由严格预算、旧会话取消和按真实 offset 恢复可机械重验。文件传输指南、Client/Server API、实例配置和变更记录已在 A1–A3 随实现更新。`max_mem_buff` 的严格总额保证须升级 Server；不是 `max_thread_num`、带宽或进程内存保证。
+
+**最终结论：** P1–P7 及 P8 的上述 Linux 组合有运行证据；保留唯一的明文 re-key 不适用项、扩展通用线程池退出行为，以及 A2 报告的同机手动端口冲突边界。未运行原生 Windows、macOS、自由线程解释器、全部配置笛卡尔积或全仓测试；模拟的 Windows 端口异常不算 Windows 验证。没有把这些边界视为已获人工豁免。
+
+A4 工作树交付仅为本报告与计划状态。临时验收脚本、源码副本、测试日志/XML、测试密钥与传输文件已清理。**未创建提交、合并或推送；合并前最后一项为人类接受上述结果与边界。**
