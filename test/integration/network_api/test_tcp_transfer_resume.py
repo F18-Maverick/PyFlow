@@ -2520,6 +2520,150 @@ def test_forward_route_survives_a_refused_target_listener_and_reload(tmp_path, m
         _close_socket_workers(server, clients, workers)
 
 
+@pytest.mark.parametrize("at_eof", [False, True], ids=["partial", "before-final-ack"])
+def test_forward_one_to_one_session_recovery(tmp_path, monkeypatch, at_eof):
+    """B's final ACK cannot erase C's same-path row; only C replays after reconnect."""
+    chunk = 8192
+    workers = _track_socket_workers(monkeypatch)
+    server = _start_server(tmp_path, file_transfer_chunk_len=chunk)
+    clients = []
+    b_ready, c_ready, replay_ready = (threading.Event() for _ in range(3))
+    finish_b, retire_c, finish_replay = (threading.Event() for _ in range(3))
+
+    def gate_ack(target, ready, release):
+        send = target.send_message
+
+        def gated(sock, message, is_send_raw=False):
+            if message == target.server_received_file_data_sign and not release.is_set():
+                ready.set()
+                assert release.wait(20), "final target ACK was not released"
+            return send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(target, "send_message", gated)
+
+    try:
+        source = _start_client(tmp_path, server, name="source", is_forward_one_to_one=True,
+                               max_thread_num=2, file_transfer_chunk_len=chunk)
+        clients.append(source)
+        for name in ("B", "C"):
+            clients.append(_start_client(tmp_path, server, name=name, recv_dir=tmp_path / name,
+                                         client_port=free_port(), file_transfer_chunk_len=chunk))
+        _, b, c = clients
+        origin, bp, cp = (node.client_socket.getsockname() for node in clients)
+        assert wait_until(lambda: {origin, bp, cp} <= server.clients.keys())
+        path = tmp_path / "same source.bin"
+        payload = os.urandom(4 * chunk + 17)
+        path.write_bytes(payload)
+        destination = "original/nested path"
+        c_output = tmp_path / "C" / destination / path.name
+        gate_ack(b, b_ready, finish_b)
+        if at_eof:
+            gate_ack(c, c_ready, retire_c)
+        else:
+            receive = c.receive_message
+
+            def stop_after_prefix(sock, size):
+                if sock is not c.client_socket and not retire_c.is_set() and any(
+                    row[0] >= chunk for row in c.file_recv_progress.copy().values()
+                ):
+                    c_ready.set()
+                    assert retire_c.wait(20), "partial receiver was not released"
+                return receive(sock, size)
+
+            monkeypatch.setattr(c, "receive_message", stop_after_prefix)
+
+        outcomes, dispatches = [], []
+        real_forward = source._forward_one
+
+        def observe_forward(*args, **kwargs):
+            ok = real_forward(*args, **kwargs)
+            outcomes.append((tuple(args[4]), ok))
+            return ok
+
+        def observe_dispatch(peer, msg):
+            if isinstance(msg, str) and msg.startswith("/file "):
+                dispatches.append((peer, int(shlex.split(msg)[-1])))
+
+        monkeypatch.setattr(source, "_forward_one", observe_forward)
+        server.add_send_message_listener(observe_dispatch)
+        source.forward_file_console(shlex.join(["/forward_file", str(path), repr(bp),
+                                                repr(cp), destination]))
+        assert b_ready.wait(15) and c_ready.wait(15)
+        rows = source.file_upload_progress.copy()
+        assert len(rows) == 2 and all(row[3] == str(path) for row in rows.values())
+        keys = {row[4]: key for key, row in rows.items()}
+        b_key, c_key = keys[bp], keys[cp]
+        assert b_key[0] == c_key[0] == (source.host, source.port) and b_key != c_key
+        route = server._fid_routes[c_key[1]]
+        child = route["targets"][cp]
+        b_child = server._fid_routes[b_key[1]]["targets"][bp]
+        assert child != b_child and set(route["targets"]) == {cp}
+        assert wait_until(lambda: source.file_upload_progress[c_key][0] == len(payload))
+        old = c.client_socket
+        # Server FIN first keeps C's configured port reusable. Its native
+        # control teardown closes the blocked read/ACK socket, not B's leg.
+        server.clients[cp]["socket"].shutdown(socket.SHUT_WR)
+        c.receive_thread.join(10)
+        assert not c.receive_thread.is_alive() and not c.running
+        c._release_client_socket()
+        retire_c.set()
+        assert wait_until(lambda: outcomes == [((cp,), False)] and cp not in server.clients
+                          and not c._receive_transfers, timeout=10)
+        offset = c_output.stat().st_size
+        if at_eof:
+            assert offset == len(payload)
+        else:
+            assert 0 < offset < len(payload)
+        assert c_output.read_bytes() == payload[:offset]
+        assert c.file_recv_progress[child] == [offset, len(payload), None, str(c_output), origin]
+        finish_b.set()
+        assert wait_until(lambda: outcomes == [((cp,), False), ((bp,), True)]
+                          and not server._forward_relays, timeout=15)
+        assert (tmp_path / "B" / destination / path.name).read_bytes() == payload
+        assert server._fid_routes == {c_key[1]: route} and not route["completed"]
+        assert server._fid_route_index == {(cp, child): c_key[1]}
+        assert set(source.file_upload_progress) == {c_key} and not b.file_recv_progress
+        with open(source.file_trans_progress_file, encoding="utf-8") as snapshot:
+            assert json.load(snapshot)["upload"] == {
+                json.dumps(c_key, separators=(",", ":")):
+                    [len(payload), len(payload), None, str(path), list(cp)]
+            }
+
+        # Count successful replay traffic, not attempted sends. C must request
+        # its disk offset even though the source had already uploaded everything.
+        requests, sizes = [], []
+
+        def observe_replay(_, msg):
+            if isinstance(msg, bytes):
+                sizes.append(len(msg))
+            elif msg.startswith("/forward_item "):
+                requests.append(shlex.split(msg))
+
+        source.add_send_message_listener(observe_replay)
+        gate_ack(c, replay_ready, finish_replay)
+        assert c.connect() and c.client_socket is not old and c.client_socket.getsockname() == cp
+        assert replay_ready.wait(15)
+        assert requests == [["/forward_item", "file", f"fid={c_key[1]}", f"resume={offset}",
+                             path.name, repr(cp)]]
+        assert server._fid_routes[c_key[1]] is route and not route["completed"]
+        assert c_key in source.file_upload_progress and len(outcomes) == 2
+        finish_replay.set()
+        assert wait_until(lambda: outcomes == [((cp,), False), ((bp,), True), ((cp,), True)]
+                          and not server._forward_relays, timeout=15)
+        assert sum(sizes) == 4 + len(path.name.encode()) + 8 + len(payload) - offset
+        initial = [(f"{bp[0]}:{bp[1]}", b_child), (f"{cp[0]}:{cp[1]}", child)]
+        assert sorted(dispatches[:2]) == sorted(initial) and dispatches[2:] == [initial[1]]
+        assert c_output.read_bytes() == payload
+        assert not server._fid_routes and not server._fid_route_index
+        assert wait_until(lambda: not source.file_upload_progress and not c.file_recv_progress
+                          and not server._receive_transfers and not source._resume_sends)
+    finally:
+        retire_c.set()
+        finish_b.set()
+        finish_replay.set()
+        _close_socket_workers(server, clients, workers)
+
+
 def test_forward_route_is_removed_only_after_all_real_targets_complete(tmp_path, monkeypatch):
     """A completed sibling leaves the route live until the other real ACK arrives."""
     workers = _track_socket_workers(monkeypatch)
@@ -2554,12 +2698,18 @@ def test_forward_route_is_removed_only_after_all_real_targets_complete(tmp_path,
         payload = os.urandom(96 * 1024)
         src.write_bytes(payload)
         result = {}
-        sender = threading.Thread(
-            target=lambda: result.update(ack=source._forward_one(
-                "file", "", src.name, str(src), targets)), daemon=True,
-        )
-        sender.start()
+        senders = []
+        transfer = source.file_transfer_mode
+
+        def observe_upload(*args, **kwargs):
+            senders.append(threading.current_thread())
+            result["ack"] = transfer(*args, **kwargs)
+            return result["ack"]
+
+        monkeypatch.setattr(source, "file_transfer_mode", observe_upload)
+        source.forward_file_console(shlex.join(["/forward_file", str(src), *map(repr, targets)]))
         assert held.wait(15), "the second Target never reached its final ACK"
+        sender, = senders  # The default public command opened one shared upload.
         assert sender.is_alive() and result == {}
         assert len(server._fid_routes) == 1
         fid, route = next(iter(server._fid_routes.items()))

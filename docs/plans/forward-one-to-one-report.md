@@ -1,6 +1,6 @@
 # 原生 TCP 文件转发 — 分阶段实施报告
 
-**状态：A1 已审计放行。A2 已完成局部验证，待人工审查；本轮未提交、未开始 A3。** [更改计划](forward-one-to-one-plan.md) · [需求卡](forward-one-to-one-requirements.md)
+**状态：A1、A2 已审计放行。A3 已完成局部验证，待人工审查；本轮未提交、未开始 A4。** [更改计划](forward-one-to-one-plan.md) · [需求卡](forward-one-to-one-requirements.md)
 
 ## A1：Server 共享字节预算
 
@@ -91,4 +91,44 @@ P=.venv/bin/python; U=test/unit/network_api; I=test/integration/network_api
 
 - 同一请求可推导的目的路径冲突只在本次命令内跳过；不承诺远端文件系统别名或跨命令互斥。暂停任务仍占名额；`max_thread_num=1` 下等待不表示任务间共享暂停状态。
 - 未运行 V3、V4 或全量回归，未运行 Windows、macOS、自由线程 Python；未单独启动 Web UI、消息转发或落盘扩展。未改这些模块、CI、依赖或 A1 的 Server 预算。本轮的加密观测是转发数据通道，不是全协议抓包审计。
-- A2 交付待审。A3 的固化集成证据和 A4 总验收未开始。
+- A2 后续审查结论：已放行，已授权 A3。A4 总验收未开始。
+
+## A3：同一路径的独立交付、暂停与恢复
+
+**意图：** 用真实控制连接、数据连接、文件和最终 ACK 固化区分两种模式的回归。只改集成测试、使用说明、变更记录和计划/报告；没有改生产代码、配置、依赖或 CI。
+
+| 文件 | 要防止的回归 |
+|---|---|
+| `test/integration/network_api/test_tcp_transfer_control.py` | `test_forward_one_to_one_pause_isolation` 从原生控制台同时发 x、y 给 B、C。真实首块写出后暂停 x→B，放开测试闸门，等发送线程确实进入原生暂停等待。C 自行暂停再继续；必须在 B 仍停着时得到另外三对的源端成功结果，再让 B 沿原 socket 完成。 |
+| `test/integration/network_api/test_tcp_transfer_resume.py` | `test_forward_one_to_one_session_recovery` 扣住 B 的 ACK，在 C 只写入前缀或已写完但尚未 ACK 时真实断开 C 的控制连接。B 成功收尾后，源快照和服务端 route/index 只能剩 C；C 原端点重连时检查 replay 的 FID、child、原嵌套路径、实际偏移及发送字节数。原共享路由的全目标 ACK 用例改从**缺省控制台命令**进入，同时保留此前的断言。 |
+| 使用说明及变更记录 | `docs/source/File_Transfer/File_Transfer.rst`、`docs/source/changes/forward-one-to-one.md` 说明同源路径可有两行、如何区分，以及为何进度到 EOF 不等于交付成功。 |
+
+### V3 局部验证
+
+```bash
+P=.venv/bin/python; I=test/integration/network_api
+"$P" -m pytest -q "$I/test_tcp_transfer_control.py::test_forward_one_to_one_pause_isolation" "$I/test_tcp_transfer_resume.py::test_forward_one_to_one_session_recovery" "$I/test_tcp_transfer_resume.py::test_concurrent_forward_upload_handshakes_match_out_of_order_replies" "$I/test_tcp_transfer_resume.py::test_forward_route_is_removed_only_after_all_real_targets_complete"
+```
+
+退出 **0：7 passed in 44.63s**，无跳过。7 项分别为暂停隔离的 3 种配置、单目标重连的 2 个中断点、已有的乱序握手和默认共享路由对照：
+
+- **P3/P4：** 明文线程（配置别名）、加密线程、加密 asyncio（关闭跟踪、通配绑定）均观察到 x→B 在真实暂停等待中，三个兄弟任务已由源端收到最终 ACK 并单独清理；B 继续后所有文件逐字节相符。关闭跟踪不生成上传行，控制仍可用。
+- **P6/P7：** 同一份 **32,785 B** 文件发往 B、C，源端实际有两个不同的 `(server_peer, fid)`。C 断线和 B 的真实 ACK 只留下 C 的五字段上传记录和原路由。两种情况下都从同一端点重连，只向 C 的原 child 重新发起请求，恢复沿用同一 upstream FID 和原嵌套路径。部分文件仅补剩余字节；文件已全但 C 尚未发 ACK 的分支只发头、不发正文，扣住重放 ACK 时路由和源记录都还在。核对接收内容、成功写入的头/正文长度、重复派发次数和源端最终结果。
+- **P1/P6 对照：** 默认控制台请求只建立一条上行和一条双目标 route。第二个目标的 ACK 没发出时，两个文件虽然均已写完，源端仍未成功；放行 ACK 后才收尾。已有乱序端口应答测试仍通过。
+
+### 本轮独立场景（非 pytest 入口）
+
+Linux x86-64，CPython 3.10.20，隔离临时目录。本轮实际重新执行，两条命令最终均退出 **0**：
+
+```bash
+.venv/bin/python /tmp/pyflow-forward-one-to-one-smoke.py --case split
+.venv/bin/python /tmp/pyflow-forward-one-to-one-smoke.py --case session
+```
+
+- **S-split（P3/P4）：** 明文、asyncio Server、配置别名；同一个 x 的 upstream FID/数据端口分别是 `8131132158:59997`（B）及 `12426099454:34509`（C）。x→B 在 1,024 B 确认暂停，另外三对完成，B 在原 socket 继续；连同另一条目录转发及普通批量发送，实测发送名额峰值 3/3，转发子 ACK 6、成功发送 8，最终活跃 owner 和额外端口均为 0。
+- **S-session（P6/P7）：** 明文、线程 Server，原控制端点重连，等名额的首次发送未跨会话。原 upstream `8404201258`、child `7397563762` 在普通发送占用唯一名额时等待，重复恢复请求未多开流；源五字段快照独立读回，释放名额后从接收盘实际的 8,192 B 续传。空文件在目标已 ACK、最终 ACK 写失败之后补确认，未增加下游。关闭跟踪时拒绝目标/健康目标 FID 为 `7823031870` / `12117999166`；显式关闭后 owner、路由、数据 socket、占用名额均为 0。
+- 初次运行两条命令均退出 1：临时 smoke 入口少一个右括号，Python 在解析阶段报 `SyntaxError`，未建立连接。仅修正临时脚本后重跑，没有以先前阶段结果代替本轮验证。
+
+### 范围与下一闸门
+
+临时脚本已删除。A3 只验本机 Linux 的上述路径；未跑 Windows、macOS、自由线程 Python、手动端口矩阵、Web/消息/落盘扩展或全项目回归。加密配置参与功能验证，不替代抓包审计；本轮未修改加密或资源计账契约。A4 的 V4、全路径总验收及合并前闸门尚未执行，需另行授权。

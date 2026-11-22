@@ -536,6 +536,14 @@ pair keeps its slot. Disconnect cancels pairs still waiting; it does not move
 them to the new session. An interrupted upload with retained progress replays
 the original FID and route, not a new batch. There is no batch ACK.
 
+When tracking is enabled, forwarding ``x`` to B and C in one-to-one mode
+creates two upload rows with the same source path. Use the **FID and logical
+target**, not the pathname, to distinguish them. If B confirms delivery and
+C disconnects, only B's row is removed. On reconnect C keeps its child FID
+and destination path; the source resumes its original upload from C's disk
+offset. Even if C already has every byte, reaching EOF is not a final ACK.
+With the default shared upload, B's ACK alone does not retire the route.
+
 The data path reuses the protocol's own transfer
 machinery:
 

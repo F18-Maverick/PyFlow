@@ -594,6 +594,91 @@ def _relay_done(relay_clients, run, *, failed=False):
         assert not server._fid_routes and not server._fid_route_index
 
 
+def test_forward_one_to_one_pause_isolation(relay_clients, tmp_path, monkeypatch):
+    """A paused x→B keeps its socket while x→C and both y deliveries finish."""
+    server, source, (b, c), releases = relay_clients
+    source.is_forward_one_to_one = True
+    chunk = source.file_transfer_chunk_len = 1024
+    x, y = tmp_path / "x.bin", tmp_path / "y.bin"
+    for path in (x, y):
+        path.write_bytes(os.urandom(chunk * 4))
+    b_addr, c_addr = b.client_socket.getsockname(), c.client_socket.getsockname()
+    xb, xc = (x, b_addr), (x, c_addr)
+    siblings = {xc, (y, b_addr), (y, c_addr)}
+    server_peer = (source.host, source.port)
+    go_b, go_others, paused_at_reader = (threading.Event() for _ in range(3))
+    releases.extend((go_b, go_others))
+    local = threading.local()
+    fids, writes, results = {}, {}, {}
+    transfer, send = source.file_transfer_mode, source.send_message
+    wait = source._transfer_pause_cond.wait
+
+    def record_transfer(path, *args, **kwargs):
+        local.pair = pair = (Path(path), kwargs["peer"])
+        fids[pair] = kwargs["fid"]
+        results[pair] = transfer(path, *args, **kwargs)  # Includes the real final ACK.
+        return results[pair]
+
+    def hold_after_first_block(sock, data, is_send_raw=False):
+        sent = send(sock, data, is_send_raw=is_send_raw)
+        pair = getattr(local, "pair", None)
+        if sent and pair is not None and isinstance(data, bytes) and len(data) == chunk:
+            stream = writes.setdefault(pair, [])
+            stream.append(sock)
+            if len(stream) == 1:
+                assert (go_b if pair == xb else go_others).wait(30)
+        return sent
+
+    def observe_pause_wait(timeout=None):
+        if getattr(local, "pair", None) == xb:
+            paused_at_reader.set()
+        return wait(timeout)
+
+    monkeypatch.setattr(source, "file_transfer_mode", record_transfer)
+    monkeypatch.setattr(source, "send_message", hold_after_first_block)
+    monkeypatch.setattr(source._transfer_pause_cond, "wait", observe_pause_wait)
+    source.forward_file_console(shlex.join(["/forward_file", str(x), str(y), repr(b_addr),
+                                            repr(c_addr)]))
+    assert wait_until(lambda: writes.get(xb) and writes.get(xc), timeout=20)
+    original = writes[xb][0]
+    assert fids[xb] != fids[xc] and original is not writes[xc][0]
+
+    def legs(pair, receiver):
+        route = server._fid_routes[fids[pair]]
+        assert set(route["targets"]) == {pair[1]}
+        child = route["targets"][pair[1]]
+        return (source._transfer_controls._legs[(server_peer, fids[pair], 1, 0)],
+                receiver._transfer_controls._legs[(server_peer, child, 1, 1)])
+
+    b_legs, c_legs = legs(xb, b), legs(xc, c)
+    assert _control(b, b_legs[1], True)
+    _confirmed(b_legs, True)
+    _confirmed(c_legs, False)
+    go_b.set()  # Now only the user's pause, not the test gate, can hold x→B.
+    assert paused_at_reader.wait(10)
+    for pause in (True, False):
+        assert _control(c, c_legs[1], pause)
+        _confirmed(c_legs, pause)
+        assert all(leg["confirmed_state"] for leg in b_legs)
+    go_others.set()
+    assert wait_until(lambda: all(results.get(pair) is True for pair in siblings), timeout=20)
+    assert set(results) == siblings and writes[xb] == [original]
+    assert wait_until(lambda: set(server._fid_routes) == {fids[xb]})
+    assert source._active_transfer_sockets[(server_peer, fids[xb])] is original
+    expected_rows = {(server_peer, fids[xb])} if source.is_enable_file_transfer_progress_bar else set()
+    assert set(source.file_upload_progress) == expected_rows
+
+    assert _control(b, b_legs[1], False)
+    assert wait_until(lambda: results.get(xb) is True, timeout=15)
+    assert len(writes[xb]) > 1 and all(sock is original for sock in writes[xb])
+    for receiver in (b, c):
+        for path in (x, y):
+            assert (Path(receiver.file_transfer_dir) / path.name).read_bytes() == path.read_bytes()
+    assert wait_until(lambda: not server._fid_routes and not server._forward_relays and
+                      all(not obj._transfer_controls._legs and not obj._active_transfer_sockets
+                          for obj in (source, server, b, c)))
+
+
 @pytest.mark.parametrize("issuer", ["source", "server-upstream", "server-alias", "target-a", "target-b"])
 def test_relay_global_pause_drains_queued_bytes_and_any_target_can_start(
     relay_clients, tmp_path, monkeypatch, issuer

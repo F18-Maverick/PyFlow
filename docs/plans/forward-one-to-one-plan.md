@@ -1,6 +1,6 @@
 # connect_tcp 原生一对一转发 — 更改计划
 
-状态：**A1 已审计放行，需求方已授权 A2；A3–A4 未获实施授权**。依据：[需求卡与 P1–P8](forward-one-to-one-requirements.md)、[文件转发词汇表](../../GLOSSARY.md)。下文列计划；已执行的命令和结果另记入[阶段报告](forward-one-to-one-report.md)。
+状态：**A1、A2 已审计放行，需求方已授权 A3；A4 未获实施授权**。依据：[需求卡与 P1–P8](forward-one-to-one-requirements.md)、[文件转发词汇表](../../GLOSSARY.md)。下文列计划；已执行的命令和结果另记入[阶段报告](forward-one-to-one-report.md)。
 
 ## 1. 决策与接口
 
@@ -71,7 +71,7 @@ flowchart TD
 
 ## 5. 可执行验收与证据
 
-下列 V1–V4 是各阶段的验收命令。V1、V2 的实际结果见[阶段报告](forward-one-to-one-report.md)；V3、V4 尚未执行，不能将规划中的节点视为已通过。
+下列 V1–V4 是各阶段的验收命令。V1–V3 的实际结果见[阶段报告](forward-one-to-one-report.md)；V4 尚未执行，不据局部结果推断总验收通过。
 
 ```bash
 P=.venv/bin/python
@@ -104,4 +104,4 @@ $P -m pytest -q test/unit/test_flow_setup.py "$U" test/unit/transfer_web/test_we
 
 风险集中在：锁顺序与配额归还、同路径不同 FID 的并发快照、突然关闭/重连时的所有权。优先复用 `_transfer_handshakes`、进度锁/原子写入、`palloc/pfree` 和现有加密读写；核对注册/删除与快照的一致性，不借此重构整套 TCP。源文件发送途中被修改、跨进程写同一进度文件、不同命令/不同发送者在接收盘上写到同一实际路径、NAT 或端点变更、同 FID 旧控制消息的代次隔离，均不作新增保证。
 
-实施闸门：本轮只交付 A2 供人工审查；明确授权后才开始 A3。不自动提交、合并或推送。
+实施闸门：本轮只交付 A3 供人工审查；明确授权后才进入 A4 总验收。不自动提交、合并或推送。
