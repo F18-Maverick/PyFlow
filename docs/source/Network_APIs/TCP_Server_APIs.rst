@@ -59,10 +59,11 @@ The parameters of the ``__init__`` method are as follows:
   user-supplied RSA keys. Both files must exist, parse as PEM, and pair
   with each other; an invalid pair is silently ignored and the default
   key lookup is used instead (``None`` keeps the default lookup).
-- ``max_mem_buff``: The forward pump's queued-byte high-water mark, in MiB and
-  stored as bytes. The reader waits for low-water drain, applying TCP flow
-  control independently of user pause/start. One fan-out enqueue may overshoot;
-  it is not a total process RAM ceiling. The default is 2048.
+- ``max_mem_buff``: Shared queue budget for all native file and folder relays
+  on this server, in MiB (default 2048). Each downstream copy of a header or
+  body segment counts until its send returns or the copy is discarded. When
+  the shared budget is full, readers wait without changing user pause/start
+  state. This limits pending delivery bytes, not total process RAM.
 - ``recv_messages_chunk_len``: The number of bytes read per receive on the
   control connection, covering commands and messages. The default is 4096.
 - ``file_transfer_chunk_len``: The chunk size in bytes for streaming a file

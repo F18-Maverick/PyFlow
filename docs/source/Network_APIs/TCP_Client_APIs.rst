@@ -32,7 +32,9 @@ the TCP server and exchange data with the server.
             is_debug: Any=False,
             is_print_log: Any=True,
             is_enable_file_transfer_progress_bar: Any=True,
-            is_enable_real_time_network_speed: Any=True) -> None:
+            is_enable_real_time_network_speed: Any=True,
+            is_auto_reconnect: Any=False,
+            is_forward_one_to_one: Any=False) -> None:
             ...
 
 The TCP Client Setup API is defined in the ``TCP_Client_Base`` class.
@@ -44,7 +46,8 @@ The parameters of the ``__init__`` method are as follows:
 - ``client_port``: The local port number to bind the client socket to (``None`` means let the OS choose).
 - ``timeout``: The socket timeout in seconds for connection and receive operations. ``None`` (the default) is not "no timeout": the socket then uses a fixed 5-second timeout, and receive timeouts are swallowed by the receive loop (it simply continues).
 - ``port_add_step``: The step size for incrementing the port number (used only in manual allocation mode).
-- ``max_thread_num``: The maximum number of threads for concurrent file transfer operations.
+- ``max_thread_num``: File send slots shared by ordinary batch sends and
+  opt-in one-to-one forwards. This is not a process-wide thread limit.
 - ``is_input_command_in_console``: A flag indicating whether to input commands in the console (interactive mode).
 - ``is_wait_server``: A flag indicating whether to keep retrying connection until the server is available.
 - ``max_custom_workers``: The maximum number of custom worker threads.
@@ -99,6 +102,11 @@ The parameters of the ``__init__`` method are as follows:
   ``recv_network_speed`` (bytes per second, a rolling average over
   ``NETWORK_SPEED_WINDOW`` seconds). With ``False`` nothing is measured and
   every speed value is ``None``.
+- ``is_forward_one_to_one``: On the sender only. ``True`` creates one native
+  forward per file entry and distinct target, each with its own upload FID,
+  pause state and final ACK. First sends and forwarded replays share file
+  slots. A paused transfer keeps its slot. Unstarted pairs belong only to the
+  original control connection and are cancelled when it closes.
 
 Every parameter has default values:
 
@@ -142,6 +150,8 @@ Every parameter has default values:
   resume the interrupted transfers, see :ref:`transfer-pause-and-reconnect`.
   The dead session's socket is closed abortively first, so a configured
   ``client_port`` can be bound again — Windows refuses it otherwise)
+- ``is_forward_one_to_one``: Default is ``False`` (one upload per file entry
+  shared by all accepted targets). Existing routes keep their original shape.
 
 The TCP Client Setup API will initialize all the necessary 
 parameters and resources for the TCP client.

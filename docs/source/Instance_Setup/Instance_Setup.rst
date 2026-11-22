@@ -246,7 +246,11 @@ the client entry carries ``host``, ``client_host``, ``port``,
 ``is_wait_server``, ``max_custom_workers``,
 ``is_extend_command``, ``is_enable_encrypto``,
 ``is_custom_keys``, ``max_mem_buff``, ``recv_messages_chunk_len``,
-``file_transfer_chunk_len``, ``is_debug`` and ``is_print_log``.
+``file_transfer_chunk_len``, ``is_debug``, ``is_print_log`` and
+``is_forward_one_to_one``. Set ``"is_forward_one_to_one": true`` on a
+sending client to forward each file entry separately to each target. Omit
+it or use ``false`` to keep the default shared upload. No server or target
+setting is required.
 
 Custom Parameters
 -----------------

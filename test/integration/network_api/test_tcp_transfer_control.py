@@ -487,7 +487,7 @@ def _relay(relay_clients, tmp_path, monkeypatch, *, pressure=False):
     entered = [threading.Event() for _ in range(3)]
     gates = [threading.Event() for _ in range(3)]
     releases.extend(gates)
-    observed = {"reads": 0, "waits": 0, "controls": [], "frames": []}
+    observed = {"reads": 0, "controls": [], "frames": []}
     tail = threading.Event()
     releases.append(tail)
     observed["tail"] = tail
@@ -510,15 +510,16 @@ def _relay(relay_clients, tmp_path, monkeypatch, *, pressure=False):
 
     def pump(up, connections, control, fid, name, relay, offset=0):
         observed["relay"] = relay
-        real_condition_wait = relay["cond"].wait
+        if pressure:
+            cond = server._forward_budget.cond
+            real_condition_wait = cond.wait
 
-        def pressure_wait(timeout=None):
-            if relay["buffer"]["backpressured"]:
-                observed["waits"] += 1
-                waiting.set()
-            return real_condition_wait(timeout)
+            def pressure_wait(timeout=None):
+                if relay["buffer"]["backpressured"]:
+                    waiting.set()
+                return real_condition_wait(timeout)
 
-        monkeypatch.setattr(relay["cond"], "wait", pressure_wait)
+            monkeypatch.setattr(cond, "wait", pressure_wait)
         return real_pump(up, connections, control, fid, name, relay, offset)
 
     def read(sock, count):
@@ -573,8 +574,9 @@ def _relay_done(relay_clients, run, *, failed=False):
     assert not worker.is_alive() and result == {"ack": not failed}
     buffer = relay["buffer"]
     assert buffer["complete"] and not buffer["failed"] and buffer["buffered"] == 0
-    assert buffer["peak"] <= buffer["high_water"] + buffer["max_enqueue"]
-    assert wait_until(lambda: not server._forward_relays)
+    assert wait_until(lambda: not server._forward_relays and not server._receive_transfers)
+    budget = server._forward_budget
+    assert budget.used == 0 and 0 < budget.peak <= server.max_mem_buff
     for target in targets[1:] if failed else targets:
         assert (Path(target.file_transfer_dir) / "relay.bin").read_bytes() == payload
     assert wait_until(lambda: all(not owner._transfer_controls._legs
@@ -590,6 +592,91 @@ def _relay_done(relay_clients, run, *, failed=False):
         assert server._fid_routes[relay["fid"]] is relay["route"]
     else:
         assert not server._fid_routes and not server._fid_route_index
+
+
+def test_forward_one_to_one_pause_isolation(relay_clients, tmp_path, monkeypatch):
+    """A paused x→B keeps its socket while x→C and both y deliveries finish."""
+    server, source, (b, c), releases = relay_clients
+    source.is_forward_one_to_one = True
+    chunk = source.file_transfer_chunk_len = 1024
+    x, y = tmp_path / "x.bin", tmp_path / "y.bin"
+    for path in (x, y):
+        path.write_bytes(os.urandom(chunk * 4))
+    b_addr, c_addr = b.client_socket.getsockname(), c.client_socket.getsockname()
+    xb, xc = (x, b_addr), (x, c_addr)
+    siblings = {xc, (y, b_addr), (y, c_addr)}
+    server_peer = (source.host, source.port)
+    go_b, go_others, paused_at_reader = (threading.Event() for _ in range(3))
+    releases.extend((go_b, go_others))
+    local = threading.local()
+    fids, writes, results = {}, {}, {}
+    transfer, send = source.file_transfer_mode, source.send_message
+    wait = source._transfer_pause_cond.wait
+
+    def record_transfer(path, *args, **kwargs):
+        local.pair = pair = (Path(path), kwargs["peer"])
+        fids[pair] = kwargs["fid"]
+        results[pair] = transfer(path, *args, **kwargs)  # Includes the real final ACK.
+        return results[pair]
+
+    def hold_after_first_block(sock, data, is_send_raw=False):
+        sent = send(sock, data, is_send_raw=is_send_raw)
+        pair = getattr(local, "pair", None)
+        if sent and pair is not None and isinstance(data, bytes) and len(data) == chunk:
+            stream = writes.setdefault(pair, [])
+            stream.append(sock)
+            if len(stream) == 1:
+                assert (go_b if pair == xb else go_others).wait(30)
+        return sent
+
+    def observe_pause_wait(timeout=None):
+        if getattr(local, "pair", None) == xb:
+            paused_at_reader.set()
+        return wait(timeout)
+
+    monkeypatch.setattr(source, "file_transfer_mode", record_transfer)
+    monkeypatch.setattr(source, "send_message", hold_after_first_block)
+    monkeypatch.setattr(source._transfer_pause_cond, "wait", observe_pause_wait)
+    source.forward_file_console(shlex.join(["/forward_file", str(x), str(y), repr(b_addr),
+                                            repr(c_addr)]))
+    assert wait_until(lambda: writes.get(xb) and writes.get(xc), timeout=20)
+    original = writes[xb][0]
+    assert fids[xb] != fids[xc] and original is not writes[xc][0]
+
+    def legs(pair, receiver):
+        route = server._fid_routes[fids[pair]]
+        assert set(route["targets"]) == {pair[1]}
+        child = route["targets"][pair[1]]
+        return (source._transfer_controls._legs[(server_peer, fids[pair], 1, 0)],
+                receiver._transfer_controls._legs[(server_peer, child, 1, 1)])
+
+    b_legs, c_legs = legs(xb, b), legs(xc, c)
+    assert _control(b, b_legs[1], True)
+    _confirmed(b_legs, True)
+    _confirmed(c_legs, False)
+    go_b.set()  # Now only the user's pause, not the test gate, can hold x→B.
+    assert paused_at_reader.wait(10)
+    for pause in (True, False):
+        assert _control(c, c_legs[1], pause)
+        _confirmed(c_legs, pause)
+        assert all(leg["confirmed_state"] for leg in b_legs)
+    go_others.set()
+    assert wait_until(lambda: all(results.get(pair) is True for pair in siblings), timeout=20)
+    assert set(results) == siblings and writes[xb] == [original]
+    assert wait_until(lambda: set(server._fid_routes) == {fids[xb]})
+    assert source._active_transfer_sockets[(server_peer, fids[xb])] is original
+    expected_rows = {(server_peer, fids[xb])} if source.is_enable_file_transfer_progress_bar else set()
+    assert set(source.file_upload_progress) == expected_rows
+
+    assert _control(b, b_legs[1], False)
+    assert wait_until(lambda: results.get(xb) is True, timeout=15)
+    assert len(writes[xb]) > 1 and all(sock is original for sock in writes[xb])
+    for receiver in (b, c):
+        for path in (x, y):
+            assert (Path(receiver.file_transfer_dir) / path.name).read_bytes() == path.read_bytes()
+    assert wait_until(lambda: not server._fid_routes and not server._forward_relays and
+                      all(not obj._transfer_controls._legs and not obj._active_transfer_sockets
+                          for obj in (source, server, b, c)))
 
 
 @pytest.mark.parametrize("issuer", ["source", "server-upstream", "server-alias", "target-a", "target-b"])
@@ -679,25 +766,31 @@ def test_relay_cross_target_start_and_unconfirmed_reverse_intent_reach_source(
 def test_relay_pressure_preserves_user_intent_and_source_start_cannot_open_reader(
     relay_clients, tmp_path, monkeypatch, close_target
 ):
+    written, drained = _observe_target_writes(monkeypatch, tmp_path / "target_b" / "relay.bin", 1024)
     run = _relay(relay_clients, tmp_path, monkeypatch, pressure=True)
     server, source, targets, _ = relay_clients
-    relay, sender, gates, _, _, _, observed, waiting = run
+    relay, sender, gates, _, _, payload, observed, waiting = run
+    budget = server._forward_budget
     upstream, buffer = relay["upstream"], relay["buffer"]
     sockets = [state["owner"] for state in relay["controls"].values()]
     gates[0].set()
     assert waiting.wait(timeout=10)
+    assert observed["tail_waiting"].wait(10)  # A full body block is in flight.
     _confirmed((sender, upstream), False)
-    assert buffer["backpressured"]
+    with budget.cond:
+        assert buffer["backpressured"] and budget.used == buffer["buffered"] == server.max_mem_buff
+        reads = observed["reads"]
     assert _control(server, upstream, True)
     _confirmed((sender, upstream), True)
     assert _control(source, sender, False)
     _confirmed((sender, upstream), False)
-    with relay["cond"]:
-        reads = observed["reads"]
+    with budget.cond:
         waiting.clear()
-        relay["cond"].notify_all()
+        budget.cond.notify_all()
     assert waiting.wait(timeout=10), "reader did not re-enter its pressure gate"
-    assert observed["reads"] == reads and buffer["backpressured"]
+    with budget.cond:
+        assert observed["reads"] == reads and buffer["backpressured"]
+        assert budget.used == budget.peak == server.max_mem_buff
     assert _control(source, sender, True)
     _confirmed((sender, upstream), True)
     assert _control(server, upstream, True)
@@ -705,10 +798,10 @@ def test_relay_pressure_preserves_user_intent_and_source_start_cannot_open_reade
         targets[0].close()
     gates[1].set()
     gates[2].set()
-    assert wait_until(lambda: not buffer["backpressured"], timeout=10)
+    assert drained.wait(10) and written == payload[:1024]
+    assert wait_until(lambda: not buffer["backpressured"] and budget.used == 0, timeout=10)
     assert sender["confirmed_state"] and upstream["confirmed_state"]
-    assert buffer["peak"] <= buffer["high_water"] + buffer["max_enqueue"]
-    assert buffer["peak"] > buffer["high_water"]
+    assert budget.peak == server.max_mem_buff
     assert all(state["owner"] is sock for state, sock in zip(relay["controls"].values(), sockets))
     assert _control(server, upstream, False)
     _relay_done(relay_clients, run, failed=close_target)
