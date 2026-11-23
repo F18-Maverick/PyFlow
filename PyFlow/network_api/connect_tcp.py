@@ -2806,7 +2806,9 @@ class _CustomCommandExecutor(ThreadPoolExecutor):
         current = threading.current_thread()
         worker = getattr(self._worker, "in_pool", False)
         with self._changed:
-            if self._retiring is current or self._state == "stopped":
+            if self._retiring is current:
+                return
+            if self._state == "stopped" and worker:
                 return
             if self._state == "stopping":
                 # A pool handler must not wait for an external closer: that closer
@@ -2850,8 +2852,8 @@ class _CustomCommandExecutor(ThreadPoolExecutor):
     def _finish(self, flush):
         with self._changed:
             self._changed.wait_for(lambda: self._state != "flushing")
-            if self._state == "stopped":
-                return
+            # Repeated external close must flush records appended after the
+            # first terminal close; resource retirement remains idempotent.
             self._state = "flushing"
         completed = False
         try:
