@@ -1,9 +1,13 @@
 
 
 import errno
+import json
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from pathlib import Path
 
 from PyFlow.network_api.connect_tcp import (
     CommandNotFoundError,
+    TCP_Client_Base,
     TCP_Server_Base,
     _is_closed_socket_error,
 )
@@ -363,3 +367,204 @@ def test_real_time_speed_is_a_rolling_window(monkeypatch):
     assert server._measure_network_speed(1000, is_upload=True) is None
     assert server.upload_network_speed is None
     assert server.recv_network_speed is None
+
+
+# ---- custom command pool: shared Server/Client contract ---------------------
+
+
+@pytest.fixture(params=[TCP_Server_Base, TCP_Client_Base], ids=["server", "client"])
+def endpoint(request, tmp_path):
+    owner = request.param(
+        host="127.0.0.1", port=0, is_extend_command=True, max_custom_workers=1,
+        is_enable_encrypto=False, is_input_command_in_console=False, is_print_log=False,
+    )
+    for attr in ("file_trans_progress_file", "messages_log_file", "events_log_file",
+                 "sent_messages_log_file", "sent_events_log_file"):
+        setattr(owner, attr, str(tmp_path / Path(getattr(owner, attr)).name))
+    close = owner.stop if isinstance(owner, TCP_Server_Base) else owner.close
+    yield owner, close
+    close()
+
+
+def test_terminal_close_joins_idle_worker_and_rejects_submit(endpoint):
+    owner, close = endpoint
+    worker = owner.submit_task(threading.current_thread).result(timeout=5)
+    close()
+    assert not worker.is_alive()
+    with pytest.raises(RuntimeError):
+        owner.submit_task(lambda: None)
+
+
+def test_terminal_close_rejects_capacity_waiter_before_running_task_exits(endpoint):
+    owner, close = endpoint
+    started, release, submitting = threading.Event(), threading.Event(), threading.Event()
+    ran = threading.Event()
+
+    def held_task():
+        started.set()
+        release.wait()
+        return threading.current_thread()
+
+    def submit_again():
+        submitting.set()
+        return owner.submit_task(ran.set)
+
+    with ThreadPoolExecutor(max_workers=2) as callers:
+        running = owner.submit_task(held_task)
+        try:
+            assert started.wait(5)
+            waiter = callers.submit(submit_again)
+            assert submitting.wait(5)
+            with pytest.raises(TimeoutError):
+                waiter.result(timeout=0.1)  # admission, not handler execution, blocks
+            closing = callers.submit(close)
+            with pytest.raises(RuntimeError):
+                waiter.result(timeout=5)
+            assert not closing.done() and not running.done()
+            with pytest.raises(RuntimeError):
+                owner.submit_task(ran.set)
+        finally:
+            release.set()
+        closing.result(timeout=5)
+        assert not running.result(timeout=5).is_alive()
+        assert not ran.is_set()
+
+
+def test_failed_pool_submit_does_not_strand_another_capacity_waiter(endpoint, monkeypatch):
+    owner, close = endpoint
+    release, failed = threading.Event(), threading.Event()
+    ready = threading.Barrier(3, timeout=5)
+    real_submit = ThreadPoolExecutor.submit
+
+    def work():
+        return "ran"
+
+    def fail_first(pool, fn, /, *args, **kwargs):
+        if fn is work and not failed.is_set():
+            failed.set()
+            raise OSError("submission failed")
+        return real_submit(pool, fn, *args, **kwargs)
+
+    def contend():
+        ready.wait()
+        try:
+            future = owner.submit_task(work)
+        except OSError as exc:
+            return str(exc)
+        return future.result(timeout=5)
+
+    owner.submit_task(release.wait)
+    monkeypatch.setattr(ThreadPoolExecutor, "submit", fail_first)
+    with ThreadPoolExecutor(max_workers=2) as callers:
+        try:
+            contenders = [callers.submit(contend) for _ in range(2)]
+            ready.wait()
+            for contender in contenders:
+                with pytest.raises(TimeoutError):
+                    contender.result(timeout=0.1)
+            release.set()
+            assert sorted(c.result(timeout=5) for c in contenders) == ["ran", "submission failed"]
+        finally:
+            release.set()
+            close()
+
+
+def test_exception_and_cancel_each_release_exactly_one_custom_slot(endpoint):
+    owner, close = endpoint
+    fail, parked, resume = threading.Event(), threading.Event(), threading.Event()
+    ran, cancelled = threading.Event(), threading.Event()
+
+    def failing_task():
+        fail.wait()
+        raise ValueError("handler failed")
+
+    def park_worker(_future):
+        # The Future has finished but its only worker cannot dequeue the next task yet.
+        parked.set()
+        resume.wait()
+
+    with ThreadPoolExecutor(max_workers=2) as callers:
+        failed = owner.submit_task(failing_task)
+        failed.add_done_callback(park_worker)
+        try:
+            fail.set()
+            with pytest.raises(ValueError, match="handler failed"):
+                failed.result(timeout=5)
+            assert parked.wait(5)
+            queued = callers.submit(owner.submit_task, ran.set).result(timeout=5)
+            assert queued.cancel() and queued.cancel()
+            pending = callers.submit(owner.submit_task, ran.set).result(timeout=5)
+            pending.add_done_callback(lambda _f: cancelled.set())
+            overflow = callers.submit(owner.submit_task, ran.set)
+            with pytest.raises(TimeoutError):
+                overflow.result(timeout=0.1)  # no extra slot from failure or repeated cancel
+            closing = callers.submit(close)
+            assert cancelled.wait(5) and pending.cancelled()
+            with pytest.raises(RuntimeError):
+                overflow.result(timeout=5)
+            assert not closing.done()
+        finally:
+            resume.set()
+            close()
+        closing.result(timeout=5)
+        assert not ran.is_set()
+
+
+def test_self_close_exits_worker_and_flushes_its_last_record(endpoint):
+    owner, close = endpoint
+
+    def handler():
+        close()
+        owner.messages_dict["peer"] = [["after self-close", "t"]]
+        return threading.current_thread()
+
+    worker = owner.submit_task(handler).result(timeout=5)
+    worker.join(timeout=5)  # observe exit before any external teardown
+    assert not worker.is_alive()
+    assert json.loads(Path(owner.messages_log_file).read_text()) == {
+        "peer": [["after self-close", "t"]]
+    }
+
+
+@pytest.mark.parametrize("external_first", [True, False], ids=["external-first", "worker-first"])
+def test_concurrent_closers_retire_once_and_external_callers_join(endpoint, external_first,
+                                                                  monkeypatch):
+    owner, close = endpoint
+    enter, returned, release, retiring = (threading.Event() for _ in range(4))
+    retirements = []
+    free_port = owner.free_port
+
+    def observe_free():
+        retirements.append(threading.current_thread())
+        retiring.set()
+        free_port()
+
+    def handler():
+        enter.wait()
+        close()
+        returned.set()
+        release.wait()
+        return threading.current_thread()
+
+    monkeypatch.setattr(owner, "free_port", observe_free)
+    with ThreadPoolExecutor(max_workers=2) as callers:
+        task = owner.submit_task(handler)
+        try:
+            if external_first:
+                first = callers.submit(close)
+                assert retiring.wait(5)
+            enter.set()
+            assert returned.wait(5)
+            if not external_first:
+                first = callers.submit(close)
+            second = callers.submit(close)
+            for closer in (first, second):
+                with pytest.raises(TimeoutError):
+                    closer.result(timeout=0.1)
+        finally:
+            enter.set()
+            release.set()
+        first.result(timeout=5)
+        second.result(timeout=5)
+    assert not task.result(timeout=5).is_alive()
+    assert len(retirements) == 1

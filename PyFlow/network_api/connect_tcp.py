@@ -2759,6 +2759,110 @@ def _custom_handler_for(command, handlers):
     return handler
 
 
+class _CustomCommandExecutor(ThreadPoolExecutor):
+    """Bound accepted Futures and coordinate terminal teardown for one endpoint."""
+
+    def __init__(self, limit):
+        self._worker = threading.local()
+        super().__init__(max_workers=limit, initializer=setattr,
+                         initargs=(self._worker, "in_pool", True))
+        self._limit = limit
+        self._changed = threading.Condition()
+        self._in_flight = 0
+        self._state = "open"
+        self._retiring = self._retire_error = self._flush_on_idle = None
+
+    def submit(self, fn, /, *args, **kwargs):
+        with self._changed:
+            self._changed.wait_for(
+                lambda: self._state != "open" or self._in_flight < self._limit
+            )
+            if self._state != "open":
+                raise RuntimeError("cannot submit a custom task after shutdown has started")
+            self._in_flight += 1
+            try:
+                future = super().submit(fn, *args, **kwargs)
+            except BaseException:
+                self._in_flight -= 1
+                self._changed.notify()
+                raise
+            # The callback is the only release path for an accepted Future.  It also
+            # runs for a Future cancelled by shutdown(cancel_futures=True).
+            future.add_done_callback(self._release_slot)
+            return future
+
+    def _release_slot(self, _future):
+        flush = None
+        with self._changed:
+            self._in_flight -= 1
+            if not self._in_flight:
+                flush, self._flush_on_idle = self._flush_on_idle, None
+            self._changed.notify()
+        if flush is not None:
+            self._finish(flush)
+
+    def close(self, retire, flush, *, join_receiver=None):
+        """Retire resources once; only an external caller can join all workers."""
+        current = threading.current_thread()
+        worker = getattr(self._worker, "in_pool", False)
+        with self._changed:
+            if self._retiring is current or self._state == "stopped":
+                return
+            if self._state == "stopping":
+                # A pool handler must not wait for an external closer: that closer
+                # may be waiting for this handler to return.
+                if worker:
+                    return
+                self._changed.wait_for(lambda: self._state != "stopping")
+            first = self._state == "open"
+            if first:
+                self._state, self._retiring = "stopping", current
+                self._changed.notify_all()
+
+        defer = False
+        if first:
+            try:
+                try:
+                    retire()  # close sockets before waiting on any endpoint thread
+                finally:
+                    self.shutdown(wait=False, cancel_futures=True)
+            except BaseException as exc:
+                self._retire_error = exc
+            finally:
+                with self._changed:
+                    defer = worker and self._in_flight != 0
+                    if defer:
+                        self._flush_on_idle = flush
+                    self._state, self._retiring = "retired", None
+                    self._changed.notify_all()
+
+        if not worker:
+            # External close owns the synchronous drain.  A second external closer
+            # can arrive after the first one has retired resources and join here.
+            self.shutdown(wait=True)
+            if join_receiver is not None:
+                join_receiver()
+        if self._retire_error is not None:
+            raise self._retire_error
+        if not worker or (first and not defer):
+            self._finish(flush)
+
+    def _finish(self, flush):
+        with self._changed:
+            self._changed.wait_for(lambda: self._state != "flushing")
+            if self._state == "stopped":
+                return
+            self._state = "flushing"
+        completed = False
+        try:
+            flush()
+            completed = True
+        finally:
+            with self._changed:
+                self._state = "stopped" if completed else "retired"
+                self._changed.notify_all()
+
+
 class _ForwardBudget:
     """Plaintext bytes owed to downstream writers across one server's relays.
 
@@ -3026,8 +3130,7 @@ class TCP_Server_Base:  # TCP server class
         self.error_sign = self.command_decode_table[0]["file_send_receive_error"]
         self._custom_handlers = [{}, {}]
         self._custom_handler_threaded = [{}, {}]
-        self._custom_executor = ThreadPoolExecutor(max_workers=max_custom_workers)
-        self._task_semaphore = threading.Semaphore(max_custom_workers)
+        self._custom_executor = _CustomCommandExecutor(max_custom_workers)
         # Inbound/outbound event listeners (see add_message_listener and
         # add_file_listener). They run on the thread performing the relevant
         # I/O; a listener must not block and its exceptions are swallowed by
@@ -4374,11 +4477,11 @@ class TCP_Server_Base:  # TCP server class
         Returns:
             concurrent.futures.Future: Handle for the submitted call; its worker
                 slot is released when the call finishes.
+
+        Raises:
+            RuntimeError: If terminal shutdown has started, even while waiting for a slot.
         """
-        self._task_semaphore.acquire()
-        future = self._custom_executor.submit(func, *args, **kwargs)
-        future.add_done_callback(lambda f: self._task_semaphore.release())
-        return future
+        return self._custom_executor.submit(func, *args, **kwargs)
 
     def create_temporary_server(self, handler, port=None, max_connections=1):
         """Start a temporary listener for a side channel (not the main protocol).
@@ -8107,15 +8210,16 @@ class TCP_Server_Base:  # TCP server class
         Closes the server socket and every client connection, flushes the message
         and event stores, releases the allocated port range, clears ``running``
         and releases the client event loop when ``is_asynic_clients_io`` is True.
-        Safe to call more than once.
+        Waits for accepted custom tasks unless called by this instance's own
+        worker. A handler that never returns can block an external stop indefinitely.
+        Safe to call more than once; the instance cannot restart.
         """
+        self._custom_executor.close(self._retire_server, self._flush_record_stores)
+
+    def _retire_server(self):
         self.running = False
         self._stopped = True  # also cancels a start_TCP_Server() still binding
         self._stop_listeners()
-        self.free_port()
-        self._flush_record_stores()
-        # in-flight transfers die with the server: persist them for the next run
-        self._persist_transfer_progress()
         with self.client_lock:
             clients = list(self.clients.values())
             self.clients.clear()
@@ -8142,6 +8246,9 @@ class TCP_Server_Base:  # TCP server class
             self.server_socket.close()
             self._log("server stopped")
         self._wake_async_accept_loop()
+        self.free_port()
+        # in-flight transfers die with the server: persist them for the next run
+        self._persist_transfer_progress()
 
     def _wake_async_accept_loop(self):
         """Release the accept coroutine, if any, so its event loop can end."""
@@ -8400,8 +8507,7 @@ class TCP_Client_Base:  # TCP client class
         self.error_sign = self.command_decode_table[0]["file_send_receive_error"]
         self._custom_handlers = [{}, {}]
         self._custom_handler_threaded = [{}, {}]
-        self._custom_executor = ThreadPoolExecutor(max_workers=max_custom_workers)
-        self._task_semaphore = threading.Semaphore(max_custom_workers)
+        self._custom_executor = _CustomCommandExecutor(max_custom_workers)
         # Inbound/outbound event listeners (see add_message_listener and
         # add_file_listener). They run on the thread performing the relevant
         # I/O; a listener must not block and its exceptions are swallowed by
@@ -8979,11 +9085,11 @@ class TCP_Client_Base:  # TCP client class
         Returns:
             concurrent.futures.Future: Handle for the submitted call; its worker
                 slot is released when the call finishes.
+
+        Raises:
+            RuntimeError: If terminal shutdown has started, even while waiting for a slot.
         """
-        self._task_semaphore.acquire()
-        future = self._custom_executor.submit(func, *args, **kwargs)
-        future.add_done_callback(lambda f: self._task_semaphore.release())
-        return future
+        return self._custom_executor.submit(func, *args, **kwargs)
 
     def _log(self, *parts):
         """Print a command/result line, unless ``is_print_log`` is False.
@@ -12273,20 +12379,41 @@ class TCP_Client_Base:  # TCP client class
 
         Stops the receive loop, releases the port range, flushes the message and
         event stores, persists the interrupted transfers and closes the socket.
-        Safe to call more than once.
+        Waits for accepted custom tasks unless called by this instance's own
+        worker. A handler that never returns can block an external close indefinitely.
+        Safe to call more than once; a reconnect is not a terminal close.
         """
+        self._custom_executor.close(self._retire_client, self._flush_record_stores,
+                                    join_receiver=self._join_receive_thread)
+
+    def _retire_client(self):
         self.running = False
         self._stopped = True  # also cancels a connect() still in flight
+        sock = self.client_socket
         self._stop_listeners()
-        if self.client_socket:
-            _retire_transfer_session(self, self.client_socket)
+        if sock is not None:
+            _retire_transfer_session(self, sock)
             try:
                 # the receive thread may be blocked in recv() on this socket:
                 # close() alone sends no FIN and leaves that read waiting for its
                 # timeout, so the server would not see the disconnect
-                self.client_socket.shutdown(socket.SHUT_RDWR)
+                sock.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass  # peer already gone
+        with self._crypto_lock:
+            if sock is not None:
+                self._channels.pop(sock, None)
+                self._encrypted_sockets.discard(sock)
+                self._control_sockets.discard(sock)
+            self._crypto_session = None
+        if sock is not None:
+            sock.close()
+        self.free_port()
+        # transfers still in flight are kept on disk for the next connect
+        self._persist_transfer_progress()
+        self._log("connection closed")
+
+    def _join_receive_thread(self):
         receive_thread = self.receive_thread
         if (
             receive_thread is not None
@@ -12296,19 +12423,6 @@ class TCP_Client_Base:  # TCP client class
             # close() returns only after the receive loop has stopped: no
             # in-flight chunk may reach a listener after this point
             receive_thread.join()
-        self.free_port()
-        self._flush_record_stores()
-        # transfers still in flight are kept on disk for the next connect
-        self._persist_transfer_progress()
-        with self._crypto_lock:
-            if self.client_socket is not None:
-                self._channels.pop(self.client_socket, None)
-                self._encrypted_sockets.discard(self.client_socket)
-                self._control_sockets.discard(self.client_socket)
-            self._crypto_session = None
-        if self.client_socket:
-            self.client_socket.close()
-        self._log("connection closed")
 
     def _release_client_socket(self):
         """Retire the captured control session and release its local port.
