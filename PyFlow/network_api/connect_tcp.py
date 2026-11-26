@@ -9859,7 +9859,7 @@ class TCP_Client_Base:  # TCP client class
         """
         retired = self._release_client_socket()
         previous_resume = self._resume_thread
-        while True:
+        while not self._stopped:
             try:
                 local_address = (
                     (self.client_host, self.client_port)
@@ -9960,6 +9960,7 @@ class TCP_Client_Base:  # TCP client class
                 self._log(f"connection error: {e}")
                 self._log_exc()
                 return False
+        return False  # close() won while waiting for a reconnect
 
     def receive_messages(self):  # get server msg
         """Read from the server until the connection ends.
