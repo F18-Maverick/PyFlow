@@ -28,7 +28,7 @@ PYTHONPATH="$PWD/test/integration${PYTHONPATH:+:$PYTHONPATH}" \
   test/integration/network_api/test_executor_lifecycle.py --tb=short
 ```
 
-结果：`4 passed in 2.28s`。四个实例对应 Threaded Server、Asyncio Server、Client close 和 Client reconnect 保池。
+结果：`4 passed in 3.20s`。四个实例对应 Threaded Server、Asyncio Server、Client close 和 Client reconnect 保池。
 
 E1 endpoint 单测及重复关闭落盘回归：
 
@@ -54,16 +54,22 @@ PYTHONPATH="$PWD/test/integration${PYTHONPATH:+:$PYTHONPATH}" \
 
 结果：`1 failed in 2.09s`；失败断言为 `connected after terminal close`。这不是重新引入的产品改动，也没有把失败断言加入通过集；是用于记录终态关闭边界的真实 TCP 证据。该结论说明 E1 的 terminal-state 状态机关闭了 executor，但在自动重连 runner 已进入 `connect()` 的竞态中，尚未保证不会再建立一次控制连接。
 
+## Windows GitHub Actions 的跨平台复核
+
+用户报告 CPython 3.14.10 Windows Actions 中，原 E2 探针的 Server threaded/async 两个参数失败（`socket_closed.wait(10)` 超时）；Client 参数通过。失败时 `submit_task` 的 Future 已完成并返回 handler 错误字符串，socket-closed 事件未设置。原 handler 在 `control_socket.dup()` 上使用 `select()`，因此该失败还不能区分 Windows duplicated-socket 观察方式与生产 socket shutdown 行为。
+
+按该证据调整了探针：不再对 duplicated socket 调用 `select()`/`recv()`，改为在 handler 持有的实际 control socket 上等待可读并读取 EOF，或仅接受列出的 closed-peer errno；未知错误、超时及非空 payload 仍失败。修订版在本机 Linux 上 `4 passed in 3.20s`，Ruff 选择集通过。**修订版尚未在 Windows Actions 重跑，Windows 结果仍未验证。** 同一日志还包含 asyncio accept task 的 WinError 995 “Task exception was never retrieved”；它发生在失败测试清理阶段，当前不能确定是探针失败的连带结果还是另一项 asyncio shutdown 问题。
+
 ## 入口 → 分支 → 出口
 
-真实 Server/Client 接收路径分发已注册的 threaded handler → per-instance admission 返回真实 Future → handler 从同一控制 socket 的 dup 读取 → 外部 `stop()`/`close()` 先关闭实际控制 socket 与 session 所属 transfer listener → handler 观察 EOF/平台闭 socket 错误 → 测试释放 handler 尾段 → 外部 close 返回，Future、worker 和临时 owner 均已退出。reconnect 对照复用同一 Client executor worker；它不是终态关闭。
+真实 Server/Client 接收路径分发已注册的 threaded handler → per-instance admission 返回真实 Future → handler 从其实际控制 socket 等待读取 → 外部 `stop()`/`close()` 先关闭实际控制 socket 与 session 所属 transfer listener → handler 观察 EOF/平台闭 socket 错误 → 测试释放 handler 尾段 → 外部 close 返回，Future、worker 和临时 owner 均已退出。reconnect 对照复用同一 Client executor worker；它不是终态关闭。
 
 ## 已知边界与未覆盖项
 
 - **终态 reconnect 仍是失败验收项。** E1 计划写有终态实例不支持重启；本轮不修复。该缺口与先前列出的 Client 关闭/连接竞态有关，另立计划，不纳入本轮实现。
 - 另一个隔离探针在 `start_TCP_Server()` 的 stopped-check 与 `running=True` 之间注入 `stop()`：listener 已关闭，但 E1 幂等退休使重复 `stop()` 不再重设 `running`，观察到 `running=True`，`delete_config()` 被拒绝。这是另一个 start/stop 并发问题；本 E2 主测试没有覆盖它，且本轮不修复。
 - 25 次自然 `connect()`/`close()` 竞争中有 3 次 `connect()` 在 `close()` 返回约 10 秒后才返回；没有观察到最终 `running` 或线程存活异常。10 秒是否由 crypto-mode wait 造成尚未验证。
-- E2 socket 路径使用明文 IPv4 loopback；本轮未实测加密控制通道、原生 Windows/macOS、手动端口范围的跨进程竞争或所有 transfer 类型。
+- Windows GitHub Actions 首版 E2 探针的 Server threaded/async 参数失败；当前探针已改为观察实际 control socket，但尚未取得 Windows 重跑结果。未报告原生 Windows 通过。
 - 未测试任意不响应 socket 关闭、永久阻塞于外设/Event/CPU 的 handler；按 E1 契约，池外 stop/close 会无限等待，Python 不会强杀它。
 - 本轮没有重跑 A4 全套转发 V4；未修改转发代码，也不把它报告为通过。
 - `docs/source/File_Transfer/File_Transfer.rst` 仍描述 semaphore；E2 计划的 TCP Client/Server API 文档之外发现这处旧说明，本轮未扩大文档路径到该文件。

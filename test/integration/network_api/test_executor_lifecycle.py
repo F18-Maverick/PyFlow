@@ -124,15 +124,20 @@ def _close_outside_pool(close, receiver, socket_closed, future, release_handler)
     with ThreadPoolExecutor(max_workers=1) as callers:
         closing = callers.submit(close)
         try:
-            assert socket_closed.wait(WAIT), "close did not reach the handler"
-            assert not closing.done() and future.running(), (
-                "external close did not drain the worker"
-            )
-            with pytest.raises(RuntimeError):
-                receiver.submit_task(lambda: None)
+            woke_on_close = socket_closed.wait(WAIT)
+            if woke_on_close:
+                assert not closing.done() and future.running(), (
+                    "external close did not drain the worker"
+                )
+                with pytest.raises(RuntimeError):
+                    receiver.submit_task(lambda: None)
         finally:
             release_handler.set()
         closing.result(timeout=WAIT)
+        assert woke_on_close, (
+            "handler did not observe control-socket shutdown; "
+            f"Future result={future.result(timeout=1)!r}"
+        )
 
 
 def _assert_endpoint_drained(endpoint, resources):
@@ -170,17 +175,19 @@ def test_real_socket_close_unblocks_handler_before_external_drain(
     submissions = _observe_submissions(receiver, monkeypatch)
 
     def wait_for_socket_shutdown(control_socket, _address, _command):
-        # dup preserves the real TCP endpoint when close() releases the instance's fd.
-        # The only accepted outcomes are EOF or a platform's closed-peer socket error.
-        with control_socket.dup() as reader:
-            entered.put(threading.current_thread())
-            assert select.select([reader], [], [], WAIT)[0], "control read was not woken"
-            try:
-                assert reader.recv(1) == b""
-            except OSError as exc:
-                assert exc.errno in _CLOSED_SOCKET_ERRNOS, f"unexpected socket error: {exc}"
-            socket_closed.set()
-            assert release_handler.wait(WAIT), "handler tail was not released"
+        # Observe the actual session socket. On Windows, select on socket.dup()
+        # did not report shutdown even though the executor Future ended.
+        entered.put(threading.current_thread())
+        readable, _, _ = select.select([control_socket], [], [], WAIT)
+        assert readable, "control read was not woken"
+        try:
+            data = control_socket.recv(1)
+        except OSError as exc:
+            assert exc.errno in _CLOSED_SOCKET_ERRNOS, f"unexpected socket error: {exc}"
+        else:
+            assert data == b"", f"unexpected control payload after shutdown: {data!r}"
+        socket_closed.set()
+        assert release_handler.wait(WAIT), "handler tail was not released"
 
     receiver.register_command(
         "/wait_for_socket_shutdown", wait_for_socket_shutdown, "server", run_in_thread=True
