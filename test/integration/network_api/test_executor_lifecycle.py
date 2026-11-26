@@ -27,6 +27,7 @@ _CLOSED_SOCKET_ERRNOS = {
     errno.ECONNRESET,
     errno.ENOTCONN,
     getattr(errno, "ESHUTDOWN", -1),
+    10038,  # WSAENOTSOCK: close() invalidated the handle between select() and recv().
     10057,  # WSAENOTCONN
     10058,  # WSAESHUTDOWN
 }
@@ -175,8 +176,7 @@ def test_real_socket_close_unblocks_handler_before_external_drain(
     submissions = _observe_submissions(receiver, monkeypatch)
 
     def wait_for_socket_shutdown(control_socket, _address, _command):
-        # Observe the actual session socket. On Windows, select on socket.dup()
-        # did not report shutdown even though the executor Future ended.
+        # Observe the original session socket: readiness does not keep its handle open.
         entered.put(threading.current_thread())
         readable, _, _ = select.select([control_socket], [], [], WAIT)
         assert readable, "control read was not woken"

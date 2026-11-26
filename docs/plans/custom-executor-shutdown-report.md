@@ -58,7 +58,9 @@ PYTHONPATH="$PWD/test/integration${PYTHONPATH:+:$PYTHONPATH}" \
 
 用户报告 CPython 3.14.10 Windows Actions 中，原 E2 探针的 Server threaded/async 两个参数失败（`socket_closed.wait(10)` 超时）；Client 参数通过。失败时 `submit_task` 的 Future 已完成并返回 handler 错误字符串，socket-closed 事件未设置。原 handler 在 `control_socket.dup()` 上使用 `select()`，因此该失败还不能区分 Windows duplicated-socket 观察方式与生产 socket shutdown 行为。
 
-按该证据调整了探针：不再对 duplicated socket 调用 `select()`/`recv()`，改为在 handler 持有的实际 control socket 上等待可读并读取 EOF，或仅接受列出的 closed-peer errno；未知错误、超时及非空 payload 仍失败。修订版在本机 Linux 上 `4 passed in 3.20s`，Ruff 选择集通过。**修订版尚未在 Windows Actions 重跑，Windows 结果仍未验证。** 同一日志还包含 asyncio accept task 的 WinError 995 “Task exception was never retrieved”；它发生在失败测试清理阶段，当前不能确定是探针失败的连带结果还是另一项 asyncio shutdown 问题。
+改用原控制 socket 后，Windows Actions 重跑结果为 `3 failed, 1039 passed, 3 skipped`。Threaded Server、Asyncio Server、Client 三例都通过了 `select()` 的可读断言，随后 `recv(1)` 报 `WSAENOTSOCK`（10038）。探针未识别该关闭信号，在设置 `socket_closed` 之前抛出了断言错误；Future 返回的错误字符串给出了这一原因。外层等待超时不是 `select()` 超时。
+
+本次仅在探针已有的 `recv()` 关闭错误集合中补入 10038。EOF、超时、非空数据、其他错误以及等待 handler 和 worker 退出的断言不变。Linux 定向运行 `test_executor_lifecycle.py::test_real_socket_close_unblocks_handler_before_external_drain`：`3 passed in 0.24s`。asyncio 日志中的 `WinError 995` 来自 `IocpProactor.accept` 任务，不是这三个断言的原因，也未列为成功信号。
 
 ## 入口 → 分支 → 出口
 
@@ -69,7 +71,7 @@ PYTHONPATH="$PWD/test/integration${PYTHONPATH:+:$PYTHONPATH}" \
 - **终态 reconnect 仍是失败验收项。** E1 计划写有终态实例不支持重启；本轮不修复。该缺口与先前列出的 Client 关闭/连接竞态有关，另立计划，不纳入本轮实现。
 - 另一个隔离探针在 `start_TCP_Server()` 的 stopped-check 与 `running=True` 之间注入 `stop()`：listener 已关闭，但 E1 幂等退休使重复 `stop()` 不再重设 `running`，观察到 `running=True`，`delete_config()` 被拒绝。这是另一个 start/stop 并发问题；本 E2 主测试没有覆盖它，且本轮不修复。
 - 25 次自然 `connect()`/`close()` 竞争中有 3 次 `connect()` 在 `close()` 返回约 10 秒后才返回；没有观察到最终 `running` 或线程存活异常。10 秒是否由 crypto-mode wait 造成尚未验证。
-- Windows GitHub Actions 首版 E2 探针的 Server threaded/async 参数失败；当前探针已改为观察实际 control socket，但尚未取得 Windows 重跑结果。未报告原生 Windows 通过。
+- Windows 已在原控制 socket 上观察到 10038；补入该错误分类后，handler 尾段、外部等待及最终资源回收仍需原生 Windows 重跑验收。
 - 未测试任意不响应 socket 关闭、永久阻塞于外设/Event/CPU 的 handler；按 E1 契约，池外 stop/close 会无限等待，Python 不会强杀它。
 - 本轮没有重跑 A4 全套转发 V4；未修改转发代码，也不把它报告为通过。
 - `docs/source/File_Transfer/File_Transfer.rst` 仍描述 semaphore；E2 计划的 TCP Client/Server API 文档之外发现这处旧说明，本轮未扩大文档路径到该文件。
