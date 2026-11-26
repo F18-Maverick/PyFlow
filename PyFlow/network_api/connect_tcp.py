@@ -8457,6 +8457,8 @@ class TCP_Client_Base:  # TCP client class
         if os.path.exists(self.project_temp_info_dir) == False:
             os.mkdir(self.project_temp_info_dir)
         self.all_allocated_ports_list = []
+        self._port_range_lock = threading.Lock()
+        self._port_reservation = None  # (control socket, record ID), only while owned
         self.is_hand_alloc_port = None
         self._transfer_handshakes = _TransferHandshakeRegistry()
         self.client_ports_list = []
@@ -9473,7 +9475,9 @@ class TCP_Client_Base:  # TCP client class
             port_add_step (int): Step between candidate ports.
             port_range_num (int): Number of ports per step.
         """
-        if self.is_hand_alloc_port == True:
+        with self._port_range_lock:
+            if self._stopped or not self.is_hand_alloc_port:
+                return
             while self.is_client_port_temp_info_file_locked():
                 time.sleep(0.1)
             self.client_port_temp_info_file_lock()
@@ -9489,7 +9493,14 @@ class TCP_Client_Base:  # TCP client class
 
         No-op unless a range was assigned (``is_hand_alloc_port`` True).
         """
-        if self.is_hand_alloc_port == True:
+        self._release_port_range()
+
+    def _release_port_range(self, control_socket=None):
+        with self._port_range_lock:
+            reservation = self._port_reservation
+            if reservation is None or (control_socket is not None
+                                       and reservation[0] is not control_socket):
+                return
             while self.is_client_port_temp_info_file_locked():
                 time.sleep(0.1)
             self.client_port_temp_info_file_lock()
@@ -9606,9 +9617,12 @@ class TCP_Client_Base:  # TCP client class
             self.client_port_info.append(each_client_info)
             with open(self.port_temp_info_path, "w", encoding="utf-8") as f:
                 f.write(str(self.client_port_info))
+        self._port_reservation = (self.client_socket, self.client_num)
 
     def hand_free_port(self):
         """Drop this client's entry from the on-disk port range record."""
+        if self._port_reservation is None:
+            return
         self.port_temp_info_path = os.path.join(self.project_temp_info_dir, "clients_port_info.log")
         if os.path.exists(self.port_temp_info_path):
             with open(self.port_temp_info_path, "r", encoding="utf-8") as f:
@@ -9617,13 +9631,15 @@ class TCP_Client_Base:  # TCP client class
             # their entries, so this one is not necessarily the last, and a
             # shrinking list would make the next index run past its end
             self.client_port_info = [
-                entry for entry in self.client_port_info if entry["client_id"] != self.client_num
+                entry for entry in self.client_port_info
+                if entry["client_id"] != self._port_reservation[1]
             ]
             if len(self.client_port_info) == 0:
                 os.remove(self.port_temp_info_path)
             else:
                 with open(self.port_temp_info_path, "w", encoding="utf-8") as f:
                     f.write(str(self.client_port_info))
+        self._port_reservation = None
 
     def palloc(self):
         """Allocate a port, waiting until one is free.
@@ -9982,7 +9998,7 @@ class TCP_Client_Base:  # TCP client class
                 if not data:
                     self._log("\nbreak the connection from server")
                     self.running = False
-                    self.free_port()
+                    self._release_port_range(control_socket)
                     # the transfers running on this session died with it: keep
                     # them on disk for the next connect (_request_resumes)
                     self._persist_transfer_progress()
@@ -10031,7 +10047,7 @@ class TCP_Client_Base:  # TCP client class
                 self._log("\nReset by server, connection closed")
                 self._log_exc()
                 self.running = False
-                self.free_port()
+                self._release_port_range(control_socket)
                 self._persist_transfer_progress()
                 break
             except Exception as e:
@@ -10041,7 +10057,7 @@ class TCP_Client_Base:  # TCP client class
                     self._log(f"\nget msg error: {e}")
                     self._log_exc()
                 self.running = False
-                self.free_port()
+                self._release_port_range(control_socket)
                 self._persist_transfer_progress()
                 break
         _retire_transfer_session(self, control_socket)
@@ -12461,6 +12477,7 @@ class TCP_Client_Base:  # TCP client class
             self._channels.pop(sock, None)
             self._encrypted_sockets.discard(sock)
             self._control_sockets.discard(sock)
+        self._release_port_range(sock)
         return retired
 
     def start_TCP_client(self):  # start client
