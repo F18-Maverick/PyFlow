@@ -1,0 +1,9 @@
+# TCP custom-command executor shutdown
+
+`TCP_Server_Base.stop()` and terminal `TCP_Client_Base.close()` retire their per-instance custom-command executor. The admission limit remains `max_custom_workers`; calls waiting for a slot are woken and rejected with `RuntimeError` once shutdown starts. Each accepted Future returns its slot exactly once on completion, exception, or cancellation.
+
+Shutdown retires the endpoint's control sockets before draining the executor, so a handler blocked on its control socket can observe EOF or a socket error and return. Queued futures are cancelled. An external caller waits without a timeout for running handlers and flushes the record stores after they finish. A handler blocked on an unrelated event, device, or computation can therefore keep external shutdown waiting indefinitely; Python does not forcibly terminate it.
+
+A custom handler may call `stop()` or `close()` from its own pool worker. That path initiates non-waiting executor shutdown rather than joining itself; the worker exits after the handler returns. External callers still wait for the worker pool to drain. Client auto-reconnect replaces control sessions without shutting down the executor, so a later session reuses the pool.
+
+E2 real-socket acceptance passed the threaded Server, asyncio Server, Client-close, and nonterminal reconnect paths. Terminal close racing with an auto-reconnect runner already entering `connect()` still produced one TCP connection after `close()`; that terminal-reconnect invariant remains unaccepted. See the [E2 acceptance report](../../plans/custom-executor-shutdown-report.md) for commands, evidence, and uncovered paths.

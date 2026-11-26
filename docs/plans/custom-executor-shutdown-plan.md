@@ -1,6 +1,6 @@
 # 自定义命令线程池关闭 — 修复计划
 
-状态：**需求方已选择 Server.stop() + Client.close() 对称修复范围，并选择外部关闭无界等待已接纳任务退出；尚未授权实现。** A4 验收发现 Server 执行并完成一次落盘扩展后，`stop()` 返回时仍有一个空闲的 `ThreadPoolExecutor` worker。这不是转发数据线程或在途任务泄漏；同样的空闲 worker 在 A1 前的 `ddb71c9` 上也可复现。
+状态：**E1 已实施并经人工审计；E2 按用户要求只验收 E1，不改生产代码。** 真实 TCP socket-first drain（Threaded/Asyncio Server、Client）和非终态 reconnect 保池通过；终态 Client close 与已经进入 connect 的 auto-reconnect runner 并发时仍观察到一次新连接，E1 终态不重启契约未完全验收。另有 Server start/stop 注入竞态导致 `running=True` 的独立发现。详见[ E2 验收报告](custom-executor-shutdown-report.md)。
 
 ## 1. 目标与不变量
 

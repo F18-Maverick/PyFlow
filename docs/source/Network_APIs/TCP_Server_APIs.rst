@@ -214,29 +214,24 @@ the function `stop`. And the stop function has been defined as:
     def stop(self: Self) -> None:
         ...
 
-To stop the TCP server, it first sets the ``self.running``
-variable to False, to stop the main loop of the server. 
-After that, it calls the `free_port` function to free the 
-port which has been allocated. And the `free_port` has been 
-defined as:
+`stop()` is terminal for the server instance. It disables listener delivery, shuts
+down and closes accepted control sockets and the listening socket, wakes the
+asyncio accept loop when used, retires session-owned transfer resources, releases
+the manually allocated server range, and persists interrupted transfer progress.
 
-.. code-block:: python
+The custom-command executor then rejects new submissions and wakes callers waiting
+for capacity. Queued futures are cancelled. An external `stop()` waits without a
+timeout for running custom handlers, then flushes the record stores. Socket-bound
+handlers can leave their I/O wait when the control socket is shut down; a handler
+blocked on an unrelated event, device, or computation can keep `stop()` waiting
+indefinitely. Python does not forcibly terminate handler threads. If a pool worker
+calls `stop()` itself, it initiates non-waiting shutdown to avoid joining itself;
+that worker exits after the handler returns.
 
-    def free_port(self: Self) -> None:
-        ...
-
-*Note: For more details of the `free_port` function, 
-see the :ref:`tcp-server-port-allocation-api` section.*
-
-At the end of the operations, the TCP server closes all client sockets stored in the
-``self.clients`` dictionary and also closes the server socket.
-
-Before closing the listening socket it shuts it down, which releases a thread
-that is blocked in ``accept()`` (closing alone would leave the port listening
-until that call returned). ``stop`` also wins against a start that has not
-finished binding: if it runs before ``start_TCP_Server`` reaches the accept
-loop, that call closes the socket it just bound and returns without starting,
-so a stopped server cannot come up behind the caller's back.
+`start_TCP_Server()` checks the stopped flag after binding and listening, so a stop
+that has already reached that check closes the listener instead of starting the
+accept loop. A narrower concurrent start/stop interleaving is not covered by this
+guarantee; see the E2 acceptance report.
 
 *Note: The ``self.clients`` variable is a dictionary that 
 maps client address tuples to an info dictionary. The 
@@ -904,6 +899,14 @@ worker slot is released when the call finishes. This allows
 long-running
 or blocking command handlers to run without blocking the 
 main server loop.
+
+Admission is bounded by ``max_custom_workers`` for accepted futures. A completed,
+failed, or cancelled future returns exactly one slot. Once `stop()` begins, new
+submissions are rejected with ``RuntimeError``; callers waiting for a slot are
+woken and rejected as well. An external `stop()` waits for accepted running
+handlers to finish and flushes the record stores. A pool worker that calls
+`stop()` does not wait for itself; its handler returns, the worker exits, and the
+deferred final flush completes.
 
 In this high-level TCP network protocol, a temporary TCP server
 and client can also be created very simply. The temporary

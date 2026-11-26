@@ -234,18 +234,24 @@ For shutting down the client, the `close` method is defined as:
     def close(self: Self) -> None:
         ...
 
-In the `close` method, we set ``self.running`` to ``False``, 
-free any allocated ports by calling `free_port`, flush the
-message and event stores, and then half-close
-(``shutdown(SHUT_RDWR)``) and close the client socket. This ensures a clean disconnection.
+`close()` is terminal for the client instance. It stops listener delivery, shuts down
+and closes the current control socket, retires its transfer resources, and releases
+its manually allocated range. An external caller waits for accepted custom workers
+and the receive thread, then flushes the record stores. The wait has no timeout: a
+handler that does not leave a socket wait or otherwise return can keep `close()`
+waiting indefinitely. Python does not forcibly terminate handler threads. A pool
+worker that calls `close()` starts non-waiting shutdown instead of joining itself;
+it exits after its handler returns.
 
-``close`` also wins against a connection attempt that is still in flight:
-if it runs before ``connect`` puts the socket up, that call closes the socket
-it just connected and returns ``False`` instead of reviving the client.
-
-*Note: The `free_port` method works similarly to the server 
-side, releasing any manually allocated ports if manual 
-allocation mode is enabled.*
+With ``is_auto_reconnect``, replacing a disconnected control session through
+``_release_client_socket()`` is nonterminal and retains the same custom executor.
+Terminal ``close()`` shuts that executor down; later ``submit_task()`` calls are
+rejected with ``RuntimeError``. If ``close()`` arrives during an in-flight TCP
+connect, `connect` checks the stopped flag when the attempt returns and closes that
+socket instead of publishing an active session; the TCP attempt itself may already
+have occurred. E2 acceptance also observed an auto-reconnect runner already entering
+its next `connect()` open one control connection after terminal ``close()``. This
+terminal reconnect race remains unaccepted; see the E2 acceptance report.
 
 .. _tcp-client-handling-information-api:
 
@@ -754,11 +760,11 @@ functions to its internal thread pool executor, and
 `_execute_custom_handler` to safely execute registered 
 handlers with error handling.
 
-The `submit_task` method works identically to the server 
-version: it submits a callable to the client's thread pool, 
-using a semaphore to limit concurrency to ``max_custom_workers``,
-and returns the ``concurrent.futures.Future`` for it (the worker
-slot is released when the call finishes).
+`submit_task()` uses bounded per-instance admission up to ``max_custom_workers`` and
+returns the actual ``concurrent.futures.Future``. Each accepted future returns its
+slot once on completion, failure, or cancellation. When terminal `close()` begins,
+capacity waiters are woken and rejected with ``RuntimeError``; new submissions are
+also rejected.
 
 Temporary server and client creation
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
