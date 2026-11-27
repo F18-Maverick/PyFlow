@@ -234,3 +234,53 @@ def test_call_extension_functions_rejects_unregistered_commands():
     assert "/ghost arg" in str(exc.value)
     with pytest.raises(CommandNotFoundError):  # an empty line selects nothing
         client.call_extension_functions("   ")
+
+
+@pytest.mark.parametrize("replace_before_driver", [True, False], ids=["submitted", "waiting"])
+def test_forward_pending_pairs_do_not_follow_a_replacement_socket(
+    replace_before_driver, tmp_path, monkeypatch, capsys
+):
+    client = _client(is_enable_encrypto=False, is_forward_one_to_one=True, max_thread_num=1)
+    path = tmp_path / "unscheduled.bin"
+    path.write_bytes(b"not admitted")
+    client.file_trans_progress_file = str(tmp_path / "progress.json")
+    entered, proceed, waiting, done = (threading.Event() for _ in range(4))
+    driver, acquire = client._forward_driver, client.file_semaphore.acquire
+
+    def observe_driver(*args, **kwargs):
+        entered.set()
+        try:
+            assert proceed.wait(5)
+            return driver(*args, **kwargs)
+        finally:
+            done.set()
+
+    def observe_acquire(*args, **kwargs):
+        waiting.set()
+        return acquire(*args, **kwargs)
+
+    monkeypatch.setattr(client, "_forward_driver", observe_driver)
+    monkeypatch.setattr(client.file_semaphore, "acquire", observe_acquire)
+    old, wire = socket.socketpair()
+    new, new_wire = socket.socketpair()
+    with old, wire, new, new_wire, client.file_semaphore:
+        client.running, client.client_socket = True, old
+        try:
+            client.forward_file_console(f'''/forward_file "{path}" "('127.0.0.1', 6010)"''')
+            assert entered.wait(5)
+            if not replace_before_driver:
+                proceed.set()
+                assert waiting.wait(5)
+            client.client_socket = new  # Old socket is still open; identity matters.
+            proceed.set()
+            assert done.wait(5)  # Does not require the occupied slot to be released.
+            assert "cancel" in capsys.readouterr().out.lower()
+            assert client._fid_alloc._counter == 0 and not client.file_upload_progress
+            assert not (tmp_path / "progress.json").exists()
+            for peer in (wire, new_wire):
+                peer.setblocking(False)
+                with pytest.raises(BlockingIOError):
+                    peer.recv(1)
+        finally:
+            client.running = False
+            proceed.set()

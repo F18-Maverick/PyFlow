@@ -1,6 +1,7 @@
 """Contracts for typed transfer control and connection-scoped endpoint identity."""
 
 import json
+import queue
 import socket
 import threading
 from collections import deque
@@ -12,6 +13,7 @@ import pytest
 from PyFlow.network_api.connect_tcp import (
     TCP_Client_Base,
     TCP_Server_Base,
+    _ForwardBudget,
     _TransferControlRegistry,
     _control_key,
     _is_control_endpoint,
@@ -494,3 +496,21 @@ def test_relay_start_before_upstream_exists_overrides_a_preset_pause():
     assert relay["requested"] is True and not child["confirmed_state"]
     assert registry.local(key, False)
     assert relay["requested"] is False and not child["confirmed_state"]
+
+
+def test_relay_publication_failure_returns_only_unpublished_credit():
+    budget = _ForwardBudget()
+    slow, failed = {"buffered": 0}, {"buffered": 0}
+    pending = queue.Queue(maxsize=1)
+    with budget.cond:
+        initial = budget.publish(pending, b"abc", 0, 5, slow)
+        # Publication fails after reservation, while another delivery owns 3 B.
+        with pytest.raises(queue.Full):
+            budget.publish(pending, b"defg", 0, 5, failed)
+        assert (initial, budget.used, slow["buffered"], failed["buffered"]) == (3, 3, 3, 0)
+        current = pending.get_nowait()  # in the writer, not yet released
+        accepted = budget.publish(pending, b"defg", 0, 5, failed)
+        assert (accepted, current, pending.get_nowait(), budget.peak) == (2, b"abc", b"de", 5)
+        budget.release(slow, 3)
+        budget.release(failed, 2)
+        assert (budget.used, slow["buffered"], failed["buffered"]) == (0, 0, 0)

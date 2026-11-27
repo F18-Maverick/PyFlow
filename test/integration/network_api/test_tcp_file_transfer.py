@@ -3,6 +3,7 @@
 import os
 import threading
 import shlex
+from contextlib import closing
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,8 @@ def _isolate_log_files(instance, log_dir, name):
     interrupted transfers another test left behind.
     """
     isolate_instance_files(instance, Path(log_dir), name)
+    instance.sent_events_log_file = str(Path(log_dir) / f"{name}_sent_events_log.json")
+    instance.sent_messages_log_file = str(Path(log_dir) / f"{name}_sent_messages_log.json")
 
 
 @pytest.fixture
@@ -587,7 +590,7 @@ def test_server_console_file_command_preserves_path_case(pair, tmp_path, monkeyp
     assert files[0].read_bytes() == payload
 
 
-def _forward_client(server, recv_dir):
+def _forward_client(server, recv_dir, **options):
     client = TCP_Client_Base(
         host="127.0.0.1",
         port=server.port,
@@ -595,6 +598,7 @@ def _forward_client(server, recv_dir):
         is_extend_command=True,
         is_input_command_in_console=False,
         is_enable_encrypto=False,
+        **options,
     )
     _isolate_log_files(client, recv_dir.parent, recv_dir.name)
     client.file_transfer_dir = str(recv_dir)
@@ -694,6 +698,130 @@ def test_forward_file_to_multiple_clients(pair, tmp_path):
     forwarder.close()
 
 
+def _record_forward_acks(monkeypatch, source):
+    completed = []
+    transfer = source.file_transfer_mode
+
+    def record(path, *args, **kwargs):
+        result = transfer(path, *args, **kwargs)  # True only after the real final ACK.
+        completed.append((Path(path), kwargs["peer"], kwargs["fid"], result))
+        return result
+
+    monkeypatch.setattr(source, "file_transfer_mode", record)
+    return completed
+
+
+def test_forward_one_to_one_item_target_admission(pair, tmp_path, monkeypatch):
+    server, b, recv_b = pair
+    x, y = tmp_path / "x data.bin", tmp_path / "y data.bin"
+    x.write_bytes(b"first x")
+    y.write_bytes(b"only y")
+    collision = tmp_path / "later" / x.name
+    collision.parent.mkdir()
+    collision.write_bytes(b"must not overwrite x")
+    dest = "received files"
+    held, permits = [], threading.Semaphore(0)
+
+    def gate_final_ack(target):
+        send = target.send_message
+
+        def gated(sock, message, is_send_raw=False):
+            if message == target.server_received_file_data_sign:
+                held.append(sock)
+                assert permits.acquire(timeout=25), "target ACK was not released"
+            return send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(target, "send_message", gated)
+
+    with (closing(_forward_client(server, tmp_path / "recv_c")) as c,
+          closing(_forward_client(server, tmp_path / "source", is_forward_one_to_one=True,
+                                  max_thread_num=3)) as source):
+        peers = [target.client_socket.getsockname() for target in (b, c)]
+        expected = {(path, peer) for path in (x, y) for peer in peers}
+        assert wait_until(lambda: all(peer in server.clients for peer in peers))
+        for target in (b, c):
+            gate_final_ack(target)
+        completed = _record_forward_acks(monkeypatch, source)
+        allocate_port = MagicMock(wraps=source.palloc)
+        monkeypatch.setattr(source, "palloc", allocate_port)
+        initial_counter = source._fid_alloc._counter
+        try:
+            source.forward_file_console(shlex.join([
+                "/forward_file", str(x), str(collision), str(y), *map(str, peers), dest,
+            ]))
+            assert wait_until(lambda: len(held) == 3, timeout=15), "three slots must overlap"
+            # The fourth pair has no upstream FID, upload row or data port yet.
+            rows = source.file_upload_progress.copy()
+            active = {(Path(row[3]), row[4]) for row in rows.values()}
+            assert active < expected and len(active) == len(rows) == 3
+            assert source._fid_alloc._counter - initial_counter == allocate_port.call_count == 3
+            assert set(rows) == set(source._active_transfer_sockets)
+            assert not completed
+            for (_, fid), row in rows.items():
+                assert set(server._fid_routes[fid]["targets"]) == {row[4]}
+            children = server._fid_route_index.copy()  # (target, child FID) -> upstream FID
+
+            permits.release()  # One completion admits the fourth, without a batch barrier.
+            assert wait_until(lambda: len(held) == 4, timeout=15)
+            assert len(completed) == 1 and completed[0][3] is True
+            children.update(server._fid_route_index)
+        finally:
+            permits.release(4)
+        assert wait_until(lambda: len(completed) == 4, timeout=15)
+        assert {(path, peer) for path, peer, _, ok in completed if ok} == expected
+        assert len({fid for _, _, fid, _ in completed}) == 4
+        assert source._fid_alloc._counter - initial_counter == allocate_port.call_count == 4
+        assert len(children) == 4 and set(children.values()) == {fid for _, _, fid, _ in completed}
+        for root in (recv_b, Path(c.file_transfer_dir)):
+            assert (root / dest / x.name).read_bytes() == b"first x"
+            assert (root / dest / y.name).read_bytes() == b"only y"
+        assert wait_until(lambda: not server._fid_routes and not server._fid_route_index
+                          and not source.file_upload_progress and not source._active_transfer_sockets
+                          and not b.file_recv_progress and not c.file_recv_progress)
+
+
+def test_forward_one_to_one_folder_destinations(pair, tmp_path, monkeypatch):
+    server, target, recv = pair
+    # Same root name and basename; only the second entry has the same relative path.
+    roots = [tmp_path / n / "shared root" for n in ("first", "collision", "distinct")]
+    paths = [root / sub / "same name.txt" for root, sub in zip(roots, ("left", "left", "right"))]
+    for path, payload in zip(paths, (b"winner", b"skip me", b"other dir")):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(payload)
+    dest = "nested/output folder"
+    with closing(_forward_client(server, tmp_path / "source", is_forward_one_to_one=True,
+                                 max_thread_num=1)) as source:
+        peer, own = (client.client_socket.getsockname() for client in (target, source))
+        refused = (server.host, server.port)  # A real control endpoint, never a relay target.
+        assert wait_until(lambda: peer in server.clients and own in server.clients)
+        completed = _record_forward_acks(monkeypatch, source)
+        requests = MagicMock(wraps=server._forward_item_handler)
+        monkeypatch.setattr(server, "_forward_item_handler", requests)
+        initial_counter = source._fid_alloc._counter
+        source.forward_folder_console(shlex.join([
+            "/forward_folder", *map(str, roots), *map(str, (own, refused, peer, peer)), dest,
+        ]))
+        assert wait_until(lambda: len(completed) == 2, timeout=20)
+        assert [(path, target_peer, ok) for path, target_peer, _, ok in completed] == [
+            (paths[0], peer, True), (paths[2], peer, True),
+        ]
+        # One slot makes wire order observable: each refused request precedes its healthy sibling.
+        wire = [shlex.split(call.args[2]) for call in requests.call_args_list]
+        assert [tokens[3:] for tokens in wire] == [
+            [f"/shared root/{sub}", "same name.txt", str(address), dest]
+            for sub in ("left", "right") for address in (refused, peer)
+        ]
+        assert len({tokens[2] for tokens in wire}) == source._fid_alloc._counter - initial_counter == 4
+        output = recv / dest / "shared root"
+        assert (output / "left" / "same name.txt").read_bytes() == b"winner"
+        assert (output / "right" / "same name.txt").read_bytes() == b"other dir"
+        assert wait_until(lambda: not server._fid_routes and not target.file_recv_progress)
+        rejected = {(refused, int(tokens[2].split("=")[1]))
+                    for tokens in wire if tokens[-2] == str(refused)}
+        assert set(source.file_upload_progress) == rejected
+        assert all(row[4] == refused for row in source.file_upload_progress.values())
+
+
 def test_forward_folder_to_client(pair, tmp_path):
     """/forward_folder relays a folder (structure preserved) from a client to
     another client through the in-memory relay."""
@@ -750,6 +878,33 @@ def test_forward_skips_unreachable_and_server_targets(pair, tmp_path):
     forwarder.close()
 
 
+def _observe_forward_pumps(monkeypatch, server):
+    relays, downstream = {}, {}
+    real_pump = server._forward_pump
+
+    def pump(up, connections, control, fid, name, relay, offset=0):
+        relays[name] = relay
+        downstream.update((sock, name) for _, _, sock in connections)
+        return real_pump(up, connections, control, fid, name, relay, offset)
+
+    monkeypatch.setattr(server, "_forward_pump", pump)
+    return relays, downstream
+
+
+def _forward_ack(monkeypatch, source, path, targets):
+    results = []
+    real_transfer = source.file_transfer_mode
+
+    def transfer(*args, **kwargs):
+        result = real_transfer(*args, **kwargs)  # Includes the real upstream final ACK.
+        results.append(result)
+        return result
+
+    monkeypatch.setattr(source, "file_transfer_mode", transfer)
+    source.forward_file_console(shlex.join(["/forward_file", str(path), *map(str, targets)]))
+    return results
+
+
 def test_forward_flow_control_pauses_uploader(pair, tmp_path, monkeypatch):
     """Local backpressure bounds queued bytes without changing user pause state."""
     server, target, recv_dir = pair
@@ -758,61 +913,122 @@ def test_forward_flow_control_pauses_uploader(pair, tmp_path, monkeypatch):
     payload = os.urandom(300 * 1024)
     src.write_bytes(payload)
     forwarder = _forward_client(server, tmp_path / "fwd")
-    writer_held, release_writer, reader_waiting = (
-        threading.Event(), threading.Event(), threading.Event()
-    )
-    relays, controls, acknowledgements = [], [], []
-    real_send, real_pump = server.send_message, server._forward_pump
-    real_wait = threading.Condition.wait
-    real_transfer = forwarder.file_transfer_mode
-
-    def pump(up_sock, target_conns, control, fid, fname, relay, resume_offset=0):
-        relays.append(relay)
-        return real_pump(up_sock, target_conns, control, fid, fname, relay, resume_offset)
+    writer_held, release_writer = threading.Event(), threading.Event()
+    relays, downstream = _observe_forward_pumps(monkeypatch, server)
+    controls = []
+    real_send = server.send_message
 
     def send(sock, message, is_send_raw=False):
-        if isinstance(message, bytes) and len(message) > server.max_mem_buff:
+        if sock in downstream and isinstance(message, bytes):
+            sent = real_send(sock, message, is_send_raw=is_send_raw)
             writer_held.set()
             assert release_writer.wait(timeout=15)
+            return sent
         if isinstance(message, str) and message.startswith(("/pause_trans", "/start_trans")):
             controls.append(message)
         return real_send(sock, message, is_send_raw=is_send_raw)
 
-    def wait(condition, *args, **kwargs):
-        if (relays and condition is relays[0]["cond"]
-                and relays[0]["buffer"]["backpressured"]):
-            reader_waiting.set()
-        return real_wait(condition, *args, **kwargs)
-
-    def transfer(*args, **kwargs):
-        result = real_transfer(*args, **kwargs)
-        acknowledgements.append(result)
-        return result
-
-    monkeypatch.setattr(server, "_forward_pump", pump)
     monkeypatch.setattr(server, "send_message", send)
-    monkeypatch.setattr(threading.Condition, "wait", wait)
-    monkeypatch.setattr(forwarder, "file_transfer_mode", transfer)
     try:
         peer = target.client_socket.getsockname()
-        cmd = '/forward_file "{}" "({}, {})"'.format(src, repr(peer[0]), peer[1])
-        forwarder.forward_file_console(cmd)
-        assert writer_held.wait(timeout=10) and reader_waiting.wait(timeout=10)
-        state = relays[0]["buffer"]
-        with relays[0]["cond"]:
-            assert state["backpressured"] and state["buffered"] > state["high_water"]
-            assert state["peak"] <= state["high_water"] + state["max_enqueue"]
+        acknowledgements = _forward_ack(monkeypatch, forwarder, src, [peer])
+        assert writer_held.wait(timeout=10)
+        state = relays[src.name]["buffer"]
+        assert wait_until(lambda: state["backpressured"])
+        assert state["buffered"] == server.max_mem_buff
+        budget = server._forward_budget
+        with budget.cond:
+            assert budget.used == budget.peak == server.max_mem_buff
         assert acknowledgements == []
         release_writer.set()
         assert wait_until(lambda: acknowledgements == [True], timeout=15)
         assert (recv_dir / "big.bin").read_bytes() == payload
         assert wait_until(lambda: not server._forward_relays and not server._receive_transfers)
         assert not state["backpressured"] and state["buffered"] == 0
-        assert state["peak"] <= state["high_water"] + state["max_enqueue"]
+        assert budget.used == 0 and budget.peak == server.max_mem_buff
         assert controls == [], "automatic pressure must not send user pause/start"
     finally:
         release_writer.set()
         forwarder.close()
+
+
+def test_forward_shared_budget_across_routes(pair, tmp_path, monkeypatch):
+    server, first_target, recv = pair
+    # Even a one-byte segment cannot be reserved for both targets at once.
+    server.max_mem_buff, server.file_transfer_chunk_len = 1, 128
+    fan, single = tmp_path / "fan.bin", tmp_path / "single.bin"
+    fan_bytes, single_bytes = os.urandom(259), os.urandom(137)
+    fan.write_bytes(fan_bytes)
+    single.write_bytes(single_bytes)
+    budget = server._forward_budget
+    relays, downstream = _observe_forward_pumps(monkeypatch, server)
+    held, release_writer = threading.Event(), threading.Event()
+    body_held, release_body = threading.Event(), threading.Event()
+    single_write = threading.Event()
+    real_send = server.send_message
+
+    def send(sock, message, is_send_raw=False):
+        route = downstream.get(sock)
+        if route and isinstance(message, bytes):
+            assert len(message) == 1
+            if route == single.name:
+                single_write.set()
+        sent = real_send(sock, message, is_send_raw=is_send_raw)
+        if route == fan.name and isinstance(message, bytes) and not release_writer.is_set():
+            held.set()  # Dequeued and really written, but send_message hasn't returned.
+            assert release_writer.wait(20)
+        return sent
+
+    monkeypatch.setattr(server, "send_message", send)
+    with (closing(_forward_client(server, tmp_path / "second")) as second_target,
+          closing(_forward_client(server, tmp_path / "source_a")) as source_a,
+          closing(_forward_client(server, tmp_path / "source_b")) as source_b):
+        peers = [target.client_socket.getsockname() for target in (first_target, second_target)]
+        assert wait_until(lambda: all(peer in server.clients for peer in peers))
+        source_a.file_transfer_chunk_len = server.file_transfer_chunk_len
+        source_send = source_a.send_message
+
+        def hold_body(sock, message, is_send_raw=False):
+            if message == fan_bytes[:source_a.file_transfer_chunk_len]:
+                body_held.set()
+                assert release_body.wait(30)
+            return source_send(sock, message, is_send_raw=is_send_raw)
+
+        monkeypatch.setattr(source_a, "send_message", hold_body)
+        try:
+            fan_ack = _forward_ack(monkeypatch, source_a, fan, peers)
+            assert held.wait(10) and body_held.wait(10)
+            single_ack = _forward_ack(monkeypatch, source_b, single, peers[:1])
+            assert wait_until(lambda: relays.get(single.name, {}).get("buffer", {}).get("backpressured"),
+                              timeout=10)
+            shared, solo = relays[fan.name], relays[single.name]
+            with budget.cond:
+                assert shared["buffer"]["buffered"] == budget.used == budget.peak == 1
+                assert solo["buffer"]["backpressured"] and solo["buffer"]["buffered"] == 0
+            assert not single_write.is_set() and fan_ack == single_ack == []
+            release_writer.set()
+            assert wait_until(lambda: single_ack == [True], timeout=15)
+            assert single_write.is_set() and (recv / single.name).read_bytes() == single_bytes
+            assert solo["route"]["completed"] == {peers[0]}
+            assert not fan_ack and server._fid_routes[shared["fid"]] is shared["route"]
+            release_body.set()
+            assert wait_until(lambda: fan_ack == [True], timeout=15)
+            assert shared["route"]["completed"] == set(peers)
+            for target in (first_target, second_target):
+                assert (Path(target.file_transfer_dir) / fan.name).read_bytes() == fan_bytes
+            assert wait_until(lambda: not server._forward_relays and not server._receive_transfers)
+            assert not server._fid_routes and not server._fid_route_index and not server._relay_recoveries
+            assert wait_until(lambda: all(not owner._active_transfer_sockets and not owner._receive_transfers
+                                          and not owner._transfer_controls._legs
+                                          for owner in (server, source_a, source_b, first_target, second_target)))
+            for relay in (shared, solo):
+                state = relay["buffer"]
+                assert state["complete"] and not state["failed"] and not state["backpressured"]
+                assert state["buffered"] == 0 and not relay["sockets"] and not relay["handshakes"]
+            assert budget.used == 0 and budget.peak == server.max_mem_buff
+        finally:
+            release_writer.set()
+            release_body.set()
 
 
 def test_forward_file_with_destination(pair, tmp_path):

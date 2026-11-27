@@ -91,6 +91,16 @@ def test_complete_config_does_not_mutate_defaults(complete_fn, defaults_dict):
     assert defaults_dict == before
 
 
+def test_one_to_one_round_trips_only_in_client_config(tmp_config):
+    fs.save_config([{}], [{}, {"is_forward_one_to_one": True}])
+    config = fs.load_existing_config()
+    assert "is_forward_one_to_one" not in config["servers"][0]
+    for saved, expected in zip(config["clients"], (False, True)):
+        assert saved["is_forward_one_to_one"] is expected
+        saved.update(is_extend_command=True, is_enable_encrypto=False)
+        assert fs.TCP_Client_Base(**saved).is_forward_one_to_one is expected
+
+
 def test_generate_configs_server():
     args = argparse.Namespace(
         type=0, setup_addr_port="127.0.0.1:8080", connect_addr_port=None, setup_num=1
