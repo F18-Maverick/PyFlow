@@ -567,6 +567,8 @@ def _config_lifecycle(*, starting):
                 if starting:
                     if self._progress_discarded:
                         raise RuntimeError("transfer progress was discarded; create a new instance")
+                    if self._stopped:
+                        return False  # a refused start must not reopen configuration state
                     self._config_started = True
                 self._config_busy += 1
                 self._config_closed = False
@@ -3110,7 +3112,8 @@ class TCP_Server_Base:  # TCP server class
         self.server_socket = None
         self.clients = {}  # store client info
         self._transfer_handshakes = _TransferHandshakeRegistry()
-        self.client_lock = threading.Lock()  # add the threading lock
+        self.client_lock = threading.Lock()  # listener publication and client admission vs stop()
+        self._pending_accepts = set()  # dispatched sockets not yet registered by their reader
         self.max_file_transfer_thread_num = max_file_transfer_thread_num
         MAX_CONCURRENT_FILES = self.max_file_transfer_thread_num
         self.file_semaphore = threading.Semaphore(MAX_CONCURRENT_FILES)
@@ -5348,6 +5351,8 @@ class TCP_Server_Base:  # TCP server class
             self._schedule_client_coroutine(client_socket, client_address)
             return
         client_id = self._register_client(client_socket, client_address)
+        if client_id is None:
+            return
         try:
             if not self._announce_client(client_socket, client_id):
                 return
@@ -5386,19 +5391,24 @@ class TCP_Server_Base:  # TCP server class
             client_socket (socket.socket): Accepted connection.
             client_address (tuple): Peer ``(ip, port)``.
         """
-        loop = self._async_loop
-        if loop is None or loop.is_closed():
+        def start_reader():
+            # Run on the loop; a queued callback must not launch a reader after stop().
+            with self.client_lock:
+                if not self._stopped and self._async_loop is loop:
+                    loop.create_task(self._handle_client_async(client_socket, client_address))
+
+        with self.client_lock:
+            loop = self._async_loop
+            stopped = self._stopped
+            if not stopped and loop is not None and not loop.is_closed():
+                self._pending_accepts.add(client_socket)  # handle_client may be called directly
+                loop.call_soon_threadsafe(start_reader)
+                return
+        if not stopped:
             self._log(
                 "asynic clients io is enabled but no event loop is running, closing the connection"
             )
-            try:
-                client_socket.close()
-            except Exception:
-                self._log_exc()
-            return
-        loop.call_soon_threadsafe(
-            loop.create_task, self._handle_client_async(client_socket, client_address)
-        )
+        client_socket.close()
 
     async def _async_receive(self, client_socket, loop):
         """Read up to ``recv_messages_chunk_len`` plaintext bytes from one accepted client.
@@ -5458,6 +5468,8 @@ class TCP_Server_Base:  # TCP server class
         """
         loop = asyncio.get_running_loop()
         client_id = self._register_client(client_socket, client_address)
+        if client_id is None:
+            return
         try:
             if not await asyncio.to_thread(self._announce_client, client_socket, client_id):
                 return
@@ -5504,23 +5516,29 @@ class TCP_Server_Base:  # TCP server class
             client_address (tuple): Peer ``(ip, port)``.
 
         Returns:
-        str: Client id, ``"<ip>:<port>"``.
+            str | None: Client id, or None if terminal shutdown rejected the connection.
         """
         client_id = f"{client_address[0]}:{client_address[1]}"
-        with self.client_lock:  # add new client
+        with self.client_lock:
             previous = self.clients.get(client_address, {}).get("socket")
-            self._control_sockets.add(client_socket)
-            self.clients[client_address] = {
-                "socket": client_socket,
-                "address": client_address,
-                "id": client_id,
-                "connected_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            }
         if previous is not None and previous is not client_socket:
             self._retire_client_transfers(previous, client_address)
-            _TransferHandshakeRegistry._close_socket(previous)
+            self._transfer_handshakes._close_socket(previous)
         with self.client_lock:
-            retired = tuple(self._retired_transfer_sessions.get(client_address, ()))
+            self._pending_accepts.discard(client_socket)
+            stopped = self._stopped
+            if not stopped:
+                self._control_sockets.add(client_socket)
+                self.clients[client_address] = {
+                    "socket": client_socket,
+                    "address": client_address,
+                    "id": client_id,
+                    "connected_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                }
+                retired = tuple(self._retired_transfer_sessions.get(client_address, ()))
+        if stopped:
+            self._transfer_handshakes._close_socket(client_socket)
+            return None
         if self.is_enable_encrypto and self.crypto is not None:
             session = self._crypto_session_for(client_address)
             channel = _SecureChannel(
@@ -7996,56 +8014,79 @@ class TCP_Server_Base:  # TCP server class
         coroutine on an asyncio event loop when ``is_asynic_clients_io`` is True,
         in which case ``max_clients`` no longer limits the connection count.
         Socket errors and the end of the accept loop both end in `stop`.
+
+        Returns:
+            bool | None: False if stopped before the listener is published; otherwise None.
         """
+        published = False
         try:
-            self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server_socket.bind((self.host, self.port))
-            self.server_socket.listen(
+            with self.client_lock:
+                if self._stopped:
+                    return False
+                # stop() owns this candidate even if startup stalls in bind/listen.
+                listener = self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind((self.host, self.port))
+            listener.listen(
                 socket.SOMAXCONN if self.is_asynic_clients_io else self.max_clients
             )
-            if self._stopped:
-                # stop() arrived while the socket was being bound: stay stopped
-                # instead of reviving the server (its listener would leak)
-                self.server_socket.close()
-                return
-            self.running = True
+            with self.client_lock:
+                if self._stopped:
+                    return False
+                self.running = True
+                published = True
             self._log(f"TCP server deployed on {self.host}:{self.port}")
             if self.is_asynic_clients_io:
                 self._debug("clients io mode: asyncio, max clients mount: no limit")
             else:
                 self._debug(f"max clients mount: {self.max_clients}")
             self._log("input '/stop' to stop the server\n")
-            if self.is_input_command_in_console:
-                input_thread = threading.Thread(
-                    target=self.console_input, daemon=True
-                )  # set up console input thread
-                input_thread.start()
-            else:
-                pass
+            with self.client_lock:
+                if self._stopped:
+                    return
+                if self.is_input_command_in_console:
+                    threading.Thread(target=self.console_input, daemon=True).start()
             if self.is_asynic_clients_io:
                 asyncio.run(self._accept_clients_async())
             else:
                 self._accept_clients_threaded()
         except Exception as e:
-            self._log(f"Server error: {e}")
-            self._log_exc()
+            if not (self._stopped and _is_closed_socket_error(e)):
+                self._log(f"Server error: {e}")
+                self._log_exc()
+            elif not published:
+                return False  # stop() closed the candidate during socket setup
         finally:
             self.stop()
+
+    def _dispatch_accepted_client(self, client_socket, client_address):
+        """Keep the socket visible to stop() until its reader registers it."""
+        with self.client_lock:
+            stopped = self._stopped
+            if not stopped:
+                self._pending_accepts.add(client_socket)
+                if not self.is_asynic_clients_io and len(self.clients) < self.max_clients:
+                    threading.Thread(
+                        target=self.handle_client, args=(client_socket, client_address), daemon=True
+                    ).start()
+                    return
+        if not stopped and self.is_asynic_clients_io:
+            self.handle_client(client_socket, client_address)
+            return
+        try:
+            if not stopped:
+                self.send_message(client_socket, "Max connection mount, try latter")
+        finally:
+            client_socket.close()
+            with self.client_lock:
+                self._pending_accepts.discard(client_socket)
 
     def _accept_clients_threaded(self):
         """Accept clients until the server stops, one thread per client."""
         while self.running:  # main loop to accept clients
             try:
                 client_socket, client_address = self.server_socket.accept()
-                if len(self.clients) >= self.max_clients:
-                    self.send_message(client_socket, "Max connection mount, try latter")
-                    client_socket.close()
-                    continue
-                client_thread = threading.Thread(  # set up client handling thread
-                    target=self.handle_client, args=(client_socket, client_address), daemon=True
-                )
-                client_thread.start()
+                self._dispatch_accepted_client(client_socket, client_address)
             except OSError as e:
                 # an accept error while stopping is the expected wake-up from
                 # stop()'s shutdown(), not a fault worth a traceback
@@ -8064,9 +8105,12 @@ class TCP_Server_Base:  # TCP server class
                 the loop; its remaining client coroutines are cancelled when it ends.
         """
         loop = asyncio.get_running_loop()
-        self._async_loop = loop
         wakeup = loop.create_future()
-        self._async_wakeup = wakeup
+        with self.client_lock:
+            if self._stopped:
+                return
+            self._async_loop = loop
+            self._async_wakeup = wakeup
         try:
             self.server_socket.setblocking(False)
             while self.running:
@@ -8091,10 +8135,11 @@ class TCP_Server_Base:  # TCP server class
                     self._log_exc()
                     break
                 client_socket.setblocking(False)
-                self.handle_client(client_socket, client_address)
+                self._dispatch_accepted_client(client_socket, client_address)
         finally:
-            self._async_loop = None
-            self._async_wakeup = None
+            with self.client_lock:
+                self._async_loop = None
+                self._async_wakeup = None
 
     def console_input(self):  # deal consule input
         """Read console commands until the server stops.
@@ -8219,12 +8264,17 @@ class TCP_Server_Base:  # TCP server class
         self._custom_executor.close(self._retire_server, self._flush_record_stores)
 
     def _retire_server(self):
-        self.running = False
-        self._stopped = True  # also cancels a start_TCP_Server() still binding
-        self._stop_listeners()
         with self.client_lock:
+            self._stopped = True
+            self.running = False
+            listener = self.server_socket  # candidate or active; no later start can replace it
+            pending = tuple(self._pending_accepts)
+            self._pending_accepts.clear()
             clients = list(self.clients.values())
             self.clients.clear()
+        self._stop_listeners()
+        for sock in pending:
+            self._transfer_handshakes._close_socket(sock)
         for client_info in clients:
             _retire_transfer_session(self, client_info["socket"])
             try:
@@ -8236,16 +8286,9 @@ class TCP_Server_Base:  # TCP server class
                 client_info["socket"].close()
             except OSError:
                 self._log_exc()
-        if self.server_socket:  # close server socket
-            try:
-                # close() alone does not release the port: a thread blocked in
-                # accept() keeps the descriptor open until the syscall returns,
-                # so the listener would stay up. shutdown() ends that accept
-                # immediately (the loop treats the error as the stop signal).
-                self.server_socket.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass  # not connected / already shut down
-            self.server_socket.close()
+        if listener is not None:
+            # shutdown() wakes a threaded accept that would otherwise keep the port bound.
+            self._transfer_handshakes._close_socket(listener)
             self._log("server stopped")
         self._wake_async_accept_loop()
         self.free_port()
@@ -9870,8 +9913,8 @@ class TCP_Client_Base:  # TCP client class
 
         Returns:
             bool: True when the connection is established (and, if encryption is
-                enabled, the key exchange has been started); False when the attempt
-                failed or the mode negotiation closed the connection.
+                enabled, the key exchange has been started); False if the client was
+                closed, the attempt failed or mode negotiation closed the connection.
         """
         retired = self._release_client_socket()
         previous_resume = self._resume_thread

@@ -3,8 +3,10 @@
 import errno
 import select
 import shutil
+import socket
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from pathlib import Path
 from queue import Queue
 
@@ -20,6 +22,7 @@ from helpers import (
 from PyFlow.network_api import connect_tcp
 from PyFlow.network_api.connect_tcp import TCP_Client_Base, TCP_Server_Base
 
+HOST = "127.0.0.1"
 WAIT = 10
 _CLOSED_SOCKET_ERRNOS = {
     errno.EBADF,
@@ -257,3 +260,56 @@ def test_client_reconnect_reuses_executor_until_terminal_close(tmp_path):
         else:
             _stop_server(server, server_thread)
     assert worker is not None and not worker.is_alive()
+
+
+def test_terminal_client_close_stops_auto_reconnect(tmp_path):
+    server, thread = _server(tmp_path, "server")
+    client = _client(
+        tmp_path, "client", server.port, is_wait_server=True, is_auto_reconnect=True
+    )
+    runner = threading.Thread(target=client.start_TCP_client, daemon=True)
+    try:
+        runner.start()
+        assert wait_until(lambda: _peer_on(server, client) is not None)
+        old_control = client.client_socket
+        _stop_server(server, thread)
+        # Wait for an actual post-disconnect retry, not just running=False (the
+        # reconnect driver could still be sleeping and take its terminal branch).
+        assert wait_until(lambda: client.client_socket is not old_control, timeout=WAIT)
+        client.close()
+        with socket.socket() as listener:
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            listener.bind((HOST, server.port))
+            listener.listen(1)
+            runner.join(timeout=WAIT)
+            assert not runner.is_alive()
+            assert client.connect() is False
+            assert not select.select([listener], [], [], 0)[0], "connected after terminal close"
+    finally:
+        client.close()
+        _stop_server(server, thread)
+        runner.join(timeout=WAIT)
+
+
+def test_late_client_close_preserves_reassigned_port_range(tmp_path):
+    server, thread = _server(tmp_path, "server", is_hand_alloc_port=True)
+    old = _client(tmp_path, "old", server.port)
+    new = _client(tmp_path, "new", server.port)
+    record = Path(old.project_temp_info_dir) / "clients_port_info.log"
+    try:
+        with closing(old), closing(new):
+            assert old.connect() and wait_until(lambda: record.is_file() and record.stat().st_size)
+            assert old.send_message(old.client_socket, "/quit")
+            old.receive_thread.join(WAIT)
+            assert not old.receive_thread.is_alive() and not record.exists()
+
+            assert new.connect() and wait_until(lambda: record.is_file() and record.stat().st_size)
+            assert old.client_num == new.client_num  # the freed ID really was reused
+            reservation = record.read_bytes()
+            old.close()
+            assert record.is_file() and record.read_bytes() == reservation
+        assert not record.exists() and not Path(new.client_port_lock_file).exists()
+    finally:
+        _stop_server(server, thread)
+    assert not Path(server.port_temp_info_path).exists()
+    assert not Path(server.server_port_lock_file).exists()
